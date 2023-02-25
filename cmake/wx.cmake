@@ -41,16 +41,6 @@ if (wx_NEED_BASE)
 	)
 endif()
 
-if (wx_NEED_ADV)
-	set (ADV "adv")
-	list (APPEND WX_COMPONENTS ADV)
-
-	add_library (wxWidgets::ADV
-		UNKNOWN
-		IMPORTED
-	)
-endif()
-
 if (wx_NEED_GUI)
 	set (CORE "core")
 	list (APPEND WX_COMPONENTS CORE)

@@ -3,7 +3,7 @@ project (amule)
 set (MIN_BOOST_VERSION 1.47)
 set (MIN_CRYPTOPP_VERSION 5.6)
 set (MIN_GDLIB_VERSION 2.0.0)
-set (MIN_WX_VERSION 2.8.12)
+set (MIN_WX_VERSION 3.2.0)
 set (PACKAGE "amule")
 set (PACKAGE_BUGREPORT "admin@amule.org")
 set (PACKAGE_NAME "aMule")
@@ -43,15 +43,6 @@ include (cmake/search-dirs.cmake)
 
 if (BUILD_AMULECMD OR BUILD_WEBSERVER)
 	include (cmake/FindReadline.cmake)
-endif()
-
-if (BUILD_CAS)
-	include (cmake/gdlib.cmake)
-	include (cmake/getopt_long.cmake)
-endif()
-
-if (BUILD_PLASMAMULE)
-	find_package (Qt4 COMPONENTS QtCore QtGUI REQUIRED)
 endif()
 
 if (BUILD_WEBSERVER OR NEED_ZLIB)
@@ -152,23 +143,6 @@ message (STATUS "
 	**** aMule ED2K Links Handler ****
 	Should aMule ED2K Links Handler be built?			${BUILD_ED2K}
 
-	**** aMuleLinkCreator ****
-	Should aMuleLinkCreator GUI version (alc) be built?		${BUILD_ALC}
-	Should aMuleLinkCreator for console (alcc) be built?		${BUILD_ALCC}
-
-	**** aMule Statistics ****
-	Should C aMule Statistics (CAS) be built?			${BUILD_CAS}
-	Should aMule GUI Statistics (wxCas) be built?			${BUILD_WXCAS}"
-)
-
-if (UNIX)
-	message ("	Should xas XChat2 plugin be installed?				${BUILD_XAS}")
-endif()
-
-message ("
-	**** General Libraries and Tools ****
-	Should aMule file viewer for console be built?			${BUILD_FILEVIEW}
-
 	Libraries aMule will use to build:"
 )
 
@@ -188,10 +162,6 @@ message ("			libintl				${ENABLE_NLS}")
 
 if (BUILD_WEBSERVER)
 	message ("			libpng				${PNG_VERSION_STRING}")
-endif()
-
-if (BUILD_CAS)
-	message ("			libgd				${gdlib_VERSION}")
 endif()
 
 if (NEED_ZLIB)
