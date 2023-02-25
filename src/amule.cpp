@@ -197,7 +197,9 @@ CamuleApp::CamuleApp()
 	// Apparently needed for *BSD
 	SetResourceLimits();
 
+#ifndef AMULE_DAEMON
 	wxSizerFlags::DisableConsistencyChecks();
+#endif
 }
 
 CamuleApp::~CamuleApp()

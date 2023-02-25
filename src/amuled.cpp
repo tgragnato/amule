@@ -68,7 +68,6 @@
 	#include <sys/wait.h> // Do_not_auto_remove
 #endif
 #include <wx/ffile.h>
-#include <wx/unix/execute.h>
 
 
 BEGIN_EVENT_TABLE(CamuleDaemonApp, wxAppConsole)
@@ -132,90 +131,6 @@ wxAppTraits *CamuleDaemonApp::CreateTraits()
 	return new CDaemonAppTraits();
 }
 
-static EndProcessDataMap endProcDataMap;
-
-int CDaemonAppTraits::WaitForChild(wxExecuteData &execData)
-{
-	int status = 0;
-	pid_t result = 0;
-	// Build the log message
-	wxString msg;
-	msg << wxT("WaitForChild() has been called for child process with pid `") <<
-		execData.pid <<
-		wxT("'. ");
-
-	if (execData.flags & wxEXEC_SYNC) {
-		result = AmuleWaitPid(execData.pid, &status, 0, &msg);
-		if (result == -1 || (!WIFEXITED(status) && !WIFSIGNALED(status))) {
-			msg << wxT(" Waiting for subprocess termination failed.");
-			AddDebugLogLineN(logGeneral, msg);
-		}
-	} else {
-		/** wxEXEC_ASYNC */
-		// Give the process a chance to start or forked child to exit
-		// 1 second is enough time to fail on "path not found"
-		wxSleep(1);
-		result = AmuleWaitPid(execData.pid, &status, WNOHANG, &msg);
-		if (result == 0) {
-			// Add a WxEndProcessData entry to the map, so that we can
-			// support process termination
-			wxEndProcessData *endProcData = new wxEndProcessData();
-			endProcData->pid = execData.pid;
-			endProcData->process = execData.process;
-			endProcData->tag = 0;
-			endProcDataMap[execData.pid] = endProcData;
-
-			status = execData.pid;
-		} else {
-			// if result != 0, then either waitpid() failed (result == -1)
-			// and there is nothing we can do, or the child has changed
-			// status, which means it is probably dead.
-			status = 0;
-		}
-	}
-
-	// Log our passage here
-	AddDebugLogLineN(logGeneral, msg);
-
-	return status;
-}
-
-void OnSignalChildHandler(int /*signal*/, siginfo_t *siginfo, void * /*ucontext*/)
-{
-	// Build the log message
-	wxString msg;
-	msg << wxT("OnSignalChildHandler() has been called for child process with pid `") <<
-		siginfo->si_pid <<
-		wxT("'. ");
-	// Make sure we leave no zombies by calling waitpid()
-	int status = 0;
-	pid_t result = AmuleWaitPid(siginfo->si_pid, &status, WNOHANG, &msg);
-	if (result != 1 && result != 0 && (WIFEXITED(status) || WIFSIGNALED(status))) {
-		// Fetch the wxEndProcessData structure corresponding to this pid
-		EndProcessDataMap::iterator it = endProcDataMap.find(siginfo->si_pid);
-		if (it != endProcDataMap.end()) {
-			wxEndProcessData *endProcData = it->second;
-			// Remove this entry from the process map
-			endProcDataMap.erase(siginfo->si_pid);
-			// Save the exit code for the wxProcess object to read later
-			endProcData->exitcode = result != -1 && WIFEXITED(status) ?
-				WEXITSTATUS(status) : -1;
-			// Make things work as in wxGUI
-			wxHandleProcessTermination(endProcData);
-
-			// wxHandleProcessTermination() will "delete endProcData;"
-			// So we do not delete it again, ok? Do not uncomment this line.
-			//delete endProcData;
-		} else {
-			msg << wxT(" Error: the child process pid is not on the pid map.");
-		}
-	}
-
-	// Log our passage here
-	AddDebugLogLineN(logGeneral, msg);
-}
-
-
 pid_t AmuleWaitPid(pid_t pid, int *status, int options, wxString *msg)
 {
 	*status = 0;
@@ -275,7 +190,6 @@ int CamuleDaemonApp::OnRun()
 	DEBUG_ONLY( int ret = 0; )
 	DEBUG_ONLY( ret = ) sigaction(SIGCHLD, NULL, &m_oldSignalChildAction);
 	m_newSignalChildAction = m_oldSignalChildAction;
-	m_newSignalChildAction.sa_sigaction = OnSignalChildHandler;
 	m_newSignalChildAction.sa_flags |=  SA_SIGINFO;
 	m_newSignalChildAction.sa_flags &= ~SA_RESETHAND;
 	DEBUG_ONLY( ret = ) sigaction(SIGCHLD, &m_newSignalChildAction, NULL);

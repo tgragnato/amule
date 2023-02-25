@@ -111,6 +111,23 @@ if (BUILD_DAEMON)
 		PRIVATE wxWidgets::NET
 	)
 
+	if(APPLE)
+		find_library(IO_KIT IOKit)
+		if (NOT IO_KIT)
+		  	message(FATAL_ERROR "IOKit not found")
+		endif()
+
+		find_library(CORE_SERVICES CoreServices)
+		if (NOT CORE_SERVICES)
+		  	message(FATAL_ERROR "CoreServices not found")
+		endif()
+
+		target_link_libraries(amuled
+			PRIVATE ${IO_KIT}
+			PRIVATE ${CORE_SERVICES}
+		)
+	endif()
+
 	if (HAVE_BFD)
 		target_link_libraries (amuled
 			PRIVATE ${LIBBFD}
@@ -167,7 +184,6 @@ if (BUILD_MONOLITHIC)
 		PRIVATE muleappgui
 		PRIVATE mulecommon
 		PRIVATE mulesocket
-		PRIVATE $<$<VERSION_LESS:${wxWidgets_VERSION_STRING},3.1.2>:wxWidgets::ADV>
 		PRIVATE wxWidgets::NET
 	)
 	
@@ -237,7 +253,6 @@ if (BUILD_REMOTEGUI)
 		PRIVATE muleappgui
 		PRIVATE mulecommon
 		PRIVATE mulesocket
-		PRIVATE $<$<VERSION_LESS:${wxWidgets_VERSION_STRING},3.1.2>:wxWidgets::ADV>
 		PRIVATE wxWidgets::NET
 	)
 
@@ -254,7 +269,6 @@ endif()
 
 if (NEED_LIB_MULEAPPCOMMON)
 	add_library (muleappcommon STATIC
-		${UPNP_SOURCES}
 		CFile.cpp
 		ClientCredits.cpp
 		DataToText.cpp

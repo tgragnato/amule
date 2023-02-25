@@ -433,10 +433,8 @@ private:
 	struct sigaction m_newSignalChildAction;
 public:
 	CDaemonAppTraits();
-	virtual int WaitForChild(wxExecuteData& execData);
 };
 
-void OnSignalChildHandler(int signal, siginfo_t *siginfo, void *ucontext);
 pid_t AmuleWaitPid(pid_t pid, int *status, int options, wxString *msg);
 
 

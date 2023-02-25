@@ -633,11 +633,11 @@ bool CaMuleExternalConnector::OnInit()
 	//
 	// OnInitCmdLine() is called from wxApp::OnInit() above,
 	// thus m_appname is already set.
-	rl_readline_name = m_appname;
+	rl_readline_name = (char *)m_appname;
 
 	// Allow completion of our commands
 	theCommands = &m_commands;
-	rl_completion_entry_function = &command_completion;
+	rl_completion_entry_function = (int (*)(const char *, int))&command_completion;
 #endif
 
 	return retval;

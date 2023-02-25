@@ -20,7 +20,6 @@ add_executable (amuleweb
 	${CMAKE_SOURCE_DIR}/src/RLE.cpp
 	${CMAKE_SOURCE_DIR}/src/NetworkFunctions.cpp
 	${CMAKE_SOURCE_DIR}/src/LoggerConsole.cpp
-	${UPNP_SOURCES}
 	php_amule_lib.cpp
 	php_core_lib.cpp
 	php_lexer.c
@@ -38,7 +37,6 @@ target_compile_definitions (amuleweb
 target_include_directories (amuleweb
 	PRIVATE ${CMAKE_BINARY_DIR}
 	PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-	PRIVATE ${LIBUPNP_INCLUDE_DIRS}
 	PRIVATE ${SRC_DIR}
 )
 
@@ -48,6 +46,23 @@ target_link_libraries (amuleweb
 	PRIVATE mulesocket
 	PRIVATE wxWidgets::NET
 )
+
+if(APPLE)
+	find_library(CORE_FOUNDATION CoreFoundation)
+	if (NOT CORE_FOUNDATION)
+		message(FATAL_ERROR "CoreFoundation not found")
+	endif()
+
+	find_library(APPLICATION_SERVICES ApplicationServices)
+	if (NOT APPLICATION_SERVICES)
+		   message(FATAL_ERROR "ApplicationServices not found")
+	endif()
+
+	target_link_libraries(amuleweb
+		PRIVATE ${CORE_FOUNDATION}
+		PRIVATE ${APPLICATION_SERVICES}
+	)
+endif()
 
 if (HAVE_BFD)
 	target_link_libraries (amuleweb
