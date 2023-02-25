@@ -28,7 +28,7 @@
 
 #include <common/DataFileVersion.h>
 
-#include "amule.h"			// Needed for theApp: let it first or fail under win32
+#include "amule.h"			// Needed for theApp
 #include "ClientList.h"		// Needed for CClientList
 #include "updownclient.h"	// Needed for CUpDownClient
 #include "Friend.h"		// Needed for CFriend

@@ -31,10 +31,6 @@
 
 #include <wx/file.h>		// Needed for constants
 
-#ifdef _MSC_VER  // silly warnings about deprecated functions
-#pragma warning(disable:4996)
-#endif
-
 /**
  * This class is a modified version of the wxFile class.
  *

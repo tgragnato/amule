@@ -32,15 +32,12 @@
 
 #include <cmath>
 
-#include "Types.h"		// Do_not_auto_remove (win32)
+#include "Types.h"		// Do_not_auto_remove
 
-#ifdef __WINDOWS__
-	#include <winsock.h>	// Do_not_auto_remove
-#else
-	#include <sys/types.h>	// Do_not_auto_remove
-	#include <netinet/in.h>	// Do_not_auto_remove
-	#include <arpa/inet.h>	// Do_not_auto_remove
-#endif
+#include <sys/types.h>	// Do_not_auto_remove
+#include <netinet/in.h>	// Do_not_auto_remove
+#include <arpa/inet.h>	// Do_not_auto_remove
+
 
 #include "ServerConnect.h"	// Needed for CServerConnect
 #include "KnownFile.h"		// Needed for CKnownFile

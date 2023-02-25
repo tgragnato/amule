@@ -8,9 +8,6 @@
 /* Define this to the include prefix of crypto++ */
 #cmakedefine CRYPTOPP_INCLUDE_PREFIX ${CRYPTOPP_INCLUDE_PREFIX}
 
-/* Define if upnp was found. */
-#cmakedefine ENABLE_UPNP
-
 /* Define to 1  if translation of program messages to the user's
    native language is requested. */
 #cmakedefine ENABLE_NLS 1

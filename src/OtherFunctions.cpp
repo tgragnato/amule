@@ -1071,14 +1071,7 @@ wxString GetConfigDir(const wxString &configFileBase)
 
 /*************************** Locale specific stuff ***************************/
 
-#ifndef __WINDOWS__
-#	define	SETWINLANG(LANG, SUBLANG)
-#else
-#	define	SETWINLANG(LANG, SUBLANG) \
-	info.WinLang = LANG; \
-	info.WinSublang = SUBLANG;
-#endif
-
+#define	SETWINLANG(LANG, SUBLANG)
 #define CUSTOMLANGUAGE(wxid, iso, winlang, winsublang, dir, desc) \
 	info.Language = wxid;		\
 	info.CanonicalName = wxT(iso);	\
@@ -1097,9 +1090,9 @@ void InitLocale(wxLocale& locale, int language)
 {
 	locale.Init(language, wxLOCALE_LOAD_DEFAULT);
 
-#if defined(__WXMAC__) || defined(__WINDOWS__)
+#if defined(__WXMAC__)
 	locale.AddCatalogLookupPathPrefix(JoinPaths(wxStandardPaths::Get().GetDataDir(), wxT("locale")));
-#endif /* (!)(defined(__WXMAC__) || defined(__WINDOWS__)) */
+#endif /* (!)(defined(__WXMAC__) */
 
 	locale.AddCatalog(wxT(PACKAGE));
 }
@@ -1156,21 +1149,7 @@ CMD4Hash GetPassword(bool allowEmptyPassword)
 {
 	wxString pass_plain;
 	CMD4Hash password;
-#ifndef __WINDOWS__
 	pass_plain = char2unicode(getpass("Enter password for mule connection: "));
-#else
-	//#warning This way, pass enter is not hidden on windows. Bad thing.
-	char temp_str[512];
-	// Though fflush() on an input stream is undefined behaviour by the standard,
-	// the MSVCRT version does seem to clear the input buffers.
-	// cppcheck-suppress fflushOnInputStream
-	fflush(stdin);
-	printf("Enter password for mule connection: \n");
-	fflush(stdout);
-	fgets(temp_str, 512, stdin);
-	temp_str[strlen(temp_str)-1] = '\0';
-	pass_plain = char2unicode(temp_str);
-#endif
 	wxCHECK2(password.Decode(MD5Sum(pass_plain).GetHash()), /* Do nothing. */ );
 	if (!allowEmptyPassword) {
 		// MD5 hash for an empty string, according to rfc1321.

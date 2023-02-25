@@ -31,7 +31,7 @@
 
 
 // Include the necessary headers for select(2), properly guarded
-#if defined HAVE_SYS_SELECT_H && !defined __IRIX__
+#if defined HAVE_SYS_SELECT_H
 #	include <sys/select.h>
 #else
 #	ifdef HAVE_SYS_TIME_H
@@ -64,16 +64,11 @@
 #include <sys/resource.h> // Do_not_auto_remove
 #endif
 
-#ifndef __WINDOWS__
-	#ifdef  HAVE_SYS_WAIT_H
-		#include <sys/wait.h> // Do_not_auto_remove
-	#endif
-	#include <wx/ffile.h>
+#ifdef  HAVE_SYS_WAIT_H
+	#include <sys/wait.h> // Do_not_auto_remove
 #endif
-
-#ifdef AMULED_APPTRAITS
-	#include <wx/unix/execute.h>
-#endif
+#include <wx/ffile.h>
+#include <wx/unix/execute.h>
 
 
 BEGIN_EVENT_TABLE(CamuleDaemonApp, wxAppConsole)
@@ -124,8 +119,6 @@ END_EVENT_TABLE()
 IMPLEMENT_APP(CamuleDaemonApp)
 
 
-#ifdef AMULED_APPTRAITS
-
 CDaemonAppTraits::CDaemonAppTraits()
 :
 wxConsoleAppTraits(),
@@ -138,10 +131,6 @@ wxAppTraits *CamuleDaemonApp::CreateTraits()
 {
 	return new CDaemonAppTraits();
 }
-
-#endif	// AMULED_APPTRAITS
-
-#ifdef AMULED_APPTRAITS
 
 static EndProcessDataMap endProcDataMap;
 
@@ -190,7 +179,6 @@ int CDaemonAppTraits::WaitForChild(wxExecuteData &execData)
 
 	return status;
 }
-
 
 void OnSignalChildHandler(int /*signal*/, siginfo_t *siginfo, void * /*ucontext*/)
 {
@@ -269,36 +257,6 @@ pid_t AmuleWaitPid(pid_t pid, int *status, int options, wxString *msg)
 	return result;
 }
 
-#endif	// AMULED_APPTRAITS
-
-
-#ifdef __WINDOWS__
-//
-// CTRL-C-Handler
-// see http://msdn.microsoft.com/en-us/library/windows/desktop/ms685049%28v=vs.85%29.aspx
-//
-static BOOL CtrlHandler(DWORD fdwCtrlType)
-{
-	switch (fdwCtrlType) {
-		case CTRL_C_EVENT:
-		case CTRL_CLOSE_EVENT:
-		case CTRL_BREAK_EVENT:
-			// handle these
-			AddLogLineNS(wxT("Received break event, exit main loop"));
-			theApp->ExitMainLoop();
-			return TRUE;
-			break;
-		case CTRL_LOGOFF_EVENT:
-		case CTRL_SHUTDOWN_EVENT:
-		default:
-			// don't handle these
-			return FALSE;
-			break;
-	}
-}
-
-#endif // __WINDOWS__
-
 
 int CamuleDaemonApp::OnRun()
 {
@@ -310,11 +268,6 @@ int CamuleDaemonApp::OnRun()
 		return 0;
 	}
 
-#ifdef __WINDOWS__
-	SetConsoleCtrlHandler((PHANDLER_ROUTINE) CtrlHandler, TRUE);
-#endif // __WINDOWS__
-
-#ifdef AMULED_APPTRAITS
 	// Process the return code of dead children so that we do not create
 	// zombies. wxBase does not implement wxProcess callbacks, so no one
 	// actually calls wxHandleProcessTermination() in console applications.
@@ -333,7 +286,6 @@ int CamuleDaemonApp::OnRun()
 		AddDebugLogLineN(logGeneral, wxT("CamuleDaemonApp::OnRun(): Installation of SIGCHLD callback with sigaction() succeeded."));
 	}
 #endif
-#endif	// AMULED_APPTRAITS
 
 	return wxApp::OnRun();
 }
@@ -354,7 +306,6 @@ bool CamuleDaemonApp::OnInit()
 
 int CamuleDaemonApp::InitGui(bool ,wxString &)
 {
-#ifndef __WINDOWS__
 	if ( !enable_daemon_fork ) {
 		return 0;
 	}
@@ -394,7 +345,6 @@ int CamuleDaemonApp::InitGui(bool ,wxString &)
 		}
 	}
 
-#endif
 	return 0;
 }
 
@@ -436,11 +386,9 @@ bool CamuleDaemonApp::Initialize(int& argc_, wxChar **argv_)
 
 int CamuleDaemonApp::OnExit()
 {
-
 	ShutDown();
-
-#ifdef AMULED_APPTRAITS
 	DEBUG_ONLY( int ret = ) sigaction(SIGCHLD, &m_oldSignalChildAction, NULL);
+	
 #ifdef __DEBUG__
 	if (ret == -1) {
 		AddDebugLogLineC(logStandard, CFormat(wxT("CamuleDaemonApp::OnRun(): second sigaction() failed: %m.")));
@@ -448,10 +396,8 @@ int CamuleDaemonApp::OnExit()
 		AddDebugLogLineN(logGeneral, wxT("CamuleDaemonApp::OnRun(): Uninstallation of SIGCHLD callback with sigaction() succeeded."));
 	}
 #endif
-#endif // AMULED_APPTRAITS
 
 	delete core_timer;
-
 	return CamuleApp::OnExit();
 }
 

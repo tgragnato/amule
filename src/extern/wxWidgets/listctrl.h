@@ -264,7 +264,7 @@ private:
     DECLARE_EVENT_TABLE()
 };
 
-#if (!defined(__WXMSW__) || defined(__WXUNIVERSAL__)) && (!defined(__WXMAC__) || defined(__WXUNIVERSAL__))
+#if (!defined(__WXMAC__) || defined(__WXUNIVERSAL__))
 /*
  * wxListCtrl has to be a real class or we have problems with
  * the run-time information.
@@ -286,7 +286,7 @@ public:
     }
 
 };
-#endif // !__WXMSW__ || __WXUNIVERSAL__
+#endif // !__WXMAC__ || __WXUNIVERSAL__
 
 } // namespace MuleExtern
 

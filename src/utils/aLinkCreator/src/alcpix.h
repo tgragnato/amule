@@ -38,9 +38,7 @@ class AlcPix
   {
   private:
     static const char *m_about_xpm[];
-#ifndef __WINDOWS__
     static const char *m_alc_xpm[];
-#endif
     static const char *m_copy_xpm[];
     static const char *m_open_xpm[];
     static const char *m_saveas_xpm[];

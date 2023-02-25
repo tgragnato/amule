@@ -43,12 +43,6 @@
 #include <common/Format.h>
 #include <common/StringFunctions.h>
 
-#ifdef _MSC_VER
-#define isatty(DUMMY) 0
-#define YY_NO_UNISTD_H
-#pragma warning(disable:4003)
-#endif
-
 #define YY_NEVER_INTERACTIVE 1
 
 // When we get here the IP has been lexed nicely,

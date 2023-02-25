@@ -118,15 +118,8 @@ static const unsigned char PADDING[64] = {
 #define H(x, y, z) ((x) ^ (y) ^ (z))
 #define I(x, y, z) ((y) ^ ((x) | (~z)))
 
-/* ROTATE_LEFT rotates x left n bits.
-	15-April-2003 Sony: use _MSC_VER intrinsic to save some cycles
- */
-#ifdef _MSC_VER
-#pragma intrinsic(_rotl)
-#define ROTATE_LEFT(x, n) _rotl((x), (n))
-#else
+// ROTATE_LEFT rotates x left n bits.
 #define ROTATE_LEFT(x, n) (((x) << (n)) | ((x) >> (32-(n))))
-#endif
 
 /* FF, GG, HH, and II transformations for rounds 1, 2, 3, and 4.
 Rotation is separate from addition to prevent recomputation.

@@ -160,11 +160,7 @@ protected:
 	DECLARE_EVENT_TABLE()
 };
 
-#ifdef __WINDOWS__
-	#define MULE_NOTEBOOK_TAB_HEIGHT 26
-#else
 	#define MULE_NOTEBOOK_TAB_HEIGHT 40
-#endif
-
+	
 #endif
 // File_checked_for_headers

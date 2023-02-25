@@ -33,25 +33,12 @@
 #include <list>			// Needed for std::list
 #include <vector>		// Needed for std::vector
 
-#ifndef _MSC_VER
-	#ifndef __STDC_FORMAT_MACROS
-		#define __STDC_FORMAT_MACROS
-	#endif
-	#include <inttypes.h>
-	#define LONGLONG(x) x##ll
-	#define ULONGLONG(x) x##llu
-#else
-	typedef unsigned __int8 uint8_t;
-	typedef unsigned __int16 uint16_t;
-	typedef unsigned __int32 uint32_t;
-	typedef unsigned __int64 uint64_t;
-	typedef signed __int8 int8_t;
-	typedef signed __int16 int16_t;
-	typedef signed __int32 int32_t;
-	typedef signed __int64 int64_t;
-	#define LONGLONG(x) x##i64
-	#define ULONGLONG(x) x##ui64
+#ifndef __STDC_FORMAT_MACROS
+	#define __STDC_FORMAT_MACROS
 #endif
+#include <inttypes.h>
+#define LONGLONG(x) x##ll
+#define ULONGLONG(x) x##llu
 
 // These are _MSC_VER defines used in eMule. They should
 // not be used in aMule, instead, use this table to
@@ -139,35 +126,12 @@ static const wxString EmptyString = wxEmptyString;
 	typedef int bool;
 #endif
 
-
-#ifdef _WIN32			// Used in non-wx-apps too (ed2k), so don't use __WINDOWS__ here !
-	#ifndef NOMINMAX
-		#define NOMINMAX
-	#endif
-	#include <windows.h> // Needed for RECT  // Do_not_auto_remove
-	// Windows compilers don't have these constants
-	#ifndef W_OK
-		enum
-		{
-			F_OK = 0,   // test for existence
-			X_OK = 1,   //          execute permission
-			W_OK = 2,   //          write
-			R_OK = 4    //          read
-		};
-	#endif // W_OK
-	#ifdef __WINDOWS__
-		#include <wx/msw/winundef.h>	// Do_not_auto_remove
-	#endif
-	#undef GetUserName
-#else // _WIN32
-	typedef struct sRECT {
-	  uint32 left;
-	  uint32 top;
-	  uint32 right;
-	  uint32 bottom;
-	} RECT;
-#endif /* _WIN32 */
-
+typedef struct sRECT {
+  uint32 left;
+  uint32 top;
+  uint32 right;
+  uint32 bottom;
+} RECT;
 
 #endif /* TYPES_H */
 // File_checked_for_headers

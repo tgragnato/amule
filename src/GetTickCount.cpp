@@ -24,54 +24,11 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include "GetTickCount.h" // Interface
+#include "GetTickCount.h" 	// Interface
+#include <sys/time.h>		// Needed for gettimeofday
 
 uint32 TheTime = 0;
 
-#ifdef __WINDOWS__
-
-void StartTickTimer(){};
-
-void StopTickTimer(){};
-
-/**
- * Returns the tickcount in full resolution using the highres timer.
- * This function replaces calls to the low res system function GetTickCOunt
- * (which can also be messed up when an app changes the system timer resolution)
- */
-uint32 GetTickCountFullRes() {
-	return GetTickCount_64();
-}
-
-/**
- * Returns the tickcount in 64bits.
- */
-uint64 GetTickCount_64()
-{
-	// Use highres timer for all operations on Windows
-	// The Timer starts at system boot and runs (on a Intel Quad core)
-	// with 14 million ticks per second. So it won't overflow for
-	// 35000 years.
-
-	// Convert hires ticks to milliseconds
-	static double tickFactor;
-	_LARGE_INTEGER li;
-
-	static bool first = true;
-	if (first) {
-		// calculate the conversion factor for the highres timer
-		QueryPerformanceFrequency(&li);
-		tickFactor = 1000.0 / li.QuadPart;
-		first = false;
-	}
-
-	QueryPerformanceCounter(&li);
-	return li.QuadPart * tickFactor;
-}
-
-#else
-
-#include <sys/time.h>		// Needed for gettimeofday
 
 uint32 GetTickCountFullRes(void) {
 	struct timeval aika;
@@ -154,6 +111,3 @@ uint32 GetTickCountFullRes(void) {
 	}
 
 #endif
-
-#endif
-// File_checked_for_headers

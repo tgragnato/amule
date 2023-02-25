@@ -50,7 +50,6 @@ Ed2kHash::~Ed2kHash()
 bool Ed2kHash::SetED2KHashFromFile(const wxFileName& filename, MD4Hook hook)
 {
   // Open file and let wxFFile destructor close the file
-  // Closing it explicitly may crash on Win32 ...
   wxFFile file(filename.GetFullPath(), wxT("rbS"));
   if (! file.IsOpened())
     {

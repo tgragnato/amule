@@ -26,9 +26,6 @@
 #include "StringFunctions.h"		// Needed for filename2char()
 
 #include <wx/file.h>
-#if defined __WINDOWS__ || defined __IRIX__
-#	include <wx/ffile.h>
-#endif
 #include <wx/utils.h>
 #include <wx/filename.h>
 #include <algorithm>	// Needed for std::min
@@ -38,13 +35,8 @@
 // case-insensitive cmp for that platform. TODO:
 // Perhaps it would be better to simply lowercase
 // m_filesystem in the constructor ...
-#ifdef __WINDOWS__
-	#define PATHCMP(a, b)		wxStricmp(a, b)
-	#define PATHNCMP(a, b, n)	wxStrnicmp(a, b, n)
-#else
-	#define PATHCMP(a, b)		wxStrcmp(a, b)
-	#define PATHNCMP(a, b, n)	wxStrncmp(a, b, n)
-#endif
+#define PATHCMP(a, b)		wxStrcmp(a, b)
+#define PATHNCMP(a, b, n)	wxStrncmp(a, b, n)
 
 
 ////////////////////////////////////////////////////////////
@@ -171,20 +163,7 @@ static wxString DoRemoveExt(const wxString& path)
 /** Readies a path for use with wxAccess.. */
 static wxString DoCleanPath(const wxString& path)
 {
-#ifdef __WINDOWS__
-	// stat fails on windows if there are trailing path-separators.
-	wxString cleanPath = StripSeparators(path, wxString::trailing);
-
-	// Root paths must end with a separator (X:\ rather than X:).
-	// See comments in wxDirExists.
-	if ((cleanPath.Length() == 2) && (cleanPath.Last() == wxT(':'))) {
-		cleanPath += wxFileName::GetPathSeparator();
-	}
-
-	return cleanPath;
-#else
 	return path;
-#endif
 }
 
 
@@ -242,17 +221,11 @@ CPath::CPath(const wxString& filename)
 		// saved as UTF8, even if the system is not unicode enabled,
 		// preserving the original filename till the user has fixed
 		// his system ...
-#ifdef __WINDOWS__
-		// Magic fails on Windows where we always work with wide char file names.
-		m_filesystem = DeepCopy(filename);
-		m_printable = m_filesystem;
-#else
 		fn = filename.utf8_str();
 		m_filesystem = wxConvFile.cMB2WC(fn);
 
 		// There's no need to try to unmangle the filename here.
 		m_printable = DeepCopy(filename);
-#endif
 	}
 
 	wxASSERT(m_filesystem.Length());
@@ -572,11 +545,7 @@ bool CPath::BackupFile(const CPath& src, const wxString& appendix)
 
 	if (CPath::CloneFile(src, dst, true)) {
 		// Try to ensure that the backup gets physically written
-#if defined __WINDOWS__ || defined __IRIX__
-		wxFFile backupFile;
-#else
 		wxFile backupFile;
-#endif
 		if (backupFile.Open(dst.m_filesystem)) {
 			backupFile.Flush();
 		}

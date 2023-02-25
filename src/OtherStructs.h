@@ -32,40 +32,20 @@
 struct z_stream_s;
 
 
-//			SERVER TO CLIENT
-#if defined(_MSC_VER) || defined(__SUNPRO_CC)
-#pragma pack(1)
-#endif
+// SERVER TO CLIENT
 struct Header_Struct{
 	int8	eDonkeyID;
 	int32	packetlength;
 	int8	command;
 }
-#if defined(_MSC_VER) || defined(__SUNPRO_CC)
-;
-#pragma pack()
-#else
 __attribute__((__packed__));
-#endif
 
-#if defined(_MSC_VER) || defined(__SUNPRO_CC)
-#pragma pack(1)
-#endif
 struct UDP_Header_Struct {
 	int8	eDonkeyID;
 	int8	command;
 }
-#if defined(_MSC_VER) || defined(__SUNPRO_CC)
-;
-#pragma pack()
-#else
 __attribute__((__packed__));
-#endif
 
-#if defined(_MSC_VER) || defined(__SUNPRO_CC)
-;
-#pragma pack(1)
-#endif
 struct Requested_Block_Struct{
 	uint64	StartOffset;
 	uint64	EndOffset;
@@ -73,12 +53,7 @@ struct Requested_Block_Struct{
 	unsigned char	FileID[16];
 	uint32  transferred; // Barry - This counts bytes completed
 }
-#if defined(_MSC_VER) || defined(__SUNPRO_CC)
-;
-#pragma pack()
-#else
 __attribute__((__packed__));
-#endif
 
 struct Pending_Block_Struct{
 	Requested_Block_Struct*	block;
@@ -93,20 +68,12 @@ struct Gap_Struct{
 	uint64 end;
 };
 
-#if defined(_MSC_VER) || defined(__SUNPRO_CC)
-#pragma pack(1)
-#endif
 struct ServerMet_Struct {
 	uint32	ip;
 	uint16	port;
 	uint32	tagcount;
 }
-#if defined(_MSC_VER) || defined(__SUNPRO_CC)
-;
-#pragma pack()
-#else
 __attribute__((__packed__));
-#endif
 
 struct TransferredData {
 	uint32	datalen;
@@ -116,9 +83,6 @@ struct TransferredData {
 
 //Kry import of 0.30d
 // Maella -Enhanced Chunk Selection- (based on jicxicmic)
-#if defined(_MSC_VER) || defined(__SUNPRO_CC)
-#pragma pack(1)
-#endif
 struct Chunk {
 	uint16 part;      // Index of the chunk
 		union {
@@ -126,12 +90,7 @@ struct Chunk {
 			uint16 rank;      // Download priority factor (highest = 0, lowest = 0xffff)
 	};
 }
-#if defined(_MSC_VER) || defined(__SUNPRO_CC)
-;
-#pragma pack()
-#else
 __attribute__((__packed__));
-#endif
 
 struct Category_Struct
 {

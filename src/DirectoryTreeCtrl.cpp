@@ -104,30 +104,7 @@ void CDirectoryTreeCtrl::Init()
 					new CItemData(CPath()));
 
 	if (!m_IsRemote) {
-	#ifndef __WINDOWS__
 		AddChildItem(m_root, CPath(wxT("/")));
-	#else
-		// this might take awhile, so change the cursor
-		::wxSetCursor(*wxHOURGLASS_CURSOR);
-		// retrieve bitmask of all drives available
-		uint32 drives = GetLogicalDrives();
-		drives >>= 1;
-		for (char drive = 'C'; drive <= 'Z'; drive++) {
-			drives >>= 1;
-			if (! (drives & 1)) { // skip non existent drives
-				continue;
-			}
-			wxString driveStr = CFormat(wxT("%c:")) % drive;
-			uint32 type = GetDriveType((driveStr + wxT("\\")).wc_str());
-
-			// skip removable/undefined drives, share only fixed or remote drives
-			if ((type == 3 || type == 4)   // fixed drive / remote drive
-				&& CPath::DirExists(driveStr)) {
-				AddChildItem(m_root, CPath(driveStr));
-			}
-		}
-		::wxSetCursor(*wxSTANDARD_CURSOR);
-	#endif
 	}
 
 	HasChanged = false;

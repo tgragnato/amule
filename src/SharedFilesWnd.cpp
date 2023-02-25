@@ -24,7 +24,7 @@
 //
 
 #include <wx/config.h>
-#include <wx/gauge.h>		// Do_not_auto_remove (win32)
+#include <wx/gauge.h>		// Do_not_auto_remove
 #include <wx/radiobox.h>
 
 #include "SharedFilesWnd.h"	// Interface declarations

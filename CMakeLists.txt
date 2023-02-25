@@ -37,7 +37,6 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 	)
 endif()
 
-include (cmake/CmDaB.cmake)
 include (cmake/manpage_install.cmake)
 include (cmake/options.cmake)
 include (cmake/search-dirs.cmake)
@@ -67,16 +66,8 @@ if (ENABLE_BOOST)
 	include (cmake/boost.cmake)
 endif()
 
-if (ENABLE_IP2COUNTRY)
-	include (cmake/ip2country.cmake)
-endif()
-
 if (ENABLE_NLS)
 	include (cmake/nls.cmake)
-endif()
-
-if (ENABLE_UPNP)
-	include (cmake/upnp.cmake)
 endif()
 
 if (NEED_GLIB_CHECK)
@@ -113,13 +104,6 @@ configure_file (
 	config.h
 )
 
-if (WIN32)
-	configure_file (
-		version.rc.in
-		version.rc
-	)
-endif()
-
 if (BUILD_MONOLITHIC)
 	install (FILES amule.desktop
 		DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
@@ -155,8 +139,6 @@ message (STATUS "
 	Prefix where aMule should be installed?				${CMAKE_PREFIX_PATH}
 	Should aMule be compiled with i18n support?			${ENABLE_NLS}
 	Which mode should aMule be compiled in?				${CMAKE_BUILD_TYPE}
-	Should aMule be compiled with UPnP support?			${ENABLE_UPNP}
-	Should aMule be compiled with IP2country support?		${ENABLE_IP2COUNTRY}
 	Should aMule monolithic application be built?			${BUILD_MONOLITHIC}
 	Should aMule daemon version be built?				${BUILD_DAEMON}
 	Should aMule remote gui be built?				${BUILD_REMOTEGUI}
@@ -202,15 +184,7 @@ if (NEED_LIB_CRYPTO)
 	message ("			crypto++			${CRYPTOPP_VERSION} in ${CRYPTOPP_INCLUDE_PREFIX}")
 endif()
 
-if (ENABLE_UPNP)
-	message ("			libupnp				${LIBUPNP_VERSION}")
-endif()
-
 message ("			libintl				${ENABLE_NLS}")
-
-if (ENABLE_IP2COUNTRY)
-	message ("			libGeoIP			${GEOIP_LIB}")
-endif()
 
 if (BUILD_WEBSERVER)
 	message ("			libpng				${PNG_VERSION_STRING}")

@@ -34,36 +34,7 @@
 #endif
 
 // standard
-#if defined(__WINDOWS__) && !defined(__GNUWIN32__) && !defined(__WXWINE__) && !defined(__WXMICROWIN__)
-#	include <io.h>
-#	ifndef __SALFORDC__
-#		define   WIN32_LEAN_AND_MEAN
-#		define   NOSERVICE
-#		define   NOIME
-#		define   NOATOM
-#		define   NOGDI
-#		define   NOGDICAPMASKS
-#		define   NOMETAFILE
-#ifndef NOMINMAX
-	#define   NOMINMAX
-#endif
-#		define   NOMSG
-#		define   NOOPENFILE
-#		define   NORASTEROPS
-#		define   NOSCROLL
-#		define   NOSOUND
-#		define   NOSYSMETRICS
-#		define   NOTEXTMETRIC
-#		define   NOWH
-#		define   NOCOMM
-#		define   NOKANJI
-#		define   NOCRYPT
-#		define   NOMCX
-#	endif
-#elif (defined(__UNIX__) || defined(__GNUWIN32__))
-#	ifdef __GNUWIN32__
-#		include <windows.h>
-#	endif
+#if (defined(__UNIX__))
 #elif (defined(__WXPM__))
 #	include <io.h>
 #elif (defined(__WXSTUBS__))
@@ -79,7 +50,7 @@ char* mktemp( char * path ) { return path ;}
 #	include <stat.h>
 #else
 #	error  "Please specify the header with file functions declarations."
-#endif  //Win/UNIX
+#endif
 
 // there is no distinction between text and binary files under Unix, so define
 // O_BINARY as 0 if the system headers don't do it already
@@ -87,41 +58,19 @@ char* mktemp( char * path ) { return path ;}
 #	define   O_BINARY    (0)
 #endif  //__UNIX__
 
-#if defined(__WINDOWS__)
-#include <wx/msw/mslu.h>
-#endif
-
-
-// The following defines handle different names across platforms,
-// and ensures that we use 64b IO on windows (only 32b by default).
-#ifdef __WINDOWS__
-	#define FLUSH_FD(x)			_commit(x)
-	#define SEEK_FD(x, y, z)		_lseeki64(x, y, z)
-	#define TELL_FD(x)			_telli64(x)
-
-	#if (__MSVCRT_VERSION__ < 0x0601)
-		//#warning MSCVRT-Version smaller than 6.01
-		#define STAT_FD(x, y)		_fstati64(x, y)
-		#define STAT_STRUCT		struct _stati64
-	#else
-		#define STAT_FD(x, y)		_fstat64(x, y)
-		#define STAT_STRUCT		struct __stat64
-	#endif
-#else
 
 // We don't need to sync all meta-data, just the contents,
 // so use fdatasync when possible (see man fdatasync).
-	#if defined(_POSIX_SYNCHRONIZED_IO) && (_POSIX_SYNCHRONIZED_IO > 0)
-		#define FLUSH_FD(x)		fdatasync(x)
-	#else
-		#define FLUSH_FD(x)		fsync(x)
-	#endif
-
-	#define SEEK_FD(x, y, z)		lseek(x, y, z)
-	#define TELL_FD(x)			wxTell(x)
-	#define STAT_FD(x, y)			fstat(x, y)
-	#define STAT_STRUCT			struct stat
+#if defined(_POSIX_SYNCHRONIZED_IO) && (_POSIX_SYNCHRONIZED_IO > 0)
+	#define FLUSH_FD(x)		fdatasync(x)
+#else
+	#define FLUSH_FD(x)		fsync(x)
 #endif
+
+#define SEEK_FD(x, y, z)		lseek(x, y, z)
+#define TELL_FD(x)			wxTell(x)
+#define STAT_FD(x, y)			fstat(x, y)
+#define STAT_STRUCT			struct stat
 
 
 // This function is used to check if a syscall failed, in that case
@@ -267,13 +216,9 @@ bool CFile::Open(const CPath& fileName, OpenMode mode, int accessMode)
 	}
 
 	// Windows needs wide character file names
-#ifdef __WINDOWS__
-	m_fd = _wopen(m_filePath.GetRaw().c_str(), flags, accessMode);
-#else
 	Unicode2CharBuf tmpFileName = filename2char(m_filePath.GetRaw());
 	wxASSERT_MSG(tmpFileName, wxT("Conversion failed in CFile::Open"));
 	m_fd = open(tmpFileName, flags, accessMode);
-#endif
 	syscall_check(m_fd != fd_invalid, m_filePath, wxT("opening file"));
 
 	return IsOpened();
@@ -425,21 +370,8 @@ uint64 CFile::GetAvailable() const
 bool CFile::SetLength(uint64 new_len)
 {
 	MULE_VALIDATE_STATE(IsOpened(), wxT("CFile: Cannot set length when no file is open."));
-
-#ifdef __WINDOWS__
-#ifdef _MSC_VER
-// MSVC has a 64bit version
-	bool result = _chsize_s(m_fd, new_len) == 0;
-#else
-// MingW has an old runtime without it
-	bool result = chsize(m_fd, new_len) == 0;
-#endif
-#else
 	bool result = ftruncate(m_fd, new_len) != -1;
-#endif
-
 	syscall_check(result, m_filePath, wxT("truncating file"));
-
 	return result;
 }
 // File_checked_for_headers

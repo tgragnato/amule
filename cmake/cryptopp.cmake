@@ -29,69 +29,25 @@ if (NOT CRYPTOPP_INCLUDE_PREFIX)
 	MESSAGE (FATAL_ERROR "cryptlib.h not found")
 endif()
 
-if (WIN32)
-	if (NOT CRYPTOPP_LIBRARY_DEBUG)
-		unset (CRYPTOPP_LIBRARY_DEBUG CACHE)
+if (NOT CRYPTOPP_LIBRARY)
+unset (CRYPTOPP_LIBRARY CACHE)
 
-		find_library (CRYPTOPP_LIBRARY_DEBUG
-			NAMES crypto++d cryptlibd cryptoppd
-			PATHS ${CRYPTOPP_LIB_SEARCH_PATH}
-		)
+find_library (CRYPTOPP_LIBRARY
+	NAMES crypto++ cryptlib cryptopp
+	PATHS ${CRYPTOPP_LIB_SEARCH_PATH}
+)
 
-		if (CRYPTOPP_LIBRARY_DEBUG)
-			message (STATUS "Found debug-libcrypto++ in ${CRYPTOPP_LIBRARY_DEBUG}")
-		endif()
-	endif()
+if (CRYPTOPP_LIBRARY)
+	message (STATUS "Found libcrypto++ in ${CRYPTOPP_LIBRARY}")
+endif()
+endif()
 
-	if (CRYPTOPP_LIBRARY_DEBUG)
-		set_property (TARGET CRYPTOPP::CRYPTOPP
-			PROPERTY IMPORTED_LOCATION_DEBUG ${CRYPTOPP_LIBRARY_DEBUG}
-		)
-	else()
-		set (CRYPTO_COMPLETE FALSE)
-	endif()
-
-	if (NOT CRYPTOPP_LIBRARY_RELEASE)
-		unset (CRYPTOPP_LIBRARY_RELEASE CACHE)
-
-		find_library (CRYPTOPP_LIBRARY_RELEASE
-			NAMES crypto++ cryptlib cryptopp
-			PATHS ${CRYPTOPP_LIB_SEARCH_PATH}
-		)
-
-		if (CRYPTOPP_LIBRARY_RELEASE)
-			message (STATUS "Found release-libcrypto++ in ${CRYPTOPP_LIBRARY_RELEASE}")
-		endif()
-	endif (NOT CRYPTOPP_LIBRARY_RELEASE)
-
-	if (CRYPTOPP_LIBRARY_RELEASE)
-		set_property (TARGET CRYPTOPP::CRYPTOPP
-			PROPERTY IMPORTED_LOCATION_RELEASE ${CRYPTOPP_LIBRARY_RELEASE}
-		)
-	else()
-		set (CRYPTO_COMPLETE FALSE)
-	endif()
+if (CRYPTOPP_LIBRARY)
+set_property (TARGET CRYPTOPP::CRYPTOPP
+	PROPERTY IMPORTED_LOCATION ${CRYPTOPP_LIBRARY}
+)
 else()
-	if (NOT CRYPTOPP_LIBRARY)
-		unset (CRYPTOPP_LIBRARY CACHE)
-
-		find_library (CRYPTOPP_LIBRARY
-			NAMES crypto++ cryptlib cryptopp
-			PATHS ${CRYPTOPP_LIB_SEARCH_PATH}
-		)
-
-		if (CRYPTOPP_LIBRARY)
-			message (STATUS "Found libcrypto++ in ${CRYPTOPP_LIBRARY}")
-		endif()
-	endif()
-
-	if (CRYPTOPP_LIBRARY)
-		set_property (TARGET CRYPTOPP::CRYPTOPP
-			PROPERTY IMPORTED_LOCATION ${CRYPTOPP_LIBRARY}
-		)
-	else()
-		set (CRYPTO_COMPLETE FALSE)
-	endif()
+set (CRYPTO_COMPLETE FALSE)
 endif()
 
 if (NOT CRYPTOPP_CONFIG_SEARCH)
@@ -124,9 +80,9 @@ if (NOT CRYPTOPP_CONFIG_FILE)
 	unset (CMAKE_REQUIRED_INCLUDES)
 endif()
 
-if (NOT CRYPTOPP_CONFIG_FILE)
-		MESSAGE (FATAL_ERROR "crypto++ config.h not found")
-endif()
+#if (NOT CRYPTOPP_CONFIG_FILE)
+#		MESSAGE (FATAL_ERROR "crypto++ config.h not found")
+#endif()
 
 if (NOT CRYPTOPP_VERSION)# AND CRYPTO_COMPLETE)
 	set (CMAKE_CONFIGURABLE_FILE_CONTENT

@@ -16,9 +16,6 @@
 # The location, where the flex executable can be found
 #SET (FLEX_EXECUTABLE "${CMAKE_SOURCE_DIR}/../win_flex_bison-latest/win_flex.exe")
 
-# The location, where the headers of libgeoip can be found.
-#SET (GEOIP_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../geoip-api-c-master/libGeoIP")
-
 # The location, where to find libpng headers.
 #SET (PNG_HEADER_DIR "${CMAKE_SOURCE_DIR}/../lpng1626")
 
@@ -51,10 +48,6 @@ if (FLEX_EXECUTABLE)
 	set (SEARCH_DIR_FLEX ${FLEX_EXECUTABLE})
 endif()
 
-if (GEOIP_INCLUDE_DIR)
-	set (SEARCH_DIR_GEOIP ${GEOIP_INCLUDE_DIR})
-endif()
-
 if (PNG_HEADER_DIR)
 	set (SEARCH_DIR_PNG_HEADER ${PNG_HEADER_DIR})
 endif()
@@ -76,7 +69,6 @@ set (SEARCH_DIR_BOOST ${SEARCH_DIR_BOOST} CACHE PATH "Search hint for boost" FOR
 set (SEARCH_DIR_CRYPTOPP_HEADER ${SEARCH_DIR_CRYPTOPP_HEADER} CACHE PATH "Search hint for crypto++ headers" FORCE)
 set (SEARCH_DIR_CRYPTOPP_LIB ${SEARCH_DIR_CRYPTOPP_LIB} CACHE PATH "Search hint for crypto++ library" FORCE)
 set (SEARCH_DIR_FLEX ${SEARCH_DIR_FLEX} CACHE FILEPATH "Location of the flex executable" FORCE)
-set (SEARCH_DIR_GEOIP ${SEARCH_DIR_GEOIP} CACHE PATH "Search hint for geoip" FORCE)
 set (SEARCH_DIR_PNG_HEADER ${SEARCH_DIR_PNG_HEADER} CACHE PATH "Search hint for libpng headers" FORCE)
 set (SEARCH_DIR_PNG_LIB ${SEARCH_DIR_PNG_LIB} CACHE PATH "Search hint for libpng library" FORCE)
 set (SEARCH_DIR_UPNP ${SEARCH_DIR_UPNP} CACHE PATH "Search hint for libupnp library" FORCE)
@@ -87,7 +79,6 @@ mark_as_advanced (FORCE SEARCH_DIR_BOOST)
 mark_as_advanced (FORCE SEARCH_DIR_CRYPTOPP_HEADER)
 mark_as_advanced (FORCE SEARCH_DIR_CRYPTOPP_LIB)
 mark_as_advanced (FORCE SEARCH_DIR_FLEX)
-mark_as_advanced (FORCE SEARCH_DIR_GEOIP)
 mark_as_advanced (FORCE SEARCH_DIR_PNG_HEADER)
 mark_as_advanced (FORCE SEARCH_DIR_PNG_LIB)
 mark_as_advanced (FORCE SEARCH_DIR_UPNP)
@@ -112,10 +103,6 @@ endif()
 
 if (SEARCH_DIR_FLEX AND NOT FLEX_EXECUTABLE)
 	set (FLEX_EXECUTABLE ${SEARCH_DIR_FLEX})
-endif()
-
-if (SEARCH_DIR_GEOIP AND NOT GEOIP_INCLUDE_DIR)
-	set (GEOIP_INCLUDE_DIR ${SEARCH_DIR_GEOIP})
 endif()
 
 if (SEARCH_DIR_PNG_HEADER AND NOT PNG_HEADER_DIR)

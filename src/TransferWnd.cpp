@@ -26,15 +26,7 @@
 #include "TransferWnd.h"	// Interface declarations
 
 #include <common/MenuIDs.h>
-
 #include <wx/config.h>
-
-
-// This include must be before amuleDlg.h
-#ifdef __WINDOWS__
-    #include <wx/msw/winundef.h>	// Needed for windows compilation
-#endif
-
 
 #include "amuleDlg.h"			// Needed for CamuleDlg
 #include "PartFile.h"			// Needed for PR_LOW

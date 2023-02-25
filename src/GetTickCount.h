@@ -29,14 +29,7 @@
 
 #include "Types.h"		// Needed for uint32
 
-#ifndef _WIN32
-	uint32 GetTickCount();
-#else
-	// System GetTickcount is lowres, so use fullres
-	#define GetTickCount GetTickCountFullRes
-	// GetTickCount64 is a system function in Vista so rename it
-	#define GetTickCount64 GetTickCount_64
-#endif
+uint32 GetTickCount();
 
 // Ideally, same than GetTickCount.
 // However, on GUI, GetTickCount does only work in

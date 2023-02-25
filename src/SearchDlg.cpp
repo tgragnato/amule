@@ -25,7 +25,7 @@
 
 #include <wx/app.h>
 
-#include <wx/gauge.h>		// Do_not_auto_remove (win32)
+#include <wx/gauge.h>		// Do_not_auto_remove
 
 #include <tags/FileTags.h>
 

@@ -26,10 +26,7 @@
 
 #include "config.h"			// Needed for VERSION
 #include "TextClient.h"
-
-#ifndef __WINDOWS__
-	#include <unistd.h>		// Do_not_auto_remove
-#endif
+#include <unistd.h>		// Do_not_auto_remove
 
 
 //-------------------------------------------------------------------
@@ -830,11 +827,7 @@ void CamulecmdApp::Process_Answer_v2(const CECPacket *response)
 					s << _("[PartFile]") << wxT(" ");
 				} else {
 					s << filePath
-#ifdef __WINDOWS__
-					  << wxT('\\');
-#else
 					  << wxT('/');
-#endif
 				}
 				s << tag->FileName()
 				  << wxT("\n\t") << PriorityToStr(tag->UpPrio() % 10, tag->UpPrio() >= 10) << wxT(" - ") << CFormat(wxT("%i(%i) / %i(%i) - %s (%s) - %.2f\n"))

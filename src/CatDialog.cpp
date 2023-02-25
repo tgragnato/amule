@@ -26,10 +26,6 @@
 #include <wx/wx.h>
 #include <wx/colordlg.h>
 
-#ifdef __WINDOWS__
-	#include <io.h> // Do_not_auto_remove
-#endif
-
 #include "CatDialog.h"			// Interface declarations.
 #include "DownloadListCtrl.h"		// Needed for CDownloadListCtrl
 #include "TransferWnd.h"		// Needed for CTransferWnd

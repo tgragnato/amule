@@ -10,12 +10,6 @@ add_executable (fileview
 	Print.cpp
 )
 
-if (WIN32)
-	target_sources (fileview
-		PRIVATE ${CMAKE_SOURCE_DIR}/version.rc
-	)
-endif()
-
 target_compile_definitions (fileview
 	PRIVATE wxUSE_GUI=0
 )

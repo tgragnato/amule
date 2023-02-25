@@ -32,7 +32,7 @@
 #include <wx/cmdline.h>			// Needed for wxCmdLineParser
 #include <wx/snglinst.h>		// Needed for wxSingleInstanceChecker
 #include <wx/textfile.h>		// Needed for wxTextFile
-#include <wx/config.h>			// Do_not_auto_remove (win32)
+#include <wx/config.h>
 #include <wx/fileconf.h>
 
 #include "amule.h"			// Interface declarations.
@@ -230,13 +230,8 @@ bool CamuleAppCommon::InitCommon(int argc, wxChar ** argv)
 	cmdline.AddSwitch(wxT("e"), wxT("ec-config"), wxT("Configure EC (External Connections)."));
 #else
 
-#ifdef __WINDOWS__
-	// MSW shows help options in a dialog box, and the formatting doesn't fit there
-#define HELPTAB wxT("\t")
-#else
-#define HELPTAB wxT("\t\t\t")
-#endif
 
+#define HELPTAB wxT("\t\t\t")
 	cmdline.AddOption(wxT("geometry"), wxEmptyString,
 			wxT("Sets the geometry of the app.\n")
 			HELPTAB wxT("<str> uses the same format as standard X11 apps:\n")
@@ -252,11 +247,10 @@ bool CamuleAppCommon::InitCommon(int argc, wxChar ** argv)
 	// Change webserver path. This is also a config option, so this switch will go at some time.
 	cmdline.AddOption(wxT("w"), wxT("use-amuleweb"), wxT("Specify location of amuleweb binary."));
 #endif
-#ifndef __WINDOWS__
+
 	cmdline.AddSwitch(wxT("d"), wxT("disable-fatal"), wxT("Do not handle fatal exception."));
-// Keep stdin open to run valgrind --gen_suppressions
+	// Keep stdin open to run valgrind --gen_suppressions
 	cmdline.AddSwitch(wxT("i"), wxT("enable-stdin"), wxT("Do not disable stdin."));
-#endif
 
 	// Allow passing of links to the app
 	cmdline.AddOption(wxT("t"), wxT("category"), wxT("Set category for passed ED2K links."), wxCMD_LINE_VAL_NUMBER);
@@ -297,14 +291,12 @@ bool CamuleAppCommon::InitCommon(int argc, wxChar ** argv)
 	// Problem is just that the backtraces are useless, because apparently the context gets lost
 	// in the try/catch somewhere.
 	// So leave it out.
-#ifndef __WINDOWS__
 	#if wxUSE_ON_FATAL_EXCEPTION
 		if ( !cmdline.Found(wxT("disable-fatal")) ) {
 			// catch fatal exceptions
 			wxHandleFatalExceptions(true);
 		}
 	#endif
-#endif
 
 	theLogger.SetEnabledStdoutLog(cmdline.Found(wxT("log-stdout")));
 #ifdef AMULE_DAEMON
@@ -414,7 +406,6 @@ bool CamuleAppCommon::InitCommon(int argc, wxChar ** argv)
 	}
 #endif
 
-#ifndef __WINDOWS__
 	// Close standard-input
 	if ( !cmdline.Found(wxT("enable-stdin")) )	{
 		// The full daemon will close all std file-descriptors by itself,
@@ -424,7 +415,6 @@ bool CamuleAppCommon::InitCommon(int argc, wxChar ** argv)
 			close(0);
 		}
 	}
-#endif
 
 	// Create the CFG file we shall use and set the config object as the global cfg file
 	wxConfig::Set(new wxFileConfig( wxEmptyString, wxEmptyString, thePrefs::GetConfigDir() + m_configFile));

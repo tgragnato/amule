@@ -41,13 +41,6 @@ if (INSTALL_SKINS)
 	add_subdirectory (skins)
 endif()
 
-
-if (ENABLE_IP2COUNTRY)
-	set_source_files_properties (${IP2COUNTRY}
-		PROPERTIES COMPILE_FLAGS "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/pixmaps/flags_xpm"
-	)
-endif()
-
 if (NEED_LIB)
 	add_subdirectory (libs)
 endif()
@@ -61,12 +54,6 @@ if (BUILD_AMULECMD)
 		OtherFunctions.cpp
 		TextClient.cpp
 	)
-
-	if (WIN32)
-		target_sources (amulecmd
-			PRIVATE ${CMAKE_SOURCE_DIR}/version.rc
-		)
-	endif()
 
 	target_compile_definitions (amulecmd
 		PRIVATE wxUSE_GUI=0
@@ -106,12 +93,6 @@ if (BUILD_DAEMON)
 		amuled.cpp
 	)
 
-	if (WIN32)
-		target_sources (amuled
-			PRIVATE ${CMAKE_SOURCE_DIR}/version.rc
-		)
-	endif()
-
 	target_compile_definitions (amuled
 		PRIVATE AMULE_DAEMON
 		PRIVATE wxUSE_GUI=0
@@ -136,12 +117,6 @@ if (BUILD_DAEMON)
 		)
 	endif()
 
-	if (WIN32)
-		target_link_libraries (amuled
-			shlwapi.lib
-		)
-	endif()
-
 	install (TARGETS amuled
 		RUNTIME DESTINATION bin
 	)
@@ -154,19 +129,18 @@ if (BUILD_ED2K)
 		MuleCollection.cpp
 	)
 
-	if (WIN32)
-		target_sources (ed2k
-			PRIVATE ${CMAKE_SOURCE_DIR}/version.rc
-		)
-	endif()
-
 	target_compile_definitions (ed2k
 		PRIVATE "USE_STD_STRING"
 	)
 
-	if (WIN32)
-		target_link_libraries (ed2k
-			PRIVATE shlwapi.lib
+	if(APPLE)
+		find_library(CORE_SERVICES CoreServices)
+		if (NOT CORE_SERVICES)
+		  	message(FATAL_ERROR "CoreServices not found")
+		endif()
+
+		target_link_libraries(ed2k
+			PRIVATE ${CORE_SERVICES}
 		)
 	endif()
 
@@ -186,12 +160,6 @@ if (BUILD_MONOLITHIC)
 		PartFileConvertDlg.cpp
 	)
 
-	if (WIN32)
-		target_sources (amule
-			PRIVATE ${CMAKE_SOURCE_DIR}/version.rc
-		)
-	endif()
-
 	target_link_libraries (amule
 		PRIVATE ec
 		PRIVATE muleappcommon
@@ -202,20 +170,33 @@ if (BUILD_MONOLITHIC)
 		PRIVATE $<$<VERSION_LESS:${wxWidgets_VERSION_STRING},3.1.2>:wxWidgets::ADV>
 		PRIVATE wxWidgets::NET
 	)
+	
+	if(APPLE)
+		find_library(CORE_FOUNDATION CoreFoundation)
+		if (NOT CORE_FOUNDATION)
+	   		message(FATAL_ERROR "CoreFoundation not found")
+		endif()
+
+		find_library(IO_KIT IOKit)
+		if (NOT IO_KIT)
+	   		message(FATAL_ERROR "IOKit not found")
+		endif()
+
+		find_library(APPLICATION_SERVICES ApplicationServices)
+		if (NOT APPLICATION_SERVICES)
+	   		message(FATAL_ERROR "ApplicationServices not found")
+		endif()
+
+		target_link_libraries(amule 
+			PRIVATE ${CORE_FOUNDATION}
+			PRIVATE ${IO_KIT}
+			PRIVATE ${APPLICATION_SERVICES}
+		)
+	endif()
 
 	if (HAVE_BFD)
 		target_link_libraries (amule
 			PRIVATE ${LIBBFD}
-		)
-	endif()
-
-	if (WIN32)
-		target_link_libraries (amule
-			PRIVATE shlwapi.lib
-		)
-
-		set_target_properties (amule PROPERTIES
-			WIN32_EXECUTABLE TRUE
 		)
 	endif()
 
@@ -242,12 +223,6 @@ if (BUILD_REMOTEGUI)
 		amule-remote-gui.cpp
 	)
 
-	if (WIN32)
-		target_sources (amulegui
-			PRIVATE ${CMAKE_SOURCE_DIR}/version.rc
-		)
-	endif()
-
 	target_compile_definitions (amulegui
 		PRIVATE "CLIENT_GUI"
 	)
@@ -269,12 +244,6 @@ if (BUILD_REMOTEGUI)
 	if (HAVE_BFD)
 		target_link_libraries (amulegui
 			PRIVATE ${LIBBFD}
-		)
-	endif()
-
-	if (WIN32)
-		set_target_properties (amulegui PROPERTIES
-			WIN32_EXECUTABLE TRUE
 		)
 	endif()
 
@@ -326,12 +295,6 @@ if (NEED_LIB_MULEAPPCOMMON)
 	target_link_libraries(muleappcommon
 		PUBLIC wxWidgets::BASE
 	)
-
-	if (ENABLE_UPNP)
-		target_link_libraries (muleappcommon
-			PUBLIC UPNP::Shared
-		)
-	endif()
 endif()
 
 if (NEED_LIB_MULEAPPCORE)
@@ -395,7 +358,6 @@ if (NEED_LIB_MULEAPPCORE)
 		StateMachine.cpp
 		TerminationProcessAmuleweb.cpp
 		ThreadScheduler.cpp
-		UPnPBase.cpp
 	)
 
 	target_compile_definitions (muleappcore
@@ -410,12 +372,6 @@ if (NEED_LIB_MULEAPPCORE)
 		PRIVATE ${INCLUDE_INCLUDE_DIR}
 		PRIVATE ${LIBS_INCLUDE_DIR}
 	)
-
-	if (ENABLE_UPNP)
-		target_include_directories (muleappcore
-			PRIVATE $<TARGET_PROPERTY:UPNP::Shared,INTERFACE_INCLUDE_DIRECTORIES>
-		)
-	endif()
 
 	target_link_libraries (muleappcore
 		PUBLIC wxWidgets::BASE
@@ -440,12 +396,6 @@ if (NEED_LIB_MULEAPPGUI)
 		muuli_wdr.cpp
 	)
 
-	if (ENABLE_IP2COUNTRY)
-		target_link_libraries (muleappgui
-			PUBLIC GeoIP::Shared
-		)
-	endif()
-
 	target_compile_definitions (muleappgui
 		PRIVATE WXUSINGDLL
 	)
@@ -459,11 +409,6 @@ if (NEED_LIB_MULEAPPGUI)
 	target_link_libraries (muleappgui
 		PRIVATE wxWidgets::CORE
 	)
-
-	if (ENABLE_IP2COUNTRY)
-		add_dependencies (muleappgui
-			generate_CountryFlags.h)
-	endif()
 endif()
 
 IF (NEED_LIB_MULESOCKET)

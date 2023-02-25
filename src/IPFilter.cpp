@@ -115,9 +115,7 @@ private:
 		     thePrefs::UseIPFilterSystem() ) {
 			// Load from system wide IP filter file
 			wxStandardPathsBase &spb(wxStandardPaths::Get());
-#ifdef __WINDOWS__
-			wxString dataDir(spb.GetPluginsDir());
-#elif defined(__WXMAC__)
+#if defined(__WXMAC__)
 			wxString dataDir(spb.GetDataDir());
 #else
 			wxString dataDir(spb.GetDataDir().BeforeLast(wxT('/')) + wxT("/amule"));

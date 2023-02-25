@@ -557,19 +557,6 @@ void CAllocateFileTask::Entry()
 	CFile file;
 	file.Open(m_file->GetFullName().RemoveExt(), CFile::read_write);
 
-#ifdef __WINDOWS__
-	try {
-		// File is already created as non-sparse, so we only need to set the length.
-		// This will fail to allocate the file e.g. under wine on linux/ext3,
-		// but works with NTFS and FAT32.
-		file.Seek(m_file->GetFileSize() - 1, wxFromStart);
-		file.WriteUInt8(0);
-		file.Close();
-		m_result = 0;
-	} catch (const CSafeIOException&) {
-		m_result = errno;
-	}
-#else
 	// Use kernel level routines if possible
 #  ifdef HAVE_FALLOCATE
 	m_result = fallocate(file.fd(), 0, 0, m_file->GetFileSize());
@@ -607,7 +594,6 @@ void CAllocateFileTask::Entry()
 		}
 	}
 
-#endif
 	if (file.IsOpened()) {
 		file.Close();
 	}

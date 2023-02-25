@@ -1,6 +1,6 @@
 include (FindZLIB)
 
-#At least on Win32 the includepath isn't set correctly sometimes
+
 if (NOT EXISTS ${ZLIB_INCLUDE_DIR}/zlib.h)
 	if (EXISTS ${ZLIB_INCLUDE_DIR}/include/zlib.h)
 		set (${ZLIB_INCLUDE_DIR} ${ZLIB_INCLUDE_DIR}/include)

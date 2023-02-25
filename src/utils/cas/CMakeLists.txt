@@ -9,12 +9,6 @@ add_executable (cas
 	lines.c
 )
 
-if (WIN32)
-	target_sources (cas
-		${CMAKE_SOURCE_DIR}/version.rc
-	)
-endif()
-
 target_include_directories (cas
 	PRIVATE ${CMAKE_BINARY_DIR}
 )

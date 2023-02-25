@@ -41,7 +41,7 @@
 
 #ifndef AMULE_DAEMON
 #include "inetdownload.h"	// Needed for inetDownload
-#include "muuli_wdr.h"		// Needed for ID_CANCEL: Let it here or will fail on win32
+#include "muuli_wdr.h"		// Needed for ID_CANCEL
 #include "MuleGifCtrl.h"
 
 typedef wxGauge wxGaugeControl;

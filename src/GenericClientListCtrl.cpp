@@ -38,9 +38,6 @@
 #include "FileDetailDialog.h"	// Needed for CFileDetailDialog
 #include "GetTickCount.h"	// Needed for GetTickCount
 #include "GuiEvents.h"		// Needed for CoreNotify_*
-#ifdef ENABLE_IP2COUNTRY
-	#include "IP2Country.h"	// Needed for IP2Country
-#endif
 #include "Logger.h"
 #include "muuli_wdr.h"		// Needed for ID_DLOADLIST
 #include "PartFile.h"		// Needed for CPartFile
@@ -319,10 +316,8 @@ void CGenericClientListCtrl::UpdateItem(uint32 toupdate, SourceItemType type)
 		// support the GetVisibleLines function
 		long first = 0, last = GetItemCount();
 
-	#ifndef __WINDOWS__
 		// Get visible lines if we need them
 		GetVisibleLines( &first, &last );
-	#endif
 
 		for ( ListItems::iterator it = rangeIt.first; it != rangeIt.second; ++it ) {
 			ClientCtrlItem_Struct* item = it->second;
@@ -834,24 +829,6 @@ void CGenericClientListCtrl::DrawClientItem(wxDC* dc, int nColumn, const wxRect&
 				point.x += iBitmapXSize;
 
 				wxString userName;
-#ifdef ENABLE_IP2COUNTRY
-				if (theApp->amuledlg->m_IP2Country->IsEnabled() && thePrefs::IsGeoIPEnabled()) {
-					// Draw the flag. Size can't be precached.
-					const CountryData& countrydata = theApp->amuledlg->m_IP2Country->GetCountryData(client.GetFullIP());
-
-					realY = point.y + (rect.GetHeight() - countrydata.Flag.GetHeight())/2 + 1 /* floor() */;
-
-					dc->DrawBitmap(countrydata.Flag,
-						point.x, realY,
-						true);
-
-					userName << countrydata.Name;
-
-					userName << wxT(" - ");
-
-					point.x += countrydata.Flag.GetWidth() + 2 /*Padding*/;
-				}
-#endif // ENABLE_IP2COUNTRY
 				if (client.GetUserName().IsEmpty()) {
 					userName << wxT("?");
 				} else {

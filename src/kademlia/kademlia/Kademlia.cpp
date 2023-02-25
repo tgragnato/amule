@@ -50,9 +50,6 @@ there client on the eMule forum..
 #include "../../Logger.h"
 #include <protocol/kad2/Client2Client/UDP.h>
 
-#ifdef _MSC_VER  // silly warnings about deprecated functions
-#pragma warning(disable:4996)
-#endif
 
 const CUInt128	Kademlia::s_nullUInt128(false);
 

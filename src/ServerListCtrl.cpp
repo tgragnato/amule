@@ -34,10 +34,6 @@
 
 #include "amule.h"		// Needed for theApp
 #include "DownloadQueue.h"	// Needed for CDownloadQueue
-#ifdef ENABLE_IP2COUNTRY
-	#include "IP2Country.h"	// Needed for IP2Country
-	#include "amuleDlg.h"	// Needed for IP2Country
-#endif
 #include "ServerList.h"		// Needed for CServerList
 #include "ServerConnect.h"	// Needed for CServerConnect
 #include "Server.h"		// Needed for CServer and SRV_PR_*
@@ -191,14 +187,6 @@ void CServerListCtrl::RefreshServer( CServer* server )
 	}
 
 	wxString serverName;
-#ifdef ENABLE_IP2COUNTRY
-	// Get the country name
-	if (theApp->amuledlg->m_IP2Country->IsEnabled() && thePrefs::IsGeoIPEnabled()) {
-		const CountryData& countrydata = theApp->amuledlg->m_IP2Country->GetCountryData(server->GetFullIP());
-		serverName << countrydata.Name;
-		serverName << wxT(" - ");
-	}
-#endif // ENABLE_IP2COUNTRY
 	serverName << server->GetListName();
 	SetItem(itemnr, COLUMN_SERVER_NAME, serverName);
 	SetItem(itemnr, COLUMN_SERVER_ADDR, server->GetAddress());

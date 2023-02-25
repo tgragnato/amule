@@ -269,19 +269,6 @@ void CWebServerBase::Print(const wxString &s)
 
 void CWebServerBase::StartServer()
 {
-#ifdef ENABLE_UPNP
-	if (m_upnpEnabled) {
-		m_upnpMappings.resize(1);
-		m_upnpMappings[0] = CUPnPPortMapping(
-			webInterface->m_WebserverPort,
-			"TCP",
-			true,
-			"aMule TCP Webserver Socket");
-		m_upnp = new CUPnPControlPoint(m_upnpTCPPort);
-		m_upnp->AddPortMappings(m_upnpMappings);
-	}
-#endif
-
 	amuleIPV4Address addr;
 	addr.AnyAddress();
 	addr.Service(webInterface->m_WebserverPort);
@@ -304,12 +291,6 @@ void CWebServerBase::StopServer()
 	if ( m_webserver_socket ) {
 		delete m_webserver_socket;
 	}
-#ifdef ENABLE_UPNP
-	if (m_upnpEnabled) {
-		m_upnp->DeletePortMappings(m_upnpMappings);
-		delete m_upnp;
-	}
-#endif
 }
 
 #ifndef ASIO_SOCKETS
@@ -978,11 +959,8 @@ CFileImage::CFileImage(const wxString& name) : CAnyImage(0)
 {
 	m_size = 0;
 	m_name = name;
-#ifdef __WINDOWS__
-	wxFFile fis(m_name, wxT("rb"));
-#else
 	wxFFile fis(m_name);
-#endif
+
 	// FIXME: proper logging is needed
 	if ( fis.IsOpened() ) {
 		size_t file_size = fis.Length();

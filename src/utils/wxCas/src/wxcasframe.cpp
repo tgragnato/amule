@@ -51,12 +51,8 @@ WxCasFrame::WxCasFrame ( const wxString & title ) :
 		wxFrame ( ( wxFrame * ) NULL, -1, title, wxDefaultPosition, wxDefaultSize, wxDEFAULT_FRAME_STYLE )
 {
 	// Give it an icon
-#ifdef __WINDOWS__
-	wxIcon icon(wxT("wxcas"));
-#else
 	wxIcon icon;
 	icon.CopyFromBitmap( WxCasPix::getPixmap( wxT( "wxcas" ) ) );
-#endif
 	SetIcon ( icon );
 
 	// Prefs
@@ -93,7 +89,7 @@ WxCasFrame::WxCasFrame ( const wxString & title ) :
 	// Frame Vertical sizer
 	m_frameVBox = new wxBoxSizer ( wxVERTICAL );
 
-	// Add Main panel to frame (needed by win32 for padding sub panels)
+	// Add Main panel to frame
 	m_mainPanel = new wxPanel ( this, -1 );
 
 	// Main Panel Vertical Sizer
@@ -101,11 +97,6 @@ WxCasFrame::WxCasFrame ( const wxString & title ) :
 
 	// Main Panel static line
 	m_staticLine = new wxStaticLine ( m_mainPanel, -1 );
-
-#ifdef __WINDOWS__
-
-	m_BottomStaticLine = new wxStaticLine ( m_mainPanel, -1 );
-#endif
 
 	// Statistics Static Vertical Box Sizer
 	m_sigPanelSBox = new wxStaticBox ( m_mainPanel, -1, _( "aMule" ) );
@@ -181,10 +172,6 @@ WxCasFrame::WxCasFrame ( const wxString & title ) :
 
 	m_mainPanelVBox->Add ( m_absHitPanelSBoxSizer, 0, wxALL | wxALIGN_CENTER | wxGROW, 10 );
 
-#ifdef __WINDOWS__
-
-	m_mainPanelVBox->Add ( m_BottomStaticLine, 0, wxALL | wxALIGN_CENTER | wxGROW );
-#endif
 
 	// Toolbar Pixmaps
 	m_toolBarBitmaps[ 0 ] = WxCasPix::getPixmap( wxT( "refresh" ) );
@@ -277,11 +264,7 @@ WxCasFrame::GetStatImage () const
 	wxMemoryDC memdc;
 	memdc.SelectObject ( statBitmap );
 
-#ifdef __WINDOWS__
-	int font_size = 6;
-#else
 	int font_size = 8;
-#endif
 
 	memdc.SetFont( wxFont ( font_size, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD ) );
 

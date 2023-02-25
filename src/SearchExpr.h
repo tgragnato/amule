@@ -86,10 +86,5 @@ public:
 
 void ParsedSearchExpression(const CSearchExpr* pexpr);
 
-#ifdef _MSC_VER
-#define YY_NO_UNISTD_H
-#define DEBUG_NEW new
-#endif
-
 #endif
 // File_checked_for_headers

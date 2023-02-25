@@ -43,9 +43,7 @@ private:
 	static const char *m_save_xpm[];
 	static const char *m_stat_xpm[];
 	static const char *m_stop_xpm[];
-#ifndef __WINDOWS__
 	static const char *m_wxcas_xpm[];
-#endif
 
 public:
 	static wxBitmap getPixmap( const wxString& name );

@@ -243,9 +243,6 @@ wxDialog(parent, -1, _("Preferences"),
 
 		if (pages[i].m_function == PreferencesGeneralTab) {
 			// This must be done now or pages won't Fit();
-			#ifdef __WINDOWS__
-				CastChild(IDC_BROWSERTABS, wxCheckBox)->Enable(false);
-			#endif /* __WINDOWS__ */
 			CastChild(IDC_PREVIEW_NOTE, wxStaticText)->SetLabel(_("The following variables will be substituted:\n    %PARTFILE - full path to the file\n    %PARTNAME - file name only"));
 			#ifdef __WXMAC__
 				FindWindow(IDC_ENABLETRAYICON)->Show(false);
@@ -473,11 +470,8 @@ bool PrefsUnifiedDlg::TransferToWindow()
 	::SendCheckBoxEvent(this, IDC_SUPPORT_PO);
 	::SendCheckBoxEvent(this, IDC_ENABLE_PO_OUTGOING);
 	::SendCheckBoxEvent(this, IDC_ENFORCE_PO_INCOMING);
-
-#ifndef ENABLE_IP2COUNTRY
 	CastChild(IDC_SHOW_COUNTRY_FLAGS, wxCheckBox)->Enable(false);
 	thePrefs::SetGeoIPEnabled(false);
-#endif
 
 #ifdef __SVN__
 	// Version is always shown on the title in development versions
@@ -493,7 +487,6 @@ bool PrefsUnifiedDlg::TransferToWindow()
 	CastChild(IDC_RATESAFTERTITLE, wxRadioButton)->SetValue(thePrefs::GetShowRatesOnTitle() != 2);
 
 	// UPNP
-#ifndef ENABLE_UPNP
 	FindWindow(IDC_UPNP_ENABLED)->Enable(false);
 	FindWindow(IDC_UPNPTCPPORT)->Enable(false);
 	FindWindow(IDC_UPNPTCPPORTTEXT)->Enable(false);
@@ -504,12 +497,6 @@ bool PrefsUnifiedDlg::TransferToWindow()
 	thePrefs::SetUPnPWebServerEnabled(false);
 	FindWindow(IDC_UPNP_EC_ENABLED)->Enable(false);
 	thePrefs::SetUPnPECEnabled(false);
-#else
-	FindWindow(IDC_UPNPTCPPORT)->Enable(thePrefs::GetUPnPEnabled());
-	FindWindow(IDC_UPNPTCPPORTTEXT)->Enable(thePrefs::GetUPnPEnabled());
-	FindWindow(IDC_WEBUPNPTCPPORT)->Enable(thePrefs::GetUPnPWebServerEnabled());
-	FindWindow(IDC_WEBUPNPTCPPORTTEXT)->Enable(thePrefs::GetUPnPWebServerEnabled());
-#endif
 
 #ifdef __DEBUG__
 	// Set debugging toggles
@@ -1051,11 +1038,7 @@ void PrefsUnifiedDlg::OnButtonBrowseApplication(wxCommandEvent& event)
 			return;
 	}
 	wxString wildcard = CFormat(_("Executable%s"))
-#ifdef __WINDOWS__
-		% wxT(" (*.exe)|*.exe");
-#else
-		% wxT("|*");
-#endif
+	% wxT("|*");
 
 	wxString str = wxFileSelector( title, wxEmptyString, wxEmptyString,
 		wxEmptyString, wildcard, 0, this );

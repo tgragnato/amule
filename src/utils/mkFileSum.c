@@ -24,7 +24,7 @@
  * whitespace normalization), so only real code change will result
  * in md5sum change.
  *
- * Preprocessor code is written by Dévai Tamás (gonosztopi@amule.org)
+ * Preprocessor code is written by Dï¿½vai Tamï¿½s (gonosztopi@amule.org)
  * md5 code is taken from src/MD5Sum.cpp
  *
  * Usage: the program takes input from stdin and places output to stdout.
@@ -160,12 +160,7 @@ static unsigned char PADDING[64] = {
 /* ROTATE_LEFT rotates x left n bits.
 	15-April-2003 Sony: use MSVC intrinsic to save some cycles
  */
-#ifdef _MSC_VER
-#pragma intrinsic(_rotl)
-#define ROTATE_LEFT(x, n) _rotl((x), (n))
-#else
 #define ROTATE_LEFT(x, n) (((x) << (n)) | ((x) >> (32-(n))))
-#endif
 
 /* FF, GG, HH, and II transformations for rounds 1, 2, 3, and 4.
 Rotation is separate from addition to prevent recomputation.

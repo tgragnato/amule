@@ -40,18 +40,7 @@
 #include "OtherStructs.h"
 #include <ec/cpp/ECID.h>	// Needed for CECID
 
-#ifdef ENABLE_UPNP
-#	include "UPnPBase.h"
-#endif
-
 #include <wx/datetime.h>	// For DownloadFile::wxtLastSeenComplete
-
-#ifdef _MSC_VER
-#define strncasecmp _strnicmp
-#define snprintf sprintf_s
-#define atoll _atoi64
-#define strdup _strdup
-#endif
 
 class CWebSocket;
 class CMD4Hash;
@@ -687,11 +676,6 @@ enum {
 };
 #endif
 
-#ifdef ENABLE_UPNP
-class CUPnPControlPoint;
-class CUPnPPortMapping;
-#endif
-
 class CWebLibSocketServer : public CLibSocketServer {
 public:
 	CWebLibSocketServer(const class amuleIPV4Address& adr, int flags, CWebServerBase * webServerBase);
@@ -726,10 +710,7 @@ class CWebServerBase : public wxEvtHandler {
 
 		bool m_upnpEnabled;
 		int m_upnpTCPPort;
-#ifdef ENABLE_UPNP
-		CUPnPControlPoint *m_upnp;
-		std::vector<CUPnPPortMapping> m_upnpMappings;
-#endif
+
 #ifdef ASIO_SOCKETS
 		CAsioService *m_AsioService;
 #else

@@ -94,11 +94,3 @@ if (BUILD_MONOLITHIC OR BUILD_DAEMON OR BUILD_REMOTEGUI)
 		UserEvents.cpp
 	)
 endif()
-
-if (ENABLE_IP2COUNTRY)
-	set (IP2COUNTRY IP2Country.cpp)
-endif()
-
-if (ENABLE_UPNP)
-	set (UPNP_SOURCES ${CMAKE_SOURCE_DIR}/src/UPnPBase.cpp)
-endif()

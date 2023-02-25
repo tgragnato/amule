@@ -47,9 +47,7 @@
 #endif
 
 
-#if wxUSE_STACKWALKER && defined(__WINDOWS__)
-	#include <wx/stackwalk.h> // Do_not_auto_remove
-#elif defined(HAVE_BFD)
+#if defined(HAVE_BFD)
 	#include <ansidecl.h> // Do_not_auto_remove
 	#include <bfd.h> // Do_not_auto_remove
 #endif
@@ -117,62 +115,7 @@ void InstallMuleExceptionHandler()
 // Make it 1 for getting the file path also
 #define TOO_VERBOSE_BACKTRACE 0
 
-#if wxUSE_STACKWALKER && defined(__WINDOWS__)
-
-// Derived class to define the actions to be done on frame print.
-// I was tempted to name it MuleSkyWalker
-class MuleStackWalker : public wxStackWalker
-{
-public:
-	MuleStackWalker() {};
-	~MuleStackWalker() {};
-
-	void OnStackFrame(const wxStackFrame& frame)
-	{
-		wxString btLine = CFormat(wxT("[%u] ")) % frame.GetLevel();
-		wxString filename = frame.GetName();
-
-		if (!filename.IsEmpty()) {
-			btLine += filename + wxT(" (") +
-#if TOO_VERBOSE_BACKTRACE
-			        frame.GetModule()
-#else
-				frame.GetModule().AfterLast(wxT('/'))
-#endif
-			        + wxT(")");
-		} else {
-			btLine += CFormat(wxT("%p")) % frame.GetAddress();
-		}
-
-		if (frame.HasSourceLocation()) {
-			btLine += wxT(" at ") +
-#if TOO_VERBOSE_BACKTRACE
-			        frame.GetFileName()
-#else
-				frame.GetFileName().AfterLast(wxT('/'))
-#endif
-			        + CFormat(wxT(":%u")) % frame.GetLine();
-		} else {
-			btLine += wxT(" (Unknown file/line)");
-		}
-
-		//! Contains the entire backtrace
-		m_trace += btLine + wxT("\n");
-	}
-
-	wxString m_trace;
-};
-
-
-wxString get_backtrace(unsigned n)
-{
-	MuleStackWalker walker; // Texas ranger?
-	walker.Walk(n); // Skip this one and Walk() also!
-
-	return walker.m_trace;
-}
-
-#elif defined(__LINUX__)
+#if defined(__LINUX__)
 
 #ifdef HAVE_BFD
 

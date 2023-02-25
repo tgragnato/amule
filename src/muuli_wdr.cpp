@@ -25,8 +25,6 @@
 #else
     #if defined(__WXMAC__)
         #define __WDR_EURO__ wxT("\xdb")
-    #elif defined(__WXMSW__)
-        #define __WDR_EURO__ wxT("\x80")
     #else
         #define __WDR_EURO__ wxT("\xa4")
     #endif

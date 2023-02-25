@@ -45,12 +45,6 @@
 #ifdef __APPLE__
 	#include <CoreServices/CoreServices.h>
 	#define CAS_DIR_SEPARATOR	"/"
-#elif defined(__WIN32__)
-	#define COBJMACROS
-	#include <winerror.h>
-	#include <shlobj.h>
-	#include <objidl.h>
-	#define CAS_DIR_SEPARATOR	"\\"
 #else
 	#define CAS_DIR_SEPARATOR	"/"
 	#if defined(unix) || defined(__unix__) || defined(__unix)
@@ -87,30 +81,6 @@ char *get_path(const char *file)
 				CFRelease(urlRef) ;
 			}
 		}
-
-#elif defined(__WIN32__)
-
-		LPITEMIDLIST pidl;
-		char home[MAX_PATH];
-		home[0] = '\0';
-
-		HRESULT hr = SHGetSpecialFolderLocation(NULL, CSIDL_APPDATA, &pidl);
-
-		if (SUCCEEDED(hr)) {
-			if (SHGetPathFromIDList(pidl, home)) {
-				strcat(home, CAS_DIR_SEPARATOR "aMule");
-			}
-		}
-
-		if (pidl) {
-			LPMALLOC pMalloc;
-			SHGetMalloc(&pMalloc);
-			if (pMalloc) {
-				IMalloc_Free(pMalloc, pidl);
-				IMalloc_Release(pMalloc);
-			}
-		}
-
 
 #else
 		char *home;
@@ -150,7 +120,7 @@ char *get_path(const char *file)
 		}
 		strcat(home, CAS_DIR_SEPARATOR ".aMule");
 
-#endif /* !__APPLE__ && !__WIN32__ */
+#endif /* !__APPLE__  */
 
 		/* save the result for future calls */
 		home_len = strlen(home);

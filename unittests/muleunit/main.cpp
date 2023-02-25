@@ -60,11 +60,9 @@ public:
 		throw CAssertFailureException(desc, file, line);
 	}
 
-#ifndef __WXMSW__
 	void OnUnhandledException() {
 		::OnUnhandledException();
 	}
-#endif
 
 };
 

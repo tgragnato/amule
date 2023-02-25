@@ -314,7 +314,6 @@ wxString MD4::calcMd4FromFile(const wxString &filename, MD4Hook hook)
   MD4Context hdc;
 
   // Open file and let wxFFile destructor close the file
-  // Closing it explicitly may crash on Win32 ...
   wxFFile file(filename, wxS("rbS"));
   if (! file.IsOpened())
     {

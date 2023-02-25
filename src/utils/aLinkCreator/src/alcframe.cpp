@@ -48,10 +48,7 @@
 #include <wx/uri.h>
 #include <wx/url.h>
 
-#ifdef __WINDOWS__
-	#include <winerror.h>
-	#include <shlobj.h>
-#elif defined(__WXMAC__)
+#if defined(__WXMAC__)
 	#include <CoreServices/CoreServices.h>
 	#include <wx/osx/core/cfstring.h>  // Do_not_auto_remove
 	#include <wx/intl.h>
@@ -68,12 +65,8 @@ AlcFrame::AlcFrame (const wxString & title):
     wxFrame ((wxFrame *) NULL, -1, title)
 {
   // Give it an icon
-#ifdef __WINDOWS__
-  wxIcon icon(wxT("alc"));
-#else
   wxIcon icon;
   icon.CopyFromBitmap(AlcPix::getPixmap(wxT("alc")));
-#endif
   SetIcon (icon);
 
   // Status Bar
@@ -86,7 +79,7 @@ AlcFrame::AlcFrame (const wxString & title):
   // Frame Vertical sizer
   m_frameVBox = new wxBoxSizer (wxVERTICAL);
 
-  // Add Main panel to frame (needed by win32 for padding sub panels)
+  // Add Main panel to frame
   m_mainPanel = new wxPanel (this, -1);
 
   // Main Panel Vertical Sizer
@@ -321,26 +314,7 @@ AlcFrame::OnBrowseButton (wxCommandEvent & WXUNUSED(event))
 void
 AlcFrame::SetFileToHash()
 {
-#ifdef __WINDOWS__
-	wxString browseroot;
-	LPITEMIDLIST pidl;
-	HRESULT hr = SHGetSpecialFolderLocation(NULL, CSIDL_PERSONAL, &pidl);
-	if (SUCCEEDED(hr)) {
-		if (!SHGetPathFromIDList(pidl, wxStringBuffer(browseroot, MAX_PATH))) {
-			browseroot = wxFileName::GetHomeDir();
-		}
-	} else {
-		browseroot = wxFileName::GetHomeDir();
-	}
-	if (pidl) {
-		LPMALLOC pMalloc;
-		SHGetMalloc(&pMalloc);
-		if (pMalloc) {
-			pMalloc->Free(pidl);
-			pMalloc->Release();
-		}
-	}
-#elif defined(__WXMAC__)
+#if defined(__WXMAC__)
 
 	FSRef fsRef;
 	wxString browseroot;
@@ -435,7 +409,6 @@ AlcFrame::SaveEd2kLinkToFile()
       if (!filename.empty ())
         {
           // Open file and let wxFile destructor close the file
-          // Closing it explicitly may crash on Win32 ...
           wxFile file(filename,wxFile::write_append);
           if (! file.IsOpened())
             {

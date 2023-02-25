@@ -204,7 +204,7 @@ bool CamulewebApp::GetTemplateDir(const wxString& templateName, wxString& templa
 #endif
 
 	dir = wxStandardPaths::Get().GetResourcesDir();	// Returns 'aMule' when we use 'amule' elsewhere
-#if !defined(__WINDOWS__) && !defined(__WXMAC__)
+#if !defined(__WXMAC__)
 	dir = dir.BeforeLast(wxFileName::GetPathSeparator());
 	dir = JoinPaths(dir, wxT("amule"));
 #endif
@@ -514,7 +514,7 @@ wxString CamulewebApp::SetLocale(const wxString& language)
 			if (m_localTemplate) {
 				DebugShow(wxT("no\n"));
 			}
-#if defined __WXMAC__ || defined __WINDOWS__
+#if defined __WXMAC__
 			// on Mac, the bundle may be tried, too
 			dir = wxStandardPaths::Get().GetDataDir();
 #elif defined(__UNIX__)

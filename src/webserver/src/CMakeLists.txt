@@ -31,12 +31,6 @@ add_executable (amuleweb
 	WebSocket.cpp
 )
 
-if (WIN32)
-	target_sources (amuleweb
-		PRIVATE ${CMAKE_SOURCE_DIR}/version.rc
-	)
-endif()
-
 target_compile_definitions (amuleweb
 	PRIVATE wxUSE_GUI=0
 )
@@ -54,12 +48,6 @@ target_link_libraries (amuleweb
 	PRIVATE mulesocket
 	PRIVATE wxWidgets::NET
 )
-
-if (ENABLE_UPNP)
-	target_link_libraries (amuleweb
-		PRIVATE UPNP::Shared
-	)
-endif()
 
 if (HAVE_BFD)
 	target_link_libraries (amuleweb

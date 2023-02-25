@@ -34,9 +34,7 @@
 
 #include "Types.h"			// Needed for int32, uint16 and uint64
 #include <map>
-#ifndef __WINDOWS__
-	#include <signal.h>
-#endif // __WINDOWS__
+#include <signal.h>
 
 #include "config.h"			// Needed for ASIO_SOCKETS
 
@@ -67,10 +65,6 @@ class UploadBandwidthThrottler;
 class CAsioService;
 #else
 class wxSocketEvent;
-#endif
-#ifdef ENABLE_UPNP
-class CUPnPControlPoint;
-class CUPnPPortMapping;
 #endif
 class CStatistics;
 class wxCommandEvent;
@@ -274,10 +268,6 @@ public:
 #ifdef ASIO_SOCKETS
 	CAsioService*		m_AsioService;
 #endif
-#ifdef ENABLE_UPNP
-	CUPnPControlPoint*	m_upnp;
-	std::vector<CUPnPPortMapping> m_upnpMappings;
-#endif
 	wxLocale m_locale;
 
 	void ShutDown();
@@ -432,17 +422,6 @@ extern CamuleGuiApp *theApp;
 #else /* ! AMULE_DAEMON */
 
 
-// AppTrait functionality is required for 2.8 wx sockets
-// Otherwise it's used to prevent zombie child processes,
-// which stops working with wx 2.9.5.
-// So disable it there (no idea if this has a noticeable impact).
-
-#if !defined(__WINDOWS__)
-#define AMULED_APPTRAITS
-#endif
-
-#ifdef AMULED_APPTRAITS
-
 typedef std::map<int, class wxEndProcessData *> EndProcessDataMap;
 
 #include <wx/apptrait.h>
@@ -459,8 +438,6 @@ public:
 
 void OnSignalChildHandler(int signal, siginfo_t *siginfo, void *ucontext);
 pid_t AmuleWaitPid(pid_t pid, int *status, int options, wxString *msg);
-
-#endif // AMULED_APPTRAITS
 
 
 class CamuleDaemonApp : public CamuleApp
@@ -479,12 +456,10 @@ private:
 	// This function are overridden to perform this.
 	virtual bool Initialize(int& argc_, wxChar **argv_);
 
-#ifdef AMULED_APPTRAITS
 	struct sigaction m_oldSignalChildAction;
 	struct sigaction m_newSignalChildAction;
 public:
 	wxAppTraits *CreateTraits();
-#endif // AMULED_APPTRAITS
 
 public:
 

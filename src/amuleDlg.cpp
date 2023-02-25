@@ -29,10 +29,10 @@
 #include <wx/config.h>				// Do_not_auto_remove (MacOS 10.3, wx 2.7)
 #include <wx/confbase.h>			// Do_not_auto_remove (MacOS 10.3, wx 2.7)
 #include <wx/html/htmlwin.h>
-#include <wx/mimetype.h>			// Do_not_auto_remove (win32)
+#include <wx/mimetype.h>
 #include <wx/stattext.h>
 #include <wx/stdpaths.h>
-#include <wx/textfile.h>			// Do_not_auto_remove (win32)
+#include <wx/textfile.h>
 #include <wx/tokenzr.h>
 #include <wx/wfstream.h>
 #include <wx/zipstrm.h>
@@ -72,37 +72,12 @@
 #endif
 #include "IPFilter.h"
 
-#ifndef __WINDOWS__
 #include "aMule.xpm"
-#endif
-
 #include "kademlia/kademlia/Kademlia.h"
 #include "MuleVersion.h"			// Needed for GetMuleVersion()
 
-#ifdef ENABLE_IP2COUNTRY
-#include "IP2Country.h"				// Needed for IP2Country
-#endif
-
-#ifdef ENABLE_IP2COUNTRY			// That's no bug. MSVC has ENABLE_IP2COUNTRY always on,
-						// but dummy GeoIP.h turns ENABLE_IP2COUNTRY off again.
-void CamuleDlg::IP2CountryDownloadFinished(uint32 result)
-{
-	m_IP2Country->DownloadFinished(result);
-}
-
-void CamuleDlg::EnableIP2Country()
-{
-	if (thePrefs::IsGeoIPEnabled()) {
-		m_IP2Country->Enable();
-	}
-}
-
-#else
-
 void CamuleDlg::IP2CountryDownloadFinished(uint32){}
 void CamuleDlg::EnableIP2Country(){}
-
-#endif
 
 BEGIN_EVENT_TABLE(CamuleDlg, wxFrame)
 
@@ -207,10 +182,6 @@ m_clientSkinNames(CLIENT_SKIN_SIZE)
 	wxInitAllImageHandlers();
 	Apply_Clients_Skin();
 
-#ifdef __WINDOWS__
-	wxSystemOptions::SetOption(wxT("msw.remap"), 0);
-#endif
-
 #if !defined(__WXMAC__)
 	// this crashes on Mac with wx 2.9
 	SetIcon(wxICON(aMule));
@@ -238,12 +209,7 @@ m_clientSkinNames(CLIENT_SKIN_SIZE)
 		wxString(_("Visit http://www.amule.org to check if a new version is available.")));
 	AddLogLineN(wxEmptyString);
 
-#ifdef ENABLE_IP2COUNTRY
-	m_GeoIPavailable = true;
-	m_IP2Country = new CIP2Country(thePrefs::GetConfigDir());
-#else
 	m_GeoIPavailable = false;
-#endif
 	m_searchwnd = new CSearchDlg(p_cnt);
 	m_transferwnd = new CTransferWnd(p_cnt);
 	m_sharedfileswnd = new CSharedFilesWnd(p_cnt);
@@ -538,11 +504,6 @@ void CamuleDlg::OnImportButton(wxCommandEvent& WXUNUSED(ev))
 CamuleDlg::~CamuleDlg()
 {
 	theApp->amuledlg = NULL;
-
-#ifdef ENABLE_IP2COUNTRY
-	delete m_IP2Country;
-#endif
-
 	AddLogLineN(_("aMule dialog destroyed"));
 }
 
@@ -1042,9 +1003,7 @@ bool CamuleDlg::SaveGUIPrefs()
 void CamuleDlg::OnMinimize(wxIconizeEvent& evt)
 {
 // Evil Hack: check if the mouse is inside the window
-#ifndef __WINDOWS__
 	if (wxFindWindowAtPoint(wxGetMousePosition()))
-#endif
 	{
 		if (m_prefsDialog && m_prefsDialog->IsShown()) {
 			// Veto.
@@ -1178,9 +1137,7 @@ bool CamuleDlg::Check_and_Init_Skin()
 	wxString userDir(JoinPaths(thePrefs::GetConfigDir(), wxT("skins")) + wxFileName::GetPathSeparator());
 
 	wxStandardPathsBase &spb(wxStandardPaths::Get());
-#ifdef __WINDOWS__
-	wxString dataDir(spb.GetPluginsDir());
-#elif defined(__WXMAC__)
+#if defined(__WXMAC__)
 		wxString dataDir(spb.GetDataDir());
 #else
 	wxString dataDir(spb.GetDataDir().BeforeLast(wxT('/')) + wxT("/amule"));

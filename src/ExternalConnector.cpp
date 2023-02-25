@@ -51,9 +51,6 @@
 #include "OtherFunctions.h"		// Needed for GetPassword()
 #include "MuleVersion.h"		// Needed for GetMuleVersion()
 
-#ifdef _MSC_VER  // silly warnings about deprecated functions
-#pragma warning(disable:4996)
-#endif
 
 //-------------------------------------------------------------------
 
@@ -291,9 +288,6 @@ void CaMuleExternalConnector::Show(const wxString &s)
 {
 	if( !m_KeepQuiet ) {
 		printf("%s", (const char *)unicode2char(s));
-#ifdef __WINDOWS__
-		fflush(stdout);
-#endif
 	}
 }
 
@@ -614,12 +608,10 @@ void CaMuleExternalConnector::SaveConfigFile()
 
 bool CaMuleExternalConnector::OnInit()
 {
-#ifndef __WINDOWS__
 	#if wxUSE_ON_FATAL_EXCEPTION
 		// catch fatal exceptions
 		wxHandleFatalExceptions(true);
 	#endif
-#endif
 
 	// If we didn't know that OnInit is called only once when creating the
 	// object, it could cause a memory leak. The two pointers below should

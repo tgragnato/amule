@@ -228,11 +228,7 @@ typedef short int yytype_int16;
 
 #if !defined _Noreturn \
      && (!defined __STDC_VERSION__ || __STDC_VERSION__ < 201112)
-# if defined _MSC_VER && 1200 <= _MSC_VER
-#  define _Noreturn __declspec (noreturn)
-# else
-#  define _Noreturn YY_ATTRIBUTE ((__noreturn__))
-# endif
+#define _Noreturn YY_ATTRIBUTE ((__noreturn__))
 #endif
 
 /* Suppress unused-variable warnings by "using" E.  */
@@ -274,9 +270,6 @@ typedef short int yytype_int16;
 #    include <alloca.h> /* INFRINGES ON USER NAME SPACE */
 #   elif defined _AIX
 #    define YYSTACK_ALLOC __alloca
-#   elif defined _MSC_VER
-#    include <malloc.h> /* INFRINGES ON USER NAME SPACE */
-#    define alloca _alloca
 #   else
 #    define YYSTACK_ALLOC alloca
 #    if ! defined _ALLOCA_H && ! defined EXIT_SUCCESS

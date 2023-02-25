@@ -36,7 +36,7 @@
 #include <common/ClientVersion.h>
 
 #include <wx/cmdline.h>			// Needed for wxCmdLineParser
-#include <wx/config.h>			// Do_not_auto_remove (win32)
+#include <wx/config.h>
 #include <wx/fileconf.h>
 #include <wx/socket.h>
 #include <wx/tokenzr.h>
@@ -78,10 +78,6 @@
 #include "UploadBandwidthThrottler.h"
 #include "UserEvents.h"
 #include "ScopedPtr.h"
-
-#ifdef ENABLE_UPNP
-#include "UPnPBase.h"			// Needed for UPnP
-#endif
 
 #ifdef __WXMAC__
 #include <wx/sysopt.h>			// Do_not_auto_remove
@@ -190,10 +186,6 @@ CamuleApp::CamuleApp()
 	glob_prefs	= NULL;
 	m_statistics	= NULL;
 	uploadBandwidthThrottler = NULL;
-#ifdef ENABLE_UPNP
-	m_upnp		= NULL;
-	m_upnpMappings.resize(4);
-#endif
 	core_timer	= NULL;
 
 	m_localip	= 0;
@@ -204,10 +196,6 @@ CamuleApp::CamuleApp()
 
 	// Apparently needed for *BSD
 	SetResourceLimits();
-
-#ifdef _MSC_VER
-	_CrtSetDbgFlag(0);		// Disable useless memleak debugging
-#endif
 
 	wxSizerFlags::DisableConsistencyChecks();
 }
@@ -299,11 +287,6 @@ int CamuleApp::OnExit()
 	delete ipfilter;
 	ipfilter = NULL;
 
-#ifdef ENABLE_UPNP
-	delete m_upnp;
-	m_upnp = NULL;
-#endif
-
 	delete ECServerHandler;
 	ECServerHandler = NULL;
 
@@ -372,13 +355,9 @@ bool CamuleApp::OnInit()
 
 	m_localip = StringHosttoUint32(::wxGetFullHostName());
 
-#ifndef __WINDOWS__
 	// get rid of sigpipe
 	signal(SIGPIPE, SIG_IGN);
-#else
-	// Handle CTRL-Break
-	signal(SIGBREAK, OnShutdownSignal);
-#endif
+
 	// Handle sigint and sigterm
 	signal(SIGINT, OnShutdownSignal);
 	signal(SIGTERM, OnShutdownSignal);
@@ -447,7 +426,6 @@ bool CamuleApp::OnInit()
 		AddLogLineNS(_("Password set and external connections enabled."));
 	}
 
-#ifndef __WINDOWS__
 	if (getuid() == 0) {
 		wxString msg =
 			wxT("Warning! You are running aMule as root.\n")
@@ -461,7 +439,6 @@ bool CamuleApp::OnInit()
 		fprintf(stderr, "%s", (const char*)unicode2UTF8(msg));
 		fprintf(stderr, "\n--------------------------------------------------\n\n");
 	}
-#endif
 
 	// Display notification on new version or first run
 	wxTextFile vfile( thePrefs::GetConfigDir() + wxT("lastversion") );
@@ -604,11 +581,6 @@ bool CamuleApp::OnInit()
 		}
 	}
 
-	// Enable GeoIP
-#ifdef ENABLE_IP2COUNTRY
-	theApp->amuledlg->EnableIP2Country();
-#endif
-
 	// Run webserver?
 	if (thePrefs::GetWSIsEnabled()) {
 		wxString aMuleConfigFile = thePrefs::GetConfigDir() + m_configFile;
@@ -631,11 +603,7 @@ bool CamuleApp::OnInit()
 		}
 #endif
 
-#ifdef __WINDOWS__
-#	define QUOTE	wxT("\"")
-#else
 #	define QUOTE	wxT("\'")
-#endif
 
 		wxString cmd =
 			QUOTE +
@@ -782,44 +750,6 @@ bool CamuleApp::ReinitializeNetwork(wxString* msg)
 	} else {
 		*msg << wxT("*** Client UDP socket (extended eMule) disabled on preferences");
 	}
-
-#ifdef ENABLE_UPNP
-	if (thePrefs::GetUPnPEnabled()) {
-		try {
-			m_upnpMappings[0] = CUPnPPortMapping(
-				myaddr[0].Service(),
-				"TCP",
-				thePrefs::GetUPnPECEnabled(),
-				"aMule TCP External Connections Socket");
-			m_upnpMappings[1] = CUPnPPortMapping(
-				myaddr[1].Service(),
-				"UDP",
-				thePrefs::GetUPnPEnabled(),
-				"aMule UDP socket (TCP+3)");
-			m_upnpMappings[2] = CUPnPPortMapping(
-				myaddr[2].Service(),
-				"TCP",
-				thePrefs::GetUPnPEnabled(),
-				"aMule TCP Listen Socket");
-			m_upnpMappings[3] = CUPnPPortMapping(
-				myaddr[3].Service(),
-				"UDP",
-				thePrefs::GetUPnPEnabled(),
-				"aMule UDP Extended eMule Socket");
-			m_upnp = new CUPnPControlPoint(thePrefs::GetUPnPTCPPort());
-
-			wxStopWatch count; // Wait UPnP service responses for 3s before add port mappings
-			while (count.Time() < 3000 && !m_upnp->WanServiceDetected());
-
-			m_upnp->AddPortMappings(m_upnpMappings);
-		} catch(CUPnPException &e) {
-			wxString error_msg;
-			error_msg << e.what();
-			AddLogLineC(error_msg);
-			fprintf(stderr, "%s\n", (const char *)unicode2char(error_msg));
-		}
-	}
-#endif
 
 	return ok;
 }
@@ -1087,16 +1017,8 @@ void CamuleApp::OnAssertFailure(const wxChar* file, int line,
 	if (wxThread::IsMain() && IsRunning()) {
 		AMULE_APP_BASE::OnAssertFailure(file, line, func, cond, msg);
 	} else {
-#ifdef _MSC_VER
-		wxString s = CFormat(wxT("%s in %s")) % cond % func;
-		if (msg) {
-			s << wxT(" : ") << msg;
-		}
-		_wassert(s.wc_str(), file, line);
-#else
 		// Abort, allows gdb to catch the assertion
 		raise( SIGABRT );
-#endif
 	}
 }
 #endif
@@ -1409,14 +1331,6 @@ void CamuleApp::ShutDown()
 
 	ECServerHandler->KillAllSockets();
 
-#ifdef ENABLE_UPNP
-	if (thePrefs::GetUPnPEnabled()) {
-		if (m_upnp) {
-			m_upnp->DeletePortMappings(m_upnpMappings);
-		}
-	}
-#endif
-
 	// saving data & stuff
 	if (knownfiles) {
 		knownfiles->Save();
@@ -1573,13 +1487,6 @@ void CamuleApp::OnFinishedHTTPDownload(CMuleInternalEvent& event)
 				AddLogLineC(_("Failed to download the nodes list."));
 			}
 			break;
-#ifdef ENABLE_IP2COUNTRY
-		case HTTP_GeoIP:
-			theApp->amuledlg->IP2CountryDownloadFinished(event.GetExtraLong());
-			// If we updated, the dialog is already up. Redraw it to show the flags.
-			theApp->amuledlg->Refresh();
-			break;
-#endif
 	}
 }
 

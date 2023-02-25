@@ -34,10 +34,6 @@ const int versionRevision	= 1;
 
 #ifdef __APPLE__
 	#include <CoreServices/CoreServices.h>
-#elif defined(_WIN32)
-	#include <winerror.h>
-	#include <shlobj.h>
-	#include <shlwapi.h>
 #endif
 
 #include "FileLock.h"
@@ -49,21 +45,11 @@ using std::string;
 static string GetLinksFilePath(const string& configDir)
 {
 	if (!configDir.empty()) {
-#ifdef _WIN32
-		char buffer[MAX_PATH + 1];
-		configDir.copy(buffer, MAX_PATH);
-		if (PathAppendA(buffer, "ED2KLinks")) {
-			string strDir;
-			strDir.assign(buffer);
-			return strDir;
-		}
-#else
 		string strDir = configDir;
 		if (strDir.at(strDir.length() - 1) != '/') {
 			strDir += '/';
 		}
 		return strDir + "ED2KLinks";
-#endif
 	}
 
 
@@ -84,33 +70,6 @@ static string GetLinksFilePath(const string& configDir)
 	}
 
 	return strDir + "/aMule/ED2KLinks";
-
-#elif defined(_WIN32)
-
-	std::string strDir;
-	LPITEMIDLIST pidl;
-
-	HRESULT hr = SHGetSpecialFolderLocation(NULL, CSIDL_APPDATA, &pidl);
-
-	if (SUCCEEDED(hr)) {
-		char buffer[MAX_PATH + 1];
-		if (SHGetPathFromIDListA(pidl, buffer)) {
-			if (PathAppendA(buffer, "aMule\\ED2KLinks")) {
-				strDir.assign(buffer);
-			}
-		}
-	}
-
-	if (pidl) {
-		LPMALLOC pMalloc;
-		SHGetMalloc(&pMalloc);
-		if (pMalloc) {
-			pMalloc->Free(pidl);
-			pMalloc->Release();
-		}
-	}
-
-	return strDir;
 
 #else
 

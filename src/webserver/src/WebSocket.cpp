@@ -27,11 +27,6 @@
 
 #include "WebSocket.h"
 
-
-#ifdef ENABLE_UPNP
-#	include "UPnPBase.h"
-#endif
-
 CWebSocket::CWebSocket(CWebServerBase *parent)
 {
 	m_pHead = 0;

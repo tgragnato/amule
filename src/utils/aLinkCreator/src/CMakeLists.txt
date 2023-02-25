@@ -9,12 +9,6 @@ if (BUILD_ALCC)
 		PRIVATE ${amule_BINARY_DIR}
 	)
 
-	if (WIN32)
-		target_sources (alcc
-			PRIVATE ${CMAKE_SOURCE_DIR}/version.rc
-		)
-	endif()
-
 	target_compile_definitions (alcc
 		PRIVATE wxUSE_GUI=0
 	)
@@ -40,16 +34,6 @@ if (BUILD_ALC)
 	target_include_directories (alc
 		PRIVATE ${amule_BINARY_DIR}
 	)
-
-	if (WIN32)
-		target_sources (alc
-			PRIVATE ${CMAKE_SOURCE_DIR}/version.rc
-		)
-
-		set_target_properties (alc
-			PROPERTIES WIN32_EXECUTABLE TRUE
-		)
-	endif()
 
 	target_link_libraries (alc
 		wxWidgets::CORE

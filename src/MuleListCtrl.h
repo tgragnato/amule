@@ -26,11 +26,7 @@
 #ifndef MULELISTCTRL_H
 #define MULELISTCTRL_H
 
-#ifdef _WIN32
-#include <wx/msw/winundef.h>
-#endif
-
-#include <wx/defs.h> // Do_not_auto_remove (Mac, Win32, and just good practice)
+#include <wx/defs.h> // Do_not_auto_remove (Mac, and just good practice)
 #include "extern/wxWidgets/listctrl.h"
 
 #include <vector>

@@ -27,12 +27,7 @@
 
 #include <wx/intl.h>		// Needed for wxTRANSLATE
 
-
-#ifdef _MSC_VER
-	#define ATTR(x)
-#else
-	#define ATTR(x) __attribute__((x))
-#endif
+#define ATTR(x) __attribute__((x))
 
 /* Each event will use 5 IDs:
    - the panel that shows the prefs for this event

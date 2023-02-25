@@ -34,10 +34,6 @@
 	#include <CoreServices/CoreServices.h> // Do_not_auto_remove
 	#include <wx/osx/core/cfstring.h>  // Do_not_auto_remove
 	#include <wx/intl.h> // Do_not_auto_remove
-#elif defined(__WINDOWS__)
-	#include <winerror.h> // Do_not_auto_remove
-	#include <shlobj.h> // Do_not_auto_remove
-	#include <wx/msw/winundef.h>
 #endif
 
 #include "wxcascte.h"
@@ -131,29 +127,6 @@ wxString GetDefaultAmulesigPath()
 		CFRelease(urlRef) ;
 			strDir = wxCFStringRef(cfString).AsString(wxLocale::GetSystemEncoding())
 			+ wxFileName::GetPathSeparator() + wxT("aMule");
-	}
-
-#elif defined(__WINDOWS__)
-
-	LPITEMIDLIST pidl;
-
-	HRESULT hr = SHGetSpecialFolderLocation(NULL, CSIDL_APPDATA, &pidl);
-
-	if (SUCCEEDED(hr)) {
-		if (!SHGetPathFromIDList(pidl, wxStringBuffer(strDir, MAX_PATH))) {
-			strDir = wxEmptyString;
-		} else {
-			strDir = strDir + wxFileName::GetPathSeparator() + wxT("aMule");
-		}
-	}
-
-	if (pidl) {
-		LPMALLOC pMalloc;
-		SHGetMalloc(&pMalloc);
-		if (pMalloc) {
-			pMalloc->Free(pidl);
-			pMalloc->Release();
-		}
 	}
 
 #else
