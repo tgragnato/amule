@@ -193,12 +193,7 @@ template<> inline CFormat& CFormat::operator%(unsigned long value)	{ return *thi
 template<> inline CFormat& CFormat::operator%(float value)		{ return *this % (double)value; }
 template<> inline CFormat& CFormat::operator%(const wxChar* value)	{ return this->operator%<const wxString&>(wxString(value)); }
 
-
-#if wxCHECK_VERSION(2, 9, 0)
 #define WXLONGLONGFMTSPEC wxT(wxLongLongFmtSpec)
-#else
-#define WXLONGLONGFMTSPEC wxLongLongFmtSpec
-#endif
 
 #endif
 // File_checked_for_headers

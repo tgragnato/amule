@@ -64,9 +64,6 @@ inline SDMODE GetStringsMode()	{ return g_stringDecodeMode; }
 
 wxString MakePrintableString(const wxString& str);
 
-#if !wxCHECK_VERSION(2, 9, 0)
-inline __attribute_always_inline__ std::ostream& operator<<(std::ostream& x, const wxString& y)		{ return x << (const char *)unicode2char(y); }
-#endif
 inline std::ostream& operator<<(std::ostream& x, const Kademlia::CUInt128& y)	{ return x << y.ToHexString(); }
 inline std::ostream& operator<<(std::ostream& x, const CMD4Hash& y)		{ return x << y.Encode(); }
 
@@ -76,13 +73,9 @@ inline wxString hex(uint32_t value)	{ return wxString::Format(wxT("0x%08x"), val
 
 inline void PrintByteArray(const void *buf, unsigned int size)
 {
-// #if wxCHECK_VERSION(2, 8, 4)
-//	cout << MakePrintableString(wxString::From8BitData(static_cast<const char *>(buf), size));
-// #else
 	for (unsigned int i = 0; i < size; i++) {
 		cout << wxString::Format(wxT("%02X "), static_cast<const unsigned char *>(buf)[i]);
 	}
-// #endif
 }
 
 

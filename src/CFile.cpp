@@ -87,7 +87,7 @@ char* mktemp( char * path ) { return path ;}
 #	define   O_BINARY    (0)
 #endif  //__UNIX__
 
-#if defined(__WINDOWS__) && !wxCHECK_VERSION(3, 1, 0)
+#if defined(__WINDOWS__)
 #include <wx/msw/mslu.h>
 #endif
 

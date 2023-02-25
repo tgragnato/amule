@@ -40,14 +40,6 @@
 #include <wx/renderer.h>
 #include <wx/dcbuffer.h>
 
-#if wxCHECK_VERSION(2, 9, 0)
-// wxWidgets 2.9+ does not include a mac/private anymore.
-#else
-	#if defined( __WXMAC__ ) && !defined(__WXUNIVERSAL__) && (wxOSX_USE_CARBON || TARGET_CARBON)
-		#include <wx/mac/private.h>
-	#endif
-#endif
-
 
 // NOTE: If using the wxListBox visual attributes works everywhere then this can
 // be removed, as well as the #else case below.
@@ -1453,11 +1445,7 @@ bool wxListLineData::SetAttributes(wxDC *dc,
         if ( highlighted )
             dc->SetBrush( m_owner->GetHighlightBrush() );
         else
-#if wxCHECK_VERSION(3, 0, 0)
             dc->SetBrush(*(wxTheBrushList->FindOrCreateBrush(attr->GetBackgroundColour(), wxBRUSHSTYLE_SOLID)));
-#else
-            dc->SetBrush(*(wxTheBrushList->FindOrCreateBrush(attr->GetBackgroundColour(), wxSOLID)));
-#endif	
         dc->SetPen( *wxTRANSPARENT_PEN );
 
         return true;
@@ -2328,12 +2316,7 @@ wxListMainWindow::wxListMainWindow( wxWindow *parent,
                             (
                                 wxSYS_COLOUR_HIGHLIGHT
                             ),
-
-#if wxCHECK_VERSION(3, 0, 0)
                             wxBRUSHSTYLE_SOLID
-#else
-                            wxSOLID
-#endif
                          ));
 
     m_highlightUnfocusedBrush = *(wxTheBrushList->FindOrCreateBrush(
@@ -2341,11 +2324,7 @@ wxListMainWindow::wxListMainWindow( wxWindow *parent,
                                  (
                                      wxSYS_COLOUR_BTNSHADOW
                                  ),
-#if wxCHECK_VERSION(3, 0, 0)
                                  wxBRUSHSTYLE_SOLID
-#else
-        	                 wxSOLID
-#endif
                               ));
 
     SetScrollbars( 0, 0, 0, 0, 0, 0 );
@@ -2746,11 +2725,7 @@ void wxListMainWindow::OnPaint( wxPaintEvent &WXUNUSED(event) )
 
     // Ensure an uniform background color, as to avoid differences between
     // the automatically cleared parts and the rest of the canvas.
-#if wxCHECK_VERSION(3, 0, 0)
     dc.SetBackground(*(wxTheBrushList->FindOrCreateBrush(wxSystemSettings::GetColour(wxSYS_COLOUR_LISTBOX), wxBRUSHSTYLE_SOLID)));
-#else
-    dc.SetBackground(*(wxTheBrushList->FindOrCreateBrush(wxSystemSettings::GetColour(wxSYS_COLOUR_LISTBOX), wxSOLID)));
-#endif
 
     // We need to clear the DC manually, since we intercept BG-erase events.
     // Clearing must be done first thing because caching of the double-buffering causes artifacts otherwise.
@@ -2821,11 +2796,7 @@ void wxListMainWindow::OnPaint( wxPaintEvent &WXUNUSED(event) )
 
         if ( HasFlag(wxLC_HRULES) )
         {
-#if wxCHECK_VERSION(3, 0, 0)
             wxPen pen = *(wxThePenList->FindOrCreatePen(GetRuleColour(), 1, wxPENSTYLE_SOLID));
-#else
-            wxPen pen = *(wxThePenList->FindOrCreatePen(GetRuleColour(), 1, wxSOLID));
-#endif
             wxSize clientSize = GetClientSize();
 
             size_t i = visibleFrom;
@@ -2851,12 +2822,7 @@ void wxListMainWindow::OnPaint( wxPaintEvent &WXUNUSED(event) )
         // Draw vertical rules if required
         if ( HasFlag(wxLC_VRULES) && !IsEmpty() )
         {
-#if wxCHECK_VERSION(3, 0, 0)
             wxPen pen = *(wxThePenList->FindOrCreatePen(GetRuleColour(), 1, wxPENSTYLE_SOLID));
-#else
-            wxPen pen = *(wxThePenList->FindOrCreatePen(GetRuleColour(), 1, wxSOLID));
-#endif
-
             wxRect firstItemRect, lastItemRect;
 
             GetItemRect(visibleFrom, firstItemRect);
@@ -4891,12 +4857,7 @@ void wxListMainWindow::OnScroll(wxScrollWinEvent& event)
     // have been removed in code present in
     // src/generic/listctrl.cpp, wxListMainWindow::OnScroll
     // of wxWidgets 3.0
-  // FIXME
-#if ( defined(__WXGTK__) || defined(__WXMAC__) ) && !defined(__WXUNIVERSAL__) && !wxCHECK_VERSION(3,0,0)
-    wxScrolledWindow::OnScroll(event);
-#else
     HandleOnScroll( event );
-#endif
 
 
     // update our idea of which lines are shown when we redraw the window the

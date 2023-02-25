@@ -74,11 +74,7 @@ COScopeCtrl::COScopeCtrl(int cntTrends, int nDecimals, StatsGraphType type, wxWi
 	PlotData_t* ppds = pdsTrends;
 	for(unsigned i=0; i<nTrends; ++i, ++ppds){
 		ppds->crPlot = (i<15 ? crPreset[i] : *wxWHITE);
-#if wxCHECK_VERSION(3, 0, 0)
 		ppds->penPlot=*(wxThePenList->FindOrCreatePen(ppds->crPlot, 1, wxPENSTYLE_SOLID));
-#else
-		ppds->penPlot=*(wxThePenList->FindOrCreatePen(ppds->crPlot, 1, wxSOLID));
-#endif
 		ppds->fPrev = ppds->fLowerLimit = ppds->fUpperLimit = 0.0;
 	}
 
@@ -170,11 +166,7 @@ void COScopeCtrl::SetPlotColor(const wxColour& cr, unsigned iTrend)
 	if (ppds->crPlot == cr)
 		return;
 	ppds->crPlot = cr;
-#if wxCHECK_VERSION(3, 0, 0)
 	ppds->penPlot=*(wxThePenList->FindOrCreatePen(ppds->crPlot, 1, wxPENSTYLE_SOLID));
-#else
-	ppds->penPlot=*(wxThePenList->FindOrCreatePen(ppds->crPlot, 1, wxSOLID));
-#endif
 
 	InvalidateGraph();
 }
@@ -188,11 +180,7 @@ void COScopeCtrl::SetBackgroundColor(const wxColour& cr)
 	}
 
 	m_bgColour = cr;
-#if wxCHECK_VERSION(3, 0, 0)
 	brushBack= *(wxTheBrushList->FindOrCreateBrush(cr, wxBRUSHSTYLE_SOLID));
-#else
-	brushBack= *(wxTheBrushList->FindOrCreateBrush(cr, wxSOLID));
-#endif
 	InvalidateCtrl() ;
 }
 
@@ -209,11 +197,7 @@ void COScopeCtrl::RecreateGrid()
 
 	wxMemoryDC dcGrid(m_bmapGrid);
 
-#if wxCHECK_VERSION(3, 0, 0)
 	wxPen solidPen = *(wxThePenList->FindOrCreatePen(m_gridColour, 1, wxPENSTYLE_SOLID));
-#else
-	wxPen solidPen = *(wxThePenList->FindOrCreatePen(m_gridColour, 1, wxSOLID));
-#endif
 	wxString strTemp;
 
 	// fill the grid background
@@ -230,11 +214,7 @@ void COScopeCtrl::RecreateGrid()
 	dcGrid.SetPen(wxNullPen);
 
 	// create some fonts (horizontal and vertical)
-#if wxCHECK_VERSION(3, 1, 0)
 	wxFont axisFont(10, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL, false);
-#else
-	wxFont axisFont(10, wxSWISS, wxNORMAL, wxNORMAL, false);
-#endif
 	dcGrid.SetFont(axisFont);
 
 	// y max
@@ -340,12 +320,7 @@ void COScopeCtrl::OnPaint(wxPaintEvent& WXUNUSED(evt))
 	// This is done last because wxMAC doesn't support the wxOR logical
 	// operation, preventing us from simply blitting the plot on top of
 	// the grid bitmap.
-
-#if wxCHECK_VERSION(3, 0, 0)
 	dc.SetPen(*(wxThePenList->FindOrCreatePen(m_gridColour, 1, wxPENSTYLE_LONG_DASH)));
-#else
-	dc.SetPen(*(wxThePenList->FindOrCreatePen(m_gridColour, 1, wxLONG_DASH)));
-#endif
 	for (unsigned j = 1; j < (nYGrids + 1); ++j) {
 		unsigned GridPos = (m_rectPlot.GetHeight())*j/( nYGrids + 1 ) + m_rectPlot.GetTop();
 

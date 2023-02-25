@@ -283,12 +283,7 @@ WxCasFrame::GetStatImage () const
 	int font_size = 8;
 #endif
 
-
-#if wxCHECK_VERSION(3, 1, 0)
 	memdc.SetFont( wxFont ( font_size, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD ) );
-#else
-	memdc.SetFont( wxFont ( font_size, wxSWISS, wxNORMAL, wxBOLD ) );
-#endif
 
 	memdc.
 	SetTextForeground ( *wxWHITE );
