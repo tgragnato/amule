@@ -176,7 +176,7 @@ static bool IsSameAs(const wxString& a, const wxString& b)
 	// We normalize everything, except env. variables, which
 	// can cause problems when the string is not encodable
 	// using wxConvLibc which wxWidgets uses for the purpose.
-	const int flags = (wxPATH_NORM_ALL | wxPATH_NORM_CASE) & ~wxPATH_NORM_ENV_VARS;
+	const int flags =  (wxPATH_NORM_DOTS | wxPATH_NORM_TILDE | wxPATH_NORM_CASE | wxPATH_NORM_ABSOLUTE);
 
 	// Let wxFileName handle the tricky stuff involved in actually
 	// comparing two paths ... Currently, a path ending with a path-
