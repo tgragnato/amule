@@ -11,7 +11,7 @@ on:
 jobs:
   pofiles:
     name: Translation checks
-    runs-on: ubuntu-latest
+    runs-on: sid
 
     steps:
     - uses: actions/checkout@v2
