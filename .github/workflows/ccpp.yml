@@ -2,30 +2,46 @@ name: C/C++ CI
 
 on:
   push:
-    paths:
-    - src/**
-    - unittests/**
-    - '!**/*.txt'
-    - '!src/skins/*'
-    - '!src/webserver/default/**'
+    branches: [ "main" ]
   pull_request:
-    paths:
-    - src/**
-    - unittests/**
-    - '!**/*.txt'
-    - '!src/skins/*'
-    - '!src/webserver/default/**'
+    branches: [ "main" ]
 
 jobs:
   build:
+    runs-on: ${{ matrix.os }}
 
-    runs-on: sid
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04]
+        c_compiler: [gcc, clang]
+        include:
+          - c_compiler: clang
+            cpp_compiler: clang++
+          - c_compiler: gcc
+            cpp_compiler: g++
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
-    - name: cmake .
-      run: cmake .
+    - name: Install some dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcrypto++-dev
+        sudo apt-get install -y libwxgtk3.2-dev
 
-    - name: make
-      run: make
+    - name: Set reusable strings
+      id: strings
+      shell: bash
+      run: |
+        echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+
+    - name: Configure CMake
+      run: >
+        cmake -B ${{ steps.strings.outputs.build-output-dir }}
+        -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
+        -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
+        -S ${{ github.workspace }}
+
+    - name: Build
+      run: cmake --build ${{ steps.strings.outputs.build-output-dir }}
