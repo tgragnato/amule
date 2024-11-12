@@ -36,7 +36,6 @@ std::map<uint32_t, wxPen*> wxPenCache;
 std::map<uint32_t, wxBrush*> wxBrushCache;
 
 const wxPen& CMuleColour::GetPen(int width, wxPenStyle style) const
-
 {
 #if USE_MULE_PEN_CACHE
 	wxPen* result = NULL;
@@ -63,7 +62,6 @@ const wxPen& CMuleColour::GetPen(int width, wxPenStyle style) const
 }
 
 const wxBrush& CMuleColour::GetBrush(wxBrushStyle style) const
-
 {
 #if USE_MULE_BRUSH_CACHE
 	wxBrush* result = NULL;

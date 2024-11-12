@@ -69,7 +69,6 @@
 #endif
 #include <wx/ffile.h>
 
-
 BEGIN_EVENT_TABLE(CamuleDaemonApp, wxAppConsole)
 
 #ifndef ASIO_SOCKETS
@@ -118,61 +117,6 @@ END_EVENT_TABLE()
 IMPLEMENT_APP(CamuleDaemonApp)
 
 
-CDaemonAppTraits::CDaemonAppTraits()
-:
-wxConsoleAppTraits(),
-m_oldSignalChildAction(),
-m_newSignalChildAction()
-{
-}
-
-wxAppTraits *CamuleDaemonApp::CreateTraits()
-{
-	return new CDaemonAppTraits();
-}
-
-pid_t AmuleWaitPid(pid_t pid, int *status, int options, wxString *msg)
-{
-	*status = 0;
-	pid_t result = waitpid(pid, status, options);
-	if (result == -1) {
-		*msg << CFormat(wxT("Error: waitpid() call failed: %m."));
-	} else if (result == 0) {
-		if (options & WNOHANG)  {
-			*msg << wxT("The child is alive.");
-		} else {
-			*msg << wxT("Error: waitpid() call returned 0 but "
-				"WNOHANG was not specified in options.");
-		}
-	} else {
-		if (WIFEXITED(*status)) {
-			*msg << wxT("Child has terminated with status code `") <<
-				WEXITSTATUS(*status) <<
-				wxT("'.");
-		} else if (WIFSIGNALED(*status)) {
-			*msg << wxT("Child was killed by signal `") <<
-				WTERMSIG(*status) <<
-				wxT("'.");
-			if (WCOREDUMP(*status)) {
-				*msg << wxT(" A core file has been dumped.");
-			}
-		} else if (WIFSTOPPED(*status)) {
-			*msg << wxT("Child has been stopped by signal `") <<
-				WSTOPSIG(*status) <<
-				wxT("'.");
-#ifdef WIFCONTINUED /* Only found in recent kernels. */
-		} else if (WIFCONTINUED(*status)) {
-			*msg << wxT("Child has received `SIGCONT' and has continued execution.");
-#endif
-		} else {
-			*msg << wxT("The program was not able to determine why the child has signaled.");
-		}
-	}
-
-	return result;
-}
-
-
 int CamuleDaemonApp::OnRun()
 {
 	if (!thePrefs::AcceptExternalConnections()) {
@@ -182,24 +126,6 @@ int CamuleDaemonApp::OnRun()
 		AddLogLineCS(_("ERROR: A valid password is required to use external connections, and aMule daemon cannot be used without external connections. To run aMule daemon, you must set the \"ECPassword\" field in the file ~/.aMule/amule.conf with an appropriate value. Execute amuled with the flag --ec-config to set the password. More information can be found at http://wiki.amule.org"));
 		return 0;
 	}
-
-	// Process the return code of dead children so that we do not create
-	// zombies. wxBase does not implement wxProcess callbacks, so no one
-	// actually calls wxHandleProcessTermination() in console applications.
-	// We do our best here.
-	DEBUG_ONLY( int ret = 0; )
-	DEBUG_ONLY( ret = ) sigaction(SIGCHLD, NULL, &m_oldSignalChildAction);
-	m_newSignalChildAction = m_oldSignalChildAction;
-	m_newSignalChildAction.sa_flags |=  SA_SIGINFO;
-	m_newSignalChildAction.sa_flags &= ~SA_RESETHAND;
-	DEBUG_ONLY( ret = ) sigaction(SIGCHLD, &m_newSignalChildAction, NULL);
-#ifdef __DEBUG__
-	if (ret == -1) {
-		AddDebugLogLineC(logStandard, CFormat(wxT("CamuleDaemonApp::OnRun(): Installation of SIGCHLD callback with sigaction() failed: %m.")));
-	} else {
-		AddDebugLogLineN(logGeneral, wxT("CamuleDaemonApp::OnRun(): Installation of SIGCHLD callback with sigaction() succeeded."));
-	}
-#endif
 
 	return wxApp::OnRun();
 }
@@ -301,16 +227,6 @@ bool CamuleDaemonApp::Initialize(int& argc_, wxChar **argv_)
 int CamuleDaemonApp::OnExit()
 {
 	ShutDown();
-	DEBUG_ONLY( int ret = ) sigaction(SIGCHLD, &m_oldSignalChildAction, NULL);
-	
-#ifdef __DEBUG__
-	if (ret == -1) {
-		AddDebugLogLineC(logStandard, CFormat(wxT("CamuleDaemonApp::OnRun(): second sigaction() failed: %m.")));
-	} else {
-		AddDebugLogLineN(logGeneral, wxT("CamuleDaemonApp::OnRun(): Uninstallation of SIGCHLD callback with sigaction() succeeded."));
-	}
-#endif
-
 	delete core_timer;
 	return CamuleApp::OnExit();
 }

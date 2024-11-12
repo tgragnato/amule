@@ -4854,8 +4854,8 @@ void wxListMainWindow::OnScroll(wxScrollWinEvent& event)
     // have been removed in code present in
     // src/generic/listctrl.cpp, wxListMainWindow::OnScroll
     // of wxWidgets 3.0
+    // FIXME
     HandleOnScroll( event );
-
 
     // update our idea of which lines are shown when we redraw the window the
     // next time

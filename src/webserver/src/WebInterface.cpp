@@ -177,8 +177,10 @@ bool CamulewebApp::GetTemplateDir(const wxString& templateName, wxString& templa
 							absoluteURL,
 							kCFURLPOSIXPathStyle);
 					CFRelease(absoluteURL);
+
 					dir = wxCFStringRef(pathString).
 					AsString(wxLocale::GetSystemEncoding());
+
 					if (CheckDirForTemplate(dir, templateName)) {
 						templateDir = dir;
 						return true;

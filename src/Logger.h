@@ -320,7 +320,7 @@ public:
 	CLoggerTarget();
 
 	/**
-	 * @see wxLog::DoLogString
+	 * @see wxLog::DoLogText
 	 */
 	void DoLogText(const wxString &msg);
 };

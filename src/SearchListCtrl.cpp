@@ -914,7 +914,6 @@ void CSearchListCtrl::OnDrawItem(
 		// Set up a new pen for drawing the tree
 		dc->SetPen( *(wxThePenList->FindOrCreatePen(dc->GetTextForeground(), 1, wxPENSTYLE_SOLID)) );
 
-
 		if (file->GetParent()) {
 			// Draw the line to the filename
 			dc->DrawLine(treeCenter, middle, treeOffset + 4, middle);

@@ -58,7 +58,6 @@ char* mktemp( char * path ) { return path ;}
 #	define   O_BINARY    (0)
 #endif  //__UNIX__
 
-
 // We don't need to sync all meta-data, just the contents,
 // so use fdatasync when possible (see man fdatasync).
 #if defined(_POSIX_SYNCHRONIZED_IO) && (_POSIX_SYNCHRONIZED_IO > 0)

@@ -422,22 +422,6 @@ extern CamuleGuiApp *theApp;
 #else /* ! AMULE_DAEMON */
 
 
-typedef std::map<int, class wxEndProcessData *> EndProcessDataMap;
-
-#include <wx/apptrait.h>
-
-class CDaemonAppTraits : public wxConsoleAppTraits
-{
-private:
-	struct sigaction m_oldSignalChildAction;
-	struct sigaction m_newSignalChildAction;
-public:
-	CDaemonAppTraits();
-};
-
-pid_t AmuleWaitPid(pid_t pid, int *status, int options, wxString *msg);
-
-
 class CamuleDaemonApp : public CamuleApp
 {
 private:
@@ -453,11 +437,6 @@ private:
 	// handle non-ASCII file names which monolithic amule can handle.
 	// This function are overridden to perform this.
 	virtual bool Initialize(int& argc_, wxChar **argv_);
-
-	struct sigaction m_oldSignalChildAction;
-	struct sigaction m_newSignalChildAction;
-public:
-	wxAppTraits *CreateTraits();
 
 public:
 

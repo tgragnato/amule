@@ -167,7 +167,6 @@ void COScopeCtrl::SetPlotColor(const wxColour& cr, unsigned iTrend)
 		return;
 	ppds->crPlot = cr;
 	ppds->penPlot=*(wxThePenList->FindOrCreatePen(ppds->crPlot, 1, wxPENSTYLE_SOLID));
-
 	InvalidateGraph();
 }
 

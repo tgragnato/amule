@@ -216,7 +216,8 @@ public:
 		if (!(a == b)) {
 			wxString message = wxT("Expected '") + StringFrom(a) +
 								wxT("' but got '") + StringFrom(b) + wxT("'");
-            throw CTestFailureException(message, file.c_str(), line);
+
+			throw CTestFailureException(message, file.c_str(), line);
 		}
 	}
 
