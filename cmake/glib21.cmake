@@ -9,25 +9,30 @@ if (BUILD_MONOLITHIC OR BUILD_DAEMON)
 	check_include_file (fcntl.h HAVE_FCNTL_H)
 	check_include_file (sys/resource.h HAVE_SYS_RESOURCE_H)
 	check_include_file (sys/statvfs.h HAVE_SYS_STATVFS_H)
+	check_include_file (features.h HAVE_FEATURES_H)
 
-	set (TEST_APP "#include <features.h>
-		#ifdef __GNU_LIBRARY__
-			#if (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 1) || (__GLIBC__ > 2)
-				Lucky GNU user
-			#endif
-		#endif"
-	)
+	if (HAVE_FEATURES_H)
+		set (TEST_APP "#include <features.h>
+			#ifdef __GNU_LIBRARY__
+				#if (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 1) || (__GLIBC__ > 2)
+					Lucky GNU user
+				#endif
+			#endif"
+		)
 
-	execute_process (COMMAND echo ${TEST_APP}
-		COMMAND ${CMAKE_C_COMPILER} -E -xc -
-		OUTPUT_VARIABLE GLIB_TEST_OUTPUT
-	)
+		execute_process (COMMAND echo ${TEST_APP}
+			COMMAND ${CMAKE_C_COMPILER} -E -xc -
+			OUTPUT_VARIABLE GLIB_TEST_OUTPUT
+		)
 
-	string (REGEX MATCH "Lucky GNU user" MATCH "${GLIB_TEST_OUTPUT}")
+		string (REGEX MATCH "Lucky GNU user" MATCH "${GLIB_TEST_OUTPUT}")
 
-	if (${MATCH})
-		set (__GLIBC__ TRUE)
-		message (STATUS "glibc -- found")
+		if (${MATCH})
+			set (__GLIBC__ TRUE)
+			message (STATUS "glibc -- found")
+		endif()
+	else()
+		message (STATUS "features.h not found - assuming non-GNU system")
 	endif()
 
 	check_function_exists (posix_fallocate HAVE_POSIX_FALLOCATE)
