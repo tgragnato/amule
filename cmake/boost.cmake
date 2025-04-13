@@ -1,5 +1,3 @@
-include (FindBoost)
-
 if (NOT ASIO_SOCKETS)
 	include (CheckIncludeFiles)
 
