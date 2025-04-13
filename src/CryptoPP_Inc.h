@@ -35,13 +35,13 @@
 
 #define CRYPTO_HEADER(hdr)	<CRYPTOPP_INCLUDE_PREFIX/hdr>
 
-#include CRYPTO_HEADER(config.h)
-#include CRYPTO_HEADER(md4.h)
-#include CRYPTO_HEADER(rsa.h)
-#include CRYPTO_HEADER(base64.h)
-#include CRYPTO_HEADER(osrng.h)
-#include CRYPTO_HEADER(files.h)
-#include CRYPTO_HEADER(sha.h)
-#include CRYPTO_HEADER(des.h)
+#include CRYPTO_HEADER(cryptopp/config.h)
+#include CRYPTO_HEADER(cryptopp/md4.h)
+#include CRYPTO_HEADER(cryptopp/rsa.h)
+#include CRYPTO_HEADER(cryptopp/base64.h)
+#include CRYPTO_HEADER(cryptopp/osrng.h)
+#include CRYPTO_HEADER(cryptopp/files.h)
+#include CRYPTO_HEADER(cryptopp/sha.h)
+#include CRYPTO_HEADER(cryptopp/des.h)
 
 #endif /* CRYPTOPP_INC_H */

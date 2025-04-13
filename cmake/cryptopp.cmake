@@ -3,90 +3,25 @@ add_library (CRYPTOPP::CRYPTOPP
 	IMPORTED
 )
 
-set (CRYPTOPP_SEARCH_PREFIXES "cryptopp" "crypto++")
+find_path(CryptoPP_INCLUDE_DIR NAMES cryptopp/config.h DOC "CryptoPP include directory")
+find_library(CryptoPP_LIBRARY NAMES cryptopp DOC "CryptoPP library")
 
-if (NOT CRYPTOPP_INCLUDE_PREFIX)
-	unset (CRYPT_SEARCH CACHE)
-	check_include_file_cxx (cryptlib.h CRYPT_SEARCH)
+include(FindPackageHandleStandardArgs)
+find_package_handle_standard_args(CryptoPP
+    REQUIRED_VARS CryptoPP_INCLUDE_DIR CryptoPP_LIBRARY
+    FOUND_VAR CryptoPP_FOUND
+    VERSION_VAR CRYPTOPP_VERSION)
+set_target_properties(CRYPTOPP::CRYPTOPP PROPERTIES
+    IMPORTED_LOCATION "${CryptoPP_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${CryptoPP_INCLUDE_DIR}")
 
-	if (CRYPT_SEARCH)
-		set (CRYPTOPP_INCLUDE_PREFIX "" CACHE STRING "cryptopp include prefix" FORCE)
-	else()
-		foreach (PREFIX ${CRYPTOPP_SEARCH_PREFIXES})
-			unset (CRYPT_SEARCH CACHE)
-			check_include_file_cxx (${PREFIX}/cryptlib.h CRYPT_SEARCH)
+mark_as_advanced(CryptoPP_INCLUDE_DIR CryptoPP_LIBRARY)
+set(CRYPTOPP_INCLUDE_PREFIX ${CryptoPP_INCLUDE_DIR})
+set(CRYTOPP_LIB_SEARCH_PATH ${CryptoPP_LIBRARY})
 
-			if (CRYPT_SEARCH)
-				message (STATUS "cryptopp prefix found: ${PREFIX}")
-				set (CRYPTOPP_INCLUDE_PREFIX ${PREFIX} CACHE STRING "cryptopp include prefix" FORCE)
-				break()
-			endif()
-		endforeach()
-	endif()
-endif()
-
-if (NOT CRYPTOPP_INCLUDE_PREFIX)
-	MESSAGE (FATAL_ERROR "cryptlib.h not found")
-endif()
-
-if (NOT CRYPTOPP_LIBRARY)
-unset (CRYPTOPP_LIBRARY CACHE)
-
-find_library (CRYPTOPP_LIBRARY
-	NAMES crypto++ cryptlib cryptopp
-	PATHS ${CRYPTOPP_LIB_SEARCH_PATH}
-)
-
-if (CRYPTOPP_LIBRARY)
-	message (STATUS "Found libcrypto++ in ${CRYPTOPP_LIBRARY}")
-endif()
-endif()
-
-if (CRYPTOPP_LIBRARY)
-set_property (TARGET CRYPTOPP::CRYPTOPP
-	PROPERTY IMPORTED_LOCATION ${CRYPTOPP_LIBRARY}
-)
-else()
-set (CRYPTO_COMPLETE FALSE)
-endif()
-
-if (NOT CRYPTOPP_CONFIG_SEARCH)
-	unset (CRYPTOPP_CONFIG_SEARCH CACHE)
-
-	check_include_file_cxx (${CRYPTOPP_INCLUDE_PREFIX}/config.h
-		CRYPTOPP_CONFIG_SEARCH
-	)
-endif()
-
-if (NOT CRYPTOPP_CONFIG_FILE)
-	if (CRYPTOPP_CONFIG_SEARCH)
-		if (CRYPTOPP_INCLUDE_DIR)
-			set (CRYPTOPP_CONFIG_FILE ${CRYPTOPP_INCLUDE_DIR}/${CRYPTOPP_INCLUDE_PREFIX}/config.h
-				CACHE FILEPATH "cryptopp config.h" FORCE
-			)
-
-			set_target_properties (CRYPTOPP::CRYPTOPP PROPERTIES
-				INTERFACE_INCLUDE_DIRECTORIES "${CRYPTOPP_INCLUDE_DIR}"
-			)
-		else()
-			set (CRYPTOPP_CONFIG_FILE ${CRYPTOPP_INCLUDE_PREFIX}/config.h
-				CACHE FILEPATH "cryptopp config.h" FORCE
-			)
-		endif()
-	else()
-		unset(CRYPTOPP_CONFIG_SEARCH)
-	endif()
-
-	unset (CMAKE_REQUIRED_INCLUDES)
-endif()
-
-#if (NOT CRYPTOPP_CONFIG_FILE)
-#		MESSAGE (FATAL_ERROR "crypto++ config.h not found")
-#endif()
-
-if (NOT CRYPTOPP_VERSION)# AND CRYPTO_COMPLETE)
+if (NOT CRYPTOPP_VERSION)
 	set (CMAKE_CONFIGURABLE_FILE_CONTENT
-		"#include <${CRYPTOPP_CONFIG_FILE}>\n
+		"#include <${CryptoPP_INCLUDE_DIR}/cryptopp/config.h>\n
 		#include <stdio.h>\n
 		int main(){\n
 			printf (\"%d\", CRYPTOPP_VERSION);\n
