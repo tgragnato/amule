@@ -83,10 +83,6 @@
 #include "kademlia/kademlia/UDPFirewallTester.h"
 #include "kademlia/routing/RoutingZone.h"
 
-
-//#define __PACKET_DEBUG__
-
-
 // some client testing variables
 static wxString crash_name = wxT("[Invalid User Name]");
 static wxString empty_name = wxT("[Empty User Name]");
@@ -508,26 +504,17 @@ bool CUpDownClient::ProcessHelloTypePacket(const CMemFile& data)
 				SetKadPort((temptag.GetInt() >> 16) & 0xFFFF);
 				m_nUDPPort = temptag.GetInt() & 0xFFFF;
 				dwEmuleTags |= 1;
-				#ifdef __PACKET_DEBUG__
-				AddLogLineNS(CFormat(wxT("Hello type packet processing with eMule ports UDP=%i KAD=%i")) % m_nUDPPort % m_nKadPort);
-				#endif
 				break;
 
 			case CT_EMULE_BUDDYIP:
 				// 32 BUDDY IP
 				m_nBuddyIP = temptag.GetInt();
-				#ifdef __PACKET_DEBUG__
-				AddLogLineNS(CFormat(wxT("Hello type packet processing with eMule BuddyIP=%u (%s)")) % m_nBuddyIP % Uint32toStringIP(m_nBuddyIP));
-				#endif
 				break;
 
 			case CT_EMULE_BUDDYUDP:
 				// 16 --Reserved for future use--
 				// 16 BUDDY Port
 				m_nBuddyPort = (uint16)temptag.GetInt();
-				#ifdef __PACKET_DEBUG__
-				AddLogLineNS(CFormat(wxT("Hello type packet processing with eMule BuddyPort=%u")) % m_nBuddyPort);
-				#endif
 				break;
 
 			case CT_EMULE_MISCOPTIONS1: {
@@ -556,19 +543,6 @@ bool CUpDownClient::ProcessHelloTypePacket(const CMemFile& data)
 				m_bMultiPacket			= (flags >> 1*1) & 0x01;
 				m_fSupportsPreview		= (flags >> 1*0) & 0x01;
 				dwEmuleTags |= 2;
-				#ifdef __PACKET_DEBUG__
-				AddLogLineNS(wxT("Hello type packet processing with eMule Misc Options:"));
-				AddLogLineNS(CFormat(wxT("m_byUDPVer = %i")) % m_byUDPVer);
-				AddLogLineNS(CFormat(wxT("m_byDataCompVer = %i")) % m_byDataCompVer);
-				AddLogLineNS(CFormat(wxT("m_bySupportSecIdent = %i")) % m_bySupportSecIdent);
-				AddLogLineNS(CFormat(wxT("m_bySourceExchangeVer = %i")) % m_bySourceExchange1Ver);
-				AddLogLineNS(CFormat(wxT("m_byExtendedRequestsVer = %i")) % m_byExtendedRequestsVer);
-				AddLogLineNS(CFormat(wxT("m_byAcceptCommentVer = %i")) % m_byAcceptCommentVer);
-				AddLogLineNS(CFormat(wxT("m_fNoViewSharedFiles = %i")) % m_fNoViewSharedFiles);
-				AddLogLineNS(CFormat(wxT("m_bMultiPacket = %i")) % m_bMultiPacket);
-				AddLogLineNS(CFormat(wxT("m_fSupportsPreview = %i")) % m_fSharedDirectories);
-				AddLogLineNS(wxT("That's all."));
-				#endif
 				SecIdentSupRec +=  1;
 				break;
 			}
@@ -599,20 +573,6 @@ bool CUpDownClient::ProcessHelloTypePacket(const CMemFile& data)
 
 				m_fRequestsCryptLayer &= m_fSupportsCryptLayer;
 				m_fRequiresCryptLayer &= m_fRequestsCryptLayer;
-
-				#ifdef __PACKET_DEBUG__
-				AddLogLineNS(wxT("Hello type packet processing with eMule Misc Options 2:"));
-				AddLogLineNS(CFormat(wxT("	m_fDirectUDPCallback	= %i")) % m_fDirectUDPCallback);
-				AddLogLineNS(CFormat(wxT("	m_fSupportsCaptcha		= %i")) % m_fSupportsCaptcha);
-				AddLogLineNS(CFormat(wxT("	m_fSupportsSourceEx2	= %i")) % m_fSupportsSourceEx2);
-				AddLogLineNS(CFormat(wxT("	m_fRequiresCryptLayer	= %i")) % m_fRequiresCryptLayer);
-				AddLogLineNS(CFormat(wxT("	m_fRequestsCryptLayer	= %i")) % m_fRequestsCryptLayer);
-				AddLogLineNS(CFormat(wxT("	m_fSupportsCryptLayer	= %i")) % m_fSupportsCryptLayer);
-				AddLogLineNS(CFormat(wxT("	m_fExtMultiPacket	= %i")) % m_fExtMultiPacket);
-				AddLogLineNS(CFormat(wxT("	m_fSupportsLargeFiles	= %i")) % m_fSupportsLargeFiles);
-				AddLogLineNS(CFormat(wxT("	KadVersion		= %u")) % m_byKadVersion);
-				AddLogLineNS(wxT("That's all."));
-				#endif
 				break;
 
 			// Special tag for Compat. Clients Misc options.
