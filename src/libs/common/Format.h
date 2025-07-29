@@ -143,9 +143,19 @@ public:
 
 	template<typename _Tp> CFormat operator+(const _Tp& value) const;
 	template<typename _Tp> CFormat operator+(_Tp* value)	{ return (*this) + wxString(value); }
-	CFormat operator+(const wxString& value) { return (*this) + wxString(value); }
+	CFormat operator+(const wxString& value) {
+		if (!value || value.empty()) {
+			return *this;
+		}
+		return (*this) % value;
+	}
 	CFormat operator+(const CFormat& value) { return (*this) + wxString(value); }
-	CFormat operator+(const std::string& value) { return (*this) + wxString(value.c_str(), wxConvUTF8); }
+	CFormat operator+(const std::string& value) { 
+		if (value.empty()) {
+			return (*this);
+		}
+		return (*this) % wxString(value.c_str(), wxConvUTF8);
+	}
 
 	/**
 	 * Returns the resulting string.
