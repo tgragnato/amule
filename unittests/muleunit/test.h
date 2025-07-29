@@ -213,9 +213,11 @@ public:
 	template <typename A, typename B>
 	static void DoAssertEquals(const wxString& file, unsigned line, const A& a, const B& b)
 	{
-		if (!(a == b)) {
-			wxString message = wxT("Expected '") + StringFrom(a) +
-								wxT("' but got '") + StringFrom(b) + wxT("'");
+		wxString aStr = StringFrom(a);
+		wxString bStr = StringFrom(b);
+		if (!(aStr == bStr)) {
+			wxString message = wxT("Expected '") + aStr +
+								wxT("' but got '") + bStr + wxT("'");
 
 			throw CTestFailureException(message, file.c_str(), line);
 		}
