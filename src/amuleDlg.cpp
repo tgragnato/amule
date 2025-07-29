@@ -201,12 +201,9 @@ m_clientSkinNames(CLIENT_SKIN_SIZE)
 
 	m_serverwnd = new CServerWnd(p_cnt, m_srv_split_pos);
 	AddLogLineN(wxEmptyString);
-	AddLogLineN(wxT(" - ") +
-		CFormat(_("This is aMule %s based on eMule.")) % GetMuleVersion());
-	AddLogLineN(wxT("   ") +
-		CFormat(_("Running on %s")) % wxGetOsDescription());
-	AddLogLineN(wxT(" - ") +
-		wxString(_("Visit http://www.amule.org to check if a new version is available.")));
+	AddLogLineN(CFormat(wxT(" - ") + _("This is aMule %s based on eMule.")) % GetMuleVersion());
+	AddLogLineN(CFormat(wxT("   ") + _("Running on %s")) % wxGetOsDescription());
+	AddLogLineN(wxT(" - ") + wxString(_("Visit http://www.amule.org to check if a new version is available.")));
 	AddLogLineN(wxEmptyString);
 
 	m_GeoIPavailable = false;
