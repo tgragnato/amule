@@ -1,4 +1,4 @@
-find_package(Boost CONFIG REQUIRED)
+find_package(Boost REQUIRED)
 
 include (CheckIncludeFiles)
 
