@@ -110,7 +110,7 @@ void CEConnectDlg::OnOK(wxCommandEvent& evt)
 }
 
 
-DEFINE_LOCAL_EVENT_TYPE(wxEVT_EC_INIT_DONE)
+wxDEFINE_EVENT(wxEVT_EC_INIT_DONE, wxEvent);
 
 
 BEGIN_EVENT_TABLE(CamuleRemoteGuiApp, wxApp)
@@ -188,9 +188,9 @@ void CamuleRemoteGuiApp::OnPollTimer(wxTimerEvent&)
 
 	// Check for new links once per second.
 	static uint32 lastED2KLinkCheck = 0;
-	if (GetTickCount() - lastED2KLinkCheck >= 1000) {
+	if (GetTickCount64() - lastED2KLinkCheck >= 1000) {
 		AddLinksFromFile();
-		lastED2KLinkCheck = GetTickCount();
+		lastED2KLinkCheck = GetTickCount64();
 	}
 }
 
@@ -2060,7 +2060,7 @@ bool CSearchListRem::Phase1Done(const CECPacket *WXUNUSED(reply))
 }
 
 
-void CSearchListRem::RemoveResults(long nSearchID)
+void CSearchListRem::RemoveResults(wxUIntPtr nSearchID)
 {
 	ResultMap::iterator it = m_results.find(nSearchID);
 	if (it != m_results.end()) {
@@ -2073,7 +2073,7 @@ void CSearchListRem::RemoveResults(long nSearchID)
 }
 
 
-const CSearchResultList& CSearchListRem::GetSearchResults(long nSearchID)
+const CSearchResultList& CSearchListRem::GetSearchResults(wxUIntPtr nSearchID)
 {
 	ResultMap::const_iterator it = m_results.find(nSearchID);
 	if (it != m_results.end()) {
@@ -2222,8 +2222,8 @@ CamuleRemoteGuiApp *theApp;
 //
 // since gui is not linked with amule.cpp - define events here
 //
-DEFINE_LOCAL_EVENT_TYPE(wxEVT_CORE_FINISHED_HTTP_DOWNLOAD)
-DEFINE_LOCAL_EVENT_TYPE(wxEVT_CORE_SOURCE_DNS_DONE)
-DEFINE_LOCAL_EVENT_TYPE(wxEVT_CORE_UDP_DNS_DONE)
-DEFINE_LOCAL_EVENT_TYPE(wxEVT_CORE_SERVER_DNS_DONE)
+wxDEFINE_EVENT(wxEVT_CORE_FINISHED_HTTP_DOWNLOAD, wxEvent);
+wxDEFINE_EVENT(wxEVT_CORE_SOURCE_DNS_DONE, wxEvent);
+wxDEFINE_EVENT(wxEVT_CORE_UDP_DNS_DONE, wxEvent);
+wxDEFINE_EVENT(wxEVT_CORE_SERVER_DNS_DONE, wxEvent);
 // File_checked_for_headers
