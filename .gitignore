@@ -27,7 +27,10 @@ src/amulegui
 src/ed2k
 src/libs/ec/ECGeneratedFiles
 src/libs/ec/cpp/EC-timestamp
+src/libs/ec/cpp/ECCodes.h
+src/libs/ec/cpp/ECTagTypes.h
 src/libs/ec/cpp/ECVersion.h
+src/icons/icon_data.c
 src/libs/ec/cpp/mkFileSum
 src/utils/cas/cas
 src/utils/scripts/denoiser.sed
