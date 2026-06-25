@@ -1915,6 +1915,37 @@ void CFriendListRem::RequestSharedFileList(CClientRef& client)
 
 
 
+// Inserted missing remote-GUI implementations for linking fixes
+
+// Null out references in client entries that point to a CKnownFile that is
+// being destroyed so the GUI side doesn't keep dangling pointers.
+void CUpDownClientListRem::DropReferencesTo(const CKnownFile *file)
+{
+	for (iterator it = begin(); it != end(); ++it) {
+		CClientRef *cref = *it;
+		if (cref && cref->GetUploadFile() == file) {
+			cref->ClearUploadFileID();
+		}
+	}
+}
+
+// Convenience overload: add multiple links by delegating to the single-link helper.
+void CDownQueueRem::AddLinks(const wxArrayString& links, uint8 category)
+{
+	for (size_t i = 0; i < links.GetCount(); ++i) {
+		AddLink(links[i], category);
+	}
+}
+
+#if wxUSE_ON_FATAL_EXCEPTION
+// Mirror the daemon/GUIs generic unhandled-exception handler so the remote GUI
+// produces the same symbolicated trace on fatal signals.
+void CamuleRemoteGuiApp::OnFatalException()
+{
+	::OnUnhandledException();
+}
+#endif
+
 /*
  * Search results
  */
