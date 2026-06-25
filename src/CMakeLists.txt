@@ -245,14 +245,12 @@ if (BUILD_MONOLITHIC)
 		RUNTIME DESTINATION bin
 	)
 
-	install (FILES aMule.xpm
+	# Legacy /usr/share/pixmaps/ fallback for desktops that don't
+	# implement the hicolor icon theme. The matching hicolor install
+	# happens in the top-level CMakeLists.txt; both paths reference
+	# the same source PNG. Filename matches the .desktop's Icon= field.
+	install (FILES ${CMAKE_SOURCE_DIR}/org.amule.aMule.png
 		DESTINATION "${CMAKE_INSTALL_DATADIR}/pixmaps"
-		RENAME amule.xpm
-	)
-
-	install (FILES aMule.xpm
-		DESTINATION "${CMAKE_INSTALL_DATADIR}/pixmaps"
-		RENAME amulegui.xpm
 	)
 endif (BUILD_MONOLITHIC)
 
