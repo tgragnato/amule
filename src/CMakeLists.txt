@@ -19,8 +19,12 @@ if (Python3_FOUND)
 		COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/icons/embed_icons.py
 			${CMAKE_CURRENT_SOURCE_DIR}/icons
 			${CMAKE_CURRENT_BINARY_DIR}/icons/icon_data.c
+		COMMAND ${CMAKE_COMMAND} -E copy
+			${CMAKE_CURRENT_SOURCE_DIR}/icons/icon_data.h
+			${CMAKE_CURRENT_BINARY_DIR}/icons/icon_data.h
 		DEPENDS
 			${CMAKE_CURRENT_SOURCE_DIR}/icons/embed_icons.py
+			${CMAKE_CURRENT_SOURCE_DIR}/icons/icon_data.h
 			${AMULE_ICON_PNGS}
 		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/icons
 		COMMENT "Embedding ${CMAKE_CURRENT_SOURCE_DIR}/icons -> icon_data.c"
