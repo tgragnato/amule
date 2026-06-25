@@ -1,7 +1,7 @@
 aMule
 =====
 
-![aMule](amule.png)
+![aMule](org.amule.aMule.png)
 
 aMule is an eMule-like client for the eDonkey and Kademlia networks.
 

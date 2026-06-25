@@ -96,13 +96,13 @@ configure_file (
 )
 
 if (BUILD_MONOLITHIC)
-	install (FILES amule.desktop
+	install (FILES org.amule.aMule.desktop
 		DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
 	)
 endif()
 
 if (BUILD_REMOTEGUI)
-	install (FILES amulegui.desktop
+	install (FILES org.amule.aMule.gui.desktop
 		DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
 	)
 endif()
