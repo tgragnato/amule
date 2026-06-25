@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )//
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -49,80 +49,13 @@
 #include "DownloadQueue.h"	// Needed for CDownloadQueue
 #include "Server.h"		// Needed for CServer
 #include "ServerList.h"		// Needed for CServerList
+#include "ServerConnect.h"	// Needed for CServerConnect::IsServerIP (#778)
 #include "IPFilter.h"		// Needed for CIPFilter
 #include "ListenSocket.h"	// Needed for CListenSocket
 #include "GuiEvents.h"		// Needed for Notify_*
 
 
 //#define __PACKET_RECV_DUMP__
-
-#ifndef ASIO_SOCKETS
-
-//------------------------------------------------------------------------------
-// CClientTCPSocketHandler
-//------------------------------------------------------------------------------
-
-class CClientTCPSocketHandler: public wxEvtHandler
-{
-public:
-	CClientTCPSocketHandler() {};
-
-private:
-	void ClientTCPSocketHandler(wxSocketEvent& event);
-	DECLARE_EVENT_TABLE()
-};
-
-BEGIN_EVENT_TABLE(CClientTCPSocketHandler, wxEvtHandler)
-	EVT_SOCKET(ID_CLIENTTCPSOCKET_EVENT, CClientTCPSocketHandler::ClientTCPSocketHandler)
-END_EVENT_TABLE()
-
-void CClientTCPSocketHandler::ClientTCPSocketHandler(wxSocketEvent& event)
-{
-	wxSocketBase* baseSocket = event.GetSocket();
-//	wxASSERT(baseSocket);	// Rather want a log message right now. Enough other wx problems. >:(
-	if (!baseSocket) {		// WTF?
-		AddDebugLogLineN(logClient, wxT("received bad wxSocketEvent"));
-		return;
-	}
-
-	CClientTCPSocket *socket = dynamic_cast<CClientTCPSocket *>(baseSocket);
-	wxASSERT(socket);
-	if (!socket) {
-		return;
-	}
-
-	if (socket->IsDestroying()) {
-		return;
-	}
-
-	switch(event.GetSocketEvent()) {
-		case wxSOCKET_LOST:
-			socket->OnError(0xFEFF /* SOCKET_LOST is not an error */);
-			break;
-		case wxSOCKET_INPUT:
-			socket->OnReceive(0);
-			break;
-		case wxSOCKET_OUTPUT:
-			socket->OnSend(0);
-			break;
-		case wxSOCKET_CONNECTION:
-			// connection stablished, nothing to do about it?
-			socket->OnConnect(socket->LastError());
-			break;
-		default:
-			// Nothing should arrive here...
-			wxFAIL;
-			break;
-	}
-}
-
-//
-// There can be only one. :)
-//
-static CClientTCPSocketHandler g_clientReqSocketHandler;
-
-#endif /* !ASIO_SOCKETS */
-
 
 //------------------------------------------------------------------------------
 // CClientTCPSocket
@@ -140,14 +73,6 @@ CClientTCPSocket::CClientTCPSocket(CUpDownClient* in_client, const CProxyData *P
 
 	ResetTimeOutTimer();
 
-#ifndef ASIO_SOCKETS
-	SetEventHandler(g_clientReqSocketHandler, ID_CLIENTTCPSOCKET_EVENT);
-	SetNotify(
-		wxSOCKET_CONNECTION_FLAG |
-		wxSOCKET_INPUT_FLAG |
-		wxSOCKET_OUTPUT_FLAG |
-		wxSOCKET_LOST_FLAG);
-#endif
 	Notify(true);
 
 	theApp->listensocket->AddSocket(this);
@@ -156,12 +81,6 @@ CClientTCPSocket::CClientTCPSocket(CUpDownClient* in_client, const CProxyData *P
 
 CClientTCPSocket::~CClientTCPSocket()
 {
-#ifndef ASIO_SOCKETS
-	// remove event handler
-	SetNotify(0);
-	Notify(false);
-#endif
-
 	if (m_client) {
 		m_client->SetSocket( NULL );
 	}
@@ -181,27 +100,45 @@ bool CClientTCPSocket::InitNetworkData()
 	MULE_CHECK(m_remoteip, false);
 
 	if (theApp->ipfilter->IsFiltered(m_remoteip)) {
-		AddDebugLogLineN(logClient, wxT("Denied connection from ") + GetPeer() + wxT("(Filtered IP)"));
+		AddDebugLogLineN(logClient, "Denied connection from " + GetPeer() + "(Filtered IP)");
 		return false;
 	} else if (theApp->clientlist->IsBannedClient(m_remoteip)) {
-		AddDebugLogLineN(logClient, wxT("Denied connection from ") + GetPeer() + wxT("(Banned IP)"));
+		AddDebugLogLineN(logClient, "Denied connection from " + GetPeer() + "(Banned IP)");
 		return false;
 	} else {
-		AddDebugLogLineN(logClient, wxT("Accepted connection from ") + GetPeer());
+		AddDebugLogLineN(logClient, "Accepted connection from " + GetPeer());
 		return true;
 	}
 }
 
+
+bool CClientTCPSocket::IsDownloadThrottled() const
+{
+	// Inbound peer connection whose source IP is the ed2k server we're
+	// currently connected (or trying to connect) to -- this is the
+	// server's HighID-callback probe, not real peer download traffic.
+	// Skip the global download throttler so a saturated peer-side
+	// budget doesn't delay the probe's read path past the server's
+	// verification timer (#778). Same shape as CServerSocket's
+	// permanent bypass (#393 / 356a59c96), just gated on IP-match
+	// instead of being unconditional.
+	if (m_remoteip != 0 && theApp->serverconnect
+		&& theApp->serverconnect->IsServerIP(m_remoteip)) {
+		return false;
+	}
+	return true;
+}
+
 void CClientTCPSocket::ResetTimeOutTimer()
 {
-	timeout_timer = ::GetTickCount();
+	timeout_timer = ::GetTickCount64();
 }
 
 
 bool CClientTCPSocket::CheckTimeOut()
 {
 	// 0.42x
-	uint32 uTimeout = GetTimeOut();
+	uint64 uTimeout = GetTimeOut();
 	if (m_client) {
 
 		if (m_client->GetKadState() == KS_CONNECTED_BUDDY) {
@@ -223,9 +160,10 @@ bool CClientTCPSocket::CheckTimeOut()
 		}
 	}
 
-	if (::GetTickCount() - timeout_timer > uTimeout){
-		timeout_timer = ::GetTickCount();
-		Disconnect(wxT("Timeout"));
+	uint64 now = ::GetTickCount64();
+	if (now - timeout_timer > uTimeout){
+		timeout_timer = now;
+		Disconnect("Timeout");
 		return true;
 	}
 
@@ -248,9 +186,9 @@ void CClientTCPSocket::OnClose(int nErrorCode)
 	wxASSERT(theApp->listensocket->IsValidSocket(this));
 	CEMSocket::OnClose(nErrorCode);
 	if (nErrorCode) {
-		Disconnect(CFormat(wxT("Closed: %u")) % nErrorCode);
+		Disconnect(CFormat("Closed: %u") % nErrorCode);
 	} else {
-		Disconnect(wxT("Close"));
+		Disconnect("Close");
 	}
 }
 
@@ -305,14 +243,14 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 	DumpMem(buffer, size);
 	#endif
 	if (!m_client && opcode != OP_HELLO) {
-		throw wxString(wxT("Asks for something without saying hello"));
+		throw wxString("Asks for something without saying hello");
 	} else if (m_client && opcode != OP_HELLO && opcode != OP_HELLOANSWER) {
 		m_client->CheckHandshakeFinished();
 	}
 
 	switch(opcode) {
 		case OP_HELLOANSWER: {	// 0.43b
-			AddDebugLogLineN(logRemoteClient, wxT("Remote Client: OP_HELLOANSWER from ") + m_client->GetFullIP());
+			AddDebugLogLineN(logRemoteClient, "Remote Client: OP_HELLOANSWER from " + m_client->GetFullIP());
 			theStats::AddDownOverheadOther(size);
 			m_client->ProcessHelloAnswer(buffer, size);
 
@@ -345,7 +283,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 			}
 
 			// Do not move up!
-			AddDebugLogLineN(logRemoteClient, wxT("Remote Client: OP_HELLO from ") + m_client->GetFullIP() );
+			AddDebugLogLineN(logRemoteClient, "Remote Client: OP_HELLO from " + m_client->GetFullIP() );
 
 			bool bIsMuleHello = false;
 
@@ -361,14 +299,14 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 			}
 
 			if (thePrefs::ParanoidFilter() && !IsLowID(m_client->GetUserIDHybrid()) && (GetRemoteIP() != wxUINT32_SWAP_ALWAYS(m_client->GetUserIDHybrid()))) {
-				wxString reason = wxT("Client claims a different IP from the one we received the hello packet from: ");
-				reason += Uint32toStringIP(wxUINT32_SWAP_ALWAYS(m_client->GetUserIDHybrid())) + wxT(" / ") + Uint32toStringIP(GetRemoteIP());
+				wxString reason = "Client claims a different IP from the one we received the hello packet from: ";
+				reason += Uint32toStringIP(wxUINT32_SWAP_ALWAYS(m_client->GetUserIDHybrid())) + " / " + Uint32toStringIP(GetRemoteIP());
 				AddDebugLogLineN(logClient, reason);
 				if (bNewClient) {
 					m_client->Safe_Delete();
 					m_client = NULL;
 				}
-				Disconnect(wxT("Paranoid disconnecting: ") + reason);
+				Disconnect("Paranoid disconnecting: " + reason);
 				return false;
 			}
 
@@ -378,7 +316,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 					m_client->Safe_Delete();
 					m_client = NULL;
 				}
-				Disconnect(wxT("IPFilter"));
+				Disconnect("IPFilter");
 				return false;
 			}
 
@@ -426,7 +364,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 			break;
 		}
 		case OP_REQUESTFILENAME: {	// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_REQUESTFILENAME from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_REQUESTFILENAME from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadFileRequest(size);
 			// IP banned, no answer for this request
@@ -472,7 +410,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 
 				CPacket* packet = new CPacket(data_out, OP_EDONKEYPROT, OP_REQFILENAMEANSWER);
 				theStats::AddUpOverheadFileRequest(packet->GetPacketSize());
-				AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_REQFILENAMEANSWER to ") + m_client->GetFullIP() );
+				AddDebugLogLineN( logLocalClient, "Local Client: OP_REQFILENAMEANSWER to " + m_client->GetFullIP() );
 				SendPacket(packet,true);
 
 				// SendPacket might kill the socket, so check
@@ -481,11 +419,11 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 
 				break;
 			}
-			throw wxString(wxT("Invalid OP_REQUESTFILENAME packet size"));
+			throw wxString("Invalid OP_REQUESTFILENAME packet size");
 			break;
 		}
 		case OP_SETREQFILEID: {	// 0.43b EXCEPT track of bad clients
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_SETREQFILEID from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_SETREQFILEID from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadFileRequest(size);
 
@@ -507,7 +445,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 						CPacket* replypacket = new CPacket(OP_FILEREQANSNOFIL, 16, OP_EDONKEYPROT);
 						replypacket->Copy16ToDataBuffer(fileID.GetHash());
 						theStats::AddUpOverheadFileRequest(replypacket->GetPacketSize());
-						AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_FILERE to ") + m_client->GetFullIP() );
+						AddDebugLogLineN( logLocalClient, "Local Client: OP_FILERE to " + m_client->GetFullIP() );
 						SendPacket(replypacket, true);
 						break;
 					}
@@ -529,17 +467,17 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 				}
 				CPacket* packet = new CPacket(data, OP_EDONKEYPROT, OP_FILESTATUS);
 				theStats::AddUpOverheadFileRequest(packet->GetPacketSize());
-				AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_FILESTATUS to ") + m_client->GetFullIP() );
+				AddDebugLogLineN( logLocalClient, "Local Client: OP_FILESTATUS to " + m_client->GetFullIP() );
 				SendPacket(packet, true);
 				break;
 			}
-			throw wxString(wxT("Invalid OP_FILEREQUEST packet size"));
+			throw wxString("Invalid OP_FILEREQUEST packet size");
 			break;
 			// DbT:End
 		}
 
 		case OP_FILEREQANSNOFIL: {	// 0.43b protocol, lacks ZZ's download manager on swap
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_FILEREQANSNOFIL from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_FILEREQANSNOFIL from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadFileRequest(size);
 			if (size == 16) {
@@ -563,12 +501,12 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 				}
 				break;
 			}
-			throw wxString(wxT("Invalid OP_FILEREQUEST packet size"));
+			throw wxString("Invalid OP_FILEREQUEST packet size");
 			break;
 		}
 
 		case OP_REQFILENAMEANSWER: {	// 0.43b except check for bad clients
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_REQFILENAMEANSWER from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_REQFILENAMEANSWER from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadFileRequest(size);
 			CMemFile data(buffer, size);
@@ -579,7 +517,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_FILESTATUS: {		// 0.43b except check for bad clients
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_FILESTATUS from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_FILESTATUS from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadFileRequest(size);
 			CMemFile data(buffer, size);
@@ -590,7 +528,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_STARTUPLOADREQ: {
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_STARTUPLOADREQ from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_STARTUPLOADREQ from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadFileRequest(size);
 
@@ -622,7 +560,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_QUEUERANK: {	// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_QUEUERANK from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_QUEUERANK from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadFileRequest(size);
 			CMemFile data(buffer, size);
@@ -633,7 +571,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_ACCEPTUPLOADREQ: {	// 0.42e (xcept khaos stats)
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_ACCEPTUPLOADREQ from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_ACCEPTUPLOADREQ from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadFileRequest(size);
 			if (m_client->GetRequestFile() && !m_client->GetRequestFile()->IsStopped() && (m_client->GetRequestFile()->GetStatus()==PS_READY || m_client->GetRequestFile()->GetStatus()==PS_EMPTY)) {
@@ -646,7 +584,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 				if (!m_client->GetSentCancelTransfer()) {
 					CPacket* packet = new CPacket(OP_CANCELTRANSFER, 0, OP_EDONKEYPROT);
 					theStats::AddUpOverheadFileRequest(packet->GetPacketSize());
-					AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_CANCELTRANSFER to ") + m_client->GetFullIP() );
+					AddDebugLogLineN( logLocalClient, "Local Client: OP_CANCELTRANSFER to " + m_client->GetFullIP() );
 					m_client->SendPacket(packet,true,true);
 
 					// SendPacket can cause the socket to die, so check
@@ -661,7 +599,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_REQUESTPARTS: {		// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_REQUESTPARTS from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_REQUESTPARTS from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadFileRequest(size);
 
@@ -671,39 +609,39 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_CANCELTRANSFER: {		// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_CANCELTRANSFER from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_CANCELTRANSFER from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadFileRequest(size);
 			theApp->uploadqueue->RemoveFromUploadQueue(m_client);
-			AddDebugLogLineN( logClient, m_client->GetUserName() + wxT(": Upload session ended due canceled transfer."));
+			AddDebugLogLineN( logClient, m_client->GetUserName() + ": Upload session ended due canceled transfer.");
 			break;
 		}
 
 		case OP_END_OF_DOWNLOAD: { // 0.43b except check for bad clients
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_END_OF_DOWNLOAD from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_END_OF_DOWNLOAD from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadFileRequest(size);
 			if (size>=16 && m_client->GetUploadFileID() == CMD4Hash(buffer)) {
 				theApp->uploadqueue->RemoveFromUploadQueue(m_client);
-				AddDebugLogLineN( logClient, m_client->GetUserName() + wxT(": Upload session ended due ended transfer."));
+				AddDebugLogLineN( logClient, m_client->GetUserName() + ": Upload session ended due ended transfer.");
 			}
 			break;
 		}
 
 		case OP_HASHSETREQUEST: {		// 0.43b except check for bad clients
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_HASHSETREQUEST from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_HASHSETREQUEST from " + m_client->GetFullIP() );
 
 
 			theStats::AddDownOverheadFileRequest(size);
 			if (size != 16) {
-				throw wxString(wxT("Invalid OP_HASHSETREQUEST packet size"));
+				throw wxString("Invalid OP_HASHSETREQUEST packet size");
 			}
 			m_client->SendHashsetPacket(CMD4Hash(buffer));
 			break;
 		}
 
 		case OP_HASHSETANSWER: {		// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_HASHSETANSWER from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_HASHSETANSWER from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadFileRequest(size);
 			m_client->ProcessHashSet(buffer, size);
@@ -711,7 +649,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_SENDINGPART: {		// 0.47a
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_SENDINGPART from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_SENDINGPART from " + m_client->GetFullIP() );
 
 			if (	 m_client->GetRequestFile() &&
 				!m_client->GetRequestFile()->IsStopped() &&
@@ -726,7 +664,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 					if (!m_client->GetSentCancelTransfer()) {
 						CPacket* packet = new CPacket(OP_CANCELTRANSFER, 0, OP_EDONKEYPROT);
 						theStats::AddUpOverheadFileRequest(packet->GetPacketSize());
-						AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_CANCELTRANSFER to ") + m_client->GetFullIP() );
+						AddDebugLogLineN( logLocalClient, "Local Client: OP_CANCELTRANSFER to " + m_client->GetFullIP() );
 						m_client->SendPacket(packet,true,true);
 
 						// Socket might die because of SendPacket, so check
@@ -741,7 +679,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 				if (!m_client->GetSentCancelTransfer()) {
 					CPacket* packet = new CPacket(OP_CANCELTRANSFER, 0, OP_EDONKEYPROT);
 					theStats::AddUpOverheadFileRequest(packet->GetPacketSize());
-					AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_CANCELTRANSFER to ") + m_client->GetFullIP() );
+					AddDebugLogLineN( logLocalClient, "Local Client: OP_CANCELTRANSFER to " + m_client->GetFullIP() );
 					m_client->SendPacket(packet,true,true);
 
 					// Socket might die because of SendPacket, so check
@@ -753,7 +691,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_OUTOFPARTREQS: {	// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_OUTOFPARTREQS from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_OUTOFPARTREQS from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadFileRequest(size);
 			if (m_client->GetDownloadState() == DS_DOWNLOADING) {
@@ -763,7 +701,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_CHANGE_CLIENT_ID: {	// Kad reviewed
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_CHANGE_CLIENT_ID from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_CHANGE_CLIENT_ID from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadOther(size);
 			CMemFile data(buffer, size);
@@ -790,7 +728,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_CHANGE_SLOT:{	// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_CHANGE_SLOT from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_CHANGE_SLOT from " + m_client->GetFullIP() );
 
 			// sometimes sent by Hybrid
 			theStats::AddDownOverheadOther(size);
@@ -798,24 +736,24 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_MESSAGE: {		// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_MESSAGE from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_MESSAGE from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadOther(size);
 
 			if (size < 2) {
-				throw wxString(wxT("invalid message packet"));
+				throw wxString("invalid message packet");
 			}
 			CMemFile message_file(buffer, size);
 			uint16 length = message_file.ReadUInt16();
 			if (length + 2u != size) {
-				throw wxString(wxT("invalid message packet"));
+				throw wxString("invalid message packet");
 			}
 
 			// limit message length
 			static const uint16 MAX_CLIENT_MSG_LEN = 450;
 
 			if (length > MAX_CLIENT_MSG_LEN) {
-				AddDebugLogLineN(logRemoteClient, CFormat(wxT("Message from '%s' (IP:%s) exceeds limit by %u chars, truncated."))
+				AddDebugLogLineN(logRemoteClient, CFormat("Message from '%s' (IP:%s) exceeds limit by %u chars, truncated.")
 					% m_client->GetUserName() % m_client->GetFullIP() % (length - MAX_CLIENT_MSG_LEN));
 				length = MAX_CLIENT_MSG_LEN;
 			}
@@ -827,7 +765,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_ASKSHAREDFILES:	{	// 0.43b (well, er, it does the same, but in our own way)
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_ASKSHAREDFILES from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_ASKSHAREDFILES from " + m_client->GetFullIP() );
 
 			// client wants to know what we have in share, let's see if we allow him to know that
 			theStats::AddDownOverheadOther(size);
@@ -854,7 +792,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 
 				// create a packet and send it
 				CPacket* replypacket = new CPacket(tempfile, OP_EDONKEYPROT, OP_ASKSHAREDFILESANSWER);
-				AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_ASKSHAREDFILESANSWER to ") + m_client->GetFullIP() );
+				AddDebugLogLineN( logLocalClient, "Local Client: OP_ASKSHAREDFILESANSWER to " + m_client->GetFullIP() );
 				theStats::AddUpOverheadOther(replypacket->GetPacketSize());
 				SendPacket(replypacket, true, true);
 			} else {
@@ -864,7 +802,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 
 				CPacket* replypacket = new CPacket(OP_ASKSHAREDDENIEDANS, 0, OP_EDONKEYPROT);
 				theStats::AddUpOverheadOther(replypacket->GetPacketSize());
-				AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_ASKSHAREDDENIEDANS to ") + m_client->GetFullIP() );
+				AddDebugLogLineN( logLocalClient, "Local Client: OP_ASKSHAREDDENIEDANS to " + m_client->GetFullIP() );
 				SendPacket(replypacket, true, true);
 			}
 
@@ -872,7 +810,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_ASKSHAREDFILESANSWER: {	// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_ASKSHAREDFILESANSWER from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_ASKSHAREDFILESANSWER from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadOther(size);
 			wxString EmptyStr;
@@ -881,7 +819,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_ASKSHAREDDIRS: {		// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_ASKSHAREDDIRS from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_ASKSHAREDDIRS from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadOther(size);
 			wxASSERT( size == 0 );
@@ -902,7 +840,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 
 				CPacket* replypacket = new CPacket(OP_ASKSHAREDDENIEDANS, 0, OP_EDONKEYPROT);
 				theStats::AddUpOverheadOther(replypacket->GetPacketSize());
-				AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_ASKSHAREDDENIEDANS to ") + m_client->GetFullIP() );
+				AddDebugLogLineN( logLocalClient, "Local Client: OP_ASKSHAREDDENIEDANS to " + m_client->GetFullIP() );
 				SendPacket(replypacket, true, true);
 			}
 
@@ -910,7 +848,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_ASKSHAREDFILESDIR: {	// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_ASKSHAREDFILESDIR from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_ASKSHAREDFILESDIR from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadOther(size);
 			// IP banned, no answer for this request
@@ -922,7 +860,15 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 			wxString strReqDir = data.ReadString((m_client->GetUnicodeSupport() != utf8strNone));
 			if (thePrefs::CanSeeShares()==vsfaEverybody || (thePrefs::CanSeeShares()==vsfaFriends && m_client->IsFriend())) {
 				AddLogLineC(CFormat(_("User %s (%u) requested your sharedfiles-list for directory '%s' -> accepted")) % m_client->GetUserName() % m_client->GetUserIDHybrid() % strReqDir);
-				wxASSERT( data.GetPosition() == data.GetLength() );
+				if (data.GetPosition() != data.GetLength()) {
+					// eMule mods routinely append extra tag blocks at
+					// the end of OP packets specifically so older
+					// clients can ignore them. Log and continue (#708).
+					AddDebugLogLineN(logRemoteClient, CFormat(
+						"OP_ASKSHAREDFILESDIR: %u trailing byte(s) ignored from %s")
+						% (unsigned)(data.GetLength() - data.GetPosition())
+						% m_client->GetFullIP());
+				}
 				// send the list of shared files for the requested directory
 				m_client->SendSharedFilesOfDirectory(strReqDir);
 			} else {
@@ -930,14 +876,14 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 
 				CPacket* replypacket = new CPacket(OP_ASKSHAREDDENIEDANS, 0, OP_EDONKEYPROT);
 				theStats::AddUpOverheadOther(replypacket->GetPacketSize());
-				AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_ASKSHAREDDENIEDANS to ") + m_client->GetFullIP() );
+				AddDebugLogLineN( logLocalClient, "Local Client: OP_ASKSHAREDDENIEDANS to " + m_client->GetFullIP() );
 				SendPacket(replypacket, true, true);
 			}
 			break;
 		}
 
 		case OP_ASKSHAREDDIRSANS:{		// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_ASKSHAREDDIRSANS from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_ASKSHAREDDIRSANS from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadOther(size);
 			if (m_client->GetFileListRequested() == 1){
@@ -954,10 +900,18 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 					tempfile.WriteString(strDir, m_client->GetUnicodeSupport());
 					CPacket* replypacket = new CPacket(tempfile, OP_EDONKEYPROT, OP_ASKSHAREDFILESDIR);
 					theStats::AddUpOverheadOther(replypacket->GetPacketSize());
-					AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_ASKSHAREDFILESDIR to ") + m_client->GetFullIP() );
+					AddDebugLogLineN( logLocalClient, "Local Client: OP_ASKSHAREDFILESDIR to " + m_client->GetFullIP() );
 					SendPacket(replypacket, true, true);
 				}
-				wxASSERT( data.GetPosition() == data.GetLength() );
+				if (data.GetPosition() != data.GetLength()) {
+					// eMule mods routinely append extra tag blocks at
+					// the end of OP packets specifically so older
+					// clients can ignore them. Log and continue (#708).
+					AddDebugLogLineN(logRemoteClient, CFormat(
+						"OP_ASKSHAREDDIRSANS: %u trailing byte(s) ignored from %s")
+						% (unsigned)(data.GetLength() - data.GetPosition())
+						% m_client->GetFullIP());
+				}
 				m_client->SetFileListRequested(uDirs);
 			} else {
 				AddLogLineC(CFormat( _("User %s (%u) sent unrequested shared dirs.") )
@@ -968,7 +922,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_ASKSHAREDFILESDIRANS: {		// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_ASKSHAREDFILESDIRANS from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_ASKSHAREDFILESDIRANS from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadOther(size);
 			CMemFile data(buffer, size);
@@ -995,7 +949,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 		}
 
 		case OP_ASKSHAREDDENIEDANS:
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_ASKSHAREDDENIEDANS from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_ASKSHAREDDENIEDANS from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadOther(size);
 			wxASSERT( size == 0 );
@@ -1008,7 +962,7 @@ bool CClientTCPSocket::ProcessPacket(const uint8_t* buffer, uint32 size, uint8 o
 
 		default:
 			theStats::AddDownOverheadOther(size);
-			AddDebugLogLineN(logRemoteClient, CFormat(wxT("Edonkey packet: unknown opcode: %i %x from %s")) % opcode % opcode % m_client->GetFullIP());
+			AddDebugLogLineN(logRemoteClient, CFormat("Edonkey packet: unknown opcode: %i %x from %s") % opcode % opcode % m_client->GetFullIP());
 			return false;
 	}
 
@@ -1025,21 +979,21 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 
 	// 0.42e - except the catches on mem exception and file exception
 	if (!m_client) {
-		throw wxString(wxT("Unknown clients sends extended protocol packet"));
+		throw wxString("Unknown clients sends extended protocol packet");
 	}
 	/*
 	if (!client->CheckHandshakeFinished()) {
 		// Here comes an extended packet without finishing the handshake.
 		// IMHO, we should disconnect the client.
-		throw wxString(wxT("Client send extended packet before finishing handshake"));
+		throw wxString("Client send extended packet before finishing handshake");
 	}
 	*/
 	switch(opcode) {
 		case OP_MULTIPACKET_EXT:
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_MULTIPACKET_EXT from ") + m_client->GetFullIP());
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_MULTIPACKET_EXT from " + m_client->GetFullIP());
 		/* fall through */
 		case OP_MULTIPACKET: {
-			if (opcode == OP_MULTIPACKET) AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_MULTIPACKET from ") + m_client->GetFullIP() );
+			if (opcode == OP_MULTIPACKET) AddDebugLogLineN( logRemoteClient, "Remote Client: OP_MULTIPACKET from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadFileRequest(size);
 
@@ -1050,7 +1004,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			if (!m_client->CheckHandshakeFinished()) {
 				// Here comes an extended packet without finishing the handshake.
 				// IMHO, we should disconnect the client.
-				throw wxString(wxT("Client send OP_MULTIPACKET before finishing handshake"));
+				throw wxString("Client send OP_MULTIPACKET before finishing handshake");
 			}
 
 			CMemFile data_in(buffer, size);
@@ -1062,18 +1016,18 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			if ( reqfile == NULL ){
 				reqfile = theApp->downloadqueue->GetFileByID(reqfilehash);
 				if ( !( reqfile != NULL && reqfile->GetFileSize() > PARTSIZE ) ) {
-					AddDebugLogLineN(logRemoteClient, wxT("Remote client asked for a non-shared file"));
+					AddDebugLogLineN(logRemoteClient, "Remote client asked for a non-shared file");
 					file_not_found = true;
 				}
 			}
 
 			if (!file_not_found && reqfile->IsLargeFile() && !m_client->SupportsLargeFiles()) {
-				AddDebugLogLineN(logRemoteClient, wxT("Remote client asked for a large file but doesn't support them"));
+				AddDebugLogLineN(logRemoteClient, "Remote client asked for a large file but doesn't support them");
 				file_not_found = true;
 			}
 
 			if (!file_not_found && nSize && (reqfile->GetFileSize() != nSize)) {
-				AddDebugLogLineN(logRemoteClient, wxT("Remote client asked for a file but specified wrong size"));
+				AddDebugLogLineN(logRemoteClient, "Remote client asked for a file but specified wrong size");
 				file_not_found = true;
 			}
 
@@ -1081,7 +1035,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 				CPacket* replypacket = new CPacket(OP_FILEREQANSNOFIL, 16, OP_EDONKEYPROT);
 				replypacket->Copy16ToDataBuffer(reqfilehash.GetHash());
 				theStats::AddUpOverheadFileRequest(replypacket->GetPacketSize());
-				AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_FILEREQANSNOFIL to ") + m_client->GetFullIP() );
+				AddDebugLogLineN( logLocalClient, "Local Client: OP_FILEREQANSNOFIL to " + m_client->GetFullIP() );
 				SendPacket(replypacket, true);
 				break;
 			}
@@ -1105,12 +1059,12 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			data_out.WriteHash(reqfile->GetFileHash());
 			while(data_in.GetLength()-data_in.GetPosition()) {
 				if (!m_client) {
-					throw wxString(wxT("Client suddenly disconnected"));
+					throw wxString("Client suddenly disconnected");
 				}
 				uint8 opcode_in = data_in.ReadUInt8();
 				switch(opcode_in) {
 					case OP_REQUESTFILENAME: {
-						AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_MULTIPACKET has OP_REQUESTFILENAME") );
+						AddDebugLogLineN( logRemoteClient, "Remote Client: OP_MULTIPACKET has OP_REQUESTFILENAME" );
 						m_client->ProcessExtendedInfo(&data_in, reqfile);
 						data_out.WriteUInt8(OP_REQFILENAMEANSWER);
 
@@ -1120,7 +1074,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 						break;
 					}
 					case OP_AICHFILEHASHREQ: {
-						AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_MULTIPACKET has OP_AICHFILEHASHANS") );
+						AddDebugLogLineN( logRemoteClient, "Remote Client: OP_MULTIPACKET has OP_AICHFILEHASHANS" );
 						if (m_client->IsSupportingAICH() && reqfile->GetAICHHashset()->GetStatus() == AICH_HASHSETCOMPLETE
 							&& reqfile->GetAICHHashset()->HasValidMasterHash())
 						{
@@ -1130,7 +1084,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 						break;
 					}
 					case OP_SETREQFILEID: {
-						AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_MULTIPACKET has OP_SETREQFILEID") );
+						AddDebugLogLineN( logRemoteClient, "Remote Client: OP_MULTIPACKET has OP_SETREQFILEID" );
 						data_out.WriteUInt8(OP_FILESTATUS);
 						if (reqfile->IsPartFile()) {
 							static_cast<CPartFile*>(reqfile)->WritePartStatus(&data_out);
@@ -1143,7 +1097,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 					//We could send it within this packet.. If agreeded, I will fix it..
 					case OP_REQUESTSOURCES2:
 					case OP_REQUESTSOURCES: {
-						AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_MULTIPACKET has OP_REQUESTSOURCES(2)") );
+						AddDebugLogLineN( logRemoteClient, "Remote Client: OP_MULTIPACKET has OP_REQUESTSOURCES(2)" );
 						uint8 byRequestedVersion = 0;
 						uint16 byRequestedOptions = 0;
 						if (opcode_in == OP_REQUESTSOURCES2){ // SX2 requests contains additional data
@@ -1154,7 +1108,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 						//Although this shouldn't happen, it's a just in case to any Mods that mess with version numbers.
 
 						if (byRequestedVersion > 0 || m_client->GetSourceExchange1Version() > 1) {
-							uint32 dwTimePassed = ::GetTickCount() - m_client->GetLastSrcReqTime() + CONNECTION_LATENCY;
+							uint64 dwTimePassed = ::GetTickCount64() - m_client->GetLastSrcReqTime() + CONNECTION_LATENCY;
 							bool bNeverAskedBefore = m_client->GetLastSrcReqTime() == 0;
 							if(
 									//if not complete and file is rare
@@ -1170,7 +1124,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 								CPacket* tosend = reqfile->CreateSrcInfoPacket(m_client, byRequestedVersion, byRequestedOptions);
 								if(tosend) {
 									theStats::AddUpOverheadSourceExchange(tosend->GetPacketSize());
-									AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_ANSWERSOURCES to ") + m_client->GetFullIP() );
+									AddDebugLogLineN( logLocalClient, "Local Client: OP_ANSWERSOURCES to " + m_client->GetFullIP() );
 									SendPacket(tosend, true);
 								}
 							}
@@ -1183,14 +1137,14 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			if( data_out.GetLength() > 16 ) {
 				CPacket* reply = new CPacket(data_out, OP_EMULEPROT, OP_MULTIPACKETANSWER);
 				theStats::AddUpOverheadFileRequest(reply->GetPacketSize());
-				AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_MULTIPACKETANSWER to ") + m_client->GetFullIP() );
+				AddDebugLogLineN( logLocalClient, "Local Client: OP_MULTIPACKETANSWER to " + m_client->GetFullIP() );
 				SendPacket(reply, true);
 			}
 			break;
 		}
 
 		case OP_MULTIPACKETANSWER: {	// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_MULTIPACKETANSWER from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_MULTIPACKETANSWER from " + m_client->GetFullIP() );
 
 			theStats::AddDownOverheadFileRequest(size);
 
@@ -1205,7 +1159,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			if (!m_client->CheckHandshakeFinished()) {
 				// Here comes an extended packet without finishing the handshake.
 				// IMHO, we should disconnect the client.
-				throw wxString(wxT("Client send OP_MULTIPACKETANSWER before finishing handshake"));
+				throw wxString("Client send OP_MULTIPACKETANSWER before finishing handshake");
 			}
 
 			CMemFile data_in(buffer, size);
@@ -1213,25 +1167,25 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			const CPartFile *reqfile = theApp->downloadqueue->GetFileByID(reqfilehash);
 			//Make sure we are downloading this file.
 			if ( !reqfile ) {
-				throw wxString(wxT(" Wrong File ID: (OP_MULTIPACKETANSWER; reqfile==NULL)"));
+				throw wxString(" Wrong File ID: (OP_MULTIPACKETANSWER; reqfile==NULL)");
 			}
 			if ( !m_client->GetRequestFile() ) {
 
-				throw wxString(wxT(" Wrong File ID: OP_MULTIPACKETANSWER; client->reqfile==NULL)"));
+				throw wxString(" Wrong File ID: OP_MULTIPACKETANSWER; client->reqfile==NULL)");
 			}
 			if (reqfile != m_client->GetRequestFile()) {
-				throw wxString(wxT(" Wrong File ID: OP_MULTIPACKETANSWER; reqfile!=client->reqfile)"));
+				throw wxString(" Wrong File ID: OP_MULTIPACKETANSWER; reqfile!=client->reqfile)");
 			}
 			while (data_in.GetLength()-data_in.GetPosition()) {
 				// Some of the cases down there can actually send a packet and lose the client
 				if (!m_client) {
-					throw wxString(wxT("Client suddenly disconnected"));
+					throw wxString("Client suddenly disconnected");
 				}
 				uint8 opcode_in = data_in.ReadUInt8();
 				switch(opcode_in) {
 					case OP_REQFILENAMEANSWER: {
 						if (!m_client) {
-							throw wxString(wxT("Client suddenly disconnected"));
+							throw wxString("Client suddenly disconnected");
 						} else {
 							m_client->ProcessFileInfo(&data_in, reqfile);
 						}
@@ -1239,7 +1193,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 					}
 					case OP_FILESTATUS: {
 						if (!m_client) {
-							throw wxString(wxT("Client suddenly disconnected"));
+							throw wxString("Client suddenly disconnected");
 						} else {
 							m_client->ProcessFileStatus(false, &data_in, reqfile);
 						}
@@ -1247,7 +1201,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 					}
 					case OP_AICHFILEHASHANS: {
 						if (!m_client) {
-							throw wxString(wxT("Client suddenly disconnected"));
+							throw wxString("Client suddenly disconnected");
 						} else {
 							m_client->ProcessAICHFileHash(&data_in, reqfile);
 						}
@@ -1263,7 +1217,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			theStats::AddDownOverheadOther(size);
 
 			if (!m_client->ProcessMuleInfoPacket(buffer, size)) {
-				AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_EMULEINFO from ") + m_client->GetFullIP() );
+				AddDebugLogLineN( logRemoteClient, "Remote Client: OP_EMULEINFO from " + m_client->GetFullIP() );
 
 				// If it's not a OS Info packet, is an old client
 				// start secure identification, if
@@ -1273,12 +1227,12 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 				}
 				m_client->SendMuleInfoPacket(true);
 			} else {
-				AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_EMULEINFO is an OS_INFO") );
+				AddDebugLogLineN( logRemoteClient, "Remote Client: OP_EMULEINFO is an OS_INFO" );
 			}
 			break;
 		}
 		case OP_EMULEINFOANSWER: {	// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_EMULEINFOANSWER from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_EMULEINFOANSWER from " + m_client->GetFullIP() );
 			theStats::AddDownOverheadOther(size);
 
 			m_client->ProcessMuleInfoPacket(buffer, size);
@@ -1293,12 +1247,12 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 		}
 
 		case OP_SECIDENTSTATE:{		// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_SECIDENTSTATE from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_SECIDENTSTATE from " + m_client->GetFullIP() );
 
 			if (!m_client->CheckHandshakeFinished()) {
 				// Here comes an extended packet without finishing the handshake.
 				// IMHO, we should disconnect the client.
-				throw wxString(wxT("Client send OP_SECIDENTSTATE before finishing handshake"));
+				throw wxString("Client send OP_SECIDENTSTATE before finishing handshake");
 			}
 			m_client->ProcessSecIdentStatePacket(buffer, size);
 			// ProcessSecIdentStatePacket() might cause the socket to die, so check
@@ -1318,7 +1272,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 		}
 
 		case OP_PUBLICKEY: {		// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_PUBLICKEY from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_PUBLICKEY from " + m_client->GetFullIP() );
 
 			if (m_client->IsBanned() ){
 				break;
@@ -1327,37 +1281,37 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			if (!m_client->CheckHandshakeFinished()) {
 				// Here comes an extended packet without finishing the handshake.
 				// IMHO, we should disconnect the client.
-				throw wxString(wxT("Client send OP_PUBLICKEY before finishing handshake"));
+				throw wxString("Client send OP_PUBLICKEY before finishing handshake");
 			}
 
 			m_client->ProcessPublicKeyPacket(buffer, size);
 			break;
 		}
 		case OP_SIGNATURE:{			// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_SIGNATURE from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_SIGNATURE from " + m_client->GetFullIP() );
 
 			if (!m_client->CheckHandshakeFinished()) {
 				// Here comes an extended packet without finishing the handshake.
 				// IMHO, we should disconnect the client.
-				throw wxString(wxT("Client send OP_COMPRESSEDPART before finishing handshake"));
+				throw wxString("Client send OP_COMPRESSEDPART before finishing handshake");
 			}
 
 			m_client->ProcessSignaturePacket(buffer, size);
 			break;
 		}
 		case OP_SENDINGPART_I64:
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_SENDINGPART_I64 from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_SENDINGPART_I64 from " + m_client->GetFullIP() );
 		/* fall through */
 		case OP_COMPRESSEDPART_I64:
-			if (opcode == OP_COMPRESSEDPART_I64) AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_COMPRESSEDPART_I64 from ") + m_client->GetFullIP() );
+			if (opcode == OP_COMPRESSEDPART_I64) AddDebugLogLineN( logRemoteClient, "Remote Client: OP_COMPRESSEDPART_I64 from " + m_client->GetFullIP() );
 		/* fall through */
 		case OP_COMPRESSEDPART: {	// 0.47a
-			if (opcode == OP_COMPRESSEDPART) AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_COMPRESSEDPART from ") + m_client->GetFullIP() );
+			if (opcode == OP_COMPRESSEDPART) AddDebugLogLineN( logRemoteClient, "Remote Client: OP_COMPRESSEDPART from " + m_client->GetFullIP() );
 
 			if (!m_client->CheckHandshakeFinished()) {
 				// Here comes an extended packet without finishing the handshake.
 				// IMHO, we should disconnect the client.
-				throw wxString(wxT("Client send OP_COMPRESSEDPART before finishing handshake"));
+				throw wxString("Client send OP_COMPRESSEDPART before finishing handshake");
 			}
 
 			if (m_client->GetRequestFile() && !m_client->GetRequestFile()->IsStopped() && (m_client->GetRequestFile()->GetStatus()==PS_READY || m_client->GetRequestFile()->GetStatus()==PS_EMPTY)) {
@@ -1371,7 +1325,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 					if (!m_client->GetSentCancelTransfer()) {
 						CPacket* packet = new CPacket(OP_CANCELTRANSFER, 0, OP_EDONKEYPROT);
 						theStats::AddUpOverheadFileRequest(packet->GetPacketSize());
-						AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_CANCELTRANSFER to ") + m_client->GetFullIP() );
+						AddDebugLogLineN( logLocalClient, "Local Client: OP_CANCELTRANSFER to " + m_client->GetFullIP() );
 						m_client->SendPacket(packet,true,true);
 
 						if (m_client) {
@@ -1387,7 +1341,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 				if (!m_client->GetSentCancelTransfer()) {
 					CPacket* packet = new CPacket(OP_CANCELTRANSFER, 0, OP_EDONKEYPROT);
 					theStats::AddUpOverheadFileRequest(packet->GetPacketSize());
-					AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_CANCELTRANSFER to ") + m_client->GetFullIP() );
+					AddDebugLogLineN( logLocalClient, "Local Client: OP_CANCELTRANSFER to " + m_client->GetFullIP() );
 					m_client->SendPacket(packet,true,true);
 
 					if ( m_client ) {
@@ -1402,7 +1356,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			break;
 		}
 		case OP_REQUESTPARTS_I64: {
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_REQUESTPARTS_I64 from ") + m_client->GetFullIP()  );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_REQUESTPARTS_I64 from " + m_client->GetFullIP()  );
 
 			theStats::AddDownOverheadFileRequest(size);
 
@@ -1411,18 +1365,18 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			break;
 		}
 		case OP_QUEUERANKING: {		// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_QUEUERANKING from ") + m_client->GetFullIP()  );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_QUEUERANKING from " + m_client->GetFullIP()  );
 
 			theStats::AddDownOverheadOther(size);
 
 			if (!m_client->CheckHandshakeFinished()) {
 				// Here comes an extended packet without finishing the handshake.
 				// IMHO, we should disconnect the client.
-				throw wxString(wxT("Client send OP_QUEUERANKING before finishing handshake"));
+				throw wxString("Client send OP_QUEUERANKING before finishing handshake");
 			}
 
 			if (size != 12) {
-				throw wxString(wxT("Invalid size (OP_QUEUERANKING)"));
+				throw wxString("Invalid size (OP_QUEUERANKING)");
 			}
 
 			uint16 newrank = PeekUInt16(buffer);
@@ -1432,14 +1386,14 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 		}
 		case OP_REQUESTSOURCES2:
 		case OP_REQUESTSOURCES:{
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_REQUESTSOURCES from ") + m_client->GetFullIP()  );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_REQUESTSOURCES from " + m_client->GetFullIP()  );
 
 			theStats::AddDownOverheadSourceExchange(size);
 
 			if (!m_client->CheckHandshakeFinished()) {
 				// Here comes an extended packet without finishing the handshake.
 				// IMHO, we should disconnect the client.
-				throw wxString(wxT("Client send OP_REQUESTSOURCES before finishing handshake"));
+				throw wxString("Client send OP_REQUESTSOURCES before finishing handshake");
 			}
 
 			uint8 byRequestedVersion = 0;
@@ -1452,7 +1406,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 
 			if (byRequestedVersion > 0 || m_client->GetSourceExchange1Version() >= 1) {
 				if(size != 16) {
-					throw wxString(wxT("Invalid size (OP_QUEUERANKING)"));
+					throw wxString("Invalid size (OP_QUEUERANKING)");
 				}
 				//first check shared file list, then download list
 				const CMD4Hash fileID(buffer);
@@ -1469,7 +1423,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 					// part status which may get cleared with the call of 'SetUploadFileID'.
 					m_client->SetUploadFileID(file);
 
-					uint32 dwTimePassed = ::GetTickCount() - m_client->GetLastSrcReqTime() + CONNECTION_LATENCY;
+					uint64 dwTimePassed = ::GetTickCount64() - m_client->GetLastSrcReqTime() + CONNECTION_LATENCY;
 					bool bNeverAskedBefore = m_client->GetLastSrcReqTime() == 0;
 					if(
 					//if not complete and file is rare, allow once every 40 minutes
@@ -1485,7 +1439,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 						CPacket* tosend = file->CreateSrcInfoPacket(m_client, byRequestedVersion, byRequestedOptions);
 						if(tosend) {
 							theStats::AddUpOverheadSourceExchange(tosend->GetPacketSize());
-							AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_ANSWERSOURCES to ") + m_client->GetFullIP() );
+							AddDebugLogLineN( logLocalClient, "Local Client: OP_ANSWERSOURCES to " + m_client->GetFullIP() );
 							SendPacket(tosend, true, true);
 						}
 					}
@@ -1494,14 +1448,14 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			break;
 		}
 		case OP_ANSWERSOURCES: {
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_ANSWERSOURCES from ") + m_client->GetFullIP()  );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_ANSWERSOURCES from " + m_client->GetFullIP()  );
 
 			theStats::AddDownOverheadSourceExchange(size);
 
 			if (!m_client->CheckHandshakeFinished()) {
 				// Here comes an extended packet without finishing the handshake.
 				// IMHO, we should disconnect the client.
-				throw wxString(wxT("Client send OP_ANSWERSOURCES before finishing handshake"));
+				throw wxString("Client send OP_ANSWERSOURCES before finishing handshake");
 			}
 
 			CMemFile data(buffer, size);
@@ -1525,7 +1479,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			if (!m_client->CheckHandshakeFinished()) {
 				// Here comes an extended packet without finishing the handshake.
 				// IMHO, we should disconnect the client.
-				throw wxString(wxT("Client send OP_ANSWERSOURCES2 before finishing handshake"));
+				throw wxString("Client send OP_ANSWERSOURCES2 before finishing handshake");
 			}
 
 			CMemFile data(buffer, size);
@@ -1544,14 +1498,14 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			break;
 		}
 		case OP_FILEDESC: {		// 0.43b
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_FILEDESC from ") + m_client->GetFullIP()  );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_FILEDESC from " + m_client->GetFullIP()  );
 
 			theStats::AddDownOverheadFileRequest(size);
 
 			if (!m_client->CheckHandshakeFinished()) {
 				// Here comes an extended packet without finishing the handshake.
 				// IMHO, we should disconnect the client.
-				throw wxString(wxT("Client send OP_FILEDESC before finishing handshake"));
+				throw wxString("Client send OP_FILEDESC before finishing handshake");
 			}
 
 			m_client->ProcessMuleCommentPacket(buffer, size);
@@ -1560,46 +1514,46 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 
 		// Unsupported
 		case OP_REQUESTPREVIEW: {
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_REQUESTPREVIEW  from ") + m_client->GetFullIP()  );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_REQUESTPREVIEW  from " + m_client->GetFullIP()  );
 			break;
 		}
 		// Unsupported
 		case OP_PREVIEWANSWER: {
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_PREVIEWANSWER from ") + m_client->GetFullIP()  );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_PREVIEWANSWER from " + m_client->GetFullIP()  );
 			break;
 		}
 
 		case OP_PUBLICIP_ANSWER: {
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_PUBLICIP_ANSWER from ") + m_client->GetFullIP()  );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_PUBLICIP_ANSWER from " + m_client->GetFullIP()  );
 			theStats::AddDownOverheadOther(size);
 			m_client->ProcessPublicIPAnswer(buffer, size);
 			break;
 		}
 		case OP_PUBLICIP_REQ: {
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_PUBLICIP_REQ from ") + m_client->GetFullIP()  );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_PUBLICIP_REQ from " + m_client->GetFullIP()  );
 			theStats::AddDownOverheadOther(size);
 			CPacket* pPacket = new CPacket(OP_PUBLICIP_ANSWER, 4, OP_EMULEPROT);
 			pPacket->CopyUInt32ToDataBuffer(m_client->GetIP());
 			theStats::AddUpOverheadOther(pPacket->GetPacketSize());
-			AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_PUBLICIP_ANSWER to") + m_client->GetFullIP());
+			AddDebugLogLineN( logLocalClient, "Local Client: OP_PUBLICIP_ANSWER to" + m_client->GetFullIP());
 			SendPacket(pPacket);
 			break;
 		}
 		case OP_AICHANSWER: {
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_AICHANSWER from ") + m_client->GetFullIP()  );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_AICHANSWER from " + m_client->GetFullIP()  );
 			theStats::AddDownOverheadOther(size);
 			m_client->ProcessAICHAnswer(buffer, size);
 			break;
 		}
 		case OP_AICHREQUEST: {
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_AICHREQUEST from ") + m_client->GetFullIP()  );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_AICHREQUEST from " + m_client->GetFullIP()  );
 			theStats::AddDownOverheadOther(size);
 			m_client->ProcessAICHRequest(buffer, size);
 			break;
 		}
 		case OP_AICHFILEHASHANS: {
 			// those should not be received normally, since we should only get those in MULTIPACKET
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_AICHFILEHASHANS from ") + m_client->GetFullIP()  );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_AICHFILEHASHANS from " + m_client->GetFullIP()  );
 			theStats::AddDownOverheadOther(size);
 			CMemFile data(buffer, size);
 			m_client->ProcessAICHFileHash(&data, NULL);
@@ -1607,7 +1561,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 		}
 		case OP_AICHFILEHASHREQ: {
 			// those should not be received normally, since we should only get those in MULTIPACKET
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_AICHFILEHASHREQ from ") + m_client->GetFullIP()  );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_AICHFILEHASHREQ from " + m_client->GetFullIP()  );
 			CMemFile data(buffer, size);
 			CMD4Hash hash = data.ReadHash();
 			CKnownFile* pPartFile = theApp->sharedfiles->GetFileByID(hash);
@@ -1622,13 +1576,13 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 				pPartFile->GetAICHHashset()->GetMasterHash().Write(&data_out);
 				CPacket* packet = new CPacket(data_out, OP_EMULEPROT, OP_AICHFILEHASHANS);
 				theStats::AddUpOverheadOther(packet->GetPacketSize());
-					AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_AICHFILEHASHANS to") + m_client->GetFullIP());
+					AddDebugLogLineN( logLocalClient, "Local Client: OP_AICHFILEHASHANS to" + m_client->GetFullIP());
 				SendPacket(packet);
 			}
 			break;
 		}
 		case OP_CALLBACK: {
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_CALLBACK from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_CALLBACK from " + m_client->GetFullIP() );
 			theStats::AddDownOverheadFileRequest(size);
 			if(!Kademlia::CKademlia::IsRunning()) {
 				break;
@@ -1663,7 +1617,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 		}
 
 		case OP_BUDDYPING: {
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_BUDDYPING from ") + m_client->GetFullIP()  );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_BUDDYPING from " + m_client->GetFullIP()  );
 			theStats::AddDownOverheadKad(size);
 
 			CUpDownClient* buddy = theApp->clientlist->GetBuddy();
@@ -1675,12 +1629,12 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			m_client->SetLastBuddyPingPongTime();
 			CPacket* replypacket = new CPacket(OP_BUDDYPONG, 0, OP_EMULEPROT);
 			theStats::AddUpOverheadKad(replypacket->GetPacketSize());
-			AddDebugLogLineN(logLocalClient,wxT("Local Client: OP_BUDDYPONG to ") + m_client->GetFullIP());
+			AddDebugLogLineN(logLocalClient,"Local Client: OP_BUDDYPONG to " + m_client->GetFullIP());
 			SendPacket(replypacket);
 			break;
 		}
 		case OP_BUDDYPONG: {
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_BUDDYPONG from ") + m_client->GetFullIP()  );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_BUDDYPONG from " + m_client->GetFullIP()  );
 			theStats::AddDownOverheadKad(size);
 
 			CUpDownClient* buddy = theApp->clientlist->GetBuddy();
@@ -1696,11 +1650,11 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			theStats::AddDownOverheadFileRequest(size);
 			CUpDownClient* buddy = theApp->clientlist->GetBuddy();
 			if (buddy != m_client) {
-				AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_REASKCALLBACKTCP from ") + m_client->GetFullIP() + wxT(" which is not our buddy!") );
+				AddDebugLogLineN( logRemoteClient, "Remote Client: OP_REASKCALLBACKTCP from " + m_client->GetFullIP() + " which is not our buddy!" );
 				//This callback was not from our buddy.. Ignore.
 				break;
 			}
-			AddDebugLogLineN( logRemoteClient, wxT("Remote Client: OP_REASKCALLBACKTCP from ") + m_client->GetFullIP() );
+			AddDebugLogLineN( logRemoteClient, "Remote Client: OP_REASKCALLBACKTCP from " + m_client->GetFullIP() );
 			CMemFile data_in(buffer, size);
 			uint32 destip = data_in.ReadUInt32();
 			uint16 destport = data_in.ReadUInt16();
@@ -1710,7 +1664,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			bool bSenderMultipleIpUnknown = false;
 			CUpDownClient* sender = theApp->uploadqueue->GetWaitingClientByIP_UDP(destip, destport, true, &bSenderMultipleIpUnknown);
 			if (!reqfile) {
-				AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_FILENOTFOUND to ") + m_client->GetFullIP() );
+				AddDebugLogLineN( logLocalClient, "Local Client: OP_FILENOTFOUND to " + m_client->GetFullIP() );
 				CPacket* response = new CPacket(OP_FILENOTFOUND,0,OP_EMULEPROT);
 				theStats::AddUpOverheadFileRequest(response->GetPacketSize());
 				if (sender) {
@@ -1756,28 +1710,28 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 					data_out.WriteUInt16(sender->GetUploadQueueWaitingPosition());
 					CPacket* response = new CPacket(data_out, OP_EMULEPROT, OP_REASKACK);
 					theStats::AddUpOverheadFileRequest(response->GetPacketSize());
-					AddDebugLogLineN( logLocalClient, wxT("Local Client UDP: OP_REASKACK to ") + m_client->GetFullIP()  );
+					AddDebugLogLineN( logLocalClient, "Local Client UDP: OP_REASKACK to " + m_client->GetFullIP()  );
 					theApp->clientudp->SendPacket(response, destip, destport, sender->ShouldReceiveCryptUDPPackets(), sender->GetUserHash().GetHash(), false, 0);
 				} else {
-					AddDebugLogLineN(logListenSocket, wxT("Client UDP socket; OP_REASKCALLBACKTCP; reqfile does not match"));
+					AddDebugLogLineN(logListenSocket, "Client UDP socket; OP_REASKCALLBACKTCP; reqfile does not match");
 				}
 			} else {
 				if (!bSenderMultipleIpUnknown){
 					if ((theStats::GetWaitingUserCount() + 50) > thePrefs::GetQueueSize()) {
-						AddDebugLogLineN( logLocalClient, wxT("Local Client: OP_QUEUEFULL to ") + m_client->GetFullIP()  );
+						AddDebugLogLineN( logLocalClient, "Local Client: OP_QUEUEFULL to " + m_client->GetFullIP()  );
 						CPacket* response = new CPacket(OP_QUEUEFULL,0,OP_EMULEPROT);
 						theStats::AddUpOverheadFileRequest(response->GetPacketSize());
 						theApp->clientudp->SendPacket(response, destip, destport, false, NULL, false, 0);
 					}
 				} else {
-					AddDebugLogLineN(logRemoteClient, CFormat(wxT("OP_REASKCALLBACKTCP Packet received - multiple clients with the same IP but different UDP port found. Possible UDP Portmapping problem, enforcing TCP connection. IP: %s, Port: %u")) % Uint32toStringIP(destip) % destport);
+					AddDebugLogLineN(logRemoteClient, CFormat("OP_REASKCALLBACKTCP Packet received - multiple clients with the same IP but different UDP port found. Possible UDP Portmapping problem, enforcing TCP connection. IP: %s, Port: %u") % Uint32toStringIP(destip) % destport);
 				}
 			}
 			break;
 		}
 		case OP_CHATCAPTCHAREQ:
 		{
-			AddDebugLogLineN(logRemoteClient, wxT("Remote Client: OP_CHATCAPTCHAREQ from ") + m_client->GetFullIP());
+			AddDebugLogLineN(logRemoteClient, "Remote Client: OP_CHATCAPTCHAREQ from " + m_client->GetFullIP());
 			theStats::AddDownOverheadOther(size);
 			CMemFile data_in(buffer, size);
 			m_client->ProcessCaptchaRequest(&data_in);
@@ -1785,7 +1739,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 		}
 		case OP_CHATCAPTCHARES:
 		{
-			AddDebugLogLineN(logRemoteClient, wxT("Remote Client: OP_CHATCAPTCHARES from ") + m_client->GetFullIP());
+			AddDebugLogLineN(logRemoteClient, "Remote Client: OP_CHATCAPTCHARES from " + m_client->GetFullIP());
 			theStats::AddDownOverheadOther(size);
 			if (size) {
 				m_client->ProcessCaptchaReqRes(buffer[0]);
@@ -1793,26 +1747,26 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t* buffer, uint32 size, uint
 			break;
 		}
 		case OP_FWCHECKUDPREQ: { // Support required for Kadversion >= 6
-			AddDebugLogLineN(logRemoteClient, wxT("Remote Client: OP_FWCHECKUDPREQ from ") + m_client->GetFullIP());
+			AddDebugLogLineN(logRemoteClient, "Remote Client: OP_FWCHECKUDPREQ from " + m_client->GetFullIP());
 			theStats::AddDownOverheadOther(size);
 			CMemFile data_in(buffer, size);
 			m_client->ProcessFirewallCheckUDPRequest(&data_in);
 			break;
 		}
 		case OP_KAD_FWTCPCHECK_ACK: { // Support required for Kadversion >= 7
-			AddDebugLogLineN(logRemoteClient, wxT("Remote Client: OP_KAD_FWTCPCHECK_ACK from ") + m_client->GetFullIP());
+			AddDebugLogLineN(logRemoteClient, "Remote Client: OP_KAD_FWTCPCHECK_ACK from " + m_client->GetFullIP());
 			if (theApp->clientlist->IsKadFirewallCheckIP(m_client->GetIP())) {
 				if (Kademlia::CKademlia::IsRunning()) {
 					Kademlia::CKademlia::GetPrefs()->IncFirewalled();
 				}
 			} else {
-				AddDebugLogLineN(logListenSocket, wxT("Received unrequested OP_KAD_FWTCPCHECK_ACK packet from ") + m_client->GetFullIP());
+				AddDebugLogLineN(logListenSocket, "Received unrequested OP_KAD_FWTCPCHECK_ACK packet from " + m_client->GetFullIP());
 			}
 			break;
 		}
 		default:
 			theStats::AddDownOverheadOther(size);
-			AddDebugLogLineN(logRemoteClient, CFormat(wxT("eMule packet : unknown opcode: %i %x from %s")) % opcode % opcode % m_client->GetFullIP());
+			AddDebugLogLineN(logRemoteClient, CFormat("eMule packet : unknown opcode: %i %x from %s") % opcode % opcode % m_client->GetFullIP());
 			break;
 	}
 
@@ -1827,14 +1781,14 @@ bool CClientTCPSocket::ProcessED2Kv2Packet(const uint8_t* buffer, uint32 size, u
 	#endif
 
 	if (!m_client) {
-		throw wxString(wxT("Unknown clients sends extended ED2Kv2 protocol packet"));
+		throw wxString("Unknown clients sends extended ED2Kv2 protocol packet");
 	}
 
 	CMemFile data(buffer, size);
 	try {
 		switch(opcode) {
 			case OP_QUEUERANK: {
-				AddDebugLogLineN( logRemoteClient, wxT("Remote Client: ED2Kv2 OP_QUEUERANK from ") + m_client->GetFullIP() );
+				AddDebugLogLineN( logRemoteClient, "Remote Client: ED2Kv2 OP_QUEUERANK from " + m_client->GetFullIP() );
 
 				uint8 numtags = data.ReadUInt8();
 				wxASSERT(numtags == 1);
@@ -1847,7 +1801,7 @@ bool CClientTCPSocket::ProcessED2Kv2Packet(const uint8_t* buffer, uint32 size, u
 			}
 
 			case OP_REQUESTPARTS: {
-				AddDebugLogLineN( logRemoteClient, wxT("Remote Client: ED2Kv2 OP_REQUESTPARTS from ") + m_client->GetFullIP() );
+				AddDebugLogLineN( logRemoteClient, "Remote Client: ED2Kv2 OP_REQUESTPARTS from " + m_client->GetFullIP() );
 
 				m_client->ProcessRequestPartsPacketv2(data);
 
@@ -1857,10 +1811,10 @@ bool CClientTCPSocket::ProcessED2Kv2Packet(const uint8_t* buffer, uint32 size, u
 
 			default:
 				theStats::AddDownOverheadOther(size);
-				AddDebugLogLineN(logRemoteClient, CFormat(wxT("ED2Kv2 packet : unknown opcode: %i %x from %s")) % opcode % opcode % m_client->GetFullIP());
+				AddDebugLogLineN(logRemoteClient, CFormat("ED2Kv2 packet : unknown opcode: %i %x from %s") % opcode % opcode % m_client->GetFullIP());
 		}
 	} catch (...) {
-		AddDebugLogLineN(logRemoteClient, CFormat(wxT("ED2Kv2 packet is corrupt at pos %i! opcode: %i %x from %s")) % data.GetPosition() % opcode % opcode % m_client->GetFullIP());
+		AddDebugLogLineN(logRemoteClient, CFormat("ED2Kv2 packet is corrupt at pos %i! opcode: %i %x from %s") % data.GetPosition() % opcode % opcode % m_client->GetFullIP());
 		throw;
 	}
 
@@ -1873,10 +1827,10 @@ void CClientTCPSocket::OnConnect(int nErrorCode)
 		OnError(nErrorCode);
 	} else if (!m_client) {
 		// and now? Disconnect? not?
-		AddDebugLogLineN( logClient, wxT("Couldn't send hello packet (Client deleted!)") );
+		AddDebugLogLineN( logClient, "Couldn't send hello packet (Client deleted!)" );
 	} else if (!m_client->SendHelloPacket()) {
 		// and now? Disconnect? not?
-		AddDebugLogLineN( logClient, wxT("Couldn't send hello packet (Client deleted by SendHelloPacket!)") );
+		AddDebugLogLineN( logClient, "Couldn't send hello packet (Client deleted by SendHelloPacket!)" );
 	} else {
 		ResetTimeOutTimer();
 	}
@@ -1901,7 +1855,7 @@ void CClientTCPSocket::OnReceive(int nErrorCode)
 			m_client->Safe_Delete();
 		}
 		Safe_Delete();
-		AddDebugLogLineN( logIPFilter, wxT("A connected client was dropped by IPFilter on new packet received"));
+		AddDebugLogLineN( logIPFilter, "A connected client was dropped by IPFilter on new packet received");
 	} else {
 		CEMSocket::OnReceive(nErrorCode);
 	}
@@ -1917,20 +1871,20 @@ void CClientTCPSocket::OnError(int nErrorCode)
 	if ((nErrorCode == 0) || (nErrorCode == 7) || (nErrorCode == 0xFEFF)) {
 		if (m_client) {
 			if (!m_client->GetUserName().IsEmpty()) {
-				strError = wxT("Client '") + m_client->GetUserName() + wxT("'");
+				strError = "Client '" + m_client->GetUserName() + "'";
 			} else {
-				strError = wxT("An unnamed client");
+				strError = "An unnamed client";
 			}
-			strError += wxT(" (IP:") + m_client->GetFullIP() + wxT(") ");
+			strError += " (IP:" + m_client->GetFullIP() + ") ";
 		} else {
-			strError = wxT("A client ");
+			strError = "A client ";
 		}
 		if (nErrorCode == 0) {
-			strError += wxT("closed connection.");
+			strError += "closed connection.";
 		} else if (nErrorCode == 0xFEFF) {
-			strError += wxT(" caused a wxSOCKET_LOST event.");
+			strError += " caused a wxSOCKET_LOST event.";
 		}	else {
-			strError += wxT("caused a socket blocking error.");
+			strError += "caused a socket blocking error.";
 		}
 	} else {
 		if (theLogger.IsEnabled(logClient) && nErrorCode != 107) {
@@ -1938,18 +1892,18 @@ void CClientTCPSocket::OnError(int nErrorCode)
 			// 107  -> Transport endpoint is not connected
 			if (m_client) {
 				if (!m_client->GetUserName().IsEmpty()) {
-					strError = CFormat(wxT("OnError: Client '%s' (IP:%s) caused an error: %u. Disconnecting client!"))
+					strError = CFormat("OnError: Client '%s' (IP:%s) caused an error: %u. Disconnecting client!")
 						% m_client->GetUserName() % m_client->GetFullIP() % nErrorCode;
 				} else {
-					strError = CFormat(wxT("OnError: Unknown client (IP:%s) caused an error: %u. Disconnecting client!"))
+					strError = CFormat("OnError: Unknown client (IP:%s) caused an error: %u. Disconnecting client!")
 						% m_client->GetFullIP() % nErrorCode;
 				}
 			} else {
-				strError = CFormat(wxT("OnError: A client caused an error or did something bad (error %u). Disconnecting client !"))
+				strError = CFormat("OnError: A client caused an error or did something bad (error %u). Disconnecting client !")
 					% nErrorCode;
 			}
 		} else {
-			strError = wxT("Error 107 (Transport endpoint is not connected)");
+			strError = "Error 107 (Transport endpoint is not connected)";
 		}
 	}
 
@@ -1964,11 +1918,11 @@ bool CClientTCPSocket::PacketReceived(CPacket* packet)
 	uint32 uRawSize = packet->GetPacketSize();
 
 	AddDebugLogLineN( logRemoteClient,
-		CFormat(wxT("Packet with protocol %x, opcode %x, size %u received from %s"))
+		CFormat("Packet with protocol %x, opcode %x, size %u received from %s")
 			% packet->GetProtocol()
 			% packet->GetOpCode()
 			% packet->GetPacketSize()
-			% ( m_client ? m_client->GetFullIP() : wxT("Unknown Client") )
+			% ( m_client ? m_client->GetFullIP() : "Unknown Client" )
 	);
 
 	wxString exception;
@@ -1980,11 +1934,11 @@ bool CClientTCPSocket::PacketReceived(CPacket* packet)
 			(packet->GetProtocol() == OP_ED2KV2PACKEDPROT)) {
 
 			if (!packet->UnPackPacket()) {
-				AddDebugLogLineN(logZLib, wxT("Failed to decompress client TCP packet."));
+				AddDebugLogLineN(logZLib, "Failed to decompress client TCP packet.");
 				bResult = false;
 				process = false;
 			} else {
-				AddDebugLogLineN(logRemoteClient, CFormat(wxT("Packet unpacked, new protocol %x, opcode %x, size %u"))
+				AddDebugLogLineN(logRemoteClient, CFormat("Packet unpacked, new protocol %x, opcode %x, size %u")
 					% packet->GetProtocol() % packet->GetOpCode() % packet->GetPacketSize());
 			}
 		}
@@ -2010,27 +1964,27 @@ bool CClientTCPSocket::PacketReceived(CPacket* packet)
 					if (m_client) {
 						m_client->SetDownloadState(DS_ERROR);
 					}
-					Disconnect(wxT("Unknown protocol"));
+					Disconnect("Unknown protocol");
 					bResult = false;
 				}
 			}
 		}
 	} catch (const CEOFException& err) {
-		exception = wxT("EOF exception: ") + err.what();
+		exception = "EOF exception: " + err.what();
 	} catch (const CInvalidPacket& err) {
-		exception = wxT("InvalidPacket exception: ") + err.what();
+		exception = "InvalidPacket exception: " + err.what();
 	} catch (const wxString& error) {
-		exception = wxT("error: ") + (error.IsEmpty() ? wxString(wxT("Unknown error")) : error);
+		exception = "error: " + (error.IsEmpty() ? wxString("Unknown error") : error);
 	}
 
 	if (!exception.IsEmpty()) {
 		AddDebugLogLineN( logPacketErrors,
-			CFormat(wxT("Caught %s\nOn packet with protocol %x, opcode %x, size %u\tClientData: %s\n"))
+			CFormat("Caught %s\nOn packet with protocol %x, opcode %x, size %u\tClientData: %s\n")
 				% exception
 				% packet->GetProtocol()
 				% packet->GetOpCode()
 				% packet->GetPacketSize()
-				% ( m_client ? m_client->GetClientFullInfo() : wxT("Unknown") )
+				% ( m_client ? m_client->GetClientFullInfo() : "Unknown" )
 		);
 
 		if (m_client) {
@@ -2038,13 +1992,13 @@ bool CClientTCPSocket::PacketReceived(CPacket* packet)
 		}
 
 		AddDebugLogLineN( logClient,
-			CFormat( wxT("Client '%s' (IP: %s) caused an error (%s). Disconnecting client!" ) )
-				% ( m_client ? m_client->GetUserName() : wxString(wxT("Unknown")) )
-				% ( m_client ? m_client->GetFullIP() : wxString(wxT("Unknown")) )
+			CFormat( "Client '%s' (IP: %s) caused an error (%s). Disconnecting client!" )
+				% ( m_client ? m_client->GetUserName() : wxString("Unknown") )
+				% ( m_client ? m_client->GetFullIP() : wxString("Unknown") )
 				% exception
 		);
 
-		Disconnect(wxT("Caught exception on CClientTCPSocket::ProcessPacket\n"));
+		Disconnect("Caught exception on CClientTCPSocket::ProcessPacket\n");
 	}
 
 	return bResult;

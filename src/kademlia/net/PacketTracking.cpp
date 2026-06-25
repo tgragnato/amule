@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2008-2011 Dévai Tamás ( gonosztopi@amule.org )
-// Copyright (c) 2008-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -52,7 +52,7 @@ void CPacketTracking::AddTrackedOutPacket(uint32_t ip, uint8_t opcode)
 	if (!IsTrackedOutListRequestPacket(opcode)) {
 		return;
 	}
-	uint32_t now = ::GetTickCount();
+	uint64_t now = ::GetTickCount64();
 	TrackPackets_Struct track = { ip, now, opcode };
 	listTrackedRequests.push_front(track);
 	while (!listTrackedRequests.empty()) {
@@ -64,7 +64,7 @@ void CPacketTracking::AddTrackedOutPacket(uint32_t ip, uint8_t opcode)
 	}
 }
 
-bool CPacketTracking::IsTrackedOutListRequestPacket(uint8_t opcode) throw()
+bool CPacketTracking::IsTrackedOutListRequestPacket(uint8_t opcode) noexcept
 {
 	switch (opcode) {
 	 case KADEMLIA2_BOOTSTRAP_REQ:
@@ -93,7 +93,7 @@ bool CPacketTracking::IsOnOutTrackList(uint32_t ip, uint8_t opcode, bool dontRem
 		wxFAIL;	// code error / bug
 	}
 #endif
-	uint32_t now = ::GetTickCount();
+	uint64_t now = ::GetTickCount64();
 	for (TrackedPacketList::iterator it = listTrackedRequests.begin(); it != listTrackedRequests.end(); ++it) {
 		if (it->ip == ip && it->opcode == opcode && now - it->inserted < SEC2MS(180)) {
 			if (!dontRemove) {
@@ -167,7 +167,7 @@ bool CPacketTracking::InTrackListIsAllowedPacket(uint32_t ip, uint8_t opcode, bo
 	}
 
 	const uint32_t secondsPerPacket = 60 / allowedPacketsPerMinute;
-	const uint32_t currentTick = ::GetTickCount();
+	const uint64_t currentTick = ::GetTickCount64();
 
 	// time for cleaning up?
 	if (currentTick - lastTrackInCleanup > MIN2MS(12)) {
@@ -196,13 +196,13 @@ bool CPacketTracking::InTrackListIsAllowedPacket(uint32_t ip, uint8_t opcode, bo
 					it->m_firstAdded = currentTick; // for the packet we just process
 				} else {
 					it->m_count -= removeCount;
-					it->m_firstAdded += SEC2MS(secondsPerPacket) * removeCount;
+					it->m_firstAdded += static_cast<uint64_t>(SEC2MS(secondsPerPacket)) * removeCount;
 				}
 			}
 			// we increase the counter in any case, even if we drop the packet later
 			it->m_count++;
 			// remember only for easier cleanup
-			trackEntry->m_lastExpire = std::max(trackEntry->m_lastExpire, it->m_firstAdded + SEC2MS(secondsPerPacket) * it->m_count);
+			trackEntry->m_lastExpire = std::max(trackEntry->m_lastExpire, it->m_firstAdded + static_cast<uint64_t>(SEC2MS(secondsPerPacket)) * it->m_count);
 
 			if (CKademlia::IsRunningInLANMode() && ::IsLanIP(wxUINT32_SWAP_ALWAYS(ip))) {
 				return true;	// no flood detection in LAN mode
@@ -212,14 +212,14 @@ bool CPacketTracking::InTrackListIsAllowedPacket(uint32_t ip, uint8_t opcode, bo
 			if (it->m_count > allowedPacketsPerMinute * 5) {
 				// this is so far above the limit that it has to be an intentional flood / misuse in any case
 				// so we take the next higher punishment and ban the IP
-				AddDebugLogLineN(logKadPacketTracking, CFormat(wxT("Massive request flood detected for opcode 0x%X (0x%X) from IP %s - Banning IP")) % opcode % dbgOrgOpcode % KadIPToString(ip));
+				AddDebugLogLineN(logKadPacketTracking, CFormat("Massive request flood detected for opcode 0x%X (0x%X) from IP %s - Banning IP") % opcode % dbgOrgOpcode % KadIPToString(ip));
 				theApp->clientlist->AddBannedClient(wxUINT32_SWAP_ALWAYS(ip));
 				return false; // drop packet
 			} else if (it->m_count > allowedPacketsPerMinute) {
 				// over the limit, drop the packet but do nothing else
 				if (!it->m_dbgLogged) {
 					it->m_dbgLogged = true;
-					AddDebugLogLineN(logKadPacketTracking, CFormat(wxT("Request flood detected for opcode 0x%X (0x%X) from IP %s - Dropping packets with this opcode")) % opcode % dbgOrgOpcode % KadIPToString(ip));
+					AddDebugLogLineN(logKadPacketTracking, CFormat("Request flood detected for opcode 0x%X (0x%X) from IP %s - Dropping packets with this opcode") % opcode % dbgOrgOpcode % KadIPToString(ip));
 				}
 				return false; // drop packet
 			} else {
@@ -243,7 +243,7 @@ bool CPacketTracking::InTrackListIsAllowedPacket(uint32_t ip, uint8_t opcode, bo
 
 void CPacketTracking::InTrackListCleanup()
 {
-	const uint32_t currentTick = ::GetTickCount();
+	const uint64_t currentTick = ::GetTickCount64();
 	DEBUG_ONLY( const uint32_t dbgOldSize = m_mapTrackPacketsIn.size(); )
 	lastTrackInCleanup = currentTick;
 	for (TrackedPacketInMap::iterator it = m_mapTrackPacketsIn.begin(); it != m_mapTrackPacketsIn.end();) {
@@ -253,17 +253,17 @@ void CPacketTracking::InTrackListCleanup()
 			m_mapTrackPacketsIn.erase(it2);
 		}
 	}
-	AddDebugLogLineN(logKadPacketTracking, CFormat(wxT("Cleaned up Kad Incoming Requests Tracklist, entries before: %u, after %u")) % dbgOldSize % m_mapTrackPacketsIn.size());
+	AddDebugLogLineN(logKadPacketTracking, CFormat("Cleaned up Kad Incoming Requests Tracklist, entries before: %u, after %u") % dbgOldSize % m_mapTrackPacketsIn.size());
 }
 
 void CPacketTracking::AddLegacyChallenge(const CUInt128& contactID, const CUInt128& challengeID, uint32_t ip, uint8_t opcode)
 {
-	uint32_t now = ::GetTickCount();
+	uint64_t now = ::GetTickCount64();
 	TrackChallenge_Struct sTrack = { ip, now, opcode, contactID, challengeID };
 	listChallengeRequests.push_front(sTrack);
 	while (!listChallengeRequests.empty()) {
 		if (now - listChallengeRequests.back().inserted > SEC2MS(180)) {
-			AddDebugLogLineN(logKadPacketTracking, wxT("Challenge timed out, client not verified - ") + KadIPToString(listChallengeRequests.back().ip));
+			AddDebugLogLineN(logKadPacketTracking, "Challenge timed out, client not verified - " + KadIPToString(listChallengeRequests.back().ip));
 			listChallengeRequests.pop_back();
 		} else {
 			break;
@@ -273,7 +273,7 @@ void CPacketTracking::AddLegacyChallenge(const CUInt128& contactID, const CUInt1
 
 bool CPacketTracking::IsLegacyChallenge(const CUInt128& challengeID, uint32_t ip, uint8_t opcode, CUInt128& contactID)
 {
-	uint32_t now = ::GetTickCount();
+	uint64_t now = ::GetTickCount64();
 	DEBUG_ONLY( bool warning = false; )
 	for (TrackChallengeList::iterator it = listChallengeRequests.begin(); it != listChallengeRequests.end();) {
 		TrackChallengeList::iterator it2 = it++;
@@ -290,7 +290,7 @@ bool CPacketTracking::IsLegacyChallenge(const CUInt128& challengeID, uint32_t ip
 	}
 #ifdef __DEBUG__
 	if (warning) {
-		AddDebugLogLineN(logKadPacketTracking, wxT("Wrong challenge answer received, client not verified (") + KadIPToString(ip) + wxT(")"));
+		AddDebugLogLineN(logKadPacketTracking, "Wrong challenge answer received, client not verified (" + KadIPToString(ip) + ")");
 	}
 #endif
 	return false;
@@ -298,7 +298,7 @@ bool CPacketTracking::IsLegacyChallenge(const CUInt128& challengeID, uint32_t ip
 
 bool CPacketTracking::HasActiveLegacyChallenge(uint32_t ip) const
 {
-	uint32_t now = ::GetTickCount();
+	uint64_t now = ::GetTickCount64();
 	for (TrackChallengeList::const_iterator it = listChallengeRequests.begin(); it != listChallengeRequests.end(); ++it) {
 		if (it->ip == ip && now - it->inserted <= SEC2MS(180)) {
 			return true;

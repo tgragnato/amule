@@ -45,6 +45,10 @@ class CamuleDlg;
 class CPreferences;
 class CDownloadQueue;
 class CUploadQueue;
+class CPartFileWriteThread;
+class CPartFileHashThread;
+class CUploadDiskIOThread;
+class CPartFileHashResultEvent;
 class CServerConnect;
 class CSharedFileList;
 class CServer;
@@ -158,6 +162,13 @@ public:
 
 	const wxString&	GetMuleAppName() const { return m_appName; }
 	const wxString	GetFullMuleVersion() const;
+
+	bool IsQuitting() const { return m_isQuitting; }
+	void SetQuitting() { m_isQuitting = true; }
+	void ResetQuitting() { m_isQuitting = false; }
+
+private:
+	bool m_isQuitting = false;
 };
 
 class CamuleApp : public AMULE_APP_BASE, public CamuleAppCommon
@@ -220,7 +231,7 @@ public:
 	uint32	GetKadIndexedNotes() const;
 	uint32	GetKadIndexedLoad() const;
 	// True IP of machine
-	uint32	GetKadIPAdress() const;
+	uint32	GetKadIPAddress() const;
 	// Buddy status
 	uint8	GetBuddyStatus() const;
 	uint32	GetBuddyIP() const;
@@ -251,6 +262,8 @@ public:
 	CPreferences*		glob_prefs;
 	CDownloadQueue*		downloadqueue;
 	CUploadQueue*		uploadqueue;
+	CPartFileWriteThread*	partFileWriteThread;
+	CPartFileHashThread*	partFileHashThread;
 	CServerConnect*		serverconnect;
 	CSharedFileList*	sharedfiles;
 	CServerList*		serverlist;
@@ -265,6 +278,7 @@ public:
 	CStatistics*		m_statistics;
 	CIPFilter*		ipfilter;
 	UploadBandwidthThrottler* uploadBandwidthThrottler;
+	CUploadDiskIOThread*	uploadDiskIOThread;
 #ifdef ASIO_SOCKETS
 	CAsioService*		m_AsioService;
 #endif
@@ -320,6 +334,7 @@ protected:
 	void OnCoreTimer(CTimerEvent& evt);
 
 	void OnFinishedHashing(CHashingEvent& evt);
+	void OnPartFileHashResult(CPartFileHashResultEvent& evt);
 	void OnFinishedAICHHashing(CHashingEvent& evt);
 	void OnFinishedCompletion(CCompletionEvent& evt);
 	void OnFinishedAllocation(CAllocFinishedEvent& evt);
@@ -389,6 +404,13 @@ class CamuleGuiApp : public CamuleApp, public CamuleGuiBase
 
 	int OnExit();
 	bool OnInit();
+
+	void OnEndSession(wxCloseEvent& evt);
+	void OnQueryEndSession(wxCloseEvent& evt);
+
+#ifdef __WXMAC__
+	virtual void MacReopenApp();
+#endif
 
 public:
 

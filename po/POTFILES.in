@@ -1,4 +1,5 @@
 src/AddFriend.cpp
+src/AppImageIntegration.cpp
 src/amuleAppCommon.cpp
 src/amule.cpp
 src/amuled.cpp
@@ -90,3 +91,4 @@ src/utils/wxCas/src/wxcasframe.cpp
 src/utils/wxCas/src/wxcasprefs.cpp
 src/webserver/src/WebInterface.cpp
 src/webserver/src/WebServer.cpp
+packaging/windows/installer_strings.c

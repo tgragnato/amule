@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2004-2011 Angel Vidal Veiga ( kry@users.sourceforge.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -28,6 +28,7 @@
 
 
 #include <deque>	// Needed for std::deque
+#include <memory>	// Needed for std::shared_ptr
 #include <string>
 #include <vector>
 
@@ -66,6 +67,13 @@ class CQueuedData;
 class CECSocket{
 	friend class CECPacket;
 	friend class CECTag;
+	// CECMemSocket is a CECSocket subclass that captures all I/O into
+	// an in-memory vector. To finish a serialization round it needs to
+	// reach the FlushBuffers / m_output_queue drain machinery that the
+	// real-socket path normally accesses via the friend declarations
+	// above. Granting it friendship avoids weakening the visibility of
+	// those primitives for everyone else.
+	friend class CECMemSocket;
 
 private:
 	static const unsigned int EC_SOCKET_BUFFER_SIZE = 2048;
@@ -94,6 +102,21 @@ private:
 protected:
 	uint32_t m_my_flags;
 	bool m_haveNotificationSupport;
+
+	// Daemon-internal subclasses (e.g. CECMemSocket) need to set the
+	// per-packet wire flags before invoking serialization primitives
+	// like CECTag::Serialize that read m_tx_flags directly (without
+	// going through WritePacket). Promoting just the setter keeps the
+	// rest of m_tx_flags' lifecycle private to WritePacket / WriteBuffer.
+	void SetTxFlags(uint32_t flags) { m_tx_flags = flags; }
+
+	// When true, the peer is on loopback / RFC1918 LAN / RFC3927
+	// link-local — i.e. the wire cost of an uncompressed response
+	// is irrelevant. WritePacket consults this to skip ZLIB on
+	// every packet up to a size threshold; large packets still
+	// compress so we never blow the receiver's 256 MB packet
+	// budget (ReadHeader gate). Default false (treat as remote).
+	bool m_isLocalPeer;
 public:
 	CECSocket(bool use_events);
 	virtual ~CECSocket();
@@ -102,7 +125,25 @@ public:
 
 	void CloseSocket() { InternalClose(); }
 
+	// Locally-initiated abort: CloseSocket + OnLost. Use from the
+	// protocol-error paths in ReadHeader / ReadPacket where we close
+	// the socket ourselves. CAsioSocketImpl::Close sets m_closed = true
+	// before the asio close, which then suppresses the operation_aborted
+	// path through HandleRead → PostLostEvent (the m_closed gate at
+	// LibSocketAsio.cpp:695), so the wrapper's OnLost never fires from
+	// the asio side. Without an explicit dispatch the EC client (e.g.
+	// amulegui) never finds out the connection is gone — same #757
+	// "wedge" class of bug as the kernel-FIN miss, just on the
+	// self-close leg. Sites that already have their own UI-facing
+	// notification (CRemoteConnect::ProcessAuthPacket fires
+	// wxEVT_EC_CONNECTION directly) keep using plain CloseSocket.
+	void CloseAndDispatchLost() { InternalClose(); OnLost(); }
+
 	bool HaveNotificationSupport() const { return m_haveNotificationSupport; }
+
+	// Set by CECServerSocket::Authenticate once the peer IP is known.
+	// Affects the ZLIB-skip decision in WritePacket only.
+	void SetLocalPeer(bool isLocal) { m_isLocalPeer = isLocal; }
 
 	/**
 	 * Sends an EC packet and returns immediately.
@@ -116,6 +157,30 @@ public:
 	 * the \e packet.
 	 */
 	void SendPacket(const CECPacket *packet);
+
+	/**
+	 * Send a response whose body has already been pre-serialized
+	 * outside the normal CECPacket → WritePacket pipeline. Each blob
+	 * is the byte-form of one top-level child tag (as produced by
+	 * CECMemSocket::SerializeTag).
+	 *
+	 * The flag-byte / length-header / per-connection compression /
+	 * length-patch dance is identical to what SendPacket → WritePacket
+	 * does — concentrated here so callers don't reach into CECSocket's
+	 * private buffer machinery.
+	 *
+	 * Wire format constraints on the cached blobs: UTF-8 numbers +
+	 * LARGE_TAG_COUNT, no zlib (compression is layered on per-
+	 * connection at this layer if required). Both capability bits are
+	 * forced on in the wire flag byte regardless of negotiation; clients
+	 * that didn't advertise them aren't served from the cache (the
+	 * caller decides the eligibility).
+	 *
+	 * @param opcode The packet opcode the receiver should see.
+	 * @param blobs One pre-serialized child tag per element.
+	 */
+	void SendCachedBodyResponse(uint8_t opcode,
+		const std::vector<std::shared_ptr<const std::vector<unsigned char> > > &blobs);
 
 	/**
 	 * Sends an EC packet and waits for a reply.

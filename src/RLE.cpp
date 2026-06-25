@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -72,7 +72,7 @@ RLE_Data::~RLE_Data()
 
 void RLE_Data::ResetEncoder()
 {
-	delete m_buff;
+	delete [] m_buff;
 	m_len = 0;
 	m_buff = 0;
 }
@@ -158,7 +158,7 @@ const uint8 * RLE_Data::Encode(const uint8 *data, int inlen, int &outlen, bool &
 {
 	changed = Realloc(inlen);		// adjust size if necessary
 
-	if (m_len == 0) {
+	if (m_len <= 0) {
 		outlen = 0;
 		return NULL;
 	}
@@ -181,7 +181,7 @@ const uint8 * RLE_Data::Encode(const uint8 *data, int inlen, int &outlen, bool &
 	// now RLE
 	//
 	// In worst case 2-byte sequence is encoded as 3. So, data can grow by 50%.
-	uint8 * enc_buff = new uint8[m_len * 3/2 + 1];
+	uint8 * enc_buff = new uint8[static_cast<size_t>(m_len) * 3 / 2 + 1];
 	int i = 0, j = 0;
 	while ( i != m_len ) {
 		uint8 curr_val = m_buff[i];

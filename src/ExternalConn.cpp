@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2003-2011 Kry ( elkry@sourceforge.net / http://www.amule.org )
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2008-2011 Froenchenko Leonid (lfroen@gmail.com)
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -26,6 +26,8 @@
 
 #include "config.h"				// Needed for VERSION
 
+#include <set>					// Needed for std::set (m_lastSentFileIds)
+
 #include <ec/cpp/ECMuleSocket.h>		// Needed for CECSocket
 
 #include <common/Format.h>			// Needed for CFormat
@@ -34,6 +36,7 @@
 #include <common/MD5Sum.h>
 
 #include "ExternalConn.h"			// Interface declarations
+#include "ECFullResponseCache.h"		// Needed for s_ec*FullCache
 #include "updownclient.h"			// Needed for CUpDownClient
 #include "Server.h"				// Needed for CServer
 #include "ServerList.h"				// Needed for CServerList
@@ -226,6 +229,59 @@ private:
 	CECPacket *ProcessRequest2(const CECPacket *request);
 
 	virtual bool IsAuthorized() { return m_conn_state == CONN_ESTABLISHED; }
+
+	// Bound on the WriteDoneAndQueueEmpty -> SendPacket -> OnOutput ->
+	// WriteDoneAndQueueEmpty recursion chain that drains the notifier
+	// queue. See WriteDoneAndQueueEmpty for the full reasoning.
+	int		m_notification_dispatch_depth;
+
+	// EC INC_UPDATE skip-unchanged state. `m_lastEcGenSeen*` values are
+	// the highest `CKnownFile::s_globalEcGen` already reflected in the
+	// client's view *for that particular request path* — files with a
+	// smaller `m_ecGen` did not change since the last response of that
+	// path and can be skipped this cycle. Three independent counters
+	// because the request paths interleave on different schedules:
+	//   * `m_lastEcGenSeen`        — `EC_OP_GET_UPDATE`        (amulegui)
+	//   * `m_lastEcGenSeenShared`  — `EC_OP_GET_SHARED_FILES`  (amuleweb)
+	//   * `m_lastEcGenSeenPart`    — `EC_OP_GET_DLOAD_QUEUE`   (amuleweb)
+	uint64		m_lastEcGenSeen;
+	uint64		m_lastEcGenSeenShared;
+	uint64		m_lastEcGenSeenPart;
+
+	// Client opted in to partial-update protocol at auth time (advertised
+	// `EC_TAG_CAN_PARTIAL_UPDATE`). When set, `Get_EC_Response_GetUpdate`
+	// skips unchanged files entirely and emits explicit `EC_TAG_FILE_REMOVED`
+	// markers for files that disappeared since the previous cycle; the
+	// client mirrors this by skipping its bulk deletion loop. When *not*
+	// set, the server falls back to emitting empty "alive marker" tags for
+	// unchanged files so old clients (which infer deletion from absence)
+	// keep working unchanged — see `Get_EC_Response_GetUpdate`.
+	bool		m_partialUpdateActive;
+	// Set of file ECIDs sent in the previous response for each EC
+	// request path. Diffed against the current snapshot to compute the
+	// removal list emitted to partial-update-capable clients. Tracked
+	// per-path because amulegui uses `EC_OP_GET_UPDATE` (mixed shared +
+	// partfile, served by `Get_EC_Response_GetUpdate`) while amuleweb
+	// drives two separate INC_UPDATE streams via `EC_OP_GET_SHARED_FILES`
+	// and `EC_OP_GET_DLOAD_QUEUE` (each served by its own handler).
+	std::set<uint32> m_lastSentFileIds;
+	std::set<uint32> m_lastSentSharedFileIds;
+	std::set<uint32> m_lastSentPartFileIds;
+
+	// Set of file ECIDs already sent to the client with full detail
+	// (EC_DETAIL_INC_UPDATE / EC_DETAIL_UPDATE payload, not the legacy
+	// childless alive-marker or the partial-update skip-silently path).
+	// Used by `Get_EC_Response_Get{Update,SharedFiles,DownloadQueue}` to
+	// gate the `m_ecGen <= ec_threshold` shortcut: that shortcut produces
+	// a ghost entry on the client (empty CKnownFile from a child-less tag,
+	// or silent absence in partial-update mode) when the client has never
+	// received the ECID's metadata. Per-path because each handler has its
+	// own `m_lastEcGenSeen*` cadence — once the ECID is seen on one path,
+	// the client only has the data for that path's view. Same rationale
+	// as `m_lastSent*FileIds` above.
+	std::set<uint32> m_sentWithDetailIds;
+	std::set<uint32> m_sentWithDetailIdsShared;
+	std::set<uint32> m_sentWithDetailIdsPart;
 };
 
 
@@ -233,7 +289,12 @@ CECServerSocket::CECServerSocket(ECNotifier *notifier)
 :
 CECMuleSocket(true),
 m_conn_state(CONN_INIT),
-m_passwd_salt(GetRandomUint64())
+m_passwd_salt(GetRandomUint64()),
+m_notification_dispatch_depth(0),
+m_lastEcGenSeen(0),
+m_lastEcGenSeenShared(0),
+m_lastEcGenSeenPart(0),
+m_partialUpdateActive(false)
 {
 	wxASSERT(theApp->ECServerHandler);
 	theApp->ECServerHandler->AddSocket(this);
@@ -281,30 +342,66 @@ void CECServerSocket::OnLost()
 
 void CECServerSocket::WriteDoneAndQueueEmpty()
 {
-	if ( HaveNotificationSupport() && (m_conn_state == CONN_ESTABLISHED) ) {
-		CECPacket *packet = m_ec_notifier->GetNextPacket(this);
-		if ( packet ) {
-			SendPacket(packet);
-		}
-	} else {
+	if (!HaveNotificationSupport() || m_conn_state != CONN_ESTABLISHED) {
 		//printf("[EC] %p: WriteDoneAndQueueEmpty but notification disabled\n", this);
+		return;
 	}
+
+	// CECSocket::OnOutput drains the per-socket output queue, then calls
+	// WriteDoneAndQueueEmpty to pull the next notification packet. The
+	// chain runs synchronously on the main thread:
+	//
+	//   WriteDoneAndQueueEmpty -> SendPacket -> WritePacket + OnOutput
+	//     -> OnOutput drains queue -> WriteDoneAndQueueEmpty -> ...
+	//
+	// On a busy amuled (many peers / files generating notifications) the
+	// ECNotifier always has the next packet ready, so the recursion never
+	// bottoms out. The main thread stays inside this chain processing the
+	// notifier feed and never yields back to the wx event loop. That
+	// starves every other event -- including LibSocketLost from a
+	// half-closed EC peer, which is what CECServerSocket::OnLost needs
+	// to fire so it can tear the dead socket down.
+	//
+	// In the wedged-amuleweb scenario reported in #666, the peer is in
+	// kernel CLOSE-WAIT, writes silently succeed against the dead
+	// kernel buffer, and amuled spins indefinitely flushing the
+	// notifier to nowhere -- amulegui can't connect because the main
+	// thread is permanently occupied.
+	//
+	// Cap the dispatch depth so the chain returns to the event loop
+	// every MAX_DEPTH packets. The pending asio LibSocketSend
+	// completions (or LibSocketLost, if the peer has gone away) get
+	// processed in between; on a healthy peer the loop simply resumes
+	// when OnSend re-enters via the next completion.
+	static const int MAX_DEPTH = 8;
+	if (m_notification_dispatch_depth >= MAX_DEPTH) {
+		return;
+	}
+
+	// ECNotifier::GetNextPacket returns a fresh new CECPacket(...) and
+	// the caller owns it; SendPacket(const CECPacket*) only serialises
+	// it into the per-socket output queue and never deletes.  Hand the
+	// raw pointer to a smart pointer so the CECPacket (and its CECTag
+	// tree) get freed at scope exit instead of leaking on every
+	// notification dispatch.  Pre-fix, the EC notification path was
+	// the dominant retained-bytes leak on long-running amuled with
+	// connected amulegui / amuleweb peers (#765).
+	CSmartPtr<CECPacket> packet(m_ec_notifier->GetNextPacket(this));
+	if (!packet) {
+		return;
+	}
+
+	m_notification_dispatch_depth++;
+	try {
+		SendPacket(packet.get());
+	} catch (...) {
+		m_notification_dispatch_depth--;
+		throw;
+	}
+	m_notification_dispatch_depth--;
 }
 
 //-------------------- ExternalConn --------------------
-
-#ifndef ASIO_SOCKETS
-enum
-{	// id for sockets
-	SERVER_ID = 1000
-};
-
-
-BEGIN_EVENT_TABLE(ExternalConn, wxEvtHandler)
-	EVT_SOCKET(SERVER_ID, ExternalConn::OnServerEvent)
-END_EVENT_TABLE()
-#endif
-
 
 ExternalConn::ExternalConn(amuleIPV4Address addr, wxString *msg)
 {
@@ -314,32 +411,28 @@ ExternalConn::ExternalConn(amuleIPV4Address addr, wxString *msg)
 	if ( thePrefs::AcceptExternalConnections() ) {
 		// We must have a valid password, otherwise we will not allow EC connections
 		if (thePrefs::ECPassword().IsEmpty()) {
-			*msg += wxT("External connections disabled due to empty password!\n");
+			*msg += "External connections disabled due to empty password!\n";
 			AddLogLineC(_("External connections disabled due to empty password!"));
 			return;
 		}
 
 		// Create the socket
 		m_ECServer = new CExternalConnListener(addr, MULE_SOCKET_REUSEADDR, this);
-#ifndef ASIO_SOCKETS
-		m_ECServer->SetEventHandler(*this, SERVER_ID);
-		m_ECServer->SetNotify(wxSOCKET_CONNECTION_FLAG);
-#endif
 		m_ECServer->Notify(true);
 
 		int port = addr.Service();
 		wxString ip = addr.IPAddress();
 		if (m_ECServer->IsOk()) {
-			msgLocal = CFormat(wxT("*** TCP socket (ECServer) listening on %s:%d")) % ip % port;
-			*msg += msgLocal + wxT("\n");
+			msgLocal = CFormat("*** TCP socket (ECServer) listening on %s:%d") % ip % port;
+			*msg += msgLocal + "\n";
 			AddLogLineN(msgLocal);
 		} else {
-			msgLocal = CFormat(wxT("Could not listen for external connections at %s:%d!")) % ip % port;
-			*msg += msgLocal + wxT("\n");
+			msgLocal = CFormat("Could not listen for external connections at %s:%d!") % ip % port;
+			*msg += msgLocal + "\n";
 			AddLogLineN(msgLocal);
 		}
 	} else {
-		*msg += wxT("External connections disabled in config file\n");
+		*msg += "External connections disabled in config file\n";
 		AddLogLineN(_("External connections disabled in config file"));
 	}
 	m_ec_notifier = new ECNotifier();
@@ -371,7 +464,7 @@ void ExternalConn::RemoveSocket(CECServerSocket *s)
 void ExternalConn::KillAllSockets()
 {
 	AddDebugLogLineN(logGeneral,
-		CFormat(wxT("ExternalConn::KillAllSockets(): %d sockets to destroy.")) %
+		CFormat("ExternalConn::KillAllSockets(): %d sockets to destroy.") %
 			socket_list.size());
 	SocketSet::iterator it = socket_list.begin();
 	while (it != socket_list.end()) {
@@ -393,14 +486,6 @@ void ExternalConn::ResetAllLogs()
 }
 
 
-#ifndef ASIO_SOCKETS
-void ExternalConn::OnServerEvent(wxSocketEvent& WXUNUSED(event))
-{
-	m_ECServer->OnAccept();
-}
-#endif
-
-
 void CExternalConnListener::OnAccept()
 {
 	CECServerSocket *sock = new CECServerSocket(m_conn->m_ec_notifier);
@@ -409,6 +494,14 @@ void CExternalConnListener::OnAccept()
 	// non-blocking accept (although if we got here, there
 	// should ALWAYS be a pending connection).
 	if (AcceptWith(*sock, false)) {
+		// Apply EC keepalive on the freshly-accepted server-side
+		// socket so amuled detects a half-open EC client (gui
+		// process killed, network blip, FIN lost) symmetrically
+		// with what the client just enabled on its end. Without
+		// this, the kernel sits on the dead connection for the
+		// default ~2h TCP retransmit timeout, holding the
+		// CECServerSocket and its m_ec_notifier reference.
+		sock->ApplyEcKeepalive();
 		AddLogLineN(_("New external connection accepted"));
 	} else {
 		delete sock;
@@ -446,16 +539,16 @@ const CECPacket *CECServerSocket::Authenticate(const CECPacket *request)
 			% ( clientVersion ? clientVersion->GetStringData() : wxString(_("Unknown version")) ) );
 		const CECTag *protocol = request->GetTagByName(EC_TAG_PROTOCOL_VERSION);
 #ifdef EC_VERSION_ID
-		// For SVN versions, both client and server must use SVNDATE, and they must be the same
+		// For snapshot builds, both client and server must use GITDATE, and they must be the same
 		CMD4Hash vhash;
-		if (!vhash.Decode(wxT(EC_VERSION_ID))) {
+		if (!vhash.Decode(EC_VERSION_ID)) {
 			response = new CECPacket(EC_OP_AUTH_FAIL);
-			response->AddTag(CECTag(EC_TAG_STRING, wxT("Fatal error, version hash is not a valid MD4-hash.")));
+			response->AddTag(CECTag(EC_TAG_STRING, "Fatal error, version hash is not a valid MD4-hash."));
 		} else if (!request->GetTagByName(EC_TAG_VERSION_ID) || request->GetTagByNameSafe(EC_TAG_VERSION_ID)->GetMD4Data() != vhash) {
 			response = new CECPacket(EC_OP_AUTH_FAIL);
 			response->AddTag(CECTag(EC_TAG_STRING, wxTRANSLATE("Incorrect EC version ID, there might be binary incompatibility. Use core and remote from same snapshot.")));
 #else
-		// For release versions, we don't want to allow connections from any arbitrary SVN client.
+		// For release versions, we don't want to allow connections from any arbitrary snapshot client.
 		if (request->GetTagByName(EC_TAG_VERSION_ID)) {
 			response = new CECPacket(EC_OP_AUTH_FAIL);
 			response->AddTag(CECTag(EC_TAG_STRING, wxTRANSLATE("You cannot connect to a release version from an arbitrary development snapshot! *sigh* possible crash prevented")));
@@ -472,18 +565,55 @@ const CECPacket *CECServerSocket::Authenticate(const CECPacket *request)
 				if (request->GetTagByName(EC_TAG_CAN_ZLIB)) {
 					m_my_flags |= EC_FLAG_ZLIB;
 				}
+				// Honour the client's prefer-no-ZLIB hint: when set, the
+				// client believes transit between us is fast (loopback /
+				// LAN) and per-packet deflate/inflate is wasted CPU. The
+				// decision lives on the client because only the client
+				// knows the IP it dialed; the server's peer-IP view
+				// would misclassify e.g. WireGuard tunnel endpoints as
+				// "local" when the underlying transit is anything but.
+				// CECSocket::WritePacket honours the resulting
+				// `m_isLocalPeer` flag per packet, falling back to ZLIB
+				// for payloads above `kLocalPeerZlibBypassMax` so very
+				// large responses still stay inside the receiver's
+				// 256 MB ReadHeader gate.
+				if (request->GetTagByName(EC_TAG_PREFER_NO_ZLIB)) {
+					SetLocalPeer(true);
+					AddDebugLogLineN(logEC,
+						CFormat("EC peer %s asked to skip ZLIB (loopback/LAN hint) — bypassing for small/medium packets")
+							% GetPeer());
+				}
 				if (request->GetTagByName(EC_TAG_CAN_UTF8_NUMBERS)) {
 					m_my_flags |= EC_FLAG_UTF8_NUMBERS;
 				}
+				if (request->GetTagByName(EC_TAG_CAN_LARGE_TAG_COUNT)) {
+					// Client can decode the sentinel-extended children-
+					// count format in CECTag::WriteChildren (#199). Only
+					// new clients send this tag; old clients omit it
+					// and we keep the wire format capped at uint16.
+					m_my_flags |= EC_FLAG_LARGE_TAG_COUNT;
+				}
+				if (request->GetTagByName(EC_TAG_CAN_PARTIAL_UPDATE)) {
+					// Client understands the partial-update protocol:
+					// `Get_EC_Response_GetUpdate` may omit unchanged
+					// files and emit explicit `EC_TAG_FILE_REMOVED`
+					// markers instead of relying on absence-implies-
+					// deletion. Old clients omit this tag and we keep
+					// the backward-compat alive-marker path active for
+					// them — see `Get_EC_Response_GetUpdate`.
+					m_partialUpdateActive = true;
+				}
 				m_haveNotificationSupport = request->GetTagByName(EC_TAG_CAN_NOTIFY) != NULL;
-				AddDebugLogLineN(logEC, CFormat(wxT("Client capabilities: ZLIB: %s  UTF8 numbers: %s  Push notification: %s") )
-					% ((m_my_flags & EC_FLAG_ZLIB) ? wxT("yes") : wxT("no"))
-					% ((m_my_flags & EC_FLAG_UTF8_NUMBERS) ? wxT("yes") : wxT("no"))
-					% (m_haveNotificationSupport ? wxT("yes") : wxT("no")));
+				AddDebugLogLineN(logEC, CFormat("Client capabilities: ZLIB: %s  UTF8 numbers: %s  Push notification: %s  Large tag count: %s  Partial update: %s" )
+					% ((m_my_flags & EC_FLAG_ZLIB) ? "yes" : "no")
+					% ((m_my_flags & EC_FLAG_UTF8_NUMBERS) ? "yes" : "no")
+					% (m_haveNotificationSupport ? "yes" : "no")
+					% ((m_my_flags & EC_FLAG_LARGE_TAG_COUNT) ? "yes" : "no")
+					% (m_partialUpdateActive ? "yes" : "no"));
 			} else {
 				response = new CECPacket(EC_OP_AUTH_FAIL);
-				response->AddTag(CECTag(EC_TAG_STRING, wxTRANSLATE("Invalid protocol version.")
-					+ (CFormat(wxT("( %#.4x != %#.4x )")) % proto_version % (uint16_t)EC_CURRENT_PROTOCOL_VERSION).GetString()));
+				response->AddTag(CECTag(EC_TAG_STRING, wxString(wxTRANSLATE("Invalid protocol version."))
+					+ wxString(CFormat("( %#.4x != %#.4x )") % proto_version % (uint16_t)EC_CURRENT_PROTOCOL_VERSION)));
 			}
 		} else {
 			response = new CECPacket(EC_OP_AUTH_FAIL);
@@ -496,18 +626,33 @@ const CECPacket *CECServerSocket::Authenticate(const CECPacket *request)
 		if (!passh.Decode(thePrefs::ECPassword())) {
 			wxString err = wxTRANSLATE("Authentication failed: invalid hash specified as EC password.");
 			AddLogLineN(wxString(wxGetTranslation(err))
-						+ wxT(" ") + thePrefs::ECPassword());
+						+ " " + thePrefs::ECPassword());
 			response = new CECPacket(EC_OP_AUTH_FAIL);
 			response->AddTag(CECTag(EC_TAG_STRING, err));
 		} else {
-			wxString saltHash = MD5Sum(CFormat(wxT("%lX")) % m_passwd_salt).GetHash();
-			wxString saltStr = CFormat(wxT("%lX")) % m_passwd_salt;
+			wxString saltHash = MD5Sum(CFormat("%lX") % m_passwd_salt).GetHash();
+			wxString saltStr = CFormat("%lX") % m_passwd_salt;
 
 			passh.Decode(MD5Sum(thePrefs::ECPassword().Lower() + saltHash).GetHash());
 
 			if (passwd && passwd->GetMD4Data() == passh) {
 				response = new CECPacket(EC_OP_AUTH_OK);
-				response->AddTag(CECTag(EC_TAG_SERVER_VERSION, wxT(VERSION)));
+				response->AddTag(CECTag(EC_TAG_SERVER_VERSION, VERSION));
+				// Echo the negotiated large-tag-count capability so
+				// the client mirrors EC_FLAG_LARGE_TAG_COUNT into its
+				// own m_my_flags. Without this echo, client wouldn't
+				// know the server supports the extended wire format
+				// and would never set the flag in its outgoing
+				// per-packet headers (#199).
+				if (m_my_flags & EC_FLAG_LARGE_TAG_COUNT) {
+					response->AddTag(CECEmptyTag(EC_TAG_CAN_LARGE_TAG_COUNT));
+				}
+				if (m_partialUpdateActive) {
+					// Confirm partial-update mode so the client switches
+					// off its bulk "missing == deleted" fallback and
+					// expects explicit `EC_TAG_FILE_REMOVED` markers.
+					response->AddTag(CECEmptyTag(EC_TAG_CAN_PARTIAL_UPDATE));
+				}
 			} else {
 				wxString err;
 				if (passwd) {
@@ -608,7 +753,7 @@ static CECPacket *Get_EC_Response_StatRequest(const CECPacket *request, CLoggerA
 				response->AddTag(CECTag(EC_TAG_STATS_KAD_INDEXED_KEYWORDS, Kademlia::CKademlia::GetIndexed()->m_totalIndexKeyword));
 				response->AddTag(CECTag(EC_TAG_STATS_KAD_INDEXED_NOTES, Kademlia::CKademlia::GetIndexed()->m_totalIndexNotes));
 				response->AddTag(CECTag(EC_TAG_STATS_KAD_INDEXED_LOAD, Kademlia::CKademlia::GetIndexed()->m_totalIndexLoad));
-				response->AddTag(CECTag(EC_TAG_STATS_KAD_IP_ADRESS, wxUINT32_SWAP_ALWAYS(Kademlia::CKademlia::GetPrefs()->GetIPAddress())));
+				response->AddTag(CECTag(EC_TAG_STATS_KAD_IP_ADDRESS, wxUINT32_SWAP_ALWAYS(Kademlia::CKademlia::GetPrefs()->GetIPAddress())));
 				response->AddTag(CECTag(EC_TAG_STATS_KAD_IN_LAN_MODE, Kademlia::CKademlia::IsRunningInLANMode()));
 				response->AddTag(CECTag(EC_TAG_STATS_BUDDY_STATUS, theApp->clientlist->GetBuddyStatus()));
 				uint32 BuddyIP = 0;
@@ -628,7 +773,10 @@ static CECPacket *Get_EC_Response_StatRequest(const CECPacket *request, CLoggerA
 	return response;
 }
 
-static CECPacket *Get_EC_Response_GetSharedFiles(const CECPacket *request, CFileEncoderMap &encoders)
+static CECPacket *Get_EC_Response_GetSharedFiles(const CECPacket *request, CFileEncoderMap &encoders,
+	uint64 &io_lastEcGenSeen,
+	bool partial_update_active, std::set<uint32> &io_lastSentFileIds,
+	std::set<uint32> &io_sentWithDetailIds)
 {
 	wxASSERT(request->GetOpCode() == EC_OP_GET_SHARED_FILES);
 
@@ -641,32 +789,142 @@ static CECPacket *Get_EC_Response_GetSharedFiles(const CECPacket *request, CFile
 
 	encoders.UpdateEncoders();
 
-	for (uint32 i = 0; i < theApp->sharedfiles->GetFileCount(); ++i) {
-		const CKnownFile *cur_file = theApp->sharedfiles->GetFileByIndex(i);
+	// Skip-unchanged + EC_TAG_FILE_REMOVED is wired only for the
+	// `EC_DETAIL_UPDATE` polling path that amuleweb uses (`EC_OP_GET_
+	// SHARED_FILES` re-issued each cycle with an encoder-retained diff
+	// state) and only when the client opted into the partial-update
+	// protocol at auth. `EC_DETAIL_FULL` callers (amulecmd `show shared`,
+	// any one-shot query) still get every alive file as a full tag.
+	const bool skip_unchanged_path =
+		partial_update_active && detail_level == EC_DETAIL_UPDATE;
+	const uint64 ec_snapshot = skip_unchanged_path
+		? CKnownFile::GetGlobalECGen() : 0;
+	const uint64 ec_threshold = io_lastEcGenSeen;
+
+	// Snapshot the shared-file list once. GetFileByIndex() does an O(N)
+	// std::advance over the underlying std::map and re-acquires list_mut
+	// on every call -- looping it N times is O(N^2) and pegs the main
+	// thread for tens of minutes on users with tens of thousands of
+	// shared files (issue #666).
+	std::vector<CKnownFile*> snapshot;
+	theApp->sharedfiles->CopyFileList(snapshot);
+
+	// Snapshot the alive set for the partial-update removal diff below.
+	std::set<uint32> current_file_ids;
+
+	for (std::vector<CKnownFile*>::const_iterator it = snapshot.begin();
+		it != snapshot.end(); ++it) {
+		const CKnownFile *cur_file = *it;
 
 		if ( !cur_file || (!queryitems.empty() && !queryitems.count(cur_file->ECID())) ) {
 			continue;
 		}
+		const uint32 ecid = cur_file->ECID();
+		if (skip_unchanged_path) {
+			current_file_ids.insert(ecid);
+			if (cur_file->GetECGen() <= ec_threshold
+				&& io_sentWithDetailIds.count(ecid)) {
+				// Client already has the latest exported view of
+				// this file; absence here is "no change", not
+				// "deleted" — see `EC_TAG_FILE_REMOVED` emission
+				// below. The `io_sentWithDetailIds` gate prevents
+				// silently skipping ECIDs the client has never
+				// received with full detail (#808-class ghost).
+				continue;
+			}
+		}
 
 		CEC_SharedFile_Tag filetag(cur_file, detail_level);
-		CKnownFile_Encoder *enc = encoders[cur_file->ECID()];
+		CKnownFile_Encoder *enc = encoders[ecid];
 		if ( detail_level != EC_DETAIL_UPDATE ) {
 			enc->ResetEncoder();
 		}
 		enc->Encode(&filetag);
 		response->AddTag(filetag);
+		if (skip_unchanged_path) {
+			io_sentWithDetailIds.insert(ecid);
+		}
+	}
+
+	if (skip_unchanged_path) {
+		// One EC_TAG_FILE_REMOVED per file that was in the previous
+		// response but is no longer alive on the server.
+		for (std::set<uint32>::const_iterator it = io_lastSentFileIds.begin();
+			it != io_lastSentFileIds.end(); ++it) {
+			if (!current_file_ids.count(*it)) {
+				response->AddTag(CECTag(EC_TAG_FILE_REMOVED, *it));
+			}
+		}
+		io_lastSentFileIds.swap(current_file_ids);
+		io_lastEcGenSeen = ec_snapshot;
 	}
 	return response;
 }
 
-static CECPacket *Get_EC_Response_GetUpdate(CFileEncoderMap &encoders, CObjTagMap &tagmap)
+static CECPacket *Get_EC_Response_GetUpdate(CFileEncoderMap &encoders, CObjTagMap &tagmap,
+	uint64 &io_lastEcGenSeen,
+	bool partial_update_active, std::set<uint32> &io_lastSentFileIds,
+	std::set<uint32> &io_sentWithDetailIds)
 {
 	CECPacket *response = new CECPacket(EC_OP_SHARED_FILES);
 
+	// Snapshot the global EC generation now. Any file whose `m_ecGen`
+	// exceeds the caller's `m_lastEcGenSeen` has been touched by a
+	// `MarkECChanged()` hook since the last response for this client and
+	// is sent through the encoder; anything older is unchanged from the
+	// client's point of view and skipped. Reading the snapshot before the
+	// iteration means files that change mid-loop are picked up on the
+	// next request (their `m_ecGen` will exceed our snapshot).
+	const uint64 ec_snapshot = CKnownFile::GetGlobalECGen();
+	const uint64 ec_threshold = io_lastEcGenSeen;
+
 	encoders.UpdateEncoders();
+
+	// Snapshot the IDs of all files currently alive on the server. Used
+	// by the partial-update path below to diff against the previous cycle
+	// and synthesize `EC_TAG_FILE_REMOVED` markers.
+	std::set<uint32> current_file_ids;
+
 	for (CFileEncoderMap::iterator it = encoders.begin(); it != encoders.end(); ++it) {
 		const CKnownFile *cur_file = it->second->GetFile();
-		CValueMap &valuemap = tagmap.GetValueMap(cur_file->ECID());
+		const uint32 ecid = cur_file->ECID();
+		current_file_ids.insert(ecid);
+
+		if (cur_file->GetECGen() <= ec_threshold
+			&& io_sentWithDetailIds.count(ecid)) {
+			// Nothing exported has changed since the client's last
+			// view of this file AND the client has previously
+			// received this ECID with full detail. Two paths
+			// depending on whether the client negotiated partial-
+			// update at auth time:
+			if (partial_update_active) {
+				// New protocol: skip the file entirely. The client
+				// only deletes when it sees an explicit
+				// `EC_TAG_FILE_REMOVED` (emitted below), so absence
+				// here is correctly interpreted as "no change".
+				continue;
+			}
+			// Legacy clients (amulegui / amuleweb on master) treat
+			// any file missing from the response as deleted, then
+			// re-add it on the next full-sweep cycle — wedging the
+			// GUI on big libraries (#713). Emit a 5-byte alive
+			// marker (`EC_TAG_KNOWNFILE` / `EC_TAG_PARTFILE` with
+			// the ECID and no children); the client's
+			// `if (tag->HasChildTags()) ProcessItemUpdate(...)`
+			// already treats childless tags as a no-op update but
+			// still records the file as present.
+			const ec_tagname_t tagname = it->second->IsPartFile_Encoder()
+				? EC_TAG_PARTFILE : EC_TAG_KNOWNFILE;
+			response->AddTag(CECTag(tagname, ecid));
+			continue;
+		}
+		// Fall-through path: either m_ecGen > ec_threshold (file
+		// changed since the client's last view) OR the ECID is new
+		// to this client. In both cases the client needs the full
+		// payload — alive-markers / silent skip would produce a
+		// ghost entry (#808) when the metadata never reached the
+		// client.
+		CValueMap &valuemap = tagmap.GetValueMap(ecid);
 		// Completed cleared Partfiles are still stored as CPartfile,
 		// but encoded as KnownFile, so we have to check the encoder type
 		// instead of the file type.
@@ -675,16 +933,33 @@ static CECPacket *Get_EC_Response_GetUpdate(CFileEncoderMap &encoders, CObjTagMa
 			// Add information if partfile is shared
 			filetag.AddTag(EC_TAG_PARTFILE_SHARED, it->second->IsShared(), &valuemap);
 
-			CPartFile_Encoder * enc = static_cast<CPartFile_Encoder *>(encoders[cur_file->ECID()]);
+			CPartFile_Encoder * enc = static_cast<CPartFile_Encoder *>(encoders[ecid]);
 			enc->Encode(&filetag);
 			response->AddTag(filetag);
 		} else {
 			CEC_SharedFile_Tag filetag(cur_file, EC_DETAIL_INC_UPDATE, &valuemap);
-			CKnownFile_Encoder * enc = encoders[cur_file->ECID()];
+			CKnownFile_Encoder * enc = encoders[ecid];
 			enc->Encode(&filetag);
 			response->AddTag(filetag);
 		}
+		io_sentWithDetailIds.insert(ecid);
 	}
+
+	if (partial_update_active) {
+		// Partial-update protocol: emit one `EC_TAG_FILE_REMOVED` per
+		// file that was in the previous response but is no longer
+		// alive on the server. Replaces the legacy client's bulk
+		// "anything missing == deleted" inference.
+		for (std::set<uint32>::const_iterator it = io_lastSentFileIds.begin();
+			it != io_lastSentFileIds.end(); ++it) {
+			if (!current_file_ids.count(*it)) {
+				response->AddTag(CECTag(EC_TAG_FILE_REMOVED, *it));
+			}
+		}
+		io_lastSentFileIds.swap(current_file_ids);
+	}
+
+	io_lastEcGenSeen = ec_snapshot;
 
 	// Add clients
 	CECEmptyTag clients(EC_TAG_CLIENT);
@@ -760,7 +1035,10 @@ static CECPacket *Get_EC_Response_GetClientQueue(const CECPacket *request, CObjT
 }
 
 
-static CECPacket *Get_EC_Response_GetDownloadQueue(const CECPacket *request, CFileEncoderMap &encoders)
+static CECPacket *Get_EC_Response_GetDownloadQueue(const CECPacket *request, CFileEncoderMap &encoders,
+	uint64 &io_lastEcGenSeen,
+	bool partial_update_active, std::set<uint32> &io_lastSentFileIds,
+	std::set<uint32> &io_sentWithDetailIds)
 {
 	CECPacket *response = new CECPacket(EC_OP_DLOAD_QUEUE);
 
@@ -771,25 +1049,109 @@ static CECPacket *Get_EC_Response_GetDownloadQueue(const CECPacket *request, CFi
 
 	encoders.UpdateEncoders();
 
-	for (unsigned int i = 0; i < theApp->downloadqueue->GetFileCount(); i++) {
-		CPartFile *cur_file = theApp->downloadqueue->GetFileByIndex(i);
+	// Skip-unchanged + EC_TAG_FILE_REMOVED is wired only for the
+	// `EC_DETAIL_UPDATE` polling path that amuleweb uses, and only when
+	// the client opted into the partial-update protocol at auth. Other
+	// callers still get every alive file as a full tag.
+	const bool skip_unchanged_path =
+		partial_update_active && detail_level == EC_DETAIL_UPDATE;
+	const uint64 ec_snapshot = skip_unchanged_path
+		? CKnownFile::GetGlobalECGen() : 0;
+	const uint64 ec_threshold = io_lastEcGenSeen;
+
+	// Snapshot once to avoid re-locking downloadqueue's mutex on every
+	// iteration (see Get_EC_Response_GetSharedFiles for the matching
+	// shared-files fix in issue #666).
+	std::vector<CPartFile*> snapshot;
+	theApp->downloadqueue->CopyFileList(snapshot);
+
+	std::set<uint32> current_file_ids;
+
+	for (std::vector<CPartFile*>::const_iterator it = snapshot.begin();
+		it != snapshot.end(); ++it) {
+		CPartFile *cur_file = *it;
 
 		if ( !queryitems.empty() && !queryitems.count(cur_file->ECID()) ) {
 			continue;
 		}
+		const uint32 ecid = cur_file->ECID();
+		if (skip_unchanged_path) {
+			current_file_ids.insert(ecid);
+			if (cur_file->GetECGen() <= ec_threshold
+				&& io_sentWithDetailIds.count(ecid)) {
+				// Client already has the latest exported view of
+				// this partfile; absence here is "no change",
+				// not "deleted" — see `EC_TAG_FILE_REMOVED`
+				// emission below. The `io_sentWithDetailIds`
+				// gate prevents silently skipping ECIDs the
+				// client has never received with full detail
+				// (#808-class ghost).
+				continue;
+			}
+		}
 
 		CEC_PartFile_Tag filetag(cur_file, detail_level);
 
-		CPartFile_Encoder * enc = static_cast<CPartFile_Encoder *>(encoders[cur_file->ECID()]);
+		CPartFile_Encoder * enc = static_cast<CPartFile_Encoder *>(encoders[ecid]);
 		if ( detail_level != EC_DETAIL_UPDATE ) {
 			enc->ResetEncoder();
 		}
 		enc->Encode(&filetag);
 
 		response->AddTag(filetag);
+		if (skip_unchanged_path) {
+			io_sentWithDetailIds.insert(ecid);
+		}
+	}
+
+	if (skip_unchanged_path) {
+		for (std::set<uint32>::const_iterator it = io_lastSentFileIds.begin();
+			it != io_lastSentFileIds.end(); ++it) {
+			if (!current_file_ids.count(*it)) {
+				response->AddTag(CECTag(EC_TAG_FILE_REMOVED, *it));
+			}
+		}
+		io_lastSentFileIds.swap(current_file_ids);
+		io_lastEcGenSeen = ec_snapshot;
 	}
 	return response;
 }
+
+
+// Build a CEC_SharedFile_Tag for the per-file cache. The output is
+// self-contained — the encoder is reset before each Encode call in
+// FULL mode (see Get_EC_Response_GetSharedFiles), so a local encoder
+// suffices. Caller owns the returned tag.
+static CECTag *BuildSharedFileCacheTag(const void *file_v)
+{
+	const CKnownFile *cur_file = static_cast<const CKnownFile *>(file_v);
+	CEC_SharedFile_Tag *filetag = new CEC_SharedFile_Tag(cur_file, EC_DETAIL_FULL);
+	CKnownFile_Encoder enc(cur_file);
+	enc.ResetEncoder();
+	enc.Encode(filetag);
+	return filetag;
+}
+
+
+// Same shape for partfiles.
+static CECTag *BuildPartFileCacheTag(const void *file_v)
+{
+	const CPartFile *cur_file = static_cast<const CPartFile *>(file_v);
+	CEC_PartFile_Tag *filetag = new CEC_PartFile_Tag(cur_file, EC_DETAIL_FULL);
+	CPartFile_Encoder enc(cur_file);
+	enc.ResetEncoder();
+	enc.Encode(filetag);
+	return filetag;
+}
+
+
+// Two daemon-wide caches. Each holds one pre-serialized blob per file
+// in its domain, freshness-stamped with the file's m_ecGen at build
+// time. A request rebuilds only entries whose file gen has advanced
+// past the cached gen — the same per-file freshness primitive the
+// INC_UPDATE path uses.
+static CECFullResponseCache s_sharedFilesFullCache(BuildSharedFileCacheTag);
+static CECFullResponseCache s_downloadQueueFullCache(BuildPartFileCacheTag);
 
 
 static CECPacket *Get_EC_Response_PartFile_Cmd(const CECPacket *request)
@@ -952,7 +1314,7 @@ static CECPacket *Get_EC_Response_Friend(const CECPacket *request)
 		if (subtag) {
 			CUpDownClient * client = theApp->clientlist->FindClientByECID(subtag->GetInt());
 			if (client) {
-				theApp->friendlist->AddFriend(CCLIENTREF(client, wxT("Get_EC_Response_Friend theApp->friendlist->AddFriend")));
+				theApp->friendlist->AddFriend(CCLIENTREF(client, "Get_EC_Response_Friend theApp->friendlist->AddFriend"));
 				response = new CECPacket(EC_OP_NOOP);
 			}
 		} else {
@@ -971,8 +1333,14 @@ static CECPacket *Get_EC_Response_Friend(const CECPacket *request)
 			CFriend * Friend = theApp->friendlist->FindFriend(subtag->GetInt());
 			if (Friend) {
 				theApp->friendlist->RemoveFriend(Friend);
-				response = new CECPacket(EC_OP_NOOP);
 			}
+			// Idempotent: the desired end state of REMOVE is "friend
+			// not in the list", which is already true if FindFriend
+			// returned null (transient sync skew between amulegui's
+			// local view and the daemon's m_FriendList). Returning
+			// EC_OP_FAILED here forces the GUI into a resend / hang
+			// loop on the stale ECID.
+			response = new CECPacket(EC_OP_NOOP);
 		}
 	} else if ((tag = request->GetTagByName(EC_TAG_FRIEND_FRIENDSLOT))) {
 		const CECTag *subtag = tag->GetTagByName(EC_TAG_FRIEND);
@@ -984,26 +1352,30 @@ static CECPacket *Get_EC_Response_Friend(const CECPacket *request)
 			}
 		}
 	} else if ((tag = request->GetTagByName(EC_TAG_FRIEND_SHARED))) {
-		response = new CECPacket(EC_OP_FAILED);
-		response->AddTag(CECTag(EC_TAG_STRING, wxT("Request shared files list not implemented yet.")));
-#if 0
-		// This works fine - but there is no way atm to transfer the results to amulegui, so disable it for now.
-
 		const CECTag *subtag = tag->GetTagByName(EC_TAG_FRIEND);
 		if (subtag) {
 			CFriend * Friend = theApp->friendlist->FindFriend(subtag->GetInt());
 			if (Friend) {
 				theApp->friendlist->RequestSharedFileList(Friend);
 				response = new CECPacket(EC_OP_NOOP);
+			} else {
+				response = new CECPacket(EC_OP_FAILED);
+				response->AddTag(CECTag(EC_TAG_STRING, wxTRANSLATE("Friend not found.")));
 			}
 		} else if ((subtag = tag->GetTagByName(EC_TAG_CLIENT))) {
 			CUpDownClient * client = theApp->clientlist->FindClientByECID(subtag->GetInt());
 			if (client) {
 				client->RequestSharedFileList();
 				response = new CECPacket(EC_OP_NOOP);
+			} else {
+				response = new CECPacket(EC_OP_FAILED);
+				response->AddTag(CECTag(EC_TAG_STRING, wxTRANSLATE("Client not found.")));
 			}
+		} else {
+			response = new CECPacket(EC_OP_FAILED);
+			response->AddTag(CECTag(EC_TAG_STRING,
+				wxTRANSLATE("EC_TAG_FRIEND_SHARED requires EC_TAG_FRIEND or EC_TAG_CLIENT.")));
 		}
-#endif
 	}
 
 	if (!response) {
@@ -1306,12 +1678,28 @@ static CECPacket *GetStatsGraphs(const CECPacket *request)
 			}
 			uint16 nScale = request->GetTagByNameSafe(EC_TAG_STATSGRAPH_SCALE)->GetInt();
 			uint16 nMaxPoints = request->GetTagByNameSafe(EC_TAG_STATSGRAPH_WIDTH)->GetInt();
-			uint32 *graphData;
-			unsigned int numPoints = theApp->m_statistics->GetHistoryForWeb(nMaxPoints, (double)nScale, &dTimestamp, &graphData);
+			uint32 *graphData = NULL;
+			uint32 *connData = NULL;
+			uint64 sessionDl = 0, sessionUl = 0, sessionKad = 0;
+			double sessionTimespan = 0.0;
+			unsigned int numPoints = theApp->m_statistics->GetHistoryForGui(
+				nMaxPoints, (double)nScale, &dTimestamp, &graphData, &connData,
+				sessionDl, sessionUl, sessionKad, sessionTimespan);
 			if (numPoints) {
 				response = new CECPacket(EC_OP_STATSGRAPHS);
 				response->AddTag(CECTag(EC_TAG_STATSGRAPH_DATA, 4 * numPoints * sizeof(uint32), graphData));
+				// Per-point active uploads / active downloads. Older
+				// amulegui builds simply ignore the unknown tag.
+				response->AddTag(CECTag(EC_TAG_STATSGRAPH_DATA_CONN, 2 * numPoints * sizeof(uint32), connData));
 				delete [] graphData;
+				delete [] connData;
+				// Latest session totals — let amulegui compute the same
+				// kBytesReceived / sTimestamp session average monolithic
+				// shows, instead of falling back to a GUI-local integral.
+				response->AddTag(CECTag(EC_TAG_STATSGRAPH_SESSION_DL, sessionDl));
+				response->AddTag(CECTag(EC_TAG_STATSGRAPH_SESSION_UL, sessionUl));
+				response->AddTag(CECTag(EC_TAG_STATSGRAPH_SESSION_KAD, sessionKad));
+				response->AddTag(CECTag(EC_TAG_STATSGRAPH_SESSION_TIMESPAN, sessionTimespan));
 				response->AddTag(CECTag(EC_TAG_STATSGRAPH_LAST, dTimestamp));
 			} else {
 				response = new CECPacket(EC_OP_FAILED);
@@ -1366,7 +1754,13 @@ CECPacket *CECServerSocket::ProcessRequest2(const CECPacket *request)
 				response->AddTag(CECTag(EC_TAG_STRING, wxTRANSLATE("Already shutting down.")));
 			}
 			break;
-		case EC_OP_ADD_LINK:
+		case EC_OP_ADD_LINK: {
+			// Aggregate the per-link results into a single response: until
+			// #206 was filed, every iteration overwrote the previous response,
+			// so a batch of N-1 successes followed by one failure looked like
+			// a total failure to the caller (and vice versa).
+			int successCount = 0;
+			int failCount = 0;
 			for (CECPacket::const_iterator it = request->begin(); it != request->end(); ++it) {
 				const CECTag &tag = *it;
 				wxString link = tag.GetStringData();
@@ -1376,18 +1770,26 @@ CECPacket *CECServerSocket::ProcessRequest2(const CECPacket *request)
 					category = cattag->GetInt();
 				}
 				AddLogLineC(CFormat(_("ExternalConn: adding link '%s'.")) % link);
-				if (response) {
-					delete response;
-				}
 				if ( theApp->downloadqueue->AddLink(link, category) ) {
-					response = new CECPacket(EC_OP_NOOP);
+					++successCount;
 				} else {
-					// Error messages are printed by the add function.
-					response = new CECPacket(EC_OP_FAILED);
-					response->AddTag(CECTag(EC_TAG_STRING, wxTRANSLATE("Invalid link or already on list.")));
+					// Per-link error reasons are already printed by AddLink().
+					++failCount;
 				}
 			}
+			if (failCount == 0) {
+				response = new CECPacket(EC_OP_NOOP);
+			} else if (successCount == 0) {
+				response = new CECPacket(EC_OP_FAILED);
+				response->AddTag(CECTag(EC_TAG_STRING, wxTRANSLATE("Invalid link or already on list.")));
+			} else {
+				response = new CECPacket(EC_OP_FAILED);
+				response->AddTag(CECTag(EC_TAG_STRING,
+					CFormat(wxString(wxTRANSLATE("%d of %d links failed (invalid or already on list).")))
+						% failCount % (failCount + successCount)));
+			}
 			break;
+		}
 		//
 		// Status requests
 		//
@@ -1403,13 +1805,69 @@ CECPacket *CECServerSocket::ProcessRequest2(const CECPacket *request)
 		//
 		//
 		case EC_OP_GET_SHARED_FILES:
+			if ( request->GetDetailLevel() == EC_DETAIL_FULL
+				&& CTagSet<uint32, EC_TAG_KNOWNFILE>(request).empty()
+				&& (m_my_flags & EC_FLAG_UTF8_NUMBERS)
+				&& (m_my_flags & EC_FLAG_LARGE_TAG_COUNT) ) {
+				// Per-file bytes cache. Daemon-wide map<ECID, bytes>
+				// keyed off CKnownFile::s_globalEcGen; rebuilds only
+				// per-file entries whose gen advanced since last use.
+				// Concatenated and written through the connection's
+				// socket with the same per-connection compression
+				// machinery WritePacket uses.
+				std::vector<CKnownFile*> snapshot;
+				theApp->sharedfiles->CopyFileList(snapshot);
+				std::vector<CECFullResponseCache::FileRef> refs;
+				refs.reserve(snapshot.size());
+				for (size_t i = 0; i < snapshot.size(); ++i) {
+					if (!snapshot[i]) continue;
+					CECFullResponseCache::FileRef r;
+					r.file = snapshot[i];
+					r.ecid = snapshot[i]->ECID();
+					r.gen = snapshot[i]->GetECGen();
+					refs.push_back(r);
+				}
+				std::vector<std::shared_ptr<const std::vector<unsigned char> > > blobs
+					= s_sharedFilesFullCache.GetBlobs(refs);
+				s_sharedFilesFullCache.PruneOutsideOf(refs);
+				SendCachedBodyResponse(EC_OP_SHARED_FILES, blobs);
+				return NULL;
+			}
 			if ( request->GetDetailLevel() != EC_DETAIL_INC_UPDATE ) {
-				response = Get_EC_Response_GetSharedFiles(request, m_FileEncoder);
+				response = Get_EC_Response_GetSharedFiles(request, m_FileEncoder,
+					m_lastEcGenSeenShared,
+					m_partialUpdateActive, m_lastSentSharedFileIds,
+					m_sentWithDetailIdsShared);
 			}
 			break;
 		case EC_OP_GET_DLOAD_QUEUE:
+			if ( request->GetDetailLevel() == EC_DETAIL_FULL
+				&& CTagSet<uint32, EC_TAG_PARTFILE>(request).empty()
+				&& (m_my_flags & EC_FLAG_UTF8_NUMBERS)
+				&& (m_my_flags & EC_FLAG_LARGE_TAG_COUNT) ) {
+				std::vector<CPartFile*> snapshot;
+				theApp->downloadqueue->CopyFileList(snapshot);
+				std::vector<CECFullResponseCache::FileRef> refs;
+				refs.reserve(snapshot.size());
+				for (size_t i = 0; i < snapshot.size(); ++i) {
+					if (!snapshot[i]) continue;
+					CECFullResponseCache::FileRef r;
+					r.file = snapshot[i];
+					r.ecid = snapshot[i]->ECID();
+					r.gen = snapshot[i]->GetECGen();
+					refs.push_back(r);
+				}
+				std::vector<std::shared_ptr<const std::vector<unsigned char> > > blobs
+					= s_downloadQueueFullCache.GetBlobs(refs);
+				s_downloadQueueFullCache.PruneOutsideOf(refs);
+				SendCachedBodyResponse(EC_OP_DLOAD_QUEUE, blobs);
+				return NULL;
+			}
 			if ( request->GetDetailLevel() != EC_DETAIL_INC_UPDATE ) {
-				response = Get_EC_Response_GetDownloadQueue(request, m_FileEncoder);
+				response = Get_EC_Response_GetDownloadQueue(request, m_FileEncoder,
+					m_lastEcGenSeenPart,
+					m_partialUpdateActive, m_lastSentPartFileIds,
+					m_sentWithDetailIdsPart);
 			}
 			break;
 		//
@@ -1417,7 +1875,10 @@ CECPacket *CECServerSocket::ProcessRequest2(const CECPacket *request)
 		//
 		case EC_OP_GET_UPDATE:
 			if ( request->GetDetailLevel() == EC_DETAIL_INC_UPDATE ) {
-				response = Get_EC_Response_GetUpdate(m_FileEncoder, m_obj_tagmap);
+				response = Get_EC_Response_GetUpdate(m_FileEncoder, m_obj_tagmap,
+					m_lastEcGenSeen,
+					m_partialUpdateActive, m_lastSentFileIds,
+					m_sentWithDetailIds);
 			}
 			break;
 		case EC_OP_GET_ULOAD_QUEUE:
@@ -1744,7 +2205,7 @@ CECPacket *CECServerSocket::ProcessRequest2(const CECPacket *request)
 				delete tree;
 			}
 			if (request->GetDetailLevel() == EC_DETAIL_WEB) {
-				response->AddTag(CECTag(EC_TAG_SERVER_VERSION, wxT(VERSION)));
+				response->AddTag(CECTag(EC_TAG_SERVER_VERSION, VERSION));
 				response->AddTag(CECTag(EC_TAG_USER_NICK, thePrefs::GetUserNick()));
 			}
 			break;
@@ -1910,8 +2371,11 @@ CECPacket *ECStatusMsgSource::GetNextPacket()
 */
 ECPartFileMsgSource::ECPartFileMsgSource()
 {
-	for (unsigned int i = 0; i < theApp->downloadqueue->GetFileCount(); i++) {
-		CPartFile *cur_file = theApp->downloadqueue->GetFileByIndex(i);
+	std::vector<CPartFile*> snapshot;
+	theApp->downloadqueue->CopyFileList(snapshot);
+	for (std::vector<CPartFile*>::const_iterator it = snapshot.begin();
+		it != snapshot.end(); ++it) {
+		CPartFile *cur_file = *it;
 		PARTFILE_STATUS status = { true, false, false, false, true, cur_file };
 		m_dirty_status[cur_file->GetFileHash()] = status;
 	}
@@ -1981,8 +2445,11 @@ CECPacket *ECPartFileMsgSource::GetNextPacket()
  */
 ECKnownFileMsgSource::ECKnownFileMsgSource()
 {
-	for (unsigned int i = 0; i < theApp->sharedfiles->GetFileCount(); i++) {
-		const CKnownFile *cur_file = theApp->sharedfiles->GetFileByIndex(i);
+	std::vector<CKnownFile*> snapshot;
+	theApp->sharedfiles->CopyFileList(snapshot);
+	for (std::vector<CKnownFile*>::const_iterator it = snapshot.begin();
+		it != snapshot.end(); ++it) {
+		const CKnownFile *cur_file = *it;
 		KNOWNFILE_STATUS status = { true, false, false, true, cur_file };
 		m_dirty_status[cur_file->GetFileHash()] = status;
 	}
@@ -2248,10 +2715,14 @@ void ECNotifier::NextPacketToSocket()
 		CECServerSocket *sock = i->first;
 		if ( sock->HaveNotificationSupport() && !sock->DataPending() ) {
 			ECUpdateMsgSource **notifier_array = i->second;
-			CECPacket *packet = GetNextPacket(notifier_array);
-			if ( packet ) {
+			// Same ownership contract as WriteDoneAndQueueEmpty: the
+			// CECPacket from GetNextPacket is caller-owned and
+			// SendPacket only serialises it.  Wrap so it's freed at
+			// scope exit (#765).
+			CSmartPtr<CECPacket> packet(GetNextPacket(notifier_array));
+			if (packet) {
 				//printf("[EC] sending update packet; opcode=%x\n",packet->GetOpCode());
-				sock->SendPacket(packet);
+				sock->SendPacket(packet.get());
 			}
 		}
 	}

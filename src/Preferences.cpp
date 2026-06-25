@@ -85,9 +85,9 @@ CProxyData	CPreferences::s_ProxyData;
 /* The rest, organize it! */
 wxString	CPreferences::s_nick;
 Cfg_Lang_Base * CPreferences::s_cfgLang;
-uint16		CPreferences::s_maxupload;
-uint16		CPreferences::s_maxdownload;
-uint16		CPreferences::s_slotallocation;
+uint32		CPreferences::s_maxupload;
+uint32		CPreferences::s_maxdownload;
+uint32		CPreferences::s_slotallocation;
 wxString	CPreferences::s_Addr;
 uint16		CPreferences::s_port;
 uint16		CPreferences::s_udpport;
@@ -130,7 +130,7 @@ uint8		CPreferences::s_iSeeShares;
 uint8		CPreferences::s_iToolDelayTime;
 uint8		CPreferences::s_splitterbarPosition;
 uint16		CPreferences::s_deadserverretries;
-uint32		CPreferences::s_dwServerKeepAliveTimeoutMins;
+uint64		CPreferences::s_dwServerKeepAliveTimeoutMins;
 uint8		CPreferences::s_statsMax;
 uint8		CPreferences::s_statsAverageMinutes;
 bool		CPreferences::s_bpreviewprio;
@@ -151,7 +151,10 @@ bool		CPreferences::s_bstartnextfilealpha;
 bool		CPreferences::s_bshowoverhead;
 bool		CPreferences::s_bDAP;
 bool		CPreferences::s_bUAP;
-#ifndef __SVN__
+bool		CPreferences::s_AutoRescanSharedDirs;
+bool		CPreferences::s_FollowSymlinksInShares;
+bool		CPreferences::s_appimageIntegrationDeclined;
+#ifndef __GIT__
 bool		CPreferences::s_showVersionOnTitle;
 #endif
 uint8_t		CPreferences::s_showRatesOnTitle;
@@ -959,7 +962,7 @@ CPreferences::CPreferences()
 	// serverlist addresses
 	CTextFile slistfile;
 	if (slistfile.Open(s_configDir + wxT("addresses.dat"), CTextFile::read)) {
-		adresses_list = slistfile.ReadLines();
+		addresses_list = slistfile.ReadLines();
 	}
 #endif
 }
@@ -1146,7 +1149,7 @@ void CPreferences::BuildItemList( const wxString& appdir )
 	NewCfgItem(IDC_SKIN,		(new Cfg_Skin(  wxT("/SkinGUIOptions/Skin"), s_Skin, wxEmptyString )));
 	NewCfgItem(IDC_VERTTOOLBAR,	(new Cfg_Bool( wxT("/eMule/VerticalToolbar"), s_ToolbarOrientation, false )));
 	NewCfgItem(IDC_SHOW_COUNTRY_FLAGS,	(new Cfg_Bool( wxT("/eMule/GeoIPEnabled"), s_GeoIPEnabled, true )));
-#ifndef __SVN__
+#ifndef __GIT__
 	NewCfgItem(IDC_SHOWVERSIONONTITLE,	(new Cfg_Bool( wxT("/eMule/ShowVersionOnTitle"), s_showVersionOnTitle, false )));
 #endif
 
@@ -1394,7 +1397,7 @@ void CPreferences::SaveAllItems(wxConfigBase* cfg)
 #endif
 }
 
-void CPreferences::SetMaxUpload(uint16 in)
+void CPreferences::SetMaxUpload(uint32 in)
 {
 	if ( s_maxupload != in ) {
 		s_maxupload = in;
@@ -1405,7 +1408,7 @@ void CPreferences::SetMaxUpload(uint16 in)
 }
 
 
-void CPreferences::SetMaxDownload(uint16 in)
+void CPreferences::SetMaxDownload(uint32 in)
 {
 	if ( s_maxdownload != in ) {
 		s_maxdownload = in;
@@ -1847,6 +1850,47 @@ void CPreferences::SetLastHTTPDownloadURL(uint8 t, const wxString& val)
 	wxConfigBase* cfg = wxConfigBase::Get();
 	wxString key = CFormat(wxT("/HTTPDownload/URL_%d")) % t;
 	cfg->Write(key, val);
+}
+
+void CPreferences::SaveSharedFolders()
+{
+#ifndef CLIENT_GUI
+	auto writeList = [](const wxString & filename, const PathList & list) {
+		CTextFile f;
+		if (f.Open(filename, CTextFile::write)) {
+			for (size_t i = 0; i < list.size(); ++i) {
+				f.WriteLine(list[i].GetRaw(), wxConvUTF8);
+			}
+		}
+	};
+	writeList(s_configDir + "shareddir-explicit.dat", shareddir_explicit_list);
+	writeList(s_configDir + "shareddir-recursive.dat", shareddir_recursive_list);
+	writeList(s_configDir + "shareddir.dat", shareddir_list);
+#endif
+}
+
+bool CPreferences::IsRecursiveAncestor(const CPath & path) const
+{
+	if (!path.IsOk()) {
+		return false;
+	}
+	const wxString target = path.GetRaw();
+	for (size_t i = 0; i < shareddir_recursive_list.size(); ++i) {
+		const wxString root = shareddir_recursive_list[i].GetRaw();
+		if (root.IsEmpty()) {
+			continue;
+		}
+		if (target == root) {
+			return true;
+		}
+		const wxChar sep = wxFileName::GetPathSeparator();
+		const wxChar lastChar = root.Last();
+		if (target.length() > root.length() && target.StartsWith(root) &&
+			(lastChar == sep || target[root.length()] == sep)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 // File_checked_for_headers

@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -82,6 +82,17 @@ public:
 	void		SetStaticServer(CServer* server, bool isStatic);
 	void		SetServerPrio(CServer* server, uint32 prio);
 
+	/**
+	 * Kick off the auto-update HTTP download of server.met.
+	 *
+	 * Split out of Init() so the caller can defer the HTTP request
+	 * until after the heavy startup I/O has finished, avoiding the
+	 * wxWebSession worker thread being starved by the main thread
+	 * (see #714). Caller is expected to gate this on the
+	 * AutoServerlist pref.
+	 */
+	void		StartAutoUpdate();
+
 private:
 	virtual void	ObserverAdded( ObserverType* );
 	void		AutoUpdate();
@@ -97,7 +108,6 @@ private:
 	CInternalList::const_iterator	m_serverpos;
 	CInternalList::const_iterator	m_statserverpos;
 
-	uint32		m_nLastED2KServerLinkCheck;// emanuelw(20030924) added
 	wxString	m_URLUpdate;
 	bool		m_initialized;
 };

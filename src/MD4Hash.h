@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -60,9 +60,6 @@ public:
 	 */
 	CMD4Hash() {
 		Clear();
-	}
-
-	~CMD4Hash() {
 	}
 
 	/**
@@ -255,12 +252,12 @@ public:
 	 * @return The value (or its reference) at the given index.
 	 */
 	unsigned char operator[](size_t i) const {
-		MULE_VALIDATE_PARAMS(i < MD4HASH_LENGTH, wxT("Invalid index in CMD4Hash::operator[]"));
+		MULE_VALIDATE_PARAMS(i < MD4HASH_LENGTH, "Invalid index in CMD4Hash::operator[]");
 		return m_hash[i];
 	}
 
 	unsigned char& operator[](size_t i) {
-		MULE_VALIDATE_PARAMS(i < MD4HASH_LENGTH, wxT("Invalid index in CMD4Hash::operator[]"));
+		MULE_VALIDATE_PARAMS(i < MD4HASH_LENGTH, "Invalid index in CMD4Hash::operator[]");
 		return m_hash[i];
 	}
 

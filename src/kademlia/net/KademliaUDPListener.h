@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2004-2011 Angel Vidal ( kry@amule.org )
-// Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2003-2011 Barry Dunne (http://www.emule-project.net)
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -60,12 +60,12 @@ class CKadClientSearcher;
 struct FetchNodeID_Struct {
 	uint32_t ip;
 	uint32_t tcpPort;
-	uint32_t expire;
+	uint64_t expire;
 	CKadClientSearcher* requester;
 };
 
-#define DebugSendF(what, ip, port)	AddDebugLogLineN(logClientKadUDP, what + wxString(wxT(" to ")) + KadIPPortToString(ip, port))
-#define DebugRecvF(what, ip, port)	AddDebugLogLineN(logClientKadUDP, what + wxString(wxT(" from ")) + KadIPPortToString(ip, port))
+#define DebugSendF(what, ip, port)	AddDebugLogLineN(logClientKadUDP, what + wxString(" to ") + KadIPPortToString(ip, port))
+#define DebugRecvF(what, ip, port)	AddDebugLogLineN(logClientKadUDP, what + wxString(" from ") + KadIPPortToString(ip, port))
 
 #define DebugSend(what, ip, port)	DebugSendF(wxSTRINGIZE_T(what), ip, port)
 #define DebugRecv(what, ip, port)	DebugRecvF(wxSTRINGIZE_T(what), ip, port)

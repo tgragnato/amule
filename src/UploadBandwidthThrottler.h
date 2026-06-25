@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2005-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -53,6 +53,12 @@ public:
     void RemoveFromAllQueues(ThrottledFileSocket* socket);
 
     void EndThread();
+
+	// Called by disk I/O thread when new packet data is available on a socket queue.
+	// Wakes the throttler early instead of waiting for its next sleep interval.
+	// eMule ref: UploadBandwidthThrottler.cpp:795
+	void NewUploadDataAvailable();
+
 private:
     void DoRemoveFromAllQueues(ThrottledControlSocket* socket);
     bool RemoveFromStandardListNoLock(ThrottledFileSocket* socket);
@@ -61,9 +67,13 @@ private:
 
     bool m_doRun;
 
+    wxMutex    m_sendLocker;
+    wxMutex    m_tempQueueLocker;
 
-    wxMutex m_sendLocker;
-    wxMutex m_tempQueueLocker;
+	// Used by disk I/O thread to wake the throttler when new data is available.
+	// eMule ref: UploadBandwidthThrottler.cpp:795 (NewUploadDataAvailable)
+	wxMutex     m_newDataMutex;
+	wxCondition m_newDataCondition;  // replaces CEvent m_eventNewDataAvailable
 
 	typedef std::deque<ThrottledControlSocket*> SocketQueue;
 

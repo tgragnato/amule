@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -27,6 +27,7 @@
 #define SERVERWND_H
 
 #include <wx/splitter.h>	// Needed for wxSplitter
+#include <wx/listctrl.h>	// Needed for wxListCtrl
 
 
 class CServerListCtrl;
@@ -43,7 +44,19 @@ public:
 
 	CServerListCtrl* serverlistctrl;
 
+	// Shared column-width helper for the two info notebooks (ED2K
+	// Info, Kad Info). Pins column 0 to autosize and fills column 1
+	// with the remaining client width so the value column doesn't
+	// truncate (#813).
+	static void FitInfoListColumns(wxListCtrl* list);
+
+	// Copy currently-selected rows of one of the two info notebooks
+	// (or all rows when no selection) to the clipboard as
+	// tab-separated `<label>\t<value>` lines (#814).
+	static void CopyInfoListToClipboard(wxListCtrl* list);
+
 private:
+	void OnSashPositionChanging(wxSplitterEvent& evt);
 	void OnSashPositionChanged(wxSplitterEvent& evt);
 	void OnBnClickedAddserver(wxCommandEvent& evt);
 	void OnBnClickedED2KDisconnect(wxCommandEvent& evt);
@@ -51,7 +64,21 @@ private:
 	void OnBnClickedResetLog(wxCommandEvent& evt);
 	void OnBnClickedResetServerLog(wxCommandEvent& evt);
 
-	DECLARE_EVENT_TABLE()
+	// Copy handlers for ED2K Info / Kad Info notebook tabs (#814).
+	// Routed through wxEvtHandler bindings rather than the static
+	// event table so both list-control IDs can share the same code
+	// without a per-ID stanza.
+	void OnInfoListKeyDown(wxKeyEvent& evt);
+	void OnInfoListContextMenu(wxContextMenuEvent& evt);
+	void OnInfoListCopy(wxCommandEvent& evt);
+
+	// Set in OnSashPositionChanging (only fires while the user is
+	// actually dragging the sash); checked by OnSashPositionChanged
+	// to filter out layout-induced sash moves that fire during
+	// minimize/restore reflows on Windows.
+	bool m_userDraggingSash = false;
+
+	wxDECLARE_EVENT_TABLE();
 };
 
 #endif // SERVERWND_H

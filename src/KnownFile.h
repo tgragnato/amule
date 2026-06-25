@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -36,6 +36,7 @@
 
 #include "kademlia/kademlia/Indexed.h"
 #include <ec/cpp/ECID.h>	// Needed for CECID
+#include <atomic>		// Needed for std::atomic (m_ecGen)
 
 
 #ifdef CLIENT_GUI
@@ -173,6 +174,28 @@ public:
 
 	virtual ~CKnownFile();
 
+	/**
+	 * EC-change generation tracking. Each CKnownFile carries a monotonic
+	 * generation number that increments whenever any field exported via
+	 * `CEC_SharedFile_Tag` / `CEC_PartFile_Tag` mutates. Per-connection
+	 * INC_UPDATE handlers compare a file's `m_ecGen` against the
+	 * "highest gen they have already sent" and skip files that have not
+	 * changed since — turning the O(N) per-INC_UPDATE iteration on a 91k-
+	 * shareset node into O(files-actually-changed).
+	 *
+	 * The counter is a single process-wide atomic, so every Mark…() call
+	 * yields a unique-and-strictly-ascending gen across all files and
+	 * threads. Per-file `m_ecGen` reads/writes are atomic for the
+	 * upload-disk-IO / hashing-thread call sites that flow through
+	 * `CFileStatistic::Add{Request,Accepted,Transferred}()`.
+	 *
+	 * See ExternalConn / `Get_EC_Response_GetUpdate` for the consumer
+	 * side of this contract and #713 for context.
+	 */
+	void		MarkECChanged();
+	uint64		GetECGen() const		{ return m_ecGen.load(std::memory_order_relaxed); }
+	static uint64	GetGlobalECGen()		{ return s_globalEcGen.load(std::memory_order_relaxed); }
+
 	void SetFilePath(const CPath& filePath);
 	const CPath& GetFilePath() const { return m_filePath; }
 
@@ -209,7 +232,7 @@ public:
 	uint8	GetUpPriority()	 const		{return m_iUpPriority;}
 	void	SetUpPriority(uint8 newUpPriority, bool bSave=true);
 	bool	IsAutoUpPriority() const		{return m_bAutoUpPriority;}
-	void	SetAutoUpPriority(bool flag)	{m_bAutoUpPriority = flag;}
+	void	SetAutoUpPriority(bool flag);
 	void	UpdateAutoUpPriority();
 #ifdef CLIENT_GUI
 	uint16	GetQueuedCount() const { return m_queuedCount; }
@@ -293,6 +316,17 @@ public:
 
 	time_t	m_lastDateChanged;
 
+	// "Last time aMule saw this exact (name, date, size) match a real
+	// file." Refreshed by CKnownFileList::FindKnownFile and the
+	// "already on the list" branch in Append. Persisted via
+	// FT_LASTSEEN. Drives the TTL prune in CKnownFileList::Save --
+	// records whose lastSeen is older than the TTL window are dropped
+	// (both live and duplicate-list entries), capping known.met
+	// growth at a function of *recently active* unique hashes
+	// rather than lifetime-of-the-profile uniques.
+	uint32	GetLastSeen() const { return m_lastSeen; }
+	void	SetLastSeen(uint32 t) { m_lastSeen = t; }
+
 	virtual wxString GetFeedback() const;
 
 	void	SetShowSources( bool val )	{ m_showSources = val; }
@@ -355,11 +389,48 @@ protected:
 	uint32	m_lastPublishTimeKadNotes;
 	uint32	m_lastBuddyIP;
 
+	uint32	m_lastSeen;
+
 	bool	m_showSources;
 	bool	m_showPeers;
+
+public:
+	/**
+	 * Returns the ed2k:// link for this file, cached for EC response building.
+	 *
+	 * `CreateED2kLink` is hot in EC response construction (the GUI / web /
+	 * cmd clients call GET_SHARED_FILES at FULL or INC_UPDATE levels and
+	 * the listener rebuilds every shared-file tag every cycle). Its CFormat
+	 * + filename Cleanup work was the single biggest CPU consumer on EC
+	 * dispatch in profiling (see #713). Cache the "no sources" base form
+	 * here; the optional |sources,IP:port|/ suffix is a tiny CFormat
+	 * appended at request time and depends on dynamic state
+	 * (IsConnected / IsFirewalled / GetID / GetPort) that the cache cannot
+	 * hold.
+	 *
+	 * Invalidated by `SetFileName` (the only user-facing event that
+	 * affects the link body — filename, size and hash are otherwise stable
+	 * across the lifetime of a CKnownFile / CPartFile).
+	 */
+	const wxString& GetCachedED2kLinkBase() const;
+
+	/**
+	 * Full ed2k:// link as needed by EC responses — cached base + the
+	 * source suffix when add_source is true. The caller decides
+	 * add_source from current ED2K connection state.
+	 */
+	wxString GetED2kLinkForEC(bool add_source) const;
+
+protected:
+	mutable wxString m_cachedED2kLinkBase;
+
 private:
 	/** Common initializations for constructors. */
 	void Init();
+
+	// EC change-generation tracking — see public MarkECChanged() doc above.
+	std::atomic<uint64> m_ecGen{0};
+	static std::atomic<uint64> s_globalEcGen;
 };
 
 #endif // KNOWNFILE_H

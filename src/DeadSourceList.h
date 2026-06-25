@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2005-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -113,12 +113,12 @@ private:
 		/**
 		 * Sets the timestamp for the time where this entry will expire.
 		 */
-		void	SetTimeout( uint32 t );
+		void	SetTimeout( uint64 t );
 
 		/**
 		 * Returns the timestamp of this entry.
 		 */
-		uint32	GetTimeout() const;
+		uint64	GetTimeout() const;
 
 	private:
 		//! The ID/IP of the client.
@@ -130,7 +130,7 @@ private:
 		//! The IP of the server the client is connected to.
 		uint32			m_ServerIP;
 		//! The timestamp of DOOM!
-		uint32			m_TimeStamp;
+		uint64			m_TimeStamp;
 	};
 
 
@@ -142,7 +142,7 @@ private:
 
 
 	//! The timestamp of when the last cleanup was performed.
-	uint32	m_dwLastCleanUp;
+	uint64	m_dwLastCleanUp;
 	//! Specifies if the list is global or not.
 	bool	m_bGlobalList;
 };

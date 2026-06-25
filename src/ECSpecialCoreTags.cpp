@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2003-2011 Angel Vidal ( kry@amule.org )
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -247,15 +247,21 @@ CEC_SharedFile_Tag::CEC_SharedFile_Tag(const CKnownFile *file, EC_DETAIL_LEVEL d
 
 	AddTag(EC_TAG_PARTFILE_NAME,file->GetFileName().GetPrintable(), valuemap);
 	AddTag(EC_TAG_PARTFILE_HASH, file->GetFileHash(), valuemap);
+	// Partfile branch used to go through CFormat + CPath::RemoveExt every
+	// call; the basename is now cached on CPartFile (lifetime-stable).
 	AddTag(EC_TAG_KNOWNFILE_FILENAME,
-		file->IsPartFile()	? wxString(CFormat(wxT("%s")) % static_cast<const CPartFile*>(file)->GetPartMetFileName().RemoveExt())
+		file->IsPartFile()	? static_cast<const CPartFile*>(file)->GetCachedPartMetBasename()
 							: file->GetFilePath().GetPrintable(),
 		valuemap);
 
 	AddTag(EC_TAG_PARTFILE_SIZE_FULL, file->GetFileSize(), valuemap);
 
+	// Cached path: ed2k:// link construction is the single hottest item on
+	// the EC dispatch chain for big shared-file libraries (#713 profile).
+	// The cache holds the rare-changing base form; the dynamic source
+	// suffix is appended live.
 	AddTag(EC_TAG_PARTFILE_ED2K_LINK,
-			theApp->CreateED2kLink(file, (theApp->IsConnectedED2K() && !theApp->serverconnect->IsLowID())), valuemap);
+			file->GetED2kLinkForEC(theApp->IsConnectedED2K() && !theApp->serverconnect->IsLowID()), valuemap);
 
 	AddTag(EC_TAG_KNOWNFILE_COMMENT, file->GetFileComment(), valuemap);
 	AddTag(EC_TAG_KNOWNFILE_RATING, file->GetFileRating(), valuemap);
@@ -365,6 +371,9 @@ CEC_SearchFile_Tag::CEC_SearchFile_Tag(const CSearchFile *file, EC_DETAIL_LEVEL 
 	AddTag(EC_TAG_PARTFILE_HASH, file->GetFileHash(), valuemap);
 	if (file->GetParent()) {
 		AddTag(EC_TAG_SEARCH_PARENT, file->GetParent()->ECID(), valuemap);
+	}
+	if (file->HasRating()) {
+		AddTag(CECTag(EC_TAG_KNOWNFILE_RATING, (uint8)file->UserRating()), valuemap);
 	}
 }
 

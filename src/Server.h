@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -92,14 +92,14 @@ public:
 	bool	HasDynIP() const		{return !dynip.IsEmpty() ;}
 	void	SetDynIP(const wxString& newdynip);
 
-	uint32	GetLastPingedTime() const				{return lastpingedtime;}
-	void	SetLastPingedTime(uint32 in_lastpingedtime)	{lastpingedtime = in_lastpingedtime;}
+	time_t	GetLastPingedTime() const				{return lastpingedtime;}
+	void	SetLastPingedTime(time_t in_lastpingedtime)	{lastpingedtime = in_lastpingedtime;}
 
-	uint32	GetRealLastPingedTime() const					{return m_dwRealLastPingedTime;} // last pinged time without any random modificator
-	void	SetRealLastPingedTime(uint32 in_lastpingedtime)	{m_dwRealLastPingedTime = in_lastpingedtime;}
+	time_t	GetRealLastPingedTime() const					{return m_dwRealLastPingedTime;} // last pinged time without any random modificator
+	void	SetRealLastPingedTime(time_t in_lastpingedtime)	{m_dwRealLastPingedTime = in_lastpingedtime;}
 
-	uint32	GetLastPinged() const		{return lastpinged;}
-	void	SetLastPinged(uint32 in_lastpinged) {lastpinged = in_lastpinged;}
+	uint64	GetLastPinged() const		{return lastpinged;}
+	void	SetLastPinged(uint64 in_lastpinged) {lastpinged = in_lastpinged;}
 
 	void	SetPing(uint32 in_ping)		{ping = in_ping;}
 	void	SetPreference(uint32 in_preferences) {preferences = in_preferences;}
@@ -157,8 +157,8 @@ public:
 
 private:
 	uint32		challenge;
-	uint32		lastpinged; //This is to get the ping delay.
-	uint32		lastpingedtime; //This is to decided when we retry the ping.
+	uint64		lastpinged; //This is to get the ping delay.
+	time_t		lastpingedtime; //This is to decide when we retry the ping.
 	uint32		files;
 	uint32		users;
 	uint32		maxusers;
@@ -194,7 +194,7 @@ private:
 	uint16		m_nObfuscationPortTCP;
 	uint16		m_nObfuscationPortUDP;
 
-	uint32		m_dwRealLastPingedTime;
+	time_t		m_dwRealLastPingedTime;
 
 	void Init();
 };

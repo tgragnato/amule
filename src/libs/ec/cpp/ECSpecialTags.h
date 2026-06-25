@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -285,7 +285,7 @@ class CEC_PartFile_Tag : public CEC_SharedFile_Tag {
 		wxString	PartMetName() const
 		{
 			uint16 id = PartMetID();
-			return id ? (CFormat(wxT("%03u.part.met")) % id) : wxEmptyString;
+			return id ? wxString(CFormat("%03u.part.met") % id) : wxString();
 		}
 
 		wxString	GetFileStatusString() const;
@@ -370,6 +370,7 @@ class CEC_SearchFile_Tag : public CECTag {
 		uint32		CompleteSourceCount(uint32 *target = 0)	const { return AssignIfExist(EC_TAG_PARTFILE_SOURCE_COUNT_XFER, target); }
 		bool		AlreadyHave()	const { return GetTagByNameSafe(EC_TAG_PARTFILE_STATUS)->GetInt() != 0; /* == CSearchFile::NEW */ }
 		uint32		DownloadStatus(uint32 *target = 0)	const { return AssignIfExist(EC_TAG_PARTFILE_STATUS, target); }
+		bool		GetRating(uint8 &target) const { return AssignIfExist(EC_TAG_KNOWNFILE_RATING, target); }
 	private:
 		CMD4Hash	GetMD4Data();	// Block it, because it doesn't work anymore!
 };

@@ -20,6 +20,7 @@ add_executable (amuleweb
 	${CMAKE_SOURCE_DIR}/src/RLE.cpp
 	${CMAKE_SOURCE_DIR}/src/NetworkFunctions.cpp
 	${CMAKE_SOURCE_DIR}/src/LoggerConsole.cpp
+	${UPNP_SOURCES}
 	php_amule_lib.cpp
 	php_core_lib.cpp
 	php_lexer.c
@@ -30,6 +31,12 @@ add_executable (amuleweb
 	WebSocket.cpp
 )
 
+if (WIN32)
+	target_sources (amuleweb
+		PRIVATE ${CMAKE_BINARY_DIR}/version.rc
+	)
+endif()
+
 target_compile_definitions (amuleweb
 	PRIVATE wxUSE_GUI=0
 )
@@ -37,6 +44,7 @@ target_compile_definitions (amuleweb
 target_include_directories (amuleweb
 	PRIVATE ${CMAKE_BINARY_DIR}
 	PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+	PRIVATE ${LIBUPNP_INCLUDE_DIRS}
 	PRIVATE ${SRC_DIR}
 )
 
@@ -47,20 +55,16 @@ target_link_libraries (amuleweb
 	PRIVATE wxWidgets::NET
 )
 
-if(APPLE)
-	find_library(CORE_FOUNDATION CoreFoundation)
-	if (NOT CORE_FOUNDATION)
-		message(FATAL_ERROR "CoreFoundation not found")
-	endif()
+# WebInterface.cpp and php_core_lib.cpp call gettext/dgettext directly.
+# Empty/no-op on glibc; the libintl entry on macOS / MinGW.
+if (ENABLE_NLS AND Intl_FOUND)
+	target_include_directories (amuleweb PRIVATE ${Intl_INCLUDE_DIRS})
+	target_link_libraries (amuleweb PRIVATE ${Intl_LIBRARIES})
+endif()
 
-	find_library(APPLICATION_SERVICES ApplicationServices)
-	if (NOT APPLICATION_SERVICES)
-		   message(FATAL_ERROR "ApplicationServices not found")
-	endif()
-
-	target_link_libraries(amuleweb
-		PRIVATE ${CORE_FOUNDATION}
-		PRIVATE ${APPLICATION_SERVICES}
+if (ENABLE_UPNP)
+	target_link_libraries (amuleweb
+		PRIVATE UPNP::Shared
 	)
 endif()
 
@@ -83,6 +87,13 @@ if (WITH_LIBPNG)
 
 	target_link_libraries (amuleweb
 		PRIVATE ${PNG_LIBRARIES}
+	)
+endif()
+
+if (APPLE)
+	target_link_libraries (amuleweb
+		PRIVATE "-framework CoreServices"
+		PRIVATE "-framework ApplicationServices"
 	)
 endif()
 

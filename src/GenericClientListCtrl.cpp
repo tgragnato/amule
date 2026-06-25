@@ -127,9 +127,9 @@ m_columndata(0, NULL)
 	m_menu = NULL;
 	m_showing = false;
 
-	m_hilightBrush  = CMuleColour(wxSYS_COLOUR_HIGHLIGHT).Blend(125).GetBrush();
+	m_highlightBrush  = CMuleColour(wxSYS_COLOUR_HIGHLIGHT).Blend(125).GetBrush();
 
-	m_hilightUnfocusBrush = CMuleColour(wxSYS_COLOUR_BTNSHADOW).Blend(125).GetBrush();
+	m_highlightUnfocusBrush = CMuleColour(wxSYS_COLOUR_BTNSHADOW).Blend(125).GetBrush();
 
 	m_clientcount = 0;
 }
@@ -646,11 +646,11 @@ void CGenericClientListCtrl::OnDrawItem(
 	if (highlighted) {
 		CMuleColour colour;
 		if (GetFocus()) {
-			dc->SetBackground(m_hilightBrush);
-			colour = m_hilightBrush.GetColour();
+			dc->SetBackground(m_highlightBrush);
+			colour = m_highlightBrush.GetColour();
 		} else {
-			dc->SetBackground(m_hilightUnfocusBrush);
-			colour = m_hilightUnfocusBrush.GetColour();
+			dc->SetBackground(m_highlightUnfocusBrush);
+			colour = m_highlightUnfocusBrush.GetColour();
 		}
 		dc->SetTextForeground(wxSystemSettings::GetColour(wxSYS_COLOUR_HIGHLIGHTTEXT));
 		dc->SetPen( colour.Blend(65).GetPen() );
@@ -881,7 +881,7 @@ void CGenericClientListCtrl::DrawClientItem(wxDC* dc, int nColumn, const wxRect&
 				dc->SetClippingRegion(rect.GetX(), rect.GetY() + 1, iWidth, iHeight);
 
 				if ( item->GetType() != A4AF_SOURCE ) {
-					uint32 dwTicks = GetTickCount();
+					uint32 dwTicks = GetTickCount64();
 
 					wxMemoryDC cdcStatus;
 
@@ -1270,6 +1270,32 @@ int CGenericClientListCtrl::Compare(
 	}
 }
 
+
+void CGenericClientListCtrl::RemoveKnownFile(CKnownFile* file)
+{
+	if (file == NULL) {
+		return;
+	}
+	CKnownFileVector::iterator kf =
+		std::find(m_knownfiles.begin(), m_knownfiles.end(), file);
+	if (kf != m_knownfiles.end()) {
+		m_knownfiles.erase(kf);
+	}
+	for (ListItems::iterator it = m_ListItems.begin();
+		it != m_ListItems.end(); /* manual ++ */) {
+		ClientCtrlItem_Struct* item = it->second;
+		if (item && item->GetOwner() == file) {
+			long row = FindItem(-1, reinterpret_cast<wxUIntPtr>(item));
+			if (row != -1) {
+				DeleteItem(row);
+			}
+			delete item;
+			m_ListItems.erase(it++);
+		} else {
+			++it;
+		}
+	}
+}
 
 void CGenericClientListCtrl::ShowSourcesCount( int diff )
 {

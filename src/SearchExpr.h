@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -35,6 +35,10 @@ enum ESearchOperators
 	SEARCHOP_NOT
 };
 
+// Magic-byte (0xAD) delimiter; as a narrow literal on POSIX UTF-8 locale it
+// would fail wxConvLibc and collapse to empty, breaking operator-token
+// comparisons in SearchList. Keep wxT() so the literal is a wide-char at
+// compile time — same reason as FileTags.h TAG_* macros.
 #define	SEARCHOPTOK_AND	wxT("\255AND")
 #define	SEARCHOPTOK_OR	wxT("\255OR")
 #define	SEARCHOPTOK_NOT	wxT("\255NOT")

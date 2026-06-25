@@ -9,6 +9,27 @@ add_custom_command (
 	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/pixmaps/flags_xpm"
 )
 
+find_package (Python3 COMPONENTS Interpreter)
+if (Python3_FOUND)
+	file (GLOB_RECURSE AMULE_ICON_PNGS CONFIGURE_DEPENDS
+		${CMAKE_CURRENT_SOURCE_DIR}/icons/*.png)
+	add_custom_command (
+		OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/icons/icon_data.c
+		COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/icons
+		COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/icons/embed_icons.py
+			${CMAKE_CURRENT_SOURCE_DIR}/icons
+			${CMAKE_CURRENT_BINARY_DIR}/icons/icon_data.c
+		DEPENDS
+			${CMAKE_CURRENT_SOURCE_DIR}/icons/embed_icons.py
+			${AMULE_ICON_PNGS}
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/icons
+		COMMENT "Embedding ${CMAKE_CURRENT_SOURCE_DIR}/icons -> icon_data.c"
+	)
+	set (AMULE_ICON_DATA_C ${CMAKE_CURRENT_BINARY_DIR}/icons/icon_data.c)
+else()
+	set (AMULE_ICON_DATA_C ${CMAKE_CURRENT_SOURCE_DIR}/icons/icon_data.c)
+endif()
+
 add_custom_command (
 	OUTPUT ${EC_INCLUDE_DIR}/ECCodes.h
 	COMMAND ${CMAKE_COMMAND} -DHEADER_FILE="${CMAKE_CURRENT_BINARY_DIR}/libs/ec/cpp/ECCodes.h" -P ${CMAKE_CURRENT_SOURCE_DIR}/libs/ec/abstracts/CMakeLists.txt
@@ -391,6 +412,11 @@ if (NEED_LIB_MULEAPPCORE)
 		PUBLIC wxWidgets::BASE
 		PRIVATE CRYPTOPP::CRYPTOPP
 	)
+
+	if (ENABLE_NLS AND Intl_FOUND)
+		target_include_directories (muleappcore PUBLIC ${Intl_INCLUDE_DIRS})
+		target_link_libraries (muleappcore PUBLIC ${Intl_LIBRARIES})
+	endif()
 endif()
 
 if (NEED_LIB_MULEAPPGUI)
@@ -438,6 +464,7 @@ IF (NEED_LIB_MULESOCKET)
 		PUBLIC ${amule_BINARY_DIR}
 		PUBLIC ${INCLUDE_INCLUDE_DIR}
 		PUBLIC ${LIBS_INCLUDE_DIR}
+		PUBLIC ${Boost_INCLUDE_DIRS}
 	)
 
 	if (ENABLE_BOOST)

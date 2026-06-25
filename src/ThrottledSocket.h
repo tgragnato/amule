@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2005-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -47,7 +47,7 @@ class ThrottledFileSocket : public ThrottledControlSocket
 {
 public:
     virtual SocketSentBytes SendFileAndControlData(uint32 maxNumberOfBytesToSend, uint32 minFragSize) = 0;
-    virtual uint32 GetLastCalledSend() = 0;
+    virtual uint64 	GetLastCalledSend() = 0;
     virtual uint32	GetNeededBytes() = 0;
 };
 

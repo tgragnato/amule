@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2005-2011 Froenchenko Leonid ( lfroen@gmail.com / http://www.amule.org )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -40,7 +40,7 @@
 
 /*
  * Built-in php functions. Those are amule-specific functions, accessing EC and internal
- * datastructure
+ * data structure
  *
  */
 
@@ -145,6 +145,56 @@ void php_native_kad_disconnect(PHP_VALUE_NODE *)
 }
 
 /*
+ * Usage: amule_kad_start()
+ *
+ * Start the Kademlia network using the on-disk nodes.dat for bootstrap.
+ * Wraps EC_OP_KAD_START.
+ */
+void php_native_kad_start(PHP_VALUE_NODE *)
+{
+	CECPacket req(EC_OP_KAD_START);
+	CPhPLibContext::g_curr_context->WebServer()->Send_Discard_V2_Request(&req);
+}
+
+/*
+ * Usage: amule_kad_update_from_url($url)
+ *
+ * Download a fresh nodes.dat from the given URL, bootstrap Kad from it,
+ * and persist the URL into the KadNodesUrl preference so subsequent
+ * starts reuse the same source. Wraps EC_OP_KAD_UPDATE_FROM_URL.
+ */
+void php_native_kad_update_from_url(PHP_VALUE_NODE *)
+{
+	PHP_SCOPE_ITEM *si = get_scope_item(g_current_scope, "__param_0");
+	if ( !si || (si->var->value.type != PHP_VAL_STRING) ) {
+		php_report_error(PHP_ERROR, "Missing or bad argument 1: $url");
+		return;
+	}
+	char *url = si->var->value.str_val;
+
+	CECPacket req(EC_OP_KAD_UPDATE_FROM_URL);
+	req.AddTag(CECTag(EC_TAG_KADEMLIA_UPDATE_URL,
+		wxString(char2unicode(url))));
+	CPhPLibContext::g_curr_context->WebServer()->Send_Discard_V2_Request(&req);
+}
+
+/*
+ * Usage: amule_server_disconnect()
+ *
+ * Disconnect from the current ed2k server (network-level, not per-server).
+ * The existing amule_do_server_cmd takes (ip, port, cmd) and always sends
+ * EC_OP_SERVER_DISCONNECT with a server tag -- which on amuled simply
+ * disconnects globally, but it's not callable without IP/port. This
+ * variant sends the same opcode with no tag for the WebUI "Disconnect
+ * from current ed2k server" button.
+ */
+void php_native_server_disconnect(PHP_VALUE_NODE *)
+{
+	CECPacket req(EC_OP_SERVER_DISCONNECT);
+	CPhPLibContext::g_curr_context->WebServer()->Send_Discard_V2_Request(&req);
+}
+
+/*
  * Usage amule_add_server_cmd($server_addr, $server_port, $server_name);
  */
 void php_native_add_server_cmd(PHP_VALUE_NODE *)
@@ -172,7 +222,7 @@ void php_native_add_server_cmd(PHP_VALUE_NODE *)
 	char *name = si->var->value.str_val;
 
 	CPhPLibContext::g_curr_context->WebServer()->Send_AddServer_Cmd(wxString(char2unicode(addr)),
-		wxString::Format(wxT("%d"), port), wxString(char2unicode(name)));
+		wxString::Format("%d", port), wxString(char2unicode(name)));
 }
 
 /*
@@ -323,13 +373,15 @@ typedef struct {
 
 PHP_2_EC_OPT_DEF g_connection_opt_defs[] = {
 	{ "max_line_up_cap", EC_TAG_CONN_UL_CAP, 4}, { "max_line_down_cap", EC_TAG_CONN_DL_CAP, 4},
-	{ "max_up_limit", EC_TAG_CONN_MAX_UL, 2}, { "max_down_limit", EC_TAG_CONN_MAX_DL, 2},
+	{ "max_up_limit", EC_TAG_CONN_MAX_UL, 4}, { "max_down_limit", EC_TAG_CONN_MAX_DL, 4},
 	{ "slot_alloc", EC_TAG_CONN_SLOT_ALLOCATION, 2},
 	{ "tcp_port", EC_TAG_CONN_TCP_PORT, 2}, { "udp_port", EC_TAG_CONN_UDP_PORT, 2},
 	{ "udp_dis", EC_TAG_CONN_UDP_DISABLE, 0},
 	{ "max_file_src", EC_TAG_CONN_MAX_FILE_SOURCES, 2},
 	{ "max_conn_total", EC_TAG_CONN_MAX_CONN, 2},
 	{ "autoconn_en", EC_TAG_CONN_AUTOCONNECT, 0}, { "reconn_en", EC_TAG_CONN_RECONNECT, 0},
+	{ "network_ed2k", EC_TAG_NETWORK_ED2K, 0},
+	{ "network_kad", EC_TAG_NETWORK_KADEMLIA, 0},
 	{0, (ECTagNames)0, 0}
 };
 
@@ -473,6 +525,17 @@ void php_set_amule_options(PHP_VALUE_NODE *)
 	CECPacket req(EC_OP_SET_PREFERENCES);
 	PHP_VAR_NODE *opt_group_array = 0;
 
+	// general: nickname. amule_get_options exposes it at the top level
+	// as "nick" (not nested under a "general" group), so the setter
+	// mirrors that shape.
+	PHP_VAR_NODE *nick_node = array_get_by_str_key(&si->var->value, "nick");
+	if ( nick_node && nick_node->value.type == PHP_VAL_STRING && nick_node->value.str_val ) {
+		CECEmptyTag generalPrefs(EC_TAG_PREFS_GENERAL);
+		generalPrefs.AddTag(CECTag(EC_TAG_USER_NICK,
+			wxString::FromUTF8(nick_node->value.str_val)));
+		req.AddTag(generalPrefs);
+	}
+
 	// files
 	opt_group_array = array_get_by_str_key(&si->var->value, "files");
 	if ( opt_group_array->value.type == PHP_VAL_ARRAY ) {
@@ -493,7 +556,7 @@ void php_set_amule_options(PHP_VALUE_NODE *)
 		CECEmptyTag webPrefs(EC_TAG_PREFS_REMOTECTRL);
 		php_2_ec_tag(&webPrefs, g_webserver_opt_defs, &opt_group_array->value);
 		req.AddTag(webPrefs);
-		// also apply settings localy
+		// also apply settings locally
 		PHP_VAR_NODE *pref = array_get_by_str_key(&opt_group_array->value, "use_gzip");
 		cast_value_dnum(&pref->value);
 		CPhPLibContext::g_curr_context->WebServer()->webInterface->m_UseGzip = pref->value.int_val != 0;
@@ -742,7 +805,7 @@ void amule_load_stats()
 /*
  * Convert CEC_StatTree_Node_Tag into php associative array
  *
- * Since data structure is recoursive - we need helper function
+ * Since data structure is recursive - we need helper function
  * to perform conversion
  */
 void ecstats2php(CEC_StatTree_Node_Tag *root, PHP_VALUE_NODE *result)
@@ -839,7 +902,7 @@ void amule_download_file_prop_get(void *ptr, char *prop_name, PHP_VALUE_NODE *re
 		result->str_val = strdup((const char *)unicode2UTF8(obj->sFileName));
 	} else if ( strcmp(prop_name, "short_name") == 0 ) {
 		result->type = PHP_VAL_STRING;
-		wxString short_name(obj->sFileName.Length() > 60 ? (obj->sFileName.Left(60) + (wxT(" ..."))) : obj->sFileName);
+		wxString short_name(obj->sFileName.Length() > 60 ? (obj->sFileName.Left(60) + (" ...")) : obj->sFileName);
 		result->str_val = strdup((const char *)unicode2UTF8(short_name));
 	} else if ( strcmp(prop_name, "hash") == 0 ) {
 		result->type = PHP_VAL_STRING;
@@ -907,9 +970,9 @@ void amule_upload_file_prop_get(void *ptr, char *prop_name, PHP_VALUE_NODE *resu
 		}
 		wxString short_name;
 		if (sharedfile) {
-			short_name = sharedfile->sFileName.Length() > 60 ? (sharedfile->sFileName.Left(60) + (wxT(" ..."))) : sharedfile->sFileName;
+			short_name = sharedfile->sFileName.Length() > 60 ? (sharedfile->sFileName.Left(60) + (" ...")) : sharedfile->sFileName;
 		} else {
-			short_name = wxT("???");
+			short_name = "???";
 		}
 		result->str_val = strdup((const char *)unicode2UTF8(short_name));
 	} else if ( strcmp(prop_name, "user_name") == 0 ) {
@@ -974,7 +1037,7 @@ void amule_shared_file_prop_get(void *ptr, char *prop_name, PHP_VALUE_NODE *resu
 		result->str_val = strdup((const char *)unicode2UTF8(obj->sFileName));
 	} else if ( strcmp(prop_name, "short_name") == 0 ) {
 		result->type = PHP_VAL_STRING;
-		wxString short_name(obj->sFileName.Length() > 60 ? (obj->sFileName.Left(60) + (wxT(" ..."))) : obj->sFileName);
+		wxString short_name(obj->sFileName.Length() > 60 ? (obj->sFileName.Left(60) + (" ...")) : obj->sFileName);
 		result->str_val = strdup((const char *)unicode2UTF8(short_name));
 	} else if ( strcmp(prop_name, "hash") == 0 ) {
 		result->type = PHP_VAL_STRING;
@@ -1026,7 +1089,7 @@ void amule_search_file_prop_get(void *ptr, char *prop_name, PHP_VALUE_NODE *resu
 		result->str_val = strdup((const char *)unicode2UTF8(obj->sFileName));
 	} else if ( strcmp(prop_name, "short_name") == 0 ) {
 		result->type = PHP_VAL_STRING;
-		wxString short_name(obj->sFileName.Length() > 60 ? (obj->sFileName.Left(60) + (wxT(" ..."))) : obj->sFileName);
+		wxString short_name(obj->sFileName.Length() > 60 ? (obj->sFileName.Left(60) + (" ...")) : obj->sFileName);
 		result->str_val = strdup((const char *)unicode2UTF8(short_name));
 	} else if ( strcmp(prop_name, "hash") == 0 ) {
 		result->type = PHP_VAL_STRING;
@@ -1133,6 +1196,28 @@ PHP_BLTIN_FUNC_DEF amule_lib_funcs[] = {
 	{
 		"amule_get_version",
 		0, amule_version,
+	},
+	{
+		"amule_kad_start",
+		0, php_native_kad_start,
+	},
+	{
+		"amule_kad_connect",
+		2,
+		php_native_kad_connect,
+	},
+	{
+		"amule_kad_disconnect",
+		0, php_native_kad_disconnect,
+	},
+	{
+		"amule_kad_update_from_url",
+		1,
+		php_native_kad_update_from_url,
+	},
+	{
+		"amule_server_disconnect",
+		0, php_native_server_disconnect,
 	},
 	{ 0, 0, 0, },
 };

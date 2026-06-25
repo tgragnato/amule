@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -55,7 +55,7 @@ public:
 	void SetRange(float dLower, float dUpper, unsigned iTrend = 0);
 	void SetRanges(float dLower, float dUpper);
 	void SetYUnits(const wxString& string,
-		const wxString& YMin = wxEmptyString, const wxString& YMax = wxEmptyString);
+		const wxString& YMin = "", const wxString& YMax = "");
 	void SetBackgroundColor(const wxColour& color);
 	void SetGridColor(const wxColour& color);
 	void SetPlotColor(const wxColour& color, unsigned iTrend = 0);
@@ -93,7 +93,7 @@ public:
 
 
 protected:
-	DECLARE_EVENT_TABLE()
+	wxDECLARE_EVENT_TABLE();
 	PlotData_t *pdsTrends;
 
 	wxRect	m_rectClient;

@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -67,7 +67,7 @@ class CaMuleExternalConnector;
 class CCommandTree {
  public:
 	CCommandTree(CaMuleExternalConnector& app)
-		: m_command(wxEmptyString), m_cmd_id(CMD_ERR_SYNTAX), m_short(wxEmptyString), m_verbose(wxEmptyString), m_params(CMD_PARAM_OPTIONAL), m_parent(NULL)
+		: m_command(""), m_cmd_id(CMD_ERR_SYNTAX), m_short(""), m_verbose(""), m_params(CMD_PARAM_OPTIONAL), m_parent(NULL)
 		{
 			m_app = &app;
 		}
@@ -145,6 +145,7 @@ public:
 	void GetCommand(const wxString &prompt, char* buffer, size_t buffer_size);
 	const CECPacket *SendRecvMsg_v2(const CECPacket *request) { return m_ECClient->SendRecvPacket(request); }
 	void SendPacket(const CECPacket *request) { m_ECClient->SendPacket(request); }
+	bool IsServerPartialUpdateActive() const { return m_ECClient->ServerSupportsPartialUpdate(); }
 	void ConnectAndRun(const wxString &ProgName, const wxString& ProgVersion);
 	void ShowGreet();
 
@@ -173,6 +174,13 @@ protected:
 	wxString	m_host;
 	CMD4Hash	m_password;
 	bool		m_ZLIB;
+	// Force ZLIB regardless of dialed-IP locality (#728 follow-up).
+	// Set by `/EC/ForceZLIB=1` in the config or `--force-zlib` on the
+	// CLI. Use case: a WireGuard tunnel endpoint that resolves to an
+	// RFC1918 IP but whose transit is slow Internet — the locality
+	// check would otherwise strip ZLIB and the user loses the perf
+	// they actually want.
+	bool		m_forceZLIB;
 	bool		m_KeepQuiet;
 	bool		m_Verbose;
 	bool		m_interactive;

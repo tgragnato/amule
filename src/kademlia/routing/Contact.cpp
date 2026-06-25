@@ -2,7 +2,7 @@
 // This file is part of aMule Project
 //
 // Copyright (c) 2004-2011 Angel Vidal ( kry@amule.org )
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2003-2011 Barry Dunne ( http://www.emule-project.net )
 
 // This program is free software; you can redistribute it and/or
@@ -21,8 +21,8 @@
 
 // This work is based on the java implementation of the Kademlia protocol.
 // Kademlia: Peer-to-peer routing based on the XOR metric
-// Copyright (c) 2002  Petar Maymounkov ( petar@post.harvard.edu )
-// http://kademlia.scs.cs.nyu.edu
+// Copyright (c) 2002  Petar Maymounkov ( petar@maymounkov.org )
+// https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf
 
 // Note To Mods //
 /*
@@ -77,7 +77,7 @@ CContact::CContact(const CContact& k1)
 	theStats::AddKadNode();
 }
 
-void CContact::CheckingType() throw()
+void CContact::CheckingType() noexcept
 {
 	time_t now = time(NULL);
 
@@ -91,7 +91,7 @@ void CContact::CheckingType() throw()
 	m_type++;
 }
 
-void CContact::UpdateType() throw()
+void CContact::UpdateType() noexcept
 {
 	time_t now = time(NULL);
 	uint32_t hours = (now - m_created) / HR2S(1);
@@ -110,7 +110,7 @@ void CContact::UpdateType() throw()
 	}
 }
 
-time_t CContact::GetLastSeen() const throw()
+time_t CContact::GetLastSeen() const noexcept
 {
 	// calculating back from expire time, so we don't need an additional field.
 	// might result in wrong values if doing CheckingType() for example, so don't use for important timing stuff

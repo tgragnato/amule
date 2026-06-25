@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2008-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -94,7 +94,7 @@ public:
 	public:
 		// constructs
 		const_iterator() {};
-		const_iterator(const ListType::const_iterator& it) { m_it = it; };
+		const_iterator(const ListType::const_iterator& it) : m_it(it) { };
 		// operators
 		bool operator != (const const_iterator& it) const { return m_it != it.m_it; }
 		const_iterator& operator ++ () { ++ m_it; return *this; }

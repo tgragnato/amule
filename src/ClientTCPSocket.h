@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -57,23 +57,34 @@ public:
 	void		Safe_Delete();
 	void		Safe_Delete_Client();
 
-	void		OnConnect(int nErrorCode);
-	void		OnSend(int nErrorCode);
-	void		OnReceive(int nErrorCode);
+	void		OnConnect(int nErrorCode) override;
+	void		OnSend(int nErrorCode) override;
+	void		OnReceive(int nErrorCode) override;
 
-	void		OnClose(int nErrorCode);
-	void		OnError(int nErrorCode);
+	void		OnClose(int nErrorCode) override;
+	void		OnError(int nErrorCode) override;
 
 	uint32		GetRemoteIP() const { return m_remoteip; }
 
 	CUpDownClient* GetClient() { return m_client; }
 
-	virtual void SendPacket(CPacket* packet, bool delpacket = true, bool controlpacket = true, uint32 actualPayloadSize = 0);
-    virtual SocketSentBytes SendControlData(uint32 maxNumberOfBytesToSend, uint32 overchargeMaxBytesToSend);
-    virtual SocketSentBytes SendFileAndControlData(uint32 maxNumberOfBytesToSend, uint32 overchargeMaxBytesToSend);
+	void		SendPacket(CPacket* packet, bool delpacket = true, bool controlpacket = true, uint32 actualPayloadSize = 0) override;
+	SocketSentBytes SendControlData(uint32 maxNumberOfBytesToSend, uint32 overchargeMaxBytesToSend) override;
+	SocketSentBytes SendFileAndControlData(uint32 maxNumberOfBytesToSend, uint32 overchargeMaxBytesToSend) override;
+
+	// Bypass the global download bandwidth throttler when the inbound
+	// peer is actually the ed2k server's HighID-callback probe (#778).
+	// CServerSocket already opts out by overriding to false; this
+	// extends the same shape to inbound peer connections whose source
+	// IP matches the connected (or currently-connecting) server, so a
+	// saturated peer-side budget doesn't delay the probe past the
+	// server's verification timer and leave us in permanent LowID.
+	// Implemented out-of-line in the .cpp because we need theApp /
+	// CServerConnect, which the header can't see.
+	bool		IsDownloadThrottled() const override;
 
 protected:
-	virtual bool PacketReceived(CPacket* packet);
+	bool		PacketReceived(CPacket* packet) override;
 
 private:
 	CUpDownClient*	m_client;
@@ -84,7 +95,7 @@ private:
 	void	ResetTimeOutTimer();
 	void	SetClient(CUpDownClient* client);
 
-	uint32	timeout_timer;
+	uint64	timeout_timer;
 	uint32	m_remoteip;
 };
 

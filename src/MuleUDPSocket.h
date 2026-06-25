@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2005-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -184,7 +184,7 @@ private:
 		//! The packet, which at this point is owned by CMuleUDPSocket.
 		CPacket*	packet;
 		//! The timestamp of when the packet was queued.
-		uint32		time;
+		uint64		time;
 		//! Target IP address.
 		uint32		IP;
 		//! Target port.

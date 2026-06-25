@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -166,7 +166,9 @@ void CBarShader::Draw( wxDC* dc, int iLeft, int iTop, bool bFlat )
 	}
 
 	// Render the bar into a raw buffer
-	unsigned char * buf = (unsigned char *) malloc(m_Width * m_Height * 3);
+	unsigned char * buf = (unsigned char *) malloc(
+		static_cast<size_t>(m_Width) *
+		static_cast<size_t>(m_Height) * 3u);
 
 	if (bFlat) {
 		// draw flat bar
@@ -185,7 +187,8 @@ void CBarShader::Draw( wxDC* dc, int iLeft, int iTop, bool bFlat )
 			std::memcpy(buf + idx, buf, idx);
 		}
 		if (y < m_Height) {
-			std::memcpy(buf + idx, buf, (m_Height - y) * linelength);
+			std::memcpy(buf + idx, buf,
+				static_cast<size_t>(m_Height - y) * linelength);
 		}
 	} else {
 		// draw rounded bar

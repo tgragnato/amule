@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Original author: Emilio Sandoz
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -116,6 +116,7 @@ protected:
 	void OnButtonIPFilterUpdate(wxCommandEvent &event);
 	void OnColorCategorySelected(wxCommandEvent &event);
 	void OnCheckBoxChange(wxCommandEvent &event);
+	void OnAutostartToggle(wxCommandEvent &event);
 	void OnPrefsPageChange(wxListEvent& event);
 	void OnToolTipDelayChange(wxSpinEvent& event);
 	void OnScrollBarChange( wxScrollEvent& event );
@@ -127,7 +128,29 @@ protected:
 
 	void OnInitDialog( wxInitDialogEvent& evt );
 
-	DECLARE_EVENT_TABLE()
+	// Tri-state outcome of an attempt to commit the pending share
+	// selection. Used by OnOk to decide between three flows:
+	//   * Committed       → continue to Save() + Reload + Show(false)
+	//   * NothingToCommit → continue to Save() + Show(false), skip Reload
+	//   * CancelledByUser → return early from OnOk: keep the prefs
+	//                       dialog open so the user can adjust their
+	//                       selection without losing the rest of
+	//                       their pending pref changes
+	enum class SharedDirsCommitResult {
+		NothingToCommit,
+		Committed,
+		CancelledByUser,
+	};
+
+	// Commits the pending share selection from the directory tree
+	// into theApp->glob_prefs->shareddir_list. Confirms before
+	// committing recursive-share roots that look like sensitive
+	// system locations (e.g. home, /etc), then runs the recursive
+	// directory enumeration on a worker thread with a cancellable
+	// progress dialog so the UI never freezes on large roots.
+	SharedDirsCommitResult CommitSharedDirsWithProgress();
+
+	wxDECLARE_EVENT_TABLE();
 
 private:
 	bool	m_verticalToolbar;

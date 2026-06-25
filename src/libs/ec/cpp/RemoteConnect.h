@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2004-2011 Angel Vidal ( kry@amule.org )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -41,7 +41,8 @@ class CECPacketHandlerBase {
 class CECLoginPacket : public CECPacket {
 	public:
 		CECLoginPacket(const wxString& client, const wxString& version,
-						bool canZLIB = true, bool canUTF8numbers = true, bool canNotify = false);
+						bool canZLIB = true, bool canUTF8numbers = true, bool canNotify = false,
+						bool preferNoZlib = false);
 };
 
 class CECAuthPacket : public CECPacket {
@@ -80,12 +81,44 @@ private:
 	bool m_canUTF8numbers;
 	bool m_canNotify;
 
+	// Set in ConnectToCore when the dialed server address resolves to
+	// a loopback / RFC1918 LAN / RFC3927 link-local IP. Drives the
+	// `EC_TAG_PREFER_NO_ZLIB` hint in the auth packet; see
+	// `CECLoginPacket` ctor and ECSocket.cpp's `m_isLocalPeer` per-
+	// packet bypass. Only meaningful when `m_canZLIB` is also true
+	// (no point sending the hint when the capability isn't advertised).
+	bool m_preferNoZlib;
+
+	// User override to always negotiate ZLIB regardless of dialed
+	// server locality. Use case: a WireGuard / Tailscale tunnel
+	// endpoint that resolves to an RFC1918 IP but whose underlying
+	// transit is slow Internet — the locality check would otherwise
+	// strip ZLIB and the user loses the perf they actually want.
+	// Set via SetForceZlib() from the caller's config/CLI plumbing.
+	bool m_forceZlib;
+
+	// Set when the server echoed `EC_TAG_CAN_PARTIAL_UPDATE` in AUTH_OK,
+	// confirming it speaks the partial-update INC_UPDATE protocol: skip
+	// the bulk "anything missing == deleted" loop and instead delete only
+	// what arrives in explicit `EC_TAG_FILE_REMOVED` markers. Old daemons
+	// don't echo the tag; we then fall back to the legacy bulk-deletion
+	// path (server emits alive-marker tags so it still works).
+	bool m_serverPartialUpdate;
+
 	void WriteDoneAndQueueEmpty();
 public:
 	// The event handler is used for notifying connect/close
 	CRemoteConnect(wxEvtHandler* evt_handler);
 
 	void SetCapabilities(bool canZLIB, bool canUTF8numbers, bool canNotify);
+
+	// Force-ZLIB override: when true, ConnectToCore skips the
+	// loopback/LAN-IP locality detection and never asks the server
+	// to bypass ZLIB. Call BEFORE ConnectToCore() — the flag is read
+	// during connect.
+	void SetForceZlib(bool force) noexcept { m_forceZlib = force; }
+
+	bool ServerSupportsPartialUpdate() const { return m_serverPartialUpdate; }
 
 	bool ConnectToCore(
 		const wxString &host, int port,
@@ -280,9 +313,9 @@ public:
 				   CMD4Hash userHash);
 	void SetPreferencesConnections(uint32 LineDownloadCapacity,
 				       uint32 LineUploadCapacity,
-				       uint16 MaxDownloadSpeed,
-				       uint16 MaxUploadSpeed,
-				       uint16 UploadSlotAllocation,
+				       uint32 MaxDownloadSpeed,
+				       uint32 MaxUploadSpeed,
+				       uint32 UploadSlotAllocation,
 				       uint16 TCPPort,
 				       uint16 UDPPort,
 				       bool DisableUDP,
@@ -382,8 +415,7 @@ private:
 	bool ProcessAuthPacket(const CECPacket *reply);
 };
 
-DECLARE_LOCAL_EVENT_TYPE(wxEVT_EC_CONNECTION, wxEVT_USER_FIRST + 1000)
-
+wxDECLARE_EVENT(wxEVT_EC_CONNECTION, wxEvent);
 class wxECSocketEvent : public wxEvent {
 public:
 	wxECSocketEvent(int id, bool result, const wxString& reply) : wxEvent(-1, id)

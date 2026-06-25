@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2008-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -62,7 +62,7 @@ void CGapList::AddGap(uint64 gapstart, uint64 gapend)
 		return;
 	}
 
-//	AddDebugLogLineN(logPartFile, CFormat(wxT("  AddGap: %5d - %5d")) % gapstart % gapend);
+//	AddDebugLogLineN(logPartFile, CFormat("  AddGap: %5d - %5d") % gapstart % gapend);
 
 	// mark involved part(s) as incomplete
 	uint16 partlast = gapend / PARTSIZE;
@@ -129,7 +129,7 @@ void CGapList::FillGap(uint64 partstart, uint64 partend)
 		return;
 	}
 
-//	AddDebugLogLineN(logPartFile, CFormat(wxT("  FillGap: %5d - %5d")) % partstart % partend);
+//	AddDebugLogLineN(logPartFile, CFormat("  FillGap: %5d - %5d") % partstart % partend);
 
 	// mark involved part(s) to be reexamined for completeness
 	uint16 partlast = partend / PARTSIZE;

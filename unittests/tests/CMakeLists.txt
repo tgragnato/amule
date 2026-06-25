@@ -105,15 +105,13 @@ target_include_directories (NetworkFunctionsTest
 	PRIVATE ${CMAKE_SOURCE_DIR}/src/include
 )
 
-if (ENABLE_BOOST)
-	target_include_directories (NetworkFunctionsTest
-		PRIVATE ${Boost_INCLUDE_DIR}
-	)
+target_include_directories (NetworkFunctionsTest
+	PRIVATE ${Boost_INCLUDE_DIRS}
+)
 
-	target_link_libraries (NetworkFunctionsTest
-		${Boost_LIBRARIES}
-	)
-endif()
+target_link_libraries (NetworkFunctionsTest
+	${Boost_LIBRARIES}
+)
 
 target_link_libraries (NetworkFunctionsTest
 	muleunit
@@ -165,6 +163,29 @@ add_test (NAME StringFunctionsTest
 )
 
 target_link_libraries (StringFunctionsTest
+	muleunit
+)
+
+add_executable (PhpArrayTest
+	PhpArrayTest.cpp
+	${CMAKE_SOURCE_DIR}/src/webserver/src/php_syntree.cpp
+	${CMAKE_SOURCE_DIR}/src/libs/common/Format.cpp
+	${CMAKE_SOURCE_DIR}/src/libs/common/strerror_r.c
+)
+
+add_test (NAME PhpArrayTest
+	COMMAND PhpArrayTest
+)
+
+target_compile_definitions (PhpArrayTest
+	PRIVATE PHP_STANDALONE_EN
+)
+
+target_include_directories (PhpArrayTest
+	PRIVATE ${CMAKE_SOURCE_DIR}/src/webserver/src
+)
+
+target_link_libraries (PhpArrayTest
 	muleunit
 )
 

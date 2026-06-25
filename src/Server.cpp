@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -149,6 +149,7 @@ void CServer::Init() {
 
 bool CServer::AddTagFromFile(CFileDataIO* servermet)
 {
+	uint64_t val;
 	if (servermet == NULL) {
 		return false;
 	}
@@ -187,7 +188,9 @@ bool CServer::AddTagFromFile(CFileDataIO* servermet)
 		break;
 
 	case ST_LASTPING:
-		lastpinged = tag.GetInt();
+		val = tag.GetInt();
+		// Pre-fix aMule wrote ms-since-boot here; reject obviously-future values.
+		lastpingedtime = (val > (uint64_t)time(NULL)) ? 0 : (time_t)val;
 		break;
 
 	case ST_MAXUSERS:
@@ -209,7 +212,7 @@ bool CServer::AddTagFromFile(CFileDataIO* servermet)
 				m_strVersion = tag.GetStr();
 			}
 		} else if (tag.IsInt()) {
-			m_strVersion = CFormat(wxT("%u.%u")) % (tag.GetInt() >> 16) % (tag.GetInt() & 0xFFFF);
+			m_strVersion = CFormat("%u.%u") % (tag.GetInt() >> 16) % (tag.GetInt() & 0xFFFF);
 		} else {
 			wxFAIL;
 		}
@@ -251,9 +254,9 @@ bool CServer::AddTagFromFile(CFileDataIO* servermet)
 
 	default:
 		if (!tag.GetName().IsEmpty()) {
-			if (tag.GetName() == wxT("files")) {
+			if (tag.GetName() == "files") {
 				files = tag.GetInt();
-			} else if (tag.GetName() == wxT("users")) {
+			} else if (tag.GetName() == "users") {
 				users = tag.GetInt();
 			}
 		} else {

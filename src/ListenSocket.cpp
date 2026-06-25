@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -58,10 +58,6 @@ CSocketServerProxy(addr, MULE_SOCKET_NOWAIT|MULE_SOCKET_REUSEADDR, ProxyData)
 	memset(m_ConnectionStates, 0, 3 * sizeof(m_ConnectionStates[0]));
 	// Set the listen socket event handler -- The handler is written in amule.cpp
 	if (IsOk()) {
-#ifndef ASIO_SOCKETS
-		SetEventHandler(*theApp, ID_LISTENSOCKET_EVENT);
-		SetNotify(wxSOCKET_CONNECTION_FLAG);
-#endif
 		Notify(true);
 
 		AddLogLineNS(_("ListenSocket: Ok."));

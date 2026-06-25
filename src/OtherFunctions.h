@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -318,8 +318,8 @@ inline void md4cpy(void* dst, const void* src)
 
 
 // DumpMem ... Dumps mem ;)
-wxString DumpMemToStr(const void *buff, int n, const wxString& msg = wxEmptyString, bool ok = true);
-void DumpMem(const void *buff, int n, const wxString& msg = wxEmptyString, bool ok = true);
+wxString DumpMemToStr(const void *buff, int n, const wxString& msg = "", bool ok = true);
+void DumpMem(const void *buff, int n, const wxString& msg = "", bool ok = true);
 void DumpMem_DW(const uint32 *ptr, int count);
 
 // Returns special source ID for GUI.

@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -40,11 +40,19 @@ public:
 	virtual ~CCommentDialog();
 	virtual bool OnInitDialog();
 protected:
-	DECLARE_EVENT_TABLE()
+	wxDECLARE_EVENT_TABLE();
 public:
 	void OnBnClickedApply(wxCommandEvent& evt);
 	void OnBnClickedClear(wxCommandEvent& evt);
 	void OnBnClickedCancel(wxCommandEvent& evt);
+	// Drop every reference to `file` from any open instance of this
+	// dialog before the CKnownFile is destroyed. Pointer-value
+	// comparison only (`file` may already be freed). Open dialogs
+	// whose m_file matches are dismissed because their state no
+	// longer corresponds to anything that exists on disk. Wired into
+	// MuleNotify::KnownFileBeingDestroyed (GuiEvents.cpp).
+	static void DropReferencesTo(const CKnownFile* file);
+
 private:
 	wxChoice* ratebox;
 	CKnownFile* m_file;

@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2004-2011 Marcelo Roberto Jimenez ( phoenix@amule.org )
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -29,14 +29,19 @@
 
 #include "Logger.h"				// for Add(Debug)LogLineM()
 
-DEFINE_LOCAL_EVENT_TYPE(MULE_EVT_LOGLINE)
-
+wxDEFINE_EVENT(MULE_EVT_LOGLINE, wxEvent);
 
 #ifdef __DEBUG__
 
+// Console-binary verbose-debug gate. Driven by /eMule/VerboseDebug from
+// amule.conf (read by CaMuleExternalConnector::LoadAmuleConfig) and the
+// --verbose CLI flag, both of which call CLogger::SetVerbose below.
+// Default off, matching amuled's behaviour when VerboseDebug is unset.
+static bool s_consoleVerbose = false;
+
 bool CLogger::IsEnabled(DebugType /*type*/) const
 {
-	return true;
+	return s_consoleVerbose;
 }
 
 // Dummy functions for EC logging
@@ -46,6 +51,16 @@ bool ECLogIsEnabled() { return false; }
 void DoECLogLine(const wxString &) {}
 
 #endif /* __DEBUG__ */
+
+
+void CLogger::SetVerbose(bool verbose)
+{
+#ifdef __DEBUG__
+	s_consoleVerbose = verbose;
+#else
+	(void)verbose;
+#endif
+}
 
 
 void CLogger::AddLogLine(
@@ -95,5 +110,5 @@ void CLogger::AddLogLine(
 
 CLogger theLogger;
 
-BEGIN_EVENT_TABLE(CLogger, wxEvtHandler)
-END_EVENT_TABLE()
+wxBEGIN_EVENT_TABLE(CLogger, wxEvtHandler)
+wxEND_EVENT_TABLE()

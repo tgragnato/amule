@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -24,6 +24,13 @@
 //
 
 
+#include <algorithm>		// Needed for std::max
+#include <vector>		// Needed for std::vector
+
+#include <wx/clipbrd.h>		// Needed for wxTheClipboard
+#include <wx/dataobj.h>		// Needed for wxTextDataObject
+#include <wx/menu.h>		// Needed for wxMenu (context-menu)
+
 #include "muuli_wdr.h"		// Needed for ID_ADDTOLIST
 #include "ServerWnd.h"		// Interface declarations.
 #include "Server.h"		// Needed for CServer
@@ -38,15 +45,16 @@
 
 #include "ClientList.h"
 
-BEGIN_EVENT_TABLE(CServerWnd,wxPanel)
+wxBEGIN_EVENT_TABLE(CServerWnd,wxPanel)
 	EVT_BUTTON(ID_ADDTOLIST,CServerWnd::OnBnClickedAddserver)
 	EVT_BUTTON(IDC_ED2KDISCONNECT,CServerWnd::OnBnClickedED2KDisconnect)
 	EVT_BUTTON(ID_UPDATELIST,CServerWnd::OnBnClickedUpdateservermetfromurl)
 	EVT_TEXT_ENTER(IDC_SERVERLISTURL,CServerWnd::OnBnClickedUpdateservermetfromurl)
 	EVT_BUTTON(ID_BTN_RESET, CServerWnd::OnBnClickedResetLog)
 	EVT_BUTTON(ID_BTN_RESET_SERVER, CServerWnd::OnBnClickedResetServerLog)
+	EVT_SPLITTER_SASH_POS_CHANGING(ID_SRV_SPLITTER,CServerWnd::OnSashPositionChanging)
 	EVT_SPLITTER_SASH_POS_CHANGED(ID_SRV_SPLITTER,CServerWnd::OnSashPositionChanged)
-END_EVENT_TABLE()
+wxEND_EVENT_TABLE()
 
 
 CServerWnd::CServerWnd(wxWindow* pParent /*=NULL*/, int splitter_pos)
@@ -60,20 +68,33 @@ CServerWnd::CServerWnd(wxWindow* pParent /*=NULL*/, int splitter_pos)
 	serverlistctrl = CastChild( ID_SERVERLIST, CServerListCtrl );
 
 	CastChild( ID_SRV_SPLITTER, wxSplitterWindow )->SetSashPosition(splitter_pos, true);
-	CastChild( ID_SRV_SPLITTER, wxSplitterWindow )->SetSashGravity(0.5f);
+	// Default gravity (0.0) anchors the sash to the top: when the
+	// main window resizes, the server list keeps its height and the
+	// log pane absorbs the extra space. The other amule splitters
+	// (Shared/Transfer/Messages) use the same default and don't
+	// suffer the layout-recalc storm during minimize/restore that
+	// gravity 0.5 produced on Mac and Windows (#334 reproductions).
 	CastChild( IDC_NODESLISTURL, wxTextCtrl )->SetValue(thePrefs::GetKadNodesUrl());
 	CastChild( IDC_SERVERLISTURL, wxTextCtrl )->SetValue(thePrefs::GetEd2kServersUrl());
 
 	// Insert two columns, currently without a header
 	wxListCtrl* ED2KInfoList = CastChild( ID_ED2KINFO, wxListCtrl );
 	wxASSERT(ED2KInfoList);
-	ED2KInfoList->InsertColumn(0, wxEmptyString);
-	ED2KInfoList->InsertColumn(1, wxEmptyString);
+	ED2KInfoList->InsertColumn(0, "");
+	ED2KInfoList->InsertColumn(1, "");
 
 	wxListCtrl* KadInfoList = CastChild( ID_KADINFO, wxListCtrl );
 	wxASSERT(KadInfoList);
-	KadInfoList->InsertColumn(0, wxEmptyString);
-	KadInfoList->InsertColumn(1, wxEmptyString);
+	KadInfoList->InsertColumn(0, "");
+	KadInfoList->InsertColumn(1, "");
+
+	// Wire Ctrl+C and right-click-to-copy on both info notebook
+	// list controls (#814). Bound dynamically so the same handler
+	// instance covers both ED2K Info and Kad Info.
+	for (wxListCtrl* list : {ED2KInfoList, KadInfoList}) {
+		list->Bind(wxEVT_KEY_DOWN, &CServerWnd::OnInfoListKeyDown, this);
+		list->Bind(wxEVT_CONTEXT_MENU, &CServerWnd::OnInfoListContextMenu, this);
+	}
 
 	sizer->Show(this,TRUE);
 }
@@ -164,33 +185,26 @@ void CServerWnd::UpdateED2KInfo()
 		ED2KInfoList->SetItem(0, 1, _("Connected"));
 
 		// Connection data
-
 		ED2KInfoList->InsertItem(1, _("IP:Port"));
-		ED2KInfoList->SetItem(1, 1, theApp->serverconnect->IsLowID() ?
-			 wxString(_("LowID")) : Uint32_16toStringIP_Port( theApp->GetED2KID(), thePrefs::GetPort()));
+		ED2KInfoList->SetItem(1, 1, theApp->serverconnect->IsLowID()
+			? wxString(_("Server"))
+			: Uint32_16toStringIP_Port(theApp->GetED2KID(), thePrefs::GetPort()));
 
 		ED2KInfoList->InsertItem(2, _("ID"));
 		// No need to test the server connect, it's already true
-		ED2KInfoList->SetItem(2, 1, CFormat(wxT("%u")) % theApp->GetED2KID());
+		ED2KInfoList->SetItem(2, 1, CFormat("%u") % theApp->GetED2KID());
 
-		ED2KInfoList->InsertItem(3, wxEmptyString);
-
-		if (theApp->serverconnect->IsLowID()) {
-			ED2KInfoList->SetItem(1, 1, _("Server")); // LowID, unknown ip
-			ED2KInfoList->SetItem(3, 1, _("LowID"));
-		} else {
-			ED2KInfoList->SetItem(1, 1, Uint32_16toStringIP_Port(theApp->GetED2KID(), thePrefs::GetPort()));
-			ED2KInfoList->SetItem(3, 1, _("HighID"));
-		}
-
+		// Previously this row was inserted with an empty label and just
+		// "LowID"/"HighID" in column 1, leaving a value with no key.
+		// Give it an explicit label so the row is self-explanatory.
+		ED2KInfoList->InsertItem(3, _("Connection Type:"));
+		ED2KInfoList->SetItem(3, 1, theApp->serverconnect->IsLowID() ? _("LowID") : _("HighID"));
 	} else {
 		// No data
 		ED2KInfoList->SetItem(0, 1, _("Not Connected"));
 	}
 
-	// Fit the width of the columns
-	ED2KInfoList->SetColumnWidth(0, -1);
-	ED2KInfoList->SetColumnWidth(1, -1);
+	FitInfoListColumns(ED2KInfoList);
 }
 
 void CServerWnd::UpdateKadInfo()
@@ -247,17 +261,17 @@ void CServerWnd::UpdateKadInfo()
 			}
 
 			KadInfoList->InsertItem(next_row, _("IP address:"));
-			KadInfoList->SetItem(next_row++, 1, Uint32toStringIP(theApp->GetKadIPAdress()));
+			KadInfoList->SetItem(next_row++, 1, Uint32toStringIP(theApp->GetKadIPAddress()));
 
 			// Index info
 			KadInfoList->InsertItem(next_row, _("Indexed sources:"));
-			KadInfoList->SetItem(next_row++, 1, CFormat(wxT("%d")) % theApp->GetKadIndexedSources());
+			KadInfoList->SetItem(next_row++, 1, CFormat("%d") % theApp->GetKadIndexedSources());
 			KadInfoList->InsertItem(next_row, _("Indexed keywords:"));
-			KadInfoList->SetItem(next_row++, 1, CFormat(wxT("%d")) % theApp->GetKadIndexedKeywords());
+			KadInfoList->SetItem(next_row++, 1, CFormat("%d") % theApp->GetKadIndexedKeywords());
 			KadInfoList->InsertItem(next_row, _("Indexed notes:"));
-			KadInfoList->SetItem(next_row++, 1, CFormat(wxT("%d")) % theApp->GetKadIndexedNotes());
+			KadInfoList->SetItem(next_row++, 1, CFormat("%d") % theApp->GetKadIndexedNotes());
 			KadInfoList->InsertItem(next_row, _("Indexed load:"));
-			KadInfoList->SetItem(next_row++, 1, CFormat(wxT("%d")) % theApp->GetKadIndexedLoad());
+			KadInfoList->SetItem(next_row++, 1, CFormat("%d") % theApp->GetKadIndexedLoad());
 
 			KadInfoList->InsertItem(next_row, _("Average Users:"));
 			KadInfoList->SetItem(next_row, 1, CastItoIShort(theApp->GetKadUsers()));
@@ -270,15 +284,164 @@ void CServerWnd::UpdateKadInfo()
 		KadInfoList->SetItem(next_row, 1, _("Not running"));
 	}
 
-	// Fit the width of the columns
-	KadInfoList->SetColumnWidth(0, -1);
-	KadInfoList->SetColumnWidth(1, -1);
+	FitInfoListColumns(KadInfoList);
+}
+
+
+// Both info notebooks (ED2K Info, Kad Info) are two-column wxListCtrls
+// where column 0 holds short labels ("eD2k Status:", "Status:", ...) and
+// column 1 holds values that can grow wide (IP:port strings, hex client
+// IDs, firewall-state sentences). The previous code called
+// `SetColumnWidth(col, wxLIST_AUTOSIZE)` on both columns, which on
+// wxGTK ends up sizing column 1 to the *current* longest item in the
+// list -- and that was sometimes narrower than the actual content, so
+// the IP:Port value got truncated (#813) even though there was free
+// horizontal space in the panel.
+//
+// Pin column 0 to autosize (its content is short and predictable) and
+// let column 1 absorb whatever client width remains. Floored at a
+// reasonable minimum so the column stays usable while the panel is
+// being resized or before the first layout pass.
+/* static */
+void CServerWnd::FitInfoListColumns(wxListCtrl* list)
+{
+	if (!list) {
+		return;
+	}
+	list->SetColumnWidth(0, wxLIST_AUTOSIZE);
+	const int clientWidth = list->GetClientSize().GetWidth();
+	const int col0 = list->GetColumnWidth(0);
+	// Small breathing-room pad so the rightmost glyph isn't flush
+	// against the column border in GTK themes that draw cell padding
+	// asymmetrically.
+	constexpr int kPad = 8;
+	constexpr int kCol1Min = 200;
+	list->SetColumnWidth(1, std::max(clientWidth - col0 - kPad, kCol1Min));
+}
+
+
+// Anonymous enum so the "Copy" context-menu item has a stable ID
+// scoped to this translation unit (it never escapes to the rest of
+// the main dialog's ID space).
+namespace {
+	enum { kInfoListMenuCopy = wxID_HIGHEST + 1 };
+}
+
+/* static */
+void CServerWnd::CopyInfoListToClipboard(wxListCtrl* list)
+{
+	if (!list || list->GetItemCount() == 0) {
+		return;
+	}
+
+	// If the user has rows selected, copy only those; otherwise copy
+	// the whole list. Matches the affordance most users expect from
+	// list-style read-only data panels.
+	std::vector<long> rows;
+	long sel = list->GetNextItem(-1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED);
+	while (sel != -1) {
+		rows.push_back(sel);
+		sel = list->GetNextItem(sel, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED);
+	}
+	if (rows.empty()) {
+		for (long i = 0; i < list->GetItemCount(); ++i) {
+			rows.push_back(i);
+		}
+	}
+
+	wxString out;
+	for (long row : rows) {
+		const wxString label = list->GetItemText(row, 0);
+		const wxString value = list->GetItemText(row, 1);
+		out << label << '\t' << value << '\n';
+	}
+
+	// wxClipboard isn't always open by default; explicitly Open/Close.
+	// SetData takes ownership of the wxTextDataObject*.
+	if (wxTheClipboard->Open()) {
+		wxTheClipboard->SetData(new wxTextDataObject(out));
+		wxTheClipboard->Close();
+	}
+}
+
+
+void CServerWnd::OnInfoListKeyDown(wxKeyEvent& evt)
+{
+	// Ctrl+C (or Cmd+C on macOS, which wx maps to ControlDown for
+	// wxKeyEvent on standard menus). Anything else falls through to
+	// the default key handler so arrow navigation etc. still works.
+	if ((evt.GetKeyCode() == 'C' || evt.GetKeyCode() == 'c')
+		&& evt.ControlDown())
+	{
+		wxListCtrl* list = wxDynamicCast(evt.GetEventObject(), wxListCtrl);
+		CopyInfoListToClipboard(list);
+		return;
+	}
+	evt.Skip();
+}
+
+
+void CServerWnd::OnInfoListContextMenu(wxContextMenuEvent& evt)
+{
+	wxListCtrl* list = wxDynamicCast(evt.GetEventObject(), wxListCtrl);
+	if (!list) {
+		evt.Skip();
+		return;
+	}
+
+	wxMenu menu;
+	menu.Append(kInfoListMenuCopy, _("Copy"));
+
+	// Stash the target list on the menu's client-data slot so the
+	// EVT_MENU handler knows which list control fired the event
+	// without an extra member variable.
+	menu.SetClientData(list);
+	menu.Bind(wxEVT_MENU, &CServerWnd::OnInfoListCopy, this, kInfoListMenuCopy);
+
+	// Pop up at the event position (already in screen coords for
+	// wxContextMenuEvent); fall back to the list's centre if the
+	// event came from a keyboard menu key with no position.
+	const wxPoint pos = evt.GetPosition() != wxDefaultPosition
+		? list->ScreenToClient(evt.GetPosition())
+		: wxPoint(list->GetClientSize().GetWidth() / 2,
+				  list->GetClientSize().GetHeight() / 2);
+	list->PopupMenu(&menu, pos);
+}
+
+
+void CServerWnd::OnInfoListCopy(wxCommandEvent& evt)
+{
+	wxMenu* menu = wxDynamicCast(evt.GetEventObject(), wxMenu);
+	if (!menu) {
+		return;
+	}
+	wxListCtrl* list = static_cast<wxListCtrl*>(menu->GetClientData());
+	CopyInfoListToClipboard(list);
+}
+
+void CServerWnd::OnSashPositionChanging(wxSplitterEvent& evt)
+{
+	// CHANGING fires only while the user is actively dragging the
+	// sash; mark the drag in flight so OnSashPositionChanged knows
+	// the next CHANGED event came from a real user gesture (and not
+	// a layout reflow during minimize/restore).
+	m_userDraggingSash = true;
+	evt.Skip();
 }
 
 void CServerWnd::OnSashPositionChanged(wxSplitterEvent& WXUNUSED(evt))
 {
-	if (theApp->amuledlg) {
-		theApp->amuledlg->m_srv_split_pos = CastChild( wxT("SrvSplitterWnd"), wxSplitterWindow )->GetSashPosition();
+	wxSplitterWindow* split = CastChild("SrvSplitterWnd", wxSplitterWindow);
+	if (!m_userDraggingSash) {
+		// Layout-induced sash move — don't persist. With the default
+		// sash gravity, these should be rare; previously gravity 0.5
+		// produced a storm of CHANGED events during minimize/restore
+		// reflows that pushed the sash out of the visible range.
+		return;
+	}
+	m_userDraggingSash = false;
+	if (theApp->amuledlg && split) {
+		theApp->amuledlg->m_srv_split_pos = split->GetSashPosition();
 	}
 }
 

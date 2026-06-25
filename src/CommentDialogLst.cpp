@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -31,12 +31,26 @@
 #include "Preferences.h"
 #include "amule.h"                      // Needed for theApp
 
+#include <set>
 
 
-BEGIN_EVENT_TABLE(CCommentDialogLst,wxDialog)
+
+wxBEGIN_EVENT_TABLE(CCommentDialogLst,wxDialog)
 	EVT_BUTTON(IDCOK,CCommentDialogLst::OnBnClickedApply)
 	EVT_BUTTON(IDCREF,CCommentDialogLst::OnBnClickedRefresh)
-END_EVENT_TABLE()
+wxEND_EVENT_TABLE()
+
+namespace {
+// Registry of open CCommentDialogLst instances. See CCommentDialog.cpp
+// for the rationale — the broadcast handler in GuiEvents.cpp iterates
+// this on every CKnownFile destruction and dismisses any dialog whose
+// m_file has just been freed (UAF prevention; #755 / #748 family).
+std::set<CCommentDialogLst*>& OpenInstances()
+{
+	static std::set<CCommentDialogLst*> instances;
+	return instances;
+}
+} // namespace
 
 
 /*
@@ -59,12 +73,26 @@ m_file(file)
 	m_list->SetSortFunc(SortProc);
 
 	UpdateList();
+	OpenInstances().insert(this);
 }
 
 
 CCommentDialogLst::~CCommentDialogLst()
 {
+	OpenInstances().erase(this);
 	ClearList();
+}
+
+
+void CCommentDialogLst::DropReferencesTo(const CKnownFile* file)
+{
+	for (CCommentDialogLst* d : OpenInstances()) {
+		// m_file is a CPartFile* — compare against the up-cast.
+		if (static_cast<const CKnownFile*>(d->m_file) == file) {
+			d->m_file = NULL;
+			d->EndModal(0);
+		}
+	}
 }
 
 
@@ -91,7 +119,7 @@ void CCommentDialogLst::UpdateList()
 		if (!thePrefs::IsCommentFiltered(it->Comment)) {
 			m_list->InsertItem(count, it->UserName);
 			m_list->SetItem(count, 1, it->FileName);
-			m_list->SetItem(count, 2, (it->Rating != -1) ? GetRateString(it->Rating) : wxString(wxT("on")));
+			m_list->SetItem(count, 2, (it->Rating != -1) ? GetRateString(it->Rating) : wxString("on"));
 			m_list->SetItem(count, 3, it->Comment);
 			m_list->SetItemPtrData(count, reinterpret_cast<wxUIntPtr>(new SFileRating(*it)));
 			++count;
@@ -123,7 +151,7 @@ void CCommentDialogLst::ClearList()
 }
 
 
-int CCommentDialogLst::SortProc(wxUIntPtr item1, wxUIntPtr item2, long sortData)
+int CCommentDialogLst::SortProc(wxUIntPtr item1, wxUIntPtr item2, wxIntPtr sortData)
 {
 	SFileRating* file1 = reinterpret_cast<SFileRating*>(item1);
 	SFileRating* file2 = reinterpret_cast<SFileRating*>(item2);

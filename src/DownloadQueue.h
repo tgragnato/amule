@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -28,7 +28,7 @@
 
 #include "MD4Hash.h"		// Needed for CMD4Hash
 #include "ObservableQueue.h"	// Needed for CObservableQueue
-#include "GetTickCount.h"	// Needed for GetTickCount
+#include "GetTickCount.h"	// Needed for GetTickCount64
 
 
 #include <deque>
@@ -273,6 +273,13 @@ public:
 	 */
 	bool	AddLink( const wxString& link, uint8 category = 0 );
 
+	/**
+	 * Batch variant of AddLink. Per-link failures are still logged with the
+	 * specific protocol reason; on top of that, a single aggregated dialog
+	 * is shown at the end of the batch (one popup for N failed links).
+	 */
+	void	AddLinks( const wxArrayString& links, uint8 category = 0 );
+
 	bool	AddED2KLink( const wxString& link, uint8 category = 0 );
 	bool	AddED2KLink( const CED2KLink* link, uint8 category = 0 );
 	bool	AddED2KLink( const CED2KFileLink* link, uint8 category = 0 );
@@ -307,7 +314,7 @@ public:
 
 	bool	DoKademliaFileRequest();
 
-	void	SetLastKademliaFileRequest()	{lastkademliafilerequest = ::GetTickCount();}
+	void	SetLastKademliaFileRequest()	{lastkademliafilerequest = ::GetTickCount64();}
 
 	uint32	GetRareFileThreshold() const { return m_rareFileThreshold; }
 	uint32	GetCommonFileThreshold() const { return m_commonFileThreshold; }
@@ -351,13 +358,13 @@ private:
 
 
 	uint32		m_datarate;
-	uint32		m_lastDiskCheck;
-	uint32		m_lastudpsearchtime;
-	uint32		m_lastsorttime;
-	uint32		m_lastudpstattime;
-	uint32		m_nLastED2KLinkCheck;
+	uint64		m_lastDiskCheck;
+	uint64		m_lastudpsearchtime;
+	uint64		m_lastsorttime;
+	uint64		m_lastudpstattime;
+	uint64		m_nLastED2KLinkCheck;
 	uint8		m_cRequestsSentToServer;
-	uint32		m_dwNextTCPSrcReq;
+	uint64		m_dwNextTCPSrcReq;
 	uint8		m_udcounter;
 	CServer*	m_udpserver;
 
@@ -397,7 +404,7 @@ private:
 	CQueueObserver<CPartFile*>	m_queueFiles;
 
 	/* Kad Stuff */
-	uint32		lastkademliafilerequest;
+	uint64		lastkademliafilerequest;
 
 	//! Threshold for rare files, dynamically based on the sources for each.
 	uint32		m_rareFileThreshold;

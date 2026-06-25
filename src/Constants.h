@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2006-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -95,7 +95,7 @@ enum StatsGraphType {
 
 #define	PS_READY			0
 #define	PS_EMPTY			1
-#define PS_WAITINGFORHASH		2
+#define PS_WAITING_FOR_HASH		2
 #define PS_HASHING			3
 #define PS_ERROR			4
 #define	PS_INSUFFICIENT			5
@@ -106,7 +106,7 @@ enum StatsGraphType {
 #define PS_ALLOCATING			10
 
 
-#define PR_VERYLOW			4 // I Had to change this because
+#define PR_VERY_LOW			4 // I Had to change this because
 					  // it didn't save negative number
 					  // correctly.. Had to modify the
 					  // sort function for this change..

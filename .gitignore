@@ -18,6 +18,7 @@ build
 *.o
 .deps
 config.h
+docs/man/*.1
 po/POTFILES
 src/amule
 src/amulecmd
@@ -34,3 +35,26 @@ src/utils/wxCas/src/wxcas
 src/utils/xas/autostart-xas
 src/webserver/src/amuleweb
 unittests/tests/*Test
+
+# Other files created by various editors
+.*~
+*~
+*.sw?
+*.orig
+.#*
+
+# msgfmt artifact
+*.mo
+
+# AI coding assistants
+*.local.md
+.claude/
+.cursor/
+.windsurf/
+.copilot/
+.continue/
+.codeium/
+.tabnine/
+.gemini/
+.devin/
+.aider*

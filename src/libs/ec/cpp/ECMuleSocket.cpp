@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2004-2011 Angel Vidal ( kry@amule.org )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -28,57 +28,7 @@
 #include "../../../amuleIPV4Address.h"
 #include "../../../NetworkFunctions.h"
 
-#ifdef ASIO_SOCKETS
 #include <boost/system/error_code.hpp>
-#else
-
-//-------------------- CECSocketHandler --------------------
-
-#define	EC_SOCKET_HANDLER	(wxID_HIGHEST + 644)
-
-class CECMuleSocketHandler: public wxEvtHandler {
- public:
-        CECMuleSocketHandler() {};
-
- private:
-        void SocketHandler(wxSocketEvent& event);
-
-        DECLARE_EVENT_TABLE()
-};
-
-BEGIN_EVENT_TABLE(CECMuleSocketHandler, wxEvtHandler)
-        EVT_SOCKET(EC_SOCKET_HANDLER, CECMuleSocketHandler::SocketHandler)
-END_EVENT_TABLE()
-
-void CECMuleSocketHandler::SocketHandler(wxSocketEvent& event)
-{
-        CECSocket *socket = dynamic_cast<CECSocket *>(event.GetSocket());
-        wxCHECK_RET(socket, wxT("Socket event with a NULL socket!"));
-
-        switch(event.GetSocketEvent()) {
-        case wxSOCKET_LOST:
-            socket->OnLost();
-            break;
-        case wxSOCKET_INPUT:
-            socket->OnInput();
-            break;
-        case wxSOCKET_OUTPUT:
-            socket->OnOutput();
-            break;
-        case wxSOCKET_CONNECTION:
-            socket->OnConnect();
-            break;
-
-        default:
-            // Nothing should arrive here...
-            wxFAIL;
-            break;
-        }
-}
-
-static CECMuleSocketHandler	g_ECSocketHandler;
-
-#endif /* ASIO_SOCKETS */
 
 //
 // CECMuleSocket API - User interface functions
@@ -88,20 +38,7 @@ CECMuleSocket::CECMuleSocket(bool use_events)
 :
 CECSocket(use_events)
 {
-#ifdef ASIO_SOCKETS
 	Notify(use_events);
-#else
-	if ( use_events ) {
-		SetEventHandler(g_ECSocketHandler, EC_SOCKET_HANDLER);
-		SetNotify(wxSOCKET_CONNECTION_FLAG | wxSOCKET_INPUT_FLAG |
-			  wxSOCKET_OUTPUT_FLAG | wxSOCKET_LOST_FLAG);
-		Notify(true);
-		SetFlags(wxSOCKET_NOWAIT);
-	} else {
-		SetFlags(wxSOCKET_WAITALL | wxSOCKET_BLOCK);
-		Notify(false);
-	}
-#endif
 }
 
 CECMuleSocket::~CECMuleSocket()
@@ -114,17 +51,43 @@ bool CECMuleSocket::ConnectSocket(amuleIPV4Address& address)
 }
 
 
+// EC-connection keepalive timings. With these values, a half-open
+// connection (peer crashed / network blip / FIN lost) is torn down at
+// the TCP layer in ~60s instead of sitting idle until the default
+// ~2h TCP retransmit timeout, so CECSocket::OnLost fires and the GUI
+// can flip to "Connection lost" instead of looking wedged. Same
+// constants used by CECServerSocket on the amuled side so detection
+// is symmetric. Numbers picked to balance responsiveness against the
+// keepalive packet overhead (one probe per 10s after 30s idle).
+namespace {
+	const int EC_KEEPALIVE_IDLE_SEC      = 30;
+	const int EC_KEEPALIVE_INTERVAL_SEC  = 10;
+	const int EC_KEEPALIVE_PROBE_COUNT   = 3;
+}
+
 bool CECMuleSocket::InternalConnect(uint32_t ip, uint16_t port, bool wait) {
 	amuleIPV4Address addr;
 	addr.Hostname(Uint32toStringIP(ip));
 	addr.Service(port);
-	return CLibSocket::Connect(addr, wait);
+	bool ok = CLibSocket::Connect(addr, wait);
+	if (ok) {
+		// Asio opens the socket fd during connect / async_connect, so
+		// setsockopt is valid here regardless of sync vs async mode.
+		ApplyEcKeepalive();
+	}
+	return ok;
+}
+
+void CECMuleSocket::ApplyEcKeepalive() {
+	CLibSocket::EnableTcpKeepalive(
+		EC_KEEPALIVE_IDLE_SEC,
+		EC_KEEPALIVE_INTERVAL_SEC,
+		EC_KEEPALIVE_PROBE_COUNT);
 }
 
 int CECMuleSocket::InternalGetLastError()
 {
 	switch (LastError()) {
-#ifdef ASIO_SOCKETS
 		case boost::system::errc::success:
 			return EC_ERROR_NOERROR;
 		case boost::system::errc::address_family_not_supported:
@@ -155,28 +118,6 @@ int CECMuleSocket::InternalGetLastError()
 			return EC_ERROR_WOULDBLOCK;
 		case boost::system::errc::timed_out:
 			return EC_ERROR_TIMEDOUT;
-#else
-		case wxSOCKET_NOERROR:
-			return EC_ERROR_NOERROR;
-		case wxSOCKET_INVOP:
-			return EC_ERROR_INVOP;
-		case wxSOCKET_IOERR:
-			return EC_ERROR_IOERR;
-		case wxSOCKET_INVADDR:
-			return EC_ERROR_INVADDR;
-		case wxSOCKET_INVSOCK:
-			return EC_ERROR_INVSOCK;
-		case wxSOCKET_NOHOST:
-			return EC_ERROR_NOHOST;
-		case wxSOCKET_INVPORT:
-			return EC_ERROR_INVPORT;
-		case wxSOCKET_WOULDBLOCK:
-			return EC_ERROR_WOULDBLOCK;
-		case wxSOCKET_TIMEDOUT:
-			return EC_ERROR_TIMEDOUT;
-		case wxSOCKET_MEMERR:
-			return EC_ERROR_MEMERR;
-#endif
 		default:
 			return EC_ERROR_UNKNOWN;
 	}

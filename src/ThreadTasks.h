@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2006-2011 Mikkel Schubert ( xaignar@amule.org / http:://www.amule.org )
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -75,9 +75,14 @@ public:
 
 protected:
 	//! Specifies which hashes should be calculated when the task is executed.
+	//! EH_MD4 and EH_AICH are bit flags; the combined value is named
+	//! explicitly so a bitwise OR cast doesn't produce a value outside
+	//! the enum's valid range (caught by
+	//! clang-analyzer-optin.core.EnumCastOutOfRange in the cpp ctor).
 	enum EHashes {
 		EH_AICH = 1,
-		EH_MD4 = 2
+		EH_MD4 = 2,
+		EH_MD4_AND_AICH = EH_MD4 | EH_AICH
 	};
 
 	//! @see CThreadTask::OnLastTask
@@ -243,7 +248,7 @@ public:
 	virtual wxEvent* Clone() const;
 
 	/** Returns true if completion failed. */
-	bool ErrorOccured() const;
+	bool ErrorOccurred() const;
 
 	/** Returns the owner of the file that was being completed. */
 	const CPartFile* GetOwner() const;
@@ -265,7 +270,7 @@ private:
 /**
  * This event is sent when preallocation of a new partfile is finished.
  */
-DECLARE_LOCAL_EVENT_TYPE(MULE_EVT_ALLOC_FINISHED, -1);
+wxDECLARE_EVENT(MULE_EVT_ALLOC_FINISHED, wxEvent);
 class CAllocFinishedEvent : public wxEvent
 {
       public:
@@ -279,16 +284,16 @@ class CAllocFinishedEvent : public wxEvent
 	virtual wxEvent *Clone() const;
 
 	/** Returns the partfile for which preallocation was requested. */
-	CPartFile *GetFile() const throw()	{ return m_file; }
+	CPartFile *GetFile() const noexcept	{ return m_file; }
 
 	/** Returns whether the partfile should start paused. */
-	bool	IsPaused() const throw()	{ return m_pause; }
+	bool	IsPaused() const noexcept	{ return m_pause; }
 
 	/** Returns the result of preallocation: true on success, false otherwise. */
-	bool	Succeeded() const throw()	{ return m_result == 0; }
+	bool	Succeeded() const noexcept	{ return m_result == 0; }
 
 	/** Returns the result of the preallocation. */
-	long	GetResult() const throw()	{ return m_result; }
+	long	GetResult() const noexcept	{ return m_result; }
 
       private:
 	//! The partfile for which preallocation was requested.
@@ -301,10 +306,9 @@ class CAllocFinishedEvent : public wxEvent
 	long		m_result;
 };
 
-DECLARE_LOCAL_EVENT_TYPE(MULE_EVT_HASHING, -1)
-DECLARE_LOCAL_EVENT_TYPE(MULE_EVT_AICH_HASHING, -1)
-DECLARE_LOCAL_EVENT_TYPE(MULE_EVT_FILE_COMPLETED, -1)
-
+wxDECLARE_EVENT(MULE_EVT_HASHING, wxEvent);
+wxDECLARE_EVENT(MULE_EVT_AICH_HASHING, wxEvent);
+wxDECLARE_EVENT(MULE_EVT_FILE_COMPLETED, wxEvent);
 
 typedef void (wxEvtHandler::*MuleHashingEventFunction)(CHashingEvent&);
 typedef void (wxEvtHandler::*MuleCompletionEventFunction)(CCompletionEvent&);
@@ -312,27 +316,19 @@ typedef void (wxEvtHandler::*MuleAllocFinishedEventFunction)(CAllocFinishedEvent
 
 //! Event-handler for completed hashings of new shared files and partfiles.
 #define EVT_MULE_HASHING(func) \
-	DECLARE_EVENT_TABLE_ENTRY(MULE_EVT_HASHING, -1, -1, \
-	(wxObjectEventFunction) (wxEventFunction) \
-	wxStaticCastEvent(MuleHashingEventFunction, &func), (wxObject*) NULL),
+	wx__DECLARE_EVT0(MULE_EVT_HASHING, wxEVENT_HANDLER_CAST(MuleHashingEventFunction, func))
 
 //! Event-handler for completed hashings of files that were missing a AICH hash.
 #define EVT_MULE_AICH_HASHING(func) \
-	DECLARE_EVENT_TABLE_ENTRY(MULE_EVT_AICH_HASHING, -1, -1, \
-	(wxObjectEventFunction) (wxEventFunction) \
-	wxStaticCastEvent(MuleHashingEventFunction, &func), (wxObject*) NULL),
+	wx__DECLARE_EVT0(MULE_EVT_AICH_HASHING, wxEVENT_HANDLER_CAST(MuleHashingEventFunction, func))
 
 //! Event-handler for completion of part-files.
 #define EVT_MULE_FILE_COMPLETED(func) \
-	DECLARE_EVENT_TABLE_ENTRY(MULE_EVT_FILE_COMPLETED, -1, -1, \
-	(wxObjectEventFunction) (wxEventFunction) \
-	wxStaticCastEvent(MuleCompletionEventFunction, &func), (wxObject*) NULL),
+	wx__DECLARE_EVT0(MULE_EVT_FILE_COMPLETED, wxEVENT_HANDLER_CAST(MuleCompletionEventFunction, func))
 
 //! Event-handler for partfile preallocation finished events.
 #define EVT_MULE_ALLOC_FINISHED(func) \
-	DECLARE_EVENT_TABLE_ENTRY(MULE_EVT_ALLOC_FINISHED, -1, -1, \
-	(wxObjectEventFunction) (wxEventFunction) \
-	wxStaticCastEvent(MuleAllocFinishedEventFunction, &func), (wxObject*) NULL),
+	wx__DECLARE_EVT0(MULE_EVT_ALLOC_FINISHED, wxEVENT_HANDLER_CAST(MuleAllocFinishedEventFunction, func))
 
 
 #endif // TASKS_H

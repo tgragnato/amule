@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -31,6 +31,7 @@
 
 #include <vector>
 #include <list>
+#include "Types.h"
 
 /**
  * Enhanced wxListCtrl provided custom-drawing among other things.
@@ -81,7 +82,7 @@ public:
 		       const wxSize &size = wxDefaultSize,
 		       long style = wxLC_ICON,
 		       const wxValidator& validator = wxDefaultValidator,
-		       const wxString &name = wxT("mulelistctrl") );
+		       const wxString &name = "mulelistctrl" );
 
 	/**
 	 * Destructor.
@@ -193,7 +194,7 @@ public:
 			  const wxString& heading,
 			  int format = wxLIST_FORMAT_LEFT,
 			  int width = -1,
-			  const wxString& name = wxEmptyString
+			  const wxString& name = ""
 			  );
 
 	/**
@@ -372,7 +373,7 @@ private:
 	wxString		m_tts_text;
 
 	//! Timestamp for the last TTS event.
-	unsigned		m_tts_time;
+	uint64			m_tts_time;
 
 	//! The index of the last item selected via TTS.
 	int			m_tts_item;
@@ -387,7 +388,7 @@ private:
 	 * otherwise, parents may not end up properly located in
 	 * relation to child-items.
 	 */
-	static int wxCALLBACK SortProc(wxUIntPtr item1, wxUIntPtr item2, long sortData);
+	static int wxCALLBACK SortProc(wxUIntPtr item1, wxUIntPtr item2, wxIntPtr sortData);
 
 	/** Compares two items in the list, using the current sort sequence. */
 	int CompareItems(wxUIntPtr item1, wxUIntPtr item2);
@@ -479,7 +480,7 @@ private:
 	// True while sorting.
 	bool m_isSorting;
 
-	DECLARE_EVENT_TABLE()
+	wxDECLARE_EVENT_TABLE();
 };
 
 #endif // MULELISTCTRL_H

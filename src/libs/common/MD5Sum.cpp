@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -77,7 +77,7 @@ wxString MD5Sum::GetHash()
 		// That's still far from optimal, but called much less often.
 		for (int i = 0; i < 16; ++i) {
 			wxString sT;
-			sT = CFormat(wxT("%02x")) % m_rawhash[i];
+			sT = CFormat("%02x") % m_rawhash[i];
 			m_sHash += sT;
 		}
 	}

@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2003-2011 Kry ( elkry@users.sourceforge.net / http://www.amule.org )
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2008-2011 Froenchenko Leonid (lfroen@gmail.com)
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -28,17 +28,12 @@
 #define EXTERNALCONN_H
 
 
-
 #include <ec/cpp/ECSpecialTags.h>
 
 #include "amuleIPV4Address.h"	// for amuleIPV4Address
 #include "RLE.h"	// for RLE
 #include "DownloadQueue.h"
 #include "PartFile.h"			// for SourcenameItemMap
-
-#ifndef ASIO_SOCKETS
-class wxSocketEvent;
-#endif
 
 template <class T, ec_tagname_t OP>
 class CTagSet : public std::set<T> {
@@ -110,13 +105,6 @@ public:
 	void RemoveSocket(CECServerSocket *s);
 	void KillAllSockets();
 	void ResetAllLogs();
-
-#ifndef ASIO_SOCKETS
-private:
-	// event handlers (these functions should _not_ be virtual)
-	void OnServerEvent(wxSocketEvent& event);
-	DECLARE_EVENT_TABLE()
-#endif
 };
 
 class ECUpdateMsgSource {

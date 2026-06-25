@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2008-2011 Dévai Tamás ( gonosztopi@amule.org )
-// Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2003-2011 Barry Dunne (http://www.emule-project.net)
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -105,11 +105,19 @@ wxString CEntry::GetStrTagValue(const wxString& tagname) const
 			return (*it)->GetStr();
 		}
 	}
-	return wxEmptyString;
+	return "";
 }
 
 void CEntry::SetFileName(const wxString& name)
 {
+	// Empty filenames are protocol garbage -- a peer publishing a Kad note
+	// or keyword with an empty FT_FILENAME tag should never end up in
+	// m_filenames at all.  Without this guard the empty entry takes the
+	// popularity slot, GetCommonFileName returns "" and trips its own
+	// !empty-or-list-empty invariant on the next call (issue #674).
+	if (name.IsEmpty()) {
+		return;
+	}
 	if (!m_filenames.empty()) {
 		wxFAIL;
 		m_filenames.clear();
@@ -120,27 +128,49 @@ void CEntry::SetFileName(const wxString& name)
 
 wxString CEntry::GetCommonFileName() const
 {
-	// return the filename on which most publishers seem to agree on
-	// due to the counting, this doesn't has to be exact, we just want to make sure to not use a filename which just
-	// a few bad publishers used and base or search matching and answering on this, instead of the most popular name
-	// Note: The Index values are not the actual numbers of publishers, but just a relative number to compare to other entries
-	FileNameList::const_iterator result = m_filenames.end();
-	uint32_t highestPopularityIndex = 0;
-	for (FileNameList::const_iterator it = m_filenames.begin(); it != m_filenames.end(); ++it) {
+	// Return the filename most publishers agreed on (by popularity
+	// index).  The index isn't the actual count of publishers — just
+	// a relative number for comparing entries — so the choice is
+	// approximate.
+	//
+	// Seed the running max from the first entry (rather than 0) so
+	// that an all-zero m_filenames still yields a non-empty result.
+	// Our own code never produces a popularity-0 entry -- SetFileName
+	// creates at 1 and the merge path only ever increments -- but two
+	// paths we don't control can land one in m_filenames anyway:
+	// (a) a remote publisher could send a popularity-0 entry over the
+	// wire (no validation on ReadUInt32), and (b) on-disk data from
+	// any node that ran an older build doing popularity decay can
+	// load back at 0 here.  The previous "highest > 0"-style loop
+	// would then leave the result iterator at end() and return an
+	// empty string -- silently dropping TAG_FILENAME from search
+	// responses (Entry.h GetTagCount), making SearchTermsMatch
+	// return false for every term, and tripping the
+	// GetCommonFileName().IsEmpty() reject path in
+	// CIndexed::AddKeyword.  Picking the first entry as a
+	// deterministic fallback preserves the protocol invariant
+	// "non-empty m_filenames yields a non-empty common name" without
+	// changing behaviour for any case where a real winner exists.
+	if (m_filenames.empty()) {
+		return wxString("");
+	}
+	FileNameList::const_iterator result = m_filenames.begin();
+	uint32_t highestPopularityIndex = result->m_popularityIndex;
+	for (FileNameList::const_iterator it = std::next(result);
+		it != m_filenames.end(); ++it) {
 		if (it->m_popularityIndex > highestPopularityIndex) {
 			highestPopularityIndex = it->m_popularityIndex;
 			result = it;
 		}
 	}
-	wxString strResult(result != m_filenames.end() ? result->m_filename : wxString(wxEmptyString));
-	wxASSERT(!strResult.IsEmpty() || m_filenames.empty());
-	return strResult;
+	wxASSERT(!result->m_filename.IsEmpty());
+	return result->m_filename;
 }
 
 void CEntry::WriteTagListInc(CFileDataIO* data, uint32_t increaseTagNumber)
 {
 	// write taglist and add name + size tag
-	wxCHECK_RET(data != NULL, wxT("data must not be NULL"));
+	wxCHECK_RET(data != NULL, "data must not be NULL");
 
 	uint32_t count = GetTagCount() + increaseTagNumber;	// will include name and size tag in the count if needed
 	wxASSERT(count <= 0xFF);
@@ -174,7 +204,7 @@ CKeyEntry::~CKeyEntry()
 {
 	if (m_publishingIPs != NULL) {
 		for (PublishingIPList::const_iterator it = m_publishingIPs->begin(); it != m_publishingIPs->end(); ++it) {
-			AdjustGlobalPublishTracking(it->m_ip, false, wxT("instance delete"));
+			AdjustGlobalPublishTracking(it->m_ip, false, "instance delete");
 		}
 		delete m_publishingIPs;
 		m_publishingIPs = NULL;
@@ -221,7 +251,7 @@ bool CKeyEntry::SearchTermsMatch(const SSearchTerm* searchTerm) const
 				// 21-Sep-2006 []: Special handling for TAG_FILEFORMAT which is already part
 				// of the filename and thus does not need to get published nor stored explicitly,
 				wxString commonFileName(GetCommonFileName());
-				int ext = commonFileName.Find(wxT('.'), true);
+				int ext = commonFileName.Find('.', true);
 				if (ext != wxNOT_FOUND) {
 					return commonFileName.Mid(ext + 1).CmpNoCase(searchTerm->tag->GetStr()) == 0;
 				}
@@ -341,8 +371,8 @@ void CKeyEntry::AdjustGlobalPublishTracking(uint32_t ip, bool increase, const wx
 	}
 #ifdef __DEBUG__
 	if (!dbgReason.IsEmpty()) {
-		AddDebugLogLineN(logKadEntryTracking, CFormat(wxT("%s %s (%s) - (%s), new count %u"))
-			% (increase ? wxT("Adding") : wxT("Removing")) % KadIPToString(ip & 0xFFFFFF00) % KadIPToString(ip) % dbgReason % count);
+		AddDebugLogLineN(logKadEntryTracking, CFormat("%s %s (%s) - (%s), new count %u")
+			% (increase ? "Adding" : "Removing") % KadIPToString(ip & 0xFFFFFF00) % KadIPToString(ip) % dbgReason % count);
 	}
 #endif
 }
@@ -377,7 +407,7 @@ void CKeyEntry::MergeIPsAndFilenames(CKeyEntry* fromEntry)
 			if (it->m_ip == m_uIP) {
 				refresh = true;
 				if ((time(NULL) - it->m_lastPublish) < (KADEMLIAREPUBLISHTIMES - HR2S(1))) {
-					AddDebugLogLineN(logKadEntryTracking, wxT("FastRefresh publish, ip: ") + KadIPToString(m_uIP));
+					AddDebugLogLineN(logKadEntryTracking, "FastRefresh publish, ip: " + KadIPToString(m_uIP));
 					fastRefresh = true; // refreshed faster than expected, will not count into filenamepopularity index
 				}
 				it->m_lastPublish = time(NULL);
@@ -393,15 +423,58 @@ void CKeyEntry::MergeIPsAndFilenames(CKeyEntry* fromEntry)
 
 		// copy over the different names, if they are different the one we have right now
 		wxASSERT(m_filenames.size() == 1); // we should have only one name here, since it's the entry from one single source
-		sFileNameEntry currentName = { wxEmptyString, 0 };
+		sFileNameEntry currentName = { "", 0 };
 		if (m_filenames.size() != 0) {
 			currentName = m_filenames.front();
 			m_filenames.pop_front();
 		}
 
+		// Cap m_filenames so a single CKeyEntry can't accumulate
+		// unbounded filename variants. A popular file collects one
+		// sFileNameEntry per distinct publisher-chosen name (renames,
+		// language variants, mirror prefixes, trailing-paren copies,
+		// case differences); without a cap the list grows monotonically
+		// for the lifetime of the entry, which on a long-running
+		// shareset shows up as a steady ~MB/hour RSS climb in amuled.
+		// 100 matches the m_publishingIPs cap below and is comfortably
+		// above the count of variants any honest publisher set produces
+		// for a single hash — GetCommonFileName already picks the
+		// highest-popularity entry, so the cap is shaped to keep
+		// popularity-ordered survivors.
+		const size_t MAX_FILENAMES = 100;
+
+		// Compare-and-skip insertion (per irwir's review of #314): if
+		// we're already at the cap, only accept the new entry when its
+		// popularity beats the weakest survivor — otherwise drop it on
+		// the floor instead of pushing then immediately re-evicting.
+		// O(N) per insert via std::min_element; no global sort needed.
+		auto pushBounded = [&](const sFileNameEntry & candidate) {
+			if (m_filenames.size() < MAX_FILENAMES) {
+				m_filenames.push_back(candidate);
+				return;
+			}
+			FileNameList::iterator weakest = std::min_element(
+				m_filenames.begin(), m_filenames.end(),
+				[](const sFileNameEntry & a, const sFileNameEntry & b) {
+					return a.m_popularityIndex < b.m_popularityIndex;
+				});
+			if (candidate.m_popularityIndex > weakest->m_popularityIndex) {
+				*weakest = candidate;
+			}
+			// else: candidate's popularity is no better than the
+			// weakest already-kept entry; drop the candidate.
+		};
+
 		bool duplicate = false;
 		for (FileNameList::iterator it = fromEntry->m_filenames.begin(); it != fromEntry->m_filenames.end(); ++it) {
 			sFileNameEntry nameToCopy = *it;
+			// Defence-in-depth: even though SetFileName now rejects empty
+			// names, an older on-disk Kad index could still hold one from
+			// before that guard landed.  Drop it here too rather than
+			// propagating into our m_filenames.
+			if (nameToCopy.m_filename.IsEmpty()) {
+				continue;
+			}
 			if (currentName.m_filename.CmpNoCase(nameToCopy.m_filename) == 0) {
 				// the filename of our new entry matches with our old, increase the popularity index for the old one
 				duplicate = true;
@@ -409,10 +482,13 @@ void CKeyEntry::MergeIPsAndFilenames(CKeyEntry* fromEntry)
 					nameToCopy.m_popularityIndex++;
 				}
 			}
-			m_filenames.push_back(nameToCopy);
+			pushBounded(nameToCopy);
 		}
-		if (!duplicate) {
-			m_filenames.push_back(currentName);
+		if (!duplicate && !currentName.m_filename.IsEmpty()) {
+			// Skip the synthetic currentName = { "", 0 } default that
+			// happens when m_filenames was unexpectedly empty above
+			// (wxASSERT fires in Debug, but Release keeps going).
+			pushBounded(currentName);
 		}
 	}
 
@@ -423,20 +499,20 @@ void CKeyEntry::MergeIPsAndFilenames(CKeyEntry* fromEntry)
 		m_publishingIPs->push_back(add);
 
 		// add the publisher to the tacking list
-		AdjustGlobalPublishTracking(m_uIP, true, wxT("new publisher"));
+		AdjustGlobalPublishTracking(m_uIP, true, "new publisher");
 
 		// we keep track of max 100 IPs, in order to avoid too much time for calculation/storing/loading.
 		if (m_publishingIPs->size() > 100) {
 			sPublishingIP curEntry = m_publishingIPs->front();
 			m_publishingIPs->pop_front();
-			AdjustGlobalPublishTracking(curEntry.m_ip, false, wxT("more than 100 publishers purge"));
+			AdjustGlobalPublishTracking(curEntry.m_ip, false, "more than 100 publishers purge");
 		}
 
 		// since we added a new publisher, we want to (re)calculate the trust value for this entry
 		ReCalculateTrustValue();
 	}
-	AddDebugLogLineN(logKadEntryTracking, CFormat(wxT("Indexed Keyword, Refresh: %s, Current Publisher: %s, Total Publishers: %u, Total different Names: %u, TrustValue: %.2f, file: %s"))
-		% (refresh ? wxT("Yes") : wxT("No")) % KadIPToString(m_uIP) % m_publishingIPs->size() % m_filenames.size() % m_trustValue % m_uSourceID.ToHexString());
+	AddDebugLogLineN(logKadEntryTracking, CFormat("Indexed Keyword, Refresh: %s, Current Publisher: %s, Total Publishers: %u, Total different Names: %u, TrustValue: %.2f, file: %s")
+		% (refresh ? "Yes" : "No") % KadIPToString(m_uIP) % m_publishingIPs->size() % m_filenames.size() % m_trustValue % m_uSourceID.ToHexString());
 }
 
 void CKeyEntry::ReCalculateTrustValue()
@@ -456,9 +532,9 @@ void CKeyEntry::ReCalculateTrustValue()
 	//
 	// Its important to note that entry with < 1 do NOT get ignored or singled out, this only comes into play if we have 300 more results for
 	// a search request rating > 1
-	wxCHECK_RET(m_publishingIPs != NULL, wxT("No publishing IPs?"));
+	wxCHECK_RET(m_publishingIPs != NULL, "No publishing IPs?");
 
-	m_lastTrustValueCalc = ::GetTickCount();
+	m_lastTrustValueCalc = ::GetTickCount64();
 	m_trustValue = 0;
 	wxASSERT(!m_publishingIPs->empty());
 	for (PublishingIPList::iterator it = m_publishingIPs->begin(); it != m_publishingIPs->end(); ++it) {
@@ -471,7 +547,7 @@ void CKeyEntry::ReCalculateTrustValue()
 		if (count > 0) {
 			m_trustValue += PUBLISHPOINTSSPERSUBNET / count;
 		} else {
-			AddDebugLogLineN(logKadEntryTracking, wxT("Inconsistency in RecalcualteTrustValue()"));
+			AddDebugLogLineN(logKadEntryTracking, "Inconsistency in RecalcualteTrustValue()");
 			wxFAIL;
 		}
 	}
@@ -480,7 +556,7 @@ void CKeyEntry::ReCalculateTrustValue()
 double CKeyEntry::GetTrustValue()
 {
 	// update if last calculation is too old, will assert if this entry is not supposed to have a trustvalue
-	if (::GetTickCount() - m_lastTrustValueCalc > MIN2MS(10)) {
+	if (::GetTickCount64() - m_lastTrustValueCalc > MIN2MS(10)) {
 		ReCalculateTrustValue();
 	}
 	return m_trustValue;
@@ -497,7 +573,7 @@ void CKeyEntry::CleanUpTrackedPublishers()
 		// entries are ordered, older ones first
 		sPublishingIP curEntry = m_publishingIPs->front();
 		if (now - curEntry.m_lastPublish > KADEMLIAREPUBLISHTIMEK) {
-			AdjustGlobalPublishTracking(curEntry.m_ip, false, wxT("cleanup"));
+			AdjustGlobalPublishTracking(curEntry.m_ip, false, "cleanup");
 			m_publishingIPs->pop_front();
 		} else {
 			break;
@@ -555,14 +631,14 @@ void CKeyEntry::ReadPublishTrackingDataFromFile(CFileDataIO* data)
 		dbgLastTime = toAdd.m_lastPublish;
 #endif
 
-		AdjustGlobalPublishTracking(toAdd.m_ip, true, wxEmptyString);
+		AdjustGlobalPublishTracking(toAdd.m_ip, true, "");
 
 		m_publishingIPs->push_back(toAdd);
 	}
 	ReCalculateTrustValue();
 // #ifdef __DEBUG__
 //	if (GetTrustValue() < 1.0) {
-//		AddDebugLogLineN(logKadEntryTracking,CFormat(wxT("Loaded %u different names, %u different publishIPs (trustvalue = %.2f) for file %s"))
+//		AddDebugLogLineN(logKadEntryTracking,CFormat("Loaded %u different names, %u different publishIPs (trustvalue = %.2f) for file %s")
 //			% nameCount % ipCount % GetTrustValue() % m_uSourceID.ToHexString());
 //	}
 // #endif

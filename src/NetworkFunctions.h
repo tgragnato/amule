@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2004-2011 Angel Vidal ( kry@amule.org )
-// Copyright (c) 2003-2016 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -35,23 +35,23 @@
 
 inline wxString Uint32toStringIP(uint32 ip)
 {
-	return CFormat(wxT("%u.%u.%u.%u")) % (uint8)ip % (uint8)(ip>>8) % (uint8)(ip>>16) % (uint8)(ip>>24);
+	return CFormat("%u.%u.%u.%u") % (uint8)ip % (uint8)(ip>>8) % (uint8)(ip>>16) % (uint8)(ip>>24);
 }
 
 inline wxString Uint32_16toStringIP_Port(uint32 ip, uint16 port)
 {
-	return CFormat(wxT("%u.%u.%u.%u:%u")) % (uint8)ip % (uint8)(ip>>8) % (uint8)(ip>>16) % (uint8)(ip>>24) % port;
+	return CFormat("%u.%u.%u.%u:%u") % (uint8)ip % (uint8)(ip>>8) % (uint8)(ip>>16) % (uint8)(ip>>24) % port;
 }
 
 // These functions take IPs in host-order
 inline wxString KadIPToString(uint32_t ip)
 {
-	return CFormat(wxT("%u.%u.%u.%u")) % (uint8_t)(ip >> 24) % (uint8_t)(ip >> 16) % (uint8_t)(ip >> 8) % (uint8_t)ip;
+	return CFormat("%u.%u.%u.%u") % (uint8_t)(ip >> 24) % (uint8_t)(ip >> 16) % (uint8_t)(ip >> 8) % (uint8_t)ip;
 }
 
 inline wxString KadIPPortToString(uint32_t ip, uint16_t port)
 {
-	return CFormat(wxT("%u.%u.%u.%u:%u")) % (uint8_t)(ip >> 24) % (uint8_t)(ip >> 16) % (uint8_t)(ip >> 8) % (uint8_t)ip % port;
+	return CFormat("%u.%u.%u.%u:%u") % (uint8_t)(ip >> 24) % (uint8_t)(ip >> 16) % (uint8_t)(ip >> 8) % (uint8_t)ip % port;
 }
 
 /**
@@ -112,10 +112,10 @@ uint32 StringHosttoUint32(const wxString &Host);
  *
  * Note: IP must be in anti-host order (BE on LE platform, LE on BE platform).
  */
-bool IsGoodIP( uint32 IP, bool filterLAN ) throw();
+bool IsGoodIP( uint32 IP, bool filterLAN ) noexcept;
 
 
-inline bool IsGoodIPPort(uint32 nIP, uint16 nPort) throw()
+inline bool IsGoodIPPort(uint32 nIP, uint16 nPort) noexcept
 {
 	return IsGoodIP(nIP, true) && nPort!=0;
 }
@@ -137,7 +137,26 @@ inline bool IsLowID(uint32 id)
  *
  * @note IP must be in anti-host order.
  */
-bool IsLanIP(uint32_t ip) throw();
+bool IsLanIP(uint32_t ip) noexcept;
+
+
+/**
+ * Checks for the IPv4 loopback range 127.0.0.0/8.
+ *
+ * @param ip The IP-address to check (anti-host order, same convention as
+ *           StringIPtoUint32 and IsLanIP).
+ * @return True if it is a loopback address.
+ */
+bool IsLoopbackIP(uint32_t ip) noexcept;
+
+
+/**
+ * Checks for the IPv4 link-local range 169.254.0.0/16 (RFC3927 / zeroconf).
+ *
+ * @param ip The IP-address to check (anti-host order).
+ * @return True if it is a link-local address.
+ */
+bool IsLinkLocalIP(uint32_t ip) noexcept;
 
 #endif // NETWORK_FUNCTIONS_H
 // File_checked_for_headers

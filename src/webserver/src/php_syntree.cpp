@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2005-2011 Froenchenko Leonid ( lfroen@gmail.com / http://www.amule.org )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -30,6 +30,11 @@
 	#include <map>
 	#include <list>
 	#include <stdarg.h>
+	#include <cassert>
+	#include <climits>
+	#include <cstdio>
+	#include <cstring>
+	#include <cstdlib>
 #else
 	#include "WebServer.h"
 #endif
@@ -185,7 +190,7 @@ PHP_EXP_NODE *make_func_param(PHP_EXP_NODE *list, PHP_EXP_NODE *var_exp_node, ch
 /*
  * Syntax tree generation
  */
-PHP_SYN_NODE *make_expr_syn_node(PHP_STATMENT_TYPE type, PHP_EXP_NODE *expr)
+PHP_SYN_NODE *make_expr_syn_node(PHP_STATEMENT_TYPE type, PHP_EXP_NODE *expr)
 {
 	PHP_SYN_NODE *syn_node = new PHP_SYN_NODE;
 	memset(syn_node, 0, sizeof(PHP_SYN_NODE));
@@ -404,7 +409,7 @@ void func_scope_init(PHP_FUNC_PARAM_DEF *params, int param_count,
 	std::map<std::string, PHP_VAR_NODE *> &saved_vars)
 {
 	//
-	// Step 1: save origival vars
+	// Step 1: save original val vars
 	PHP_SCOPE_TABLE_TYPE *curr_scope_map = (PHP_SCOPE_TABLE_TYPE *)g_current_scope;
 	for(PHP_SCOPE_TABLE_TYPE::iterator i = curr_scope_map->begin(); i != curr_scope_map->end();++i) {
 		if ( (i->second->type == PHP_SCOPE_VAR) || (i->second->type == PHP_SCOPE_PARAM) ) {
@@ -782,13 +787,36 @@ int array_get_size(PHP_VALUE_NODE *array)
 
 PHP_VAR_NODE *array_push_back(PHP_VALUE_NODE *array)
 {
-	for(int i = 0; i < 0xffff;i++) {
+	if ( array->type != PHP_VAL_ARRAY ) {
+		return 0;
+	}
+	PHP_ARRAY_TYPE *arr_ptr = (PHP_ARRAY_TYPE *)array->ptr_val;
+
+	// Resume the linear scan from a cached hint so back-to-back
+	// push_backs are O(1) instead of O(N) each. With N=43k+ shared
+	// files in amuleweb's amuleweb-main-shared.php this collapses
+	// the page-build from O(N^2) (~minutes) to O(N).
+	// Proposed fix for issue #699: raised the upper bound from 0xffff (65535)
+	// to INT_MAX. PHP_ARRAY_TYPE uses std::map (unbounded), so the old cap
+	// was artificial. With the push_next_hint optimisation each call is still
+	// O(1) in the common sequential-push case regardless of array size.
+	for(int i = arr_ptr->push_next_hint; i < INT_MAX; i++) {
+		PHP_VAR_NODE *arr_var_node = array_get_by_int_key(array, i);
+		if ( arr_var_node->value.type == PHP_VAL_NONE ) {
+			arr_ptr->push_next_hint = i + 1;
+			return arr_var_node;
+		}
+	}
+	// Hint didn't pay off (gap below it from a delete). Fall back
+	// to scanning the low range so push_back keeps the same
+	// semantics as before for mixed insert/delete patterns.
+	for(int i = 0; i < arr_ptr->push_next_hint; i++) {
 		PHP_VAR_NODE *arr_var_node = array_get_by_int_key(array, i);
 		if ( arr_var_node->value.type == PHP_VAL_NONE ) {
 			return arr_var_node;
 		}
 	}
-	// array size reached 64K ?!
+	// integer key space exhausted — unreachable in practice
 	return 0;
 }
 
@@ -1206,7 +1234,7 @@ void php_engine_free()
 }
 
 /*
- * Create reference. This is recoursive process, since operators []
+ * Create reference. This is recursive process, since operators []
  * can be stacked: $a[1][2][3] = & $b;
  * There's 3 valid cases in making reference:
  *  1,2. Target is scalar variable or variable by name ${xxx}
@@ -2012,7 +2040,7 @@ void php_report_error(PHP_MSG_TYPE err_type, const char *msg, ...)
 	char msgbuf[1024];
 	const char *type_msg = 0;
 	switch(err_type) {
-		case PHP_MESAGE:
+		case PHP_MESSAGE:
 			type_msg = "PHP:";
 			break;
 		case PHP_WARNING:

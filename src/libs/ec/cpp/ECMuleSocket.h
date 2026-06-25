@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2004-2011 Angel Vidal ( kry@amule.org )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -45,6 +45,28 @@ public:
 	virtual void OnConnect(int)	{ OnConnect(); }	// This is called from LibSocketAsio
 	virtual void OnSend(int)	{ OnOutput(); }
 	virtual void OnReceive(int)	{ OnInput(); }
+	// CLibSocket::OnLost(int) fires from the Asio reactor when the
+	// peer FIN reaches our kernel (HandleRead returning bytes=0 or
+	// an EOF error_code). Forward to the EC-layer CECSocket::OnLost()
+	// virtual so CRemoteConnect / CECServerSocket overrides actually
+	// run — without this the empty CLibSocket::OnLost(int){} default
+	// would swallow the notification and the UI would stay "connected"
+	// even after the connection died at the TCP layer.
+	//
+	// The cast to CECSocket* forces virtual dispatch through the EC
+	// vtable, so an instance of CRemoteConnect / CECServerSocket
+	// reaches its override.  A qualified `CECSocket::OnLost()` call
+	// would bypass virtual dispatch and only run the empty base.
+	virtual void OnLost(int)	{ static_cast<CECSocket *>(this)->OnLost(); }
+
+	// Apply EC-tuned TCP keepalive (idle=30s / probe=10s / count=3 →
+	// ~60s half-open detection). Called automatically from
+	// InternalConnect after a successful client-side connect; subclasses
+	// that take over OnConnect (CRemoteConnect) and the server-side
+	// accept path (ExternalConn.cpp::OnAccept on amuled) call this
+	// explicitly so detection is symmetric on both ends of every EC
+	// connection.
+	void ApplyEcKeepalive();
 
 private:
 	bool InternalConnect(uint32_t ip, uint16_t port, bool wait);

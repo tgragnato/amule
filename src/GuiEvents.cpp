@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -24,6 +24,20 @@
 
 #include "GuiEvents.h"
 #include "amule.h"
+#include <common/MenuIDs.h>		// MP_PAUSE/STOP/RESUME/CANCEL + MP_PRIO* for the
+#ifndef AMULE_DAEMON
+#include "CommentDialog.h"		// CCommentDialog::DropReferencesTo
+#include "CommentDialogLst.h"		// CCommentDialogLst::DropReferencesTo
+#include "FileDetailDialog.h"		// CFileDetailDialog::DropReferencesTo
+#include "GenericClientListCtrl.h"	// CGenericClientListCtrl::RemoveKnownFile
+#include "TransferWnd.h"		// access to m_transferwnd->clientlistctrl
+#include "SharedFilesWnd.h"		// access to m_sharedfileswnd->peerslistctrl
+#endif
+#ifndef CLIENT_GUI
+#include "SHAHashSet.h"			// CAICHHashSet::DropReferencesTo
+#include "PartFileWriteThread.h"	// CPartFileWriteThread::DropReferencesTo
+#endif
+					// CLIENT_GUI implementations of Download_Set_Cat_*
 #include "PartFile.h"
 #include "DownloadQueue.h"
 #include "ServerList.h"
@@ -34,6 +48,10 @@
 #include "IPFilter.h"
 #include "Friend.h"
 #include "Logger.h"
+
+#ifdef __WXMAC__
+#include "MacAppHelper.h"	// mac_set_accessory_mode
+#endif
 
 #ifndef AMULE_DAEMON
 #	include "ChatWnd.h"
@@ -63,8 +81,7 @@
 
 #include <common/MacrosProgramSpecific.h>
 
-DEFINE_LOCAL_EVENT_TYPE(MULE_EVT_NOTIFY)
-
+wxDEFINE_EVENT(MULE_EVT_NOTIFY, wxEvent);
 
 namespace MuleNotify
 {
@@ -81,7 +98,7 @@ namespace MuleNotify
 #endif
 		} else {
 			CMuleGUIEvent evt(ntf.Clone());
-			wxPostEvent(wxTheApp, evt);
+			wxQueueEvent(wxTheApp, (evt).Clone());
 		}
 	}
 
@@ -89,7 +106,7 @@ namespace MuleNotify
 	void HandleNotificationAlways(const CMuleNotiferBase& ntf)
 	{
 		CMuleGUIEvent evt(ntf.Clone());
-		wxPostEvent(wxTheApp, evt);
+		wxQueueEvent(wxTheApp, (evt).Clone());
 	}
 
 
@@ -128,7 +145,16 @@ namespace MuleNotify
 	void DownloadCtrlUpdateItem(const void* item)
 	{
 #ifndef CLIENT_GUI
-		theApp->ECServerHandler->m_ec_notifier->DownloadFile_SetDirty(static_cast<const CPartFile*>(item));
+		// Notify can fire from PartFile load during early OnInit (#268
+		// crash from a wx2.8.12 / pre-ASIO build) and from background
+		// threads during shutdown after `delete ECServerHandler`.
+		// Master's OnInit currently builds ECServerHandler before
+		// LoadMetFiles, so the early-init crash is fixed by ordering;
+		// guard the dereference anyway so future reorders or
+		// shutdown races can't reintroduce the segfault.
+		if (theApp->ECServerHandler && theApp->ECServerHandler->m_ec_notifier) {
+			theApp->ECServerHandler->m_ec_notifier->DownloadFile_SetDirty(static_cast<const CPartFile*>(item));
+		}
 #endif
 #ifndef AMULE_DAEMON
 		if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->downloadlistctrl) {
@@ -165,7 +191,23 @@ namespace MuleNotify
 	void ShowGUI()
 	{
 #ifndef AMULE_DAEMON
+		// Triggered from a duplicate-launch RAISE_DIALOG signal (the
+		// running instance picks it up via ED2KLinks polling) and
+		// from MacReopenApp when the user clicks the Dock icon. Cover
+		// every hidden state the main window can be in:
+		//   * Show(false) via the close-button HideOnClose path
+		//   * Iconize(true) via the minimize-to-tray path
+		//   * just behind another app's window
+#ifdef __WXMAC__
+		// If we're still in accessory mode (window was hidden via the
+		// tray), restore the regular Dock icon before the window
+		// comes back, otherwise activate-ignoring-other-apps lands on
+		// a Dock-less app and the focus shift is invisible.
+		mac_set_accessory_mode(false);
+#endif
+		theApp->amuledlg->Show(true);
 		theApp->amuledlg->Iconize(false);
+		theApp->amuledlg->Raise();
 #endif
 	}
 
@@ -318,12 +360,61 @@ namespace MuleNotify
 		theApp->sharedfiles->SetFileCommentRating(file, comment, rating);
 	}
 
-	void Download_Set_Cat_Prio(uint8, uint8)
+	void Download_Set_Cat_Prio(uint8 cat, uint8 newprio)
 	{
+		// EC has no per-category bulk priority opcode. Mirror the daemon's
+		// CDownloadQueue::SetCatPrio predicate (all files if cat == 0, else
+		// exact category match) and send one EC_OP_PARTFILE_PRIO_SET per
+		// file using the existing per-file helpers. Without this stub being
+		// filled in, amulegui's category-tab right-click priority items
+		// silently no-op'd (#697 sibling of the status case below).
+		std::vector<CPartFile*> targets;
+		for (CDownQueueRem::iterator it = theApp->downloadqueue->begin();
+				it != theApp->downloadqueue->end(); ++it) {
+			CPartFile *file = it->second;
+			if (!cat || file->GetCategory() == cat) {
+				targets.push_back(file);
+			}
+		}
+		for (std::vector<CPartFile*>::iterator it = targets.begin();
+				it != targets.end(); ++it) {
+			if (newprio == PR_AUTO) {
+				theApp->downloadqueue->AutoPrio(*it, true);
+			} else {
+				theApp->downloadqueue->Prio(*it, newprio);
+			}
+		}
 	}
 
-	void Download_Set_Cat_Status(uint8, int)
+	void Download_Set_Cat_Status(uint8 cat, int newstatus)
 	{
+		// EC has no per-category bulk status opcode. Mirror the daemon's
+		// CDownloadQueue::SetCatStatus: snapshot files that
+		// CheckShowItemInGivenCat() admits for this (cat, AllcatFilter)
+		// pair, then send one per-file EC command. Snapshot first so a
+		// late-arriving EC response can't mutate the queue mid-iteration.
+		// #697: previously empty -- tab-right-click Stop/Pause/Resume/
+		// Cancel silently no-op'd in amulegui (only the remote GUI, not
+		// the monolithic amule, hit this stub).
+		ec_tagname_t cmd = 0;
+		switch (newstatus) {
+			case MP_CANCEL:	cmd = EC_OP_PARTFILE_DELETE;	break;
+			case MP_PAUSE:	cmd = EC_OP_PARTFILE_PAUSE;	break;
+			case MP_STOP:	cmd = EC_OP_PARTFILE_STOP;	break;
+			case MP_RESUME:	cmd = EC_OP_PARTFILE_RESUME;	break;
+			default:	return;
+		}
+		std::vector<CPartFile*> targets;
+		for (CDownQueueRem::iterator it = theApp->downloadqueue->begin();
+				it != theApp->downloadqueue->end(); ++it) {
+			if (it->second->CheckShowItemInGivenCat(cat)) {
+				targets.push_back(it->second);
+			}
+		}
+		for (std::vector<CPartFile*>::iterator it = targets.begin();
+				it != targets.end(); ++it) {
+			theApp->downloadqueue->SendFileCommand(*it, cmd);
+		}
 	}
 
 	void Upload_Resort_Queue()
@@ -380,9 +471,33 @@ namespace MuleNotify
 	}
 
 
+	void SharedFilesBeginBulkUpdate()
+	{
+#ifndef AMULE_DAEMON
+		if (theApp->amuledlg && theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl) {
+			theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->BeginBulkUpdate();
+		}
+#endif
+	}
+
+
+	void SharedFilesEndBulkUpdate()
+	{
+#ifndef AMULE_DAEMON
+		if (theApp->amuledlg && theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl) {
+			theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->EndBulkUpdate();
+		}
+#endif
+	}
+
+
 	void DownloadCtrlAddFile(CPartFile* file)
 	{
-		theApp->ECServerHandler->m_ec_notifier->DownloadFile_AddFile(file);
+		// See DownloadCtrlUpdateItem above for the rationale; the
+		// notifier can be NULL during init or shutdown.
+		if (theApp->ECServerHandler && theApp->ECServerHandler->m_ec_notifier) {
+			theApp->ECServerHandler->m_ec_notifier->DownloadFile_AddFile(file);
+		}
 #ifndef AMULE_DAEMON
 		if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->downloadlistctrl ) {
 			theApp->amuledlg->m_transferwnd->downloadlistctrl->AddFile(file);
@@ -392,7 +507,9 @@ namespace MuleNotify
 
 	void DownloadCtrlRemoveFile(CPartFile* file)
 	{
-		theApp->ECServerHandler->m_ec_notifier->DownloadFile_RemoveFile(file);
+		if (theApp->ECServerHandler && theApp->ECServerHandler->m_ec_notifier) {
+			theApp->ECServerHandler->m_ec_notifier->DownloadFile_RemoveFile(file);
+		}
 #ifndef AMULE_DAEMON
 		if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->downloadlistctrl) {
 			theApp->amuledlg->m_transferwnd->downloadlistctrl->RemoveFile(file);
@@ -560,7 +677,7 @@ namespace MuleNotify
 	{
 #ifndef AMULE_DAEMON
 		if (theApp->amuledlg->m_chatwnd) {
-			theApp->amuledlg->m_chatwnd->SendMessage(captcha, wxEmptyString, to_id);
+			theApp->amuledlg->m_chatwnd->SendMessage(captcha, "", to_id);
 		}
 #endif
 	}
@@ -774,6 +891,80 @@ namespace MuleNotify
 #endif	// #ifndef AMULE_DAEMON
 
 #endif	// #ifndef CLIENT_GUI
+
+
+// Broadcast called from every CKnownFile destruction site BEFORE
+// the `delete file`. Subscribers MUST only compare the file pointer
+// by value (==) to entries they already hold — never dereference it.
+// By the time a subscriber on the main thread processes this event
+// the bytes pointed at by `file` may already have been recycled.
+//
+// Defined outside the CLIENT_GUI / non-CLIENT_GUI split so the same
+// function compiles into both `amule` and `amulegui`. The branches
+// inside select the right subscriber set per target.
+//
+// Sites that fire this:
+//   - CPartFile::Delete()                  (user cancel)
+//   - CKnownFileList::PruneDuplicates       (TTL eviction)
+//   - CKnownFileList::~CKnownFileList       (shutdown / via Clear())
+//   - CSharedFileList::Reload()             (rebuild)
+//   - CKnownFilesRem::DeleteItem            (amulegui EC_TAG_FILE_REMOVED)
+void KnownFileBeingDestroyed(CKnownFile* file)
+{
+#ifndef AMULE_DAEMON
+	// GUI subscribers (linked into `amule` and `amulegui`).
+	if (theApp->amuledlg) {
+		// #1: CGenericClientListCtrl in the transfer window's
+		// downloads pane caches selected files in m_knownfiles;
+		// stale entries crash on the next selection change
+		// (issue #755).
+		if (theApp->amuledlg->m_transferwnd
+			&& theApp->amuledlg->m_transferwnd->clientlistctrl) {
+			theApp->amuledlg->m_transferwnd->clientlistctrl
+				->RemoveKnownFile(file);
+		}
+		// #2: CGenericClientListCtrl in the shared-files pane
+		// caches selected files the same way.
+		if (theApp->amuledlg->m_sharedfileswnd
+			&& theApp->amuledlg->m_sharedfileswnd->peerslistctrl) {
+			theApp->amuledlg->m_sharedfileswnd->peerslistctrl
+				->RemoveKnownFile(file);
+		}
+		// #3, #4, #5: open modal dialogs that captured the file
+		// pointer at construction time (CommentDialog,
+		// CommentDialogLst, FileDetailDialog). Each class keeps
+		// its own static registry of live instances so the
+		// broadcast can iterate without needing a friend.
+		CCommentDialog::DropReferencesTo(file);
+		CCommentDialogLst::DropReferencesTo(file);
+		CFileDetailDialog::DropReferencesTo(file);
+	}
+#endif
+#ifdef CLIENT_GUI
+	// Remote-GUI subscriber: null CUpDownClient::m_uploadingfile /
+	// m_reqfile on every client that points at this file (the #748
+	// crash flow). Pointer-value comparison only.
+	if (theApp->clientlist) {
+		theApp->clientlist->DropReferencesTo(file);
+	}
+#endif
+#ifndef CLIENT_GUI
+	// Daemon-side subscribers — drop pending requests/writes naming
+	// this file. Both lists are kept by background-thread machinery
+	// and would otherwise leave dangling pointers after the file is
+	// freed (see audit table in the PR description).
+	//
+	// #5: AICH static recovery-request list. Strip-by-pointer; the
+	// existing RequestAICHRecovery() guard at SHAHashSet.cpp:990 can
+	// be spoofed by allocator reuse, which this prevents.
+	CAICHHashSet::DropReferencesTo(file);
+	// #8: pending writes the CPartFileWriteThread hasn't drained yet.
+	// Without this, ~CPartFile would race the write loop.
+	if (theApp->partFileWriteThread) {
+		theApp->partFileWriteThread->DropReferencesTo(file);
+	}
+#endif
+}
 
 }
 // File_checked_for_headers

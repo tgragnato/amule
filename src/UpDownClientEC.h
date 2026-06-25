@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2003-2011 Stu Redman ( sturedman@amule.org / http://www.amule.org )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -60,7 +60,7 @@ private:
 	wxString GetLinkedFrom() {
 		wxString ret;
 		for (std::multiset<wxString>::iterator it = m_linkedFrom.begin(); it != m_linkedFrom.end(); it++) {
-			ret += *it + wxT(", ");
+			ret += *it + ", ";
 		}
 		return ret;
 	}

@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2005-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -140,6 +140,9 @@ public:
 	CFormat& operator%(const wxString& value)		{ return this->operator%<const wxString&>(value); }
 	CFormat& operator%(const CFormat& value)		{ return this->operator%<const wxString&>(value); }
 	CFormat& operator%(const std::string& value)	{ return this->operator%<const wxString&>(wxString(value.c_str(), wxConvUTF8)); }
+	// Narrow string literals are passed directly (after dropping the wxT()
+	// wrapping sweep); dispatch to the wxString overload.
+	CFormat& operator%(const char* value)			{ return this->operator%<const wxString&>(wxString(value, wxConvUTF8)); }
 
 	template<typename _Tp> CFormat operator+(const _Tp& value) const;
 	template<typename _Tp> CFormat operator+(_Tp* value)	{ return (*this) + wxString(value); }
@@ -209,7 +212,8 @@ template<> inline CFormat& CFormat::operator%(unsigned long value)	{ return *thi
 template<> inline CFormat& CFormat::operator%(float value)		{ return *this % (double)value; }
 template<> inline CFormat& CFormat::operator%(const wxChar* value)	{ return this->operator%<const wxString&>(wxString(value)); }
 
-#define WXLONGLONGFMTSPEC wxT(wxLongLongFmtSpec)
+
+#define WXLONGLONGFMTSPEC wxLongLongFmtSpec
 
 #endif
 // File_checked_for_headers

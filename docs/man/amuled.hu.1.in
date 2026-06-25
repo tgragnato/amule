@@ -1,0 +1,109 @@
+.\"*******************************************************************
+.\"
+.\" This file was generated with po4a. Translate the source file.
+.\"
+.\"*******************************************************************
+.TH AMULED 1 @MAN_DATE@ "aMule Daemon v@PACKAGE_VERSION@" "aMule Daemon"
+.als B_untranslated B
+.als RB_untranslated RB
+.SH NÉV
+amule \- a "minden\-platform" eMule p2p kliens \- démon változat
+.SH ÁTTEKINTÉS
+.B_untranslated amuled
+[\fB\-c\fP \fI<útvonal>\fP]
+.RB_untranslated [ \-f ]
+[\fB\-p\fP \fI<fájl>\fP]
+.RB_untranslated [ \-e ]
+.RB_untranslated [ \-o ]
+.RB_untranslated [ \-r ]
+.RB_untranslated [ \-\-configure\-autostart " " \fI<on|off> ]
+[\fB\-w\fP \fI<fájl>\fP]
+.RB_untranslated [ \-d ]
+.RB_untranslated [ \-i ]
+[\fB\-t\fP \fI<szám>\fP] [\fIeD2k\-hivatkozás\fP]
+
+.B_untranslated amuled
+.RB_untranslated [ \-v ]
+
+.B_untranslated amuled
+.RB_untranslated [ \-h ]
+.SH LEÍRÁS
+.TP 
+\fB[ \-c\fP \fI<útvonal>\fP, \fB\-\-config\-dir\fP=\fI<útvonal>\fP \fB]\fP
+A beállításokat az \fI<útvonal>\fP\-ból olvassa az alapértelmezett
+helyett.
+.TP 
+.B_untranslated [ \-f\fR, \fB\-\-full\-daemon ]\fR
+Háttérbe vonul.
+.TP 
+\fB[ \-p\fP \fI<fájl>\fP, \fB\-\-pid\-file\fP=\fI<fájl>\fP \fB]\fP
+A háttérbe vonulás után hozzon létre egy pid\-fájlt.
+.TP 
+.B_untranslated [ \-e\fR, \fB\-\-ec\-config ]\fR
+A távoli elérés beállítása.
+.TP 
+.B_untranslated [ \-o\fR, \fB\-\-log\-stdout ]\fR
+A napló bejegyzéseket a szabvány kimenetre írja.
+.TP 
+.B_untranslated [ \-r\fR, \fB\-\-reset\-config ]\fR
+Beállítások visszaállítása az alapértelmezett értékekre.
+.TP 
+.B_untranslated [ \-\-configure\-autostart\fR=\fI<on|off>\fR \fB]\fR
+Enable or disable starting amuled on user login, then exit.  The OS\-specific
+store is selected automatically: Windows registry Run key, macOS
+LaunchAgent, Linux XDG \fI.desktop\fP autostart entry.
+.TP 
+\fB[ \-w\fP \fI<fájl>\fP, \fB\-\-use\-amuleweb\fP=\fI<fájl>\fP \fB]\fP
+Az amuleweb programnak \fI<fájl>\fP\-t fogja használni.
+.TP 
+.B_untranslated [ \-d\fR, \fB\-\-disable\-fatal ]\fR
+Don't catch fatal exceptions and don't block exit on assertions.  Useful for
+headless / supervised setups (systemd, watchdog scripts)  where the
+otherwise\-modal assertion dialog prevents auto\-restart.
+.TP 
+.B_untranslated [ \-i\fR, \fB\-\-enable\-stdin ]\fR
+Nem zárja le a szabvány bemenetet.
+.TP 
+\fB[ \-t\fP \fI<num>\fP, \fB\-\-category\fP=\fI<num>\fP \fB]\fP
+A megadott eD2k hivatkozást a \fI<szám>\fP\-adik kategóriába tölti.
+.TP 
+.B_untranslated [ \-v\fR, \fB\-\-version ]\fR
+Megjeleníti a verziószámot.
+.TP 
+.B_untranslated [ \-h\fR, \fB\-\-help ]\fR
+Egy rövid használati leírást jelenít meg.
+.TP 
+\fB[ eD2k\-hivatkozás ]\fP
+eD2k hivatkozás letöltése.
+.PP
+Az eD2k hivatkozás a következő lehet:
+.RS 3
+.IP \(bu 2
+egy fájl hivatkozás (ed2k://|file|...), ez a letöltési sorhoz lesz
+hozzáadva;
+.IP \(bu 2
+egy kiszolgáló hivatkozás (ed2k://|server|...), ez a kiszolgáló\-listához
+lesz hozzáadva;
+.IP \(bu 2
+egy kiszolgáló\-lista hivatkozás, mely esetben a listában szereplő összes
+kiszolgáló a kiszolgáló\-listához adódik;
+.IP \(bu 2
+egy magnet hivatkozás.
+.RE
+.SH FÁJLOK
+~/.aMule/*
+.SH "HIBÁK JELENTÉSE"
+A hibákat kérjük vagy a fórumon
+(\fIhttps://github.com/amule\-org/amule/discussions\fP), vagy a hibakövetőben
+(\fIhttps://github.com/amule\-org/amule/issues\fP) jelentsék. Hibákról kérjük ne
+írjanak levelet (e\-mail\-t) se a levelezési listára, se közvetlenül
+valamelyik fejlesztőnek.
+.SH COPYRIGHT
+Az aMule és az összes hozzá tartozó segédprogram a GNU General Public
+License védelme alatt áll.
+.SH "LÁSD MÉG"
+.B_untranslated alcc\fR(1), \fBamule\fR(1), \fBamulecmd\fR(1), \fBamulegui\fR(1), \fBamuleweb\fR(1), \fBcas\fR(1), \fBed2k\fR(1)
+.SH SZERZŐ
+Ezt a kézikönyv lapot Vollstrecker <amule@vollstreckernet.de> írta.
+.SH MAGYAR FORDÍTÁS
+Dévai Tamás <gonosztopi@amule.org>

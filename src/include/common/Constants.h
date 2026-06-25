@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -27,6 +27,13 @@
 #define COMMONCONSTANTS_H
 
 const unsigned UNLIMITED = 0;
+
+// Internal sentinel for "no upload throttling at all" — used when the user
+// has set MaxUpload=0 in prefs. Distinct from UNLIMITED=0 (the user-facing
+// pref value) so the throttle loop can skip the per-iteration rate cap math
+// entirely rather than dividing a budget by zero or by a meaningless ramp.
+#include <climits>
+const unsigned UNLIMITED_RATE = UINT_MAX;
 
 #define	MINWAIT_BEFORE_DLDISPLAY_WINDOWUPDATE	1500
 #define	DISKSPACERECHECKTIME			60000	// checkDiskspace

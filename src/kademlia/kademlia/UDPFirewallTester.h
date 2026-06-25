@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2008-2011 Dévai Tamás ( gonosztopi@amule.org )
-// Copyright (c) 2008-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -50,8 +50,8 @@ class CUDPFirewallTester
 	static bool	IsFirewalledUDP(bool lastStateIfTesting); // Are we UDP firewalled - if unknown open is assumed unless onlyVerified == true
 	static void	SetUDPFWCheckResult(bool succeeded, bool testCancelled, uint32_t fromIP, uint16_t incomingPort);
 	static void	ReCheckFirewallUDP(bool setUnverified);
-	static bool	IsFWCheckUDPRunning() throw()		{ return m_fwChecksFinishedUDP < UDP_FIREWALLTEST_CLIENTSTOASK && !CKademlia::IsRunningInLANMode(); }
-	static bool	IsVerified() throw()			{ return m_isFWVerifiedUDP || CKademlia::IsRunningInLANMode(); }
+	static bool	IsFWCheckUDPRunning() noexcept		{ return m_fwChecksFinishedUDP < UDP_FIREWALLTEST_CLIENTSTOASK && !CKademlia::IsRunningInLANMode(); }
+	static bool	IsVerified() noexcept			{ return m_isFWVerifiedUDP || CKademlia::IsRunningInLANMode(); }
 
 	static void	AddPossibleTestContact(const CUInt128& clientID, uint32_t ip, uint16_t port, uint16_t tport, const CUInt128& target, uint8_t version, const CKadUDPKey& udpKey, bool ipVerified)
 	{
@@ -69,7 +69,7 @@ class CUDPFirewallTester
 
       private:
 	// are we in search for testclients
-	static bool	GetUDPCheckClientsNeeded() throw()	{ return (m_fwChecksRunningUDP + m_fwChecksFinishedUDP) < UDP_FIREWALLTEST_CLIENTSTOASK; }
+	static bool	GetUDPCheckClientsNeeded() noexcept	{ return (m_fwChecksRunningUDP + m_fwChecksFinishedUDP) < UDP_FIREWALLTEST_CLIENTSTOASK; }
 	static bool	m_firewalledUDP;
 	static bool	m_firewalledLastStateUDP;
 	static bool	m_isFWVerifiedUDP;
@@ -77,8 +77,8 @@ class CUDPFirewallTester
 	static bool	m_timedOut;
 	static uint8_t	m_fwChecksRunningUDP;
 	static uint8_t	m_fwChecksFinishedUDP;
-	static uint32_t	m_testStart;
-	static uint32_t	m_lastSucceededTime;
+	static uint64_t	m_testStart;
+	static uint64_t	m_lastSucceededTime;
 	typedef std::list<CContact> PossibleClientList;
 	typedef std::list<UsedClient_Struct> UsedClientList;
 	static PossibleClientList m_possibleTestClients;

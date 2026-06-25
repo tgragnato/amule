@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2005-2011 Froenchenko Leonid ( lfroen@gmail.com / http://www.amule.org )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -38,7 +38,7 @@
 
 #if !defined PRIu64
 # if defined(__alpha__) || defined(__ia64__) || defined(__ppc64__) || defined(__x86_64__) \
- || defined(__mips64__) || defined(__hppa64__) || defined(__sparc64__)
+ || defined(__mips64__) || defined(__hppa64__) || defined(__sparc64__) || defined(__loongarch64)
 #  define PRIu64 "lu"
 # else
 #  define PRIu64 "llu"
@@ -218,13 +218,13 @@ typedef void *PHP_SCOPE_STACK;
 /*
  Syntax tree node, representing 1 statement.
 */
-typedef enum PHP_STATMENT_TYPE {
+typedef enum PHP_STATEMENT_TYPE {
 	PHP_ST_EXPR, PHP_ST_IF,
 	PHP_ST_WHILE, PHP_ST_DO_WHILE, PHP_ST_FOR, PHP_ST_FOREACH, PHP_ST_SWITCH,
 	PHP_ST_CONTINUE, PHP_ST_BREAK, PHP_ST_RET,
 	PHP_ST_FUNC_DECL, PHP_ST_CLASS_DECL,
 	PHP_ST_ECHO
-} PHP_STATMENT_TYPE;
+} PHP_STATEMENT_TYPE;
 
 /*
  * Syntax tree constructs: regular statements and declarations
@@ -302,7 +302,7 @@ typedef struct PHP_SYN_CLASS_DECL_NODE {
 } PHP_SYN_CLASS_DECL_NODE;
 
 struct PHP_SYN_NODE {
-    PHP_STATMENT_TYPE type;
+    PHP_STATEMENT_TYPE type;
     union {
         PHP_EXP_NODE			*node_expr;
         PHP_SYN_IF_NODE			node_if;
@@ -333,7 +333,7 @@ typedef struct PHP_BLTIN_FUNC_DEF {
 } PHP_BLTIN_FUNC_DEF;
 
 typedef enum PHP_MSG_TYPE {
-	PHP_MESAGE, PHP_WARNING, PHP_ERROR, PHP_INTERNAL_ERROR
+	PHP_MESSAGE, PHP_WARNING, PHP_ERROR, PHP_INTERNAL_ERROR
 } PHP_MSG_TYPE;
 
 #ifdef __cplusplus
@@ -412,7 +412,7 @@ extern "C" {
 	extern PHP_SYN_NODE *g_syn_tree_top;
 
 	/* make syntax node for expression */
-	PHP_SYN_NODE *make_expr_syn_node(PHP_STATMENT_TYPE type, PHP_EXP_NODE *node);
+	PHP_SYN_NODE *make_expr_syn_node(PHP_STATEMENT_TYPE type, PHP_EXP_NODE *node);
 
 	PHP_SYN_NODE *make_ifelse_syn_node(PHP_EXP_NODE *expr,
 		PHP_SYN_NODE *then_node, PHP_SYN_NODE *elseif_list, PHP_SYN_NODE *else_node);
@@ -527,17 +527,25 @@ extern "C" {
  */
 #ifdef __cplusplus
 
+#include <map>
+#include <list>
+#include <string>
+
 typedef std::map<std::string, PHP_VAR_NODE *>::iterator PHP_ARRAY_ITER_TYPE;
 typedef std::list<std::string>::iterator PHP_ARRAY_KEY_ITER_TYPE;
 //
 // In php arrays are behave like hashes (i.e. associative) and are sortable.
 // STL std::map is not sortable.
 //
-typedef struct {
+struct PHP_ARRAY_TYPE {
 	std::map<std::string, PHP_VAR_NODE *> array;
 	std::list<std::string> sorted_keys;
 	PHP_ARRAY_KEY_ITER_TYPE current;
-} PHP_ARRAY_TYPE;
+	// Hint for array_push_back: integer key to start the
+	// next free-slot scan from. Avoids O(N) per push (-> O(N^2)
+	// for N pushes) which wedges amuleweb on large shared lists.
+	int push_next_hint = 0;
+};
 
 //
 // using std::string instead of "char *" so keys will be compared

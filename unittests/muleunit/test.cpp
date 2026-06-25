@@ -1,7 +1,7 @@
 //
 // MuleUnit: A minimalistic C++ Unit testing framework based on EasyUnit.
 //
-// Copyright (c) 2005-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2004-2011 Barthelemy Dagenais ( barthelemy@prologique.com )
 //
 // This library is free software; you can redistribute it and/or
@@ -28,7 +28,7 @@ using namespace muleunit;
 /** Entry for a context. */
 struct BTEntry
 {
-	BTEntry(const wxChar* f, int l, const wxString& m)
+	BTEntry(const wxString& f, int l, const wxString& m)
 		: file(f)
 		, line(l)
 		, msg(m)
@@ -57,38 +57,32 @@ namespace muleunit {
 }
 
 
-CTestFailureException::CTestFailureException(const wxString& msg, const wxChar* file, long lineNumber)
-	: m_bt(new BTList(g_backtrace)), m_message(msg.ToAscii())
+CTestFailureException::CTestFailureException(const wxString& msg, const wxString& file, long lineNumber)
+	: m_bt(std::make_shared<BTList>(g_backtrace)), m_message(msg.ToAscii())
 {
 	m_bt->snapshot.push_back(BTEntry(file, lineNumber, msg));
 }
 
 
-CTestFailureException::~CTestFailureException() throw()
-{
-	delete m_bt;
-}
-
-
 void CTestFailureException::PrintBT() const
 {
-	wxString indent = wxT("\t\t");
+	wxString indent = "\t\t";
 	std::list<BTEntry>::const_iterator it = m_bt->snapshot.begin();
 	for (; it != m_bt->snapshot.end(); ++it) {
 		indent += ' ';
 
-		Print(indent + it->file + wxString::Format(wxT(":%i -- "), it->line) + it->msg);
+		Print(indent + it->file + wxString::Format(":%i -- ", it->line) + it->msg);
 	}
 }
 
 
-const char* CTestFailureException::what () const throw ()
+const char* CTestFailureException::what () const noexcept
 {
 	return m_message.c_str();
 }
 
 
-CContext::CContext(const wxChar* file, int line, const wxString& msg)
+CContext::CContext(const wxString& file, int line, const wxString& msg)
 {
 	g_backtrace.push_back(BTEntry(file, line, msg));
 }

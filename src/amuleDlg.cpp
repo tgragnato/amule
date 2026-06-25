@@ -72,7 +72,7 @@
 #endif
 #include "IPFilter.h"
 
-#include "aMule.xpm"
+#include <wx/artprov.h>		// Needed for wxArtProvider::GetIcon
 #include "kademlia/kademlia/Kademlia.h"
 #include "MuleVersion.h"			// Needed for GetMuleVersion()
 
@@ -183,8 +183,7 @@ m_clientSkinNames(CLIENT_SKIN_SIZE)
 	Apply_Clients_Skin();
 
 #if !defined(__WXMAC__)
-	// this crashes on Mac with wx 2.9
-	SetIcon(wxICON(aMule));
+	SetIcon(wxArtProvider::GetIcon("amule:amule"));
 #endif
 
 	srand(time(NULL));

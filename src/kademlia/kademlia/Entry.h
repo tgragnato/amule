@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2004-2011 Angel Vidal ( kry@amule.org )
-// Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2003-2011 Barry Dunne (http://www.emule-project.net)
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -74,7 +74,7 @@ public:
 
 	virtual		~CEntry();
 	virtual CEntry*	Copy() const;
-	virtual bool	IsKeyEntry() const throw()	{ return false; }
+	virtual bool	IsKeyEntry() const noexcept	{ return false; }
 
 	bool	 GetIntTagValue(const wxString& tagname, uint64_t& value, bool includeVirtualTags = true) const;
 	wxString GetStrTagValue(const wxString& tagname) const;
@@ -116,7 +116,7 @@ class CKeyEntry : public CEntry
 	virtual ~CKeyEntry();
 
 	virtual CEntry*	Copy() const			{ return CEntry::Copy(); }
-	virtual bool	IsKeyEntry() const throw()	{ return true; }
+	virtual bool	IsKeyEntry() const noexcept	{ return true; }
 
 	bool	SearchTermsMatch(const SSearchTerm *searchTerm) const;
 	void	MergeIPsAndFilenames(CKeyEntry* fromEntry);
@@ -135,7 +135,7 @@ class CKeyEntry : public CEntry
 	typedef std::list<sPublishingIP>	PublishingIPList;
 	typedef std::map<uint32_t, uint32_t>	GlobalPublishIPMap;
 
-	uint32_t m_lastTrustValueCalc;
+	uint64_t m_lastTrustValueCalc;
 	double	 m_trustValue;
 	PublishingIPList *		m_publishingIPs;
 	static GlobalPublishIPMap	s_globalPublishIPs;	// tracks count of publishings for each 255.255.255.0/24 subnet

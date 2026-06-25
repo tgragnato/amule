@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -51,7 +51,7 @@ enum CMTC_Events
 };
 
 
-BEGIN_EVENT_TABLE(CMuleTextCtrl, wxTextCtrl)
+wxBEGIN_EVENT_TABLE(CMuleTextCtrl, wxTextCtrl)
 #ifndef __WXGTK__
 	EVT_RIGHT_DOWN	(CMuleTextCtrl::OnRightDown)
 
@@ -59,7 +59,7 @@ BEGIN_EVENT_TABLE(CMuleTextCtrl, wxTextCtrl)
 	EVT_MENU	(CMTCE_Clear,	CMuleTextCtrl::OnClear)
 	EVT_MENU	(CMTCE_SelAll,	CMuleTextCtrl::OnSelAll)
 #endif
-END_EVENT_TABLE()
+wxEND_EVENT_TABLE()
 
 
 CMuleTextCtrl::CMuleTextCtrl(wxWindow* parent, wxWindowID id, const wxString& value, const wxPoint& pos, const wxSize& size, long style, const wxValidator& validator, const wxString& name)
@@ -97,7 +97,7 @@ void CMuleTextCtrl::OnRightDown( wxMouseEvent& evt )
 				wxTextDataObject data;
 				wxTheClipboard->GetData( data );
 
-				canpaste = (data.GetTextLength() > 0);
+				canpaste = !data.GetText().IsEmpty();
 			}
 			wxTheClipboard->Close();
 		}

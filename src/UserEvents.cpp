@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2006-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -36,7 +36,7 @@
 #include <wx/process.h>
 
 
-#define USEREVENTS_EVENT(ID, NAME, VARS)	{ wxT(#ID), NAME, false, wxEmptyString, false, wxEmptyString },
+#define USEREVENTS_EVENT(ID, NAME, VARS)	{ #ID, NAME, false, "", false, "" },
 static struct {
 	const wxString key;
 	const wxString name;
@@ -47,73 +47,89 @@ static struct {
 } s_EventList[] = {
 	USEREVENTS_EVENTLIST()
 	/* This macro expands to initialise the list of user event types. Example:
-	   { wxT("NewChatSession"), wxTRANSLATE("New chat session started"), false, wxEmptyString, false, wxEmptyString }, */
+	   { "NewChatSession", wxTRANSLATE("New chat session started"), false, "", false, "" }, */
 };
 #undef USEREVENTS_EVENT
 
 
-#ifdef __WXDEBUG__
+// Always defined: the wxCHECK_* macros below evaluate their condition in
+// both debug and release, unlike the wxASSERT_* family this used to be
+// paired with. Returns false for any out-of-range event so accessors below
+// can fall through to a safe sentinel instead of reading past s_EventList.
 inline bool CheckIndex(const unsigned int idx)
 {
 	return (idx < itemsof(s_EventList));
 }
-#endif
 
 unsigned int CUserEvents::GetCount()
 {
 	return itemsof(s_EventList);
 }
 
+// wxCHECK rather than wxASSERT in the accessors below: a release build
+// would otherwise read past s_EventList on a bad index instead of
+// aborting (wxASSERT is a no-op in release). Each accessor returns a
+// safe sentinel — entry [0] — when the index is out of range; the
+// debug-build behaviour (assert + abort on first mis-use) is unchanged.
+
 const wxString& CUserEvents::GetDisplayName(enum EventType event)
 {
-	wxASSERT(CheckIndex(event));
+	wxCHECK_MSG(CheckIndex(event), s_EventList[0].name,
+		"CUserEvents::GetDisplayName: event index out of range");
 	return s_EventList[event].name;
 }
 
 bool CUserEvents::IsCoreCommandEnabled(enum EventType event)
 {
-	wxASSERT(CheckIndex(event));
+	wxCHECK_MSG(CheckIndex(event), false,
+		"CUserEvents::IsCoreCommandEnabled: event index out of range");
 	return s_EventList[event].core_enabled;
 }
 
 bool CUserEvents::IsGUICommandEnabled(enum EventType event)
 {
-	wxASSERT(CheckIndex(event));
+	wxCHECK_MSG(CheckIndex(event), false,
+		"CUserEvents::IsGUICommandEnabled: event index out of range");
 	return s_EventList[event].gui_enabled;
 }
 
 const wxString& CUserEvents::GetKey(const unsigned int event)
 {
-	wxASSERT(CheckIndex(event));
+	wxCHECK_MSG(CheckIndex(event), s_EventList[0].key,
+		"CUserEvents::GetKey: event index out of range");
 	return s_EventList[event].key;
 }
 
 bool& CUserEvents::GetCoreEnableVar(const unsigned int event)
 {
-	wxASSERT(CheckIndex(event));
+	wxCHECK_MSG(CheckIndex(event), s_EventList[0].core_enabled,
+		"CUserEvents::GetCoreEnableVar: event index out of range");
 	return s_EventList[event].core_enabled;
 }
 
 wxString& CUserEvents::GetCoreCommandVar(const unsigned int event)
 {
-	wxASSERT(CheckIndex(event));
+	wxCHECK_MSG(CheckIndex(event), s_EventList[0].core_command,
+		"CUserEvents::GetCoreCommandVar: event index out of range");
 	return s_EventList[event].core_command;
 }
 
 bool& CUserEvents::GetGUIEnableVar(const unsigned int event)
 {
-	wxASSERT(CheckIndex(event));
+	wxCHECK_MSG(CheckIndex(event), s_EventList[0].gui_enabled,
+		"CUserEvents::GetGUIEnableVar: event index out of range");
 	return s_EventList[event].gui_enabled;
 }
 
 wxString& CUserEvents::GetGUICommandVar(const unsigned int event)
 {
-	wxASSERT(CheckIndex(event));
+	wxCHECK_MSG(CheckIndex(event), s_EventList[0].gui_command,
+		"CUserEvents::GetGUICommandVar: event index out of range");
 	return s_EventList[event].gui_command;
 }
 
 #define USEREVENTS_EVENT(ID, NAME, VARS)	case CUserEvents::ID: { VARS break; }
-#define USEREVENTS_REPLACE_VAR(VAR, DESC, CODE)	command.Replace(wxT("%") VAR, CODE);
+#define USEREVENTS_REPLACE_VAR(VAR, DESC, CODE)	command.Replace("%" VAR, CODE);
 static void ExecuteCommand(
 	enum CUserEvents::EventType event,
 	const void* object,
@@ -125,7 +141,7 @@ static void ExecuteCommand(
 		USEREVENTS_EVENTLIST()
 		/* This macro expands to handle all user event types. Example:
 		   case CUserEvents::NewChatSession: {
-		       command.Replace( wxT("%SENDER"), *((wxString*)object) );
+		       command.Replace( "%SENDER", *((wxString*)object) );
 			   break;
 		   } */
 	}
@@ -143,8 +159,10 @@ static void ExecuteCommand(
 
 void CUserEvents::ProcessEvent(enum EventType event, const void* object)
 {
-	wxASSERT(CheckIndex(event));
-	wxASSERT(object != NULL);
+	wxCHECK_RET(CheckIndex(event),
+		"CUserEvents::ProcessEvent: event index out of range");
+	wxCHECK_RET(object != NULL,
+		"CUserEvents::ProcessEvent: NULL object");
 
 #ifndef CLIENT_GUI
 	if (s_EventList[event].core_enabled) {

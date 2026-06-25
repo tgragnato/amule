@@ -1,7 +1,7 @@
 //
 // MuleUnit: A minimalistic C++ Unit testing framework based on EasyUnit.
 //
-// Copyright (c) 2005-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2004-2011 Barthelemy Dagenais ( barthelemy@prologique.com )
 //
 // This library is free software; you can redistribute it and/or
@@ -28,41 +28,56 @@ using namespace muleunit;
 
 wxString GetFullMuleVersion()
 {
-	return wxT("UnitTest");
+	return "UnitTest";
 }
 
 
 unsigned s_disableAssertions = 0;
 
 
+static void MuleUnitAssertHandler(const wxString& file, int line,
+                                  const wxString& /*func*/, const wxString& cond,
+                                  const wxString& msg)
+{
+	if (s_disableAssertions) {
+		return;
+	}
+
+	wxString desc;
+	if (!cond.IsEmpty() && !msg.IsEmpty()) {
+		desc << cond << " -- " << msg;
+	} else if (!cond.IsEmpty()) {
+		desc << "Assertion: " << cond;
+	} else {
+		desc << msg;
+	}
+
+	throw CAssertFailureException(desc, file, line);
+}
+
+
 class UnitTestApp : public wxAppConsole
 {
 public:
-	int OnRun() {
+	bool OnInit() override {
+		// In Release builds (NDEBUG), wxIMPLEMENT_APP_CONSOLE auto-calls
+		// wxDISABLE_DEBUG_SUPPORT(), which nulls wxTheAssertHandler. Without
+		// re-enabling, wxASSERT short-circuits before reaching OnAssertFailure
+		// and ASSERT_RAISES tests fail on platforms where wxDEBUG_LEVEL >= 1
+		// at compile time (Linux, mingw-w64). Install our handler explicitly.
+		wxSetAssertHandler(MuleUnitAssertHandler);
+		return wxAppConsole::OnInit();
+	}
+
+	int OnRun() override {
 		return (TestRegistry::runAndPrint() ? 0 : 1);
 	}
 
-	void OnAssertFailure(const wxChar* file, int line,  const wxChar* /*func*/, const wxChar* cond, const wxChar* msg)
-	{
-		if (s_disableAssertions) {
-			return;
-		}
-
-		wxString desc;
-		if (cond && msg) {
-			desc << cond << wxT(" -- ") << msg;
-		} else if (cond) {
-			desc << wxT("Assertion: ") << cond;
-		} else {
-			desc << msg;
-		}
-
-		throw CAssertFailureException(desc, file, line);
-	}
-
-	void OnUnhandledException() {
+#ifndef __WXMSW__
+	void OnUnhandledException() override {
 		::OnUnhandledException();
 	}
+#endif
 
 };
 

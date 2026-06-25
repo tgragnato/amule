@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -53,7 +53,7 @@ class CServerUDPSocket;
 #define	CS_WAITFORLOGIN	3
 #define CS_RETRYCONNECTTIME  30 // seconds
 
-typedef std::map<uint32, CServerSocket*> ServerSocketMap;
+typedef std::map<uint64, CServerSocket*> ServerSocketMap;
 
 class CServerConnect {
 public:
@@ -86,6 +86,16 @@ public:
 	bool	IsLowID()	{ return ::IsLowID(clientid); }
 	void	SetClientID(uint32 newid);
 	bool	IsLocalServer(uint32 dwIP, uint16 nPort);
+
+	/// True if `ip` matches the IP of the currently-connected ed2k server
+	/// or any in-flight CServerSocket whose login attempt is still
+	/// outstanding.  Used by CClientTCPSocket to short-circuit the
+	/// global download-bandwidth throttler for inbound peer connections
+	/// that are actually the server's HighID-callback probe (#778).
+	/// Without that bypass, a saturated peer-side download budget delays
+	/// the probe past the server's verification timer and we end up with
+	/// a permanent LowID under sustained load.
+	bool	IsServerIP(uint32 ip) const;
 	void	TryAnotherConnectionrequest();
 	bool	IsSingleConnect()	{ return singleconnecting; }
 	void	KeepConnectionAlive();

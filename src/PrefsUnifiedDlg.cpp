@@ -421,8 +421,6 @@ bool PrefsUnifiedDlg::TransferToWindow()
 		FindWindow(ID_PROXY_USER)->Enable(false);
 		FindWindow(ID_PROXY_PASSWORD)->Enable(false);
 	}
-	// This option from the proxy tab is currently unused
-	FindWindow(ID_PROXY_AUTO_SERVER_CONNECT_WITHOUT_PROXY)->Enable(false);
 
 	// Enable/Disable some controls
 	FindWindow( IDC_MINDISKSPACE )->Enable( thePrefs::IsCheckDiskspaceEnabled() );
@@ -917,8 +915,6 @@ void PrefsUnifiedDlg::OnCheckBoxChange(wxCommandEvent& event)
 			FindWindow(IDC_NOTIF)->Enable(value);
 			break;
 
-		case ID_PROXY_AUTO_SERVER_CONNECT_WITHOUT_PROXY:
-			break;
 
 		case IDC_VERTTOOLBAR:
 			m_toolbarOrientationChanged = (m_verticalToolbar != value);

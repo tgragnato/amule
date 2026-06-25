@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2003-2011 Angel Vidal ( kry@amule.org )
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -27,7 +27,7 @@
 #ifndef WEBSERVER_H
 #define WEBSERVER_H
 
-#include "config.h"		// Needed for ASIO_SOCKETS
+#include "config.h"		// Needed for WITH_LIBPNG
 
 #ifdef WITH_LIBPNG
 	#include <png.h>
@@ -40,12 +40,29 @@
 #include "OtherStructs.h"
 #include <ec/cpp/ECID.h>	// Needed for CECID
 
+#ifdef ENABLE_UPNP
+#	include "UPnPBase.h"
+#endif
+
 #include <wx/datetime.h>	// For DownloadFile::wxtLastSeenComplete
+
+#ifdef _MSC_VER
+#define strncasecmp _strnicmp
+#define snprintf sprintf_s
+#define atoll _atoi64
+#define strdup _strdup
+#endif
 
 class CWebSocket;
 class CMD4Hash;
 
-#define SESSION_TIMEOUT_SECS	300	// 5 minutes session expiration
+// Idle window after which a CSession entry is dropped and the user is
+// asked to log in again. Has been a hardcoded 7200 (2 hours) in
+// CScriptWebServer::CheckLoggedin since forever; the named constant
+// existed but was never wired up (set to 300, but no `7200`-using site
+// referenced it). Keep the live behaviour (2 hours) and have the
+// macro own the value so the timeout can be changed in one place.
+#define SESSION_TIMEOUT_SECS	7200	// 2 hours session expiration
 #define SHORT_FILENAME_LENGTH	40	// Max size of file name.
 
 wxString _SpecialChars(wxString str);
@@ -263,15 +280,38 @@ class UpdatableItemsContainer : public ItemsContainer<T> {
 
 		/*!
 		 * Process answer of update request, create list of new items for
-		 * full request later. Also remove items that no longer exist in core
+		 * full request later. Also remove items that no longer exist in core.
+		 *
+		 * Partial-update protocol negotiated at auth: when the server is
+		 * partial-update-capable, files unchanged since the last cycle
+		 * are simply absent from the response; deletions arrive as
+		 * explicit `EC_TAG_FILE_REMOVED` markers. The bulk "anything
+		 * missing == deleted" loop below would otherwise wipe most of
+		 * the library every cycle on big libraries (#713). When the
+		 * server is not partial-update-capable (or didn't echo the
+		 * capability), the encoder's per-file diff makes unchanged
+		 * tags effectively empty alive-markers and the bulk-deletion
+		 * loop stays correct.
 		 */
 		void ProcessUpdate(const CECPacket *reply, CECPacket *full_req, int req_type)
 		{
-			std::set<I> core_files;
-			for (CECPacket::const_iterator it = reply->begin(); it != reply->end(); ++it) {
-				G *tag = (G *) & *it;
+			const bool partial_update = this->m_webApp->IsServerPartialUpdateActive();
 
-				core_files.insert(tag->ID());
+			std::set<I> core_files;
+			std::set<I> removed_files;
+			for (CECPacket::const_iterator it = reply->begin(); it != reply->end(); ++it) {
+				const CECTag *raw_tag = &*it;
+				if (raw_tag->GetTagName() == EC_TAG_FILE_REMOVED) {
+					// Explicit deletion marker from a partial-
+					// update-capable server.
+					removed_files.insert(raw_tag->GetInt());
+					continue;
+				}
+				G *tag = (G *) raw_tag;
+
+				if (!partial_update) {
+					core_files.insert(tag->ID());
+				}
 				if ( m_items_hash.count(tag->ID()) ) {
 					T *item = m_items_hash[tag->ID()];
 					item->ProcessUpdate(tag);
@@ -279,16 +319,32 @@ class UpdatableItemsContainer : public ItemsContainer<T> {
 					full_req->AddTag(CECTag(req_type, tag->ID()));
 				}
 			}
+
 			std::list<I> del_ids;
-			for(typename std::list<T>::iterator j = this->m_items.begin(); j != this->m_items.end(); ++j) {
-				if ( core_files.count(j->ID()) == 0 ) {
-					// item may contain data that need to be freed externally, before
-					// dtor is called and memory freed
+			if (partial_update) {
+				// Only delete what the server explicitly told us to
+				// delete. Skipped early when there's nothing to
+				// remove this cycle (the common case).
+				if (!removed_files.empty()) {
+					for(typename std::list<T>::iterator j = this->m_items.begin(); j != this->m_items.end(); ++j) {
+						if (removed_files.count(j->ID())) {
+							T *real_ptr = &*j;
+							this->ItemDeleted(real_ptr);
+							del_ids.push_back(j->ID());
+						}
+					}
+				}
+			} else {
+				for(typename std::list<T>::iterator j = this->m_items.begin(); j != this->m_items.end(); ++j) {
+					if ( core_files.count(j->ID()) == 0 ) {
+						// item may contain data that need to be freed externally, before
+						// dtor is called and memory freed
 
-					T *real_ptr = &*j;
-					this->ItemDeleted(real_ptr);
+						T *real_ptr = &*j;
+						this->ItemDeleted(real_ptr);
 
-					del_ids.push_back(j->ID());
+						del_ids.push_back(j->ID());
+					}
 				}
 			}
 			for(typename std::list<I>::iterator j = del_ids.begin(); j != del_ids.end(); ++j) {
@@ -586,15 +642,17 @@ class CNumImageMask {
 
 		// mask generation
 		void DrawHorzLine(int off);
-		void DrawVertLine(int offx, int offy);
+		void DrawVertLine(int off_x, int off_y);
 		void DrawSegment(int id);
 
-		static const int m_num_to_7_decode[10];
+		// 0-9 are digit glyphs; 10-13 are unit-prefix glyphs K, M, G, T
+		// for axis labels scaled by powers of 1000.
+		static const int m_num_to_7_decode[14];
 	public:
 		CNumImageMask(int number, int width, int height);
 		~CNumImageMask();
 
-		void Apply(png_bytep *image, int offx, int offy);
+		void Apply(png_bytep *image, int off_x, int off_y);
 };
 
 class CDynStatisticImage : public virtual CDynPngImage {
@@ -606,8 +664,10 @@ class CDynStatisticImage : public virtual CDynPngImage {
 		int m_left_margin, m_bottom_margin;
 		int m_y_axis_size;
 
-		// hope nobody needs "define" for 10 !
-		CNumImageMask *m_digits[10];
+		// 0-9 are digit glyphs; 10-13 are unit-prefix glyphs K, M, G, T
+		// used by the axis-label renderer when the y-axis maximum exceeds
+		// what 4 digits can hold.
+		CNumImageMask *m_digits[14];
 
 		// indicates whether data should be divided on 1024 before
 		// drawing graph.
@@ -663,17 +723,31 @@ class CParsedUrl {
 // Changing this to a typedef struct{} makes egcs compiler do it all wrong and crash on run
 struct ThreadData {
 	CParsedUrl	parsedURL;
+	// CParsedUrl of the *original* request URL, before
+	// CWebSocket::OnRequestReceived concatenated the POST body onto
+	// it (see comment at WebSocket.cpp:197-208). Used by the login
+	// handler to tell apart "param came from the POST body" from
+	// "param came from the URL query string"; we refuse to consume
+	// `pass` when it's reachable via the query, so attacker-crafted
+	// URLs like `/login.php?pass=XYZ` (or POST forms whose action
+	// carries `?pass=...`) can never authenticate (#872). The
+	// existing merged `parsedURL` above stays the source of truth
+	// for every non-credential parameter so #724's POST-on-
+	// query-URL fix isn't disturbed.
+	CParsedUrl	getOnlyParsedURL;
 	wxString	sURL;
-	int		SessionID;
+	// Opaque 64-bit session token; 0 means "no session cookie yet".
+	// Sourced from CryptoPP::AutoSeededRandomPool when a new session
+	// is created, see CScriptWebServer::CheckLoggedin in
+	// WebServer.cpp. Was `int` + rand() before #870, which made
+	// session IDs trivially guessable.
+	uint64_t	SessionID;
 	CWebSocket	*pSocket;
 };
 
-#ifndef ASIO_SOCKETS
-enum {
-    // Socket handlers
-    ID_WEBLISTENSOCKET_EVENT = wxID_HIGHEST+123,  // random safe ID
-    ID_WEBCLIENTSOCKET_EVENT,
-};
+#ifdef ENABLE_UPNP
+class CUPnPControlPoint;
+class CUPnPPortMapping;
 #endif
 
 class CWebLibSocketServer : public CLibSocketServer {
@@ -710,14 +784,11 @@ class CWebServerBase : public wxEvtHandler {
 
 		bool m_upnpEnabled;
 		int m_upnpTCPPort;
-
-#ifdef ASIO_SOCKETS
-		CAsioService *m_AsioService;
-#else
-		void OnWebSocketServerEvent(wxSocketEvent& event);
-		void OnWebSocketEvent(wxSocketEvent& event);
-		DECLARE_EVENT_TABLE();
+#ifdef ENABLE_UPNP
+		CUPnPControlPoint *m_upnp;
+		std::vector<CUPnPPortMapping> m_upnpMappings;
 #endif
+		CAsioService *m_AsioService;
 	public:
 		CWebServerBase(CamulewebApp *webApp, const wxString& templateDir);
 		virtual ~CWebServerBase();
@@ -760,7 +831,7 @@ class CWebServerBase : public wxEvtHandler {
 
 class CSession {
 	public:
-		bool m_loggedin;
+		bool m_logged_in;
 		time_t m_last_access;
 		std::map<std::string, std::string> m_vars, m_get_vars;
 
@@ -771,7 +842,7 @@ class CSession {
  * Script based webserver
  */
 class CScriptWebServer : public CWebServerBase {
-		wxString m_wwwroot;
+		wxString m_www_root;
 		wxString m_index;
 
 		char *ProcessHtmlRequest(const char *filename, long &size);
@@ -780,7 +851,7 @@ class CScriptWebServer : public CWebServerBase {
 		char *GetErrorPage(const char *message, long &size);
 		char *Get_404_Page(long &size);
 
-		std::map<int, CSession> m_sessions;
+		std::map<uint64_t, CSession> m_sessions;
 
 		CSession *CheckLoggedin(ThreadData &);
 	protected:

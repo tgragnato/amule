@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -29,6 +29,9 @@
 
 #include "KnownFile.h"		// Needed for CKnownFile
 #include "FileAutoClose.h"	// Needed for CFileAutoClose
+#include "FileArea.h"		// Needed for CFileArea (PartFileBufferedData)
+#include <atomic>			// Needed for std::atomic (m_iWrites)
+#include <mutex>			// Needed for std::mutex (m_hpartfileMutex)
 
 #include "OtherStructs.h"	// Needed for Requested_Block_Struct
 #include "DeadSourceList.h"	// Needed for CDeadSourceList
@@ -45,7 +48,7 @@ class CED2KFileLink;
 // Ok, eMule and aMule are building incompatible backup files because
 // of the different name. aMule was using ".BAK" and eMule ".bak".
 // This should fix it.
-#define   PARTMET_BAK_EXT wxT(".bak")
+#define   PARTMET_BAK_EXT ".bak"
 
 enum EPartFileFormat {
 	PMT_UNKNOWN	= 0,
@@ -66,9 +69,7 @@ public:
 	wxString Comment;
 public:
 	SFileRating(const wxString &u, const wxString &f, sint16 r, const wxString &c);
-	SFileRating(const SFileRating &fr);
 	SFileRating(const CUpDownClient &client);
-	~SFileRating();
 };
 
 typedef std::list<SFileRating> FileRatingList;
@@ -86,7 +87,28 @@ public:
 
 typedef std::map<uint32,SourcenameItem> SourcenameItemMap;
 
+
+class PartFileBufferedData
+{
+public:
+	CFileArea area;				// File area to be written
+	uint64 start;					// This is the start offset of the data
+	uint64 end;						// This is the end offset of the data
+	Requested_Block_Struct *block;	// This is the requested block that this data relates to
+	uint8 flushed;					// eMule ref: 0=ready 1=pending 2=error 3=written
+
+	PartFileBufferedData(CFileAutoClose& file, uint8_t * data, uint64 _start, uint64 _end, Requested_Block_Struct *_block)
+		: start(_start), end(_end), block(_block), flushed(0)
+	{
+		area.StartWriteAt(file, start, end-start+1);
+		memcpy(area.GetBuffer(), data, end-start+1);
+	}
+};
+
+
 class CPartFile : public CKnownFile {
+	friend class CPartFileWriteThread;
+	friend class CPartFileHashThread;
 public:
 	typedef std::list<Requested_Block_Struct*> CReqBlockPtrList;
 
@@ -108,9 +130,24 @@ public:
 	bool	IsCompleted() const		{ return status == PS_COMPLETE; }	// true if completed
 	bool	IsCPartFile() const		{ return true; }					// true if it's a CPartFile
 
-	uint32	Process(uint32 reducedownload, uint8 m_icounter);
+	uint32	Process(uint8 m_icounter);
 	uint8	LoadPartFile(const CPath& in_directory, const CPath& filename, bool from_backup = false, bool getsizeonly = false);
 	bool	SavePartFile(bool Initial = false);
+
+	// Mark/clear the in-memory dirty bit for the .part.met file.  See
+	// m_metDirty in the private section for the dirty-flag contract.
+	void	MarkMetDirty()			{ m_metDirty = true; }
+	void	ClearMetDirty()			{ m_metDirty = false; }
+	bool	IsMetDirty() const		{ return m_metDirty; }
+
+	// Soft-dirty bit for upload-stat counters (AllTimeRequests,
+	// AllTimeAccepts, AllTimeTransferred).  Flipped by CFileStatistic's
+	// AddRequest / AddAccepted / AddTransferred so a popular sharer does
+	// not re-dirty the partfile on every served chunk.  See m_statsDirty
+	// in the private section.
+	void	MarkStatsDirty()		{ m_statsDirty = true; }
+	void	ClearStatsDirty()		{ m_statsDirty = false; }
+	bool	IsStatsDirty() const		{ return m_statsDirty; }
 	void	PartFileHashFinished(CKnownFile* result);
 	bool	HashSinglePart(uint16 partnumber); // true = ok , false = corrupted
 
@@ -134,6 +171,17 @@ public:
 #endif
 	virtual void	UpdatePartsInfo();
 	const CPath& GetPartMetFileName() const { return m_partmetfilename; }
+
+	/**
+	 * Cached partmet basename (filename without `.met` extension) as a
+	 * wxString. Used by EC GET_SHARED_FILES / GET_UPDATE for the
+	 * EC_TAG_KNOWNFILE_FILENAME tag of partfiles — that path went through
+	 * `CFormat("%s") % GetPartMetFileName().RemoveExt()` on every call,
+	 * which allocates a CPath (two wxStrings via DeepCopy) plus a CFormat
+	 * round-trip per file per EC cycle. The basename never changes after
+	 * the partfile is created, so this is a populate-once cache.
+	 */
+	const wxString& GetCachedPartMetBasename() const;
 	uint16	GetPartMetNumber() const;
 	uint64	GetTransferred() const		{ return transferred; }
 	const CPath& GetFullName() const	{ return m_fullname; }
@@ -165,6 +213,18 @@ public:
 	uint32	WriteToBuffer(uint32 transize, uint8_t *data, uint64 start, uint64 end, Requested_Block_Struct *block, const CUpDownClient* client);
 	void	FlushBuffer(bool fromAICHRecoveryDataAvailable = false);
 
+	// True when m_aChangedPart has dirty entries and the write thread
+	// is idle. CDownloadQueue uses this to drive FlushBuffer for
+	// paused/insufficient files (Process() doesn't run for them).
+	bool	HasPendingHashWork() const;
+
+	// Called from CamuleApp's wxEVT_PARTFILE_HASH_RESULT handler when
+	// CPartFileHashThread reports a HashSinglePart result for this
+	// file. Runs the original Phase 3 success/failure logic (AICH
+	// recovery on bad part, SafeAddKFile on good complete part).
+	void	OnAsyncHashComplete(uint16 partNumber, bool ok,
+		bool fromAICHRecoveryDataAvailable);
+
 	// Barry - Added to prevent list containing deleted blocks on shutdown
 	void	RemoveAllRequestedBlocks(void);
 
@@ -180,7 +240,7 @@ public:
 
 	bool	PreviewAvailable();
 	uint16	GetAvailablePartCount() const	{ return m_availablePartsCount; }
-	uint32	GetLastAnsweredTime() const	{ return m_ClientSrcAnswered; }
+	uint64	GetLastAnsweredTime() const	{ return m_ClientSrcAnswered; }
 	void	SetLastAnsweredTime();
 	void	SetLastAnsweredTimeTimeout();
 	uint64	GetLostDueToCorruption() const	{ return m_iLostDueToCorruption; }
@@ -199,7 +259,11 @@ public:
 
 	void	SetDownPriority(uint8 newDownPriority, bool bSave = true, bool bRefresh = true);
 	bool	IsAutoDownPriority() const	{ return m_bAutoDownPriority; }
-	void	SetAutoDownPriority(bool flag)	{ m_bAutoDownPriority = flag; }
+	// EC exports the priority with the auto flag folded in via
+	// EC_TAG_PARTFILE_PRIO; mark the change so amulegui/amuleweb see
+	// it without waiting for the next Process() tick (and at all when
+	// the file is paused/stopped — Process() doesn't run then).
+	void	SetAutoDownPriority(bool flag)	{ if (m_bAutoDownPriority != flag) { MarkMetDirty(); MarkECChanged(); } m_bAutoDownPriority = flag; }
 	void	UpdateAutoDownPriority();
 	uint8	GetDownPriority() const		{ return m_iDownPriority; }
 	void	SetActive(bool bActive);
@@ -327,31 +391,101 @@ private:
 	CPath	m_fullname;			// path/name of the met file
 	CPath	m_partmetfilename;	// name of the met file
 	CPath	m_PartPath;		// path/name of the partfile
+	// Cache for EC EC_TAG_KNOWNFILE_FILENAME — see GetCachedPartMetBasename().
+	// Populate-once: m_partmetfilename never changes for the lifetime of
+	// the partfile (the basename is the partfile's allocation number).
+	mutable wxString m_cachedPartMetBasename;
 	bool	m_paused;
 	bool	m_stopped;
 	bool	m_insufficient;
 	uint8   m_iDownPriority;
 	bool    m_bAutoDownPriority;
 	uint8	status;
-	uint32	lastpurgetime;
-	uint32	m_LastNoNeededCheck;
+	uint64	lastpurgetime;
+	uint64	m_LastNoNeededCheck;
 	CGapList m_gaplist;
 	CReqBlockPtrList m_requestedblocks_list;
 	double	percentcompleted;
 	std::list<uint16> m_corrupted_list;
 	uint16	m_availablePartsCount;
-	uint32	m_ClientSrcAnswered;
+	uint64	m_ClientSrcAnswered;
 	bool	m_bPercentUpdated;
 
 	void	PerformFileComplete();
 
-	uint32		m_lastRefreshedDLDisplay;
+	uint64		m_lastRefreshedDLDisplay;
 
 	// Buffered data to be written
 	std::list<class PartFileBufferedData*> m_BufferedData_list;
 
 	uint32 m_nTotalBufferData;
-	uint32 m_nLastBufferFlushTime;
+	uint64 m_nLastBufferFlushTime;
+	std::atomic<int32> m_iWrites;	// eMule ref: count of items queued to write thread (not yet PB_WRITTEN)
+	std::vector<bool> m_aChangedPart;	// eMule ref: persistent tracking of parts needing hash verification
+
+	// GetTickCount() at last WriteToBuffer; FlushBuffer's Phase 3
+	// quiescent guard reads this to defer hashing during active receive.
+	uint64 m_nLastBlockReceivedTick = 0;
+
+	// Set in ~CPartFile so Phase 3 skips its SafeAddKFile branch
+	// during destruction (avoids re-sharing a partfile being deleted).
+	bool m_inDestructor = false;
+
+	// Tick (GetTickCount) of the last successful SavePartFile.
+	// Used together with m_statsDirty to throttle soft-stat persistence
+	// to the STATS_HEARTBEAT_MS cadence (see FlushBuffer).
+	uint64 m_lastMetSaveTick = 0;
+
+	// Soft-dirty bit for upload-stat counters that increment every time
+	// a peer requests / accepts / transfers a chunk
+	// (CFileStatistic::AddRequest / AddAccepted / AddTransferred).
+	// Promoted to a save only on the STATS_HEARTBEAT_MS cadence so a
+	// popular sharer does not write its .met on every served chunk -- a
+	// pure seeder with active uploads would otherwise re-dirty every
+	// partfile on every block served.  Cleared on a successful save.
+	bool m_statsDirty = false;
+
+	// True when in-memory partfile state has diverged from the on-disk
+	// .part.met since the last successful save.  Gates the periodic
+	// FlushBuffer-driven SavePartFile so idle/seeding partfiles do not
+	// rewrite their .met every 60 s with byte-identical content.
+	//
+	// Set by MarkMetDirty() at every mutation of a field that ends up
+	// in the .met (gap list, status, priorities, category, AICH state,
+	// corrupted list, lastseencomplete, filename).  Cleared by a
+	// successful SavePartFile().  Stat counters (transferred,
+	// AllTimeRequests, etc.) and download active time deliberately do
+	// NOT mark dirty -- they persist on the next hard-state change or
+	// at shutdown via the destructor's explicit save, and a session's
+	// counters surviving across a crash is best-effort by design.
+	//
+	// Initialised false: the load path constructs CPartFile in a state
+	// matching the just-read .met, so nothing to flush.  LoadPartFile
+	// explicitly ClearMetDirty()s before each successful return to
+	// undo any MarkMetDirty()s incidentally produced by setters during
+	// tag parsing.  New-download path calls SavePartFile(true) which
+	// writes the initial .met and clears the flag.
+	bool m_metDirty = false;
+
+	// Count of HashJobs in flight on CPartFileHashThread targeting
+	// this file. Incremented before enqueue, decremented by the worker
+	// after HashSinglePart and event-post complete. ~CPartFile waits
+	// for this to reach 0 so the worker is never reading m_hpartfile
+	// while the destructor is closing it.
+	std::atomic<int32> m_pendingHashes{0};
+
+	// Serialises access to m_hpartfile across the main thread,
+	// CPartFileWriteThread and CPartFileHashThread. With ENABLE_MMAP=OFF
+	// (the default), CFileAutoClose::ReadAt / WriteAt both implement
+	// positional I/O as Seek+Read / Seek+Write on the same OS fd, so
+	// concurrent hash reads and disk writes would race on the fd's
+	// file position and corrupt one or the other. Held by:
+	//   * CPartFileWriteThread::Entry around pBuffer->area.FlushAt(...)
+	//   * CPartFileHashThread::Entry around HashSinglePart(...)
+	//   * ~CPartFile's sync-hash drain around HashSinglePart(...)
+	//   * FlushBuffer Phase 2's PB_READY synchronous fallback around
+	//     item->area.FlushAt(...)
+	std::mutex m_hpartfileMutex;
 
 	uint8	m_category;
 	uint32	m_nDlActiveTime;
@@ -361,7 +495,7 @@ private:
 	SourceSet	m_SrcList;
 	SourceSet	m_A4AFsrclist;
 	bool		m_hashsetneeded;
-	uint32		m_lastsearchtime;
+	uint64		m_lastsearchtime;
 	bool		m_localSrcReqQueued;
 
 #ifdef CLIENT_GUI
@@ -393,11 +527,11 @@ public:
 	bool IsLocalSrcRequestQueued() const		{ return m_localSrcReqQueued; }
 	void SetLocalSrcRequestQueued(bool value)	{ m_localSrcReqQueued = value; }
 
-	void AddA4AFSource(CUpDownClient* src)		{ m_A4AFsrclist.insert(CCLIENTREF(src, wxT("A4AFSource"))); }
-	bool RemoveA4AFSource(CUpDownClient* src)	{ return (m_A4AFsrclist.erase(CCLIENTREF(src, wxEmptyString)) > 0); }
+	void AddA4AFSource(CUpDownClient* src)		{ m_A4AFsrclist.insert(CCLIENTREF(src, "A4AFSource")); }
+	bool RemoveA4AFSource(CUpDownClient* src)	{ return (m_A4AFsrclist.erase(CCLIENTREF(src, "")) > 0); }
 
-	uint32 GetLastSearchTime() const			{ return m_lastsearchtime; }
-	void SetLastSearchTime(uint32 time)			{ m_lastsearchtime = time; }
+	uint64 GetLastSearchTime() const			{ return m_lastsearchtime; }
+	void SetLastSearchTime(uint64 time)			{ m_lastsearchtime = time; }
 
 	void AddDownloadingSource(CUpDownClient* client);
 
@@ -406,7 +540,8 @@ public:
 	void StopPausedFile();
 
 	// [sivka / Tarod] Imported from eMule 0.30c (Creteil) ...
-	void SetA4AFAuto(bool in)		{ m_is_A4AF_auto = in; }
+	// EC exports the flag via EC_TAG_PARTFILE_A4AFAUTO; mark on change.
+	void SetA4AFAuto(bool in)		{ if (m_is_A4AF_auto != in) { MarkECChanged(); } m_is_A4AF_auto = in; }
 	bool IsA4AFAuto() const			{ return m_is_A4AF_auto; }
 
 	// Kry -Sources seeds
@@ -424,7 +559,7 @@ private:
 	CClientRefList m_downloadingSourcesList;
 
 	/* Kad Stuff */
-	uint32	m_LastSearchTimeKad;
+	uint64	m_LastSearchTimeKad;
 	uint8	m_TotalSearchesKad;
 
 friend class CKnownFilesRem;

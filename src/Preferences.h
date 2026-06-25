@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -35,7 +35,7 @@
 #include "Proxy.h"
 #include "OtherStructs.h"
 
-#include <common/ClientVersion.h>	// Needed for __SVN__
+#include <common/ClientVersion.h>	// Needed for __GIT__
 
 class CPreferences;
 class wxConfigBase;
@@ -195,7 +195,29 @@ public:
 
 	void			Save();
 	void			SaveCats();
+	// Read shareddir-explicit.dat, shareddir-recursive.dat, and
+	// shareddir.dat from disk; recompute shareddir_list as the union
+	// of the explicit list and the recursive expansion; reconcile any
+	// drift from external writers (e.g. a Docker entrypoint script
+	// that edits shareddir.dat directly and then calls Reload via
+	// EC); rewrite shareddir.dat as the new union. Safe to call from
+	// startup, the EC ReloadSharedFiles command, the UI Reload
+	// button, and the watcher's debounced reload.
 	void			ReloadSharedFolders();
+	// Persist all three shared-dir files: shareddir-explicit.dat,
+	// shareddir-recursive.dat (the two canonical sources of truth)
+	// and shareddir.dat (regenerated as the union, for backwards
+	// compatibility with older binaries and scripts that read it).
+	// Called by CSharedDirWatcher after it auto-appends a
+	// newly-created subdirectory so the change survives a restart
+	// without forcing a full preferences.dat write.
+	void			SaveSharedFolders();
+	// True iff `path` is in shareddir_recursive_list or is a
+	// descendant of an entry there. Used by the watcher to decide
+	// whether auto-add of a new subdir / cold-discovered subdir is
+	// authorised: non-recursive share roots do NOT auto-collect new
+	// subdirs, recursive roots do.
+	bool			IsRecursiveAncestor(const CPath & path) const;
 
 	static const wxString&	GetConfigDir()			{ return s_configDir; }
 	static void		SetConfigDir(const wxString& dir) { s_configDir = dir; }
@@ -224,8 +246,8 @@ public:
 	static void		SetTempDir(const CPath& dir)	{ s_tempdir = dir; }
 	static const CMD4Hash&	GetUserHash()			{ return s_userhash; }
 	static void		SetUserHash(const CMD4Hash& h)	{ s_userhash = h; }
-	static uint16		GetMaxUpload()			{ return s_maxupload; }
-	static uint16		GetSlotAllocation()		{ return s_slotallocation; }
+	static uint32		GetMaxUpload()			{ return s_maxupload; }
+	static uint32		GetSlotAllocation()		{ return s_slotallocation; }
 	static bool		IsICHEnabled()			{ return s_ICH; }
 	static void		SetICHEnabled(bool val)		{ s_ICH = val; }
 	static bool		IsTrustingEveryHash()		{ return s_AICHTrustEveryHash; }
@@ -239,6 +261,8 @@ public:
 	static void		SetUseTrayIcon(bool val)	{ s_trayiconenabled = val; }
 	static bool		HideOnClose()			{ return s_hideonclose; }
 	static void		SetHideOnClose(bool val)	{ s_hideonclose = val; }
+	static bool		IsAppImageIntegrationDeclined()		{ return s_appimageIntegrationDeclined; }
+	static void		SetAppImageIntegrationDeclined(bool val) { s_appimageIntegrationDeclined = val; }
 	static bool		DoAutoConnect()			{ return s_autoconnect; }
 	static void		SetAutoConnect(bool inautoconnect)
 						{s_autoconnect = inautoconnect; }
@@ -264,7 +288,7 @@ public:
 	static void		SetMaxGraphDownloadRate(uint32 in)
 						{ s_maxGraphDownloadRate = in; }
 
-	static uint16		GetMaxDownload()		{ return s_maxdownload; }
+	static uint32		GetMaxDownload()		{ return s_maxdownload; }
 	static uint16		GetMaxConnections()		{ return s_maxconnections; }
 	static uint16		GetMaxSourcePerFile()		{ return s_maxsourceperfile; }
 	static uint16		GetMaxSourcePerFileSoft() {
@@ -277,8 +301,8 @@ public:
                                         return temp; }
 	static uint16		GetDeadserverRetries()		{ return s_deadserverretries; }
 	static void		SetDeadserverRetries(uint16 val) { s_deadserverretries = val; }
-	static uint32		GetServerKeepAliveTimeout()	{ return s_dwServerKeepAliveTimeoutMins*60000; }
-	static void		SetServerKeepAliveTimeout(uint32 val)	{ s_dwServerKeepAliveTimeoutMins = val/60000; }
+	static uint64		GetServerKeepAliveTimeout()	{ return s_dwServerKeepAliveTimeoutMins*60000; }
+	static void		SetServerKeepAliveTimeout(uint64 val)	{ s_dwServerKeepAliveTimeoutMins = val/60000; }
 
 	static const wxString&	GetLanguageID()			{ return s_languageID; }
 	static void		SetLanguageID(const wxString& new_id)	{ s_languageID = new_id; }
@@ -345,14 +369,41 @@ public:
 	static const wxString&	GetYourHostname()		{ return s_yourHostname; }
 	static void		SetYourHostname(const wxString& s)	{ s_yourHostname = s; }
 
-	static void		SetMaxUpload(uint16 in);
-	static void		SetMaxDownload(uint16 in);
-	static void		SetSlotAllocation(uint16 in)	{ s_slotallocation = (in >= 1) ? in : 1; };
+	static void		SetMaxUpload(uint32 in);
+	static void		SetMaxDownload(uint32 in);
+	static void		SetSlotAllocation(uint32 in)	{ s_slotallocation = (in >= 1) ? in : 1; };
 
 	typedef std::vector<CPath> PathList;
+	// The effective set of shared directories at runtime, computed at
+	// load time as `shareddir_explicit_list ∪ expand(shareddir_recursive_list)`.
+	// Persisted as the union to shareddir.dat for backwards compatibility
+	// with older binaries and external scripts that read/write that file.
+	// Live consumers (share scan, watcher) treat this as authoritative.
 	PathList shareddir_list;
 
-	wxArrayString adresses_list;
+	// User-explicit non-recursive share roots. Each entry shares only
+	// the files directly under it -- subdirectories are NOT followed.
+	// New subdirs created at runtime under an explicit-only root are
+	// NOT auto-shared (CSharedDirWatcher::RegisterNewSubdirectory
+	// gates on "ancestor is recursive"). Persisted to
+	// shareddir-explicit.dat. Migration: a pre-existing shareddir.dat
+	// with no shareddir-recursive.dat is loaded entirely into this
+	// list, which preserves the user's existing path set without
+	// silently upgrading anything to recursive (safer default).
+	PathList shareddir_explicit_list;
+
+	// User-explicit recursive share roots. Each entry contributes
+	// itself AND every descendant directory to shareddir_list at
+	// load time (cold expansion). New subdirs created at runtime
+	// under a recursive root are auto-added by the watcher's HOT
+	// path. Persisted to shareddir-recursive.dat -- a separate file
+	// so older binaries that read shareddir.dat see the already-
+	// expanded union and behave correctly, while round-tripping
+	// shareddir.dat through an older binary preserves the recursive
+	// intent in this file.
+	PathList shareddir_recursive_list;
+
+	wxArrayString addresses_list;
 
 	static bool		AutoConnectStaticOnly()		{ return s_autoconnectstaticonly; }
 	static void		SetAutoConnectStaticOnly(bool val) { s_autoconnectstaticonly = val; }
@@ -481,7 +532,7 @@ public:
 	static void LoadAllItems(wxConfigBase* cfg);
 	static void SaveAllItems(wxConfigBase* cfg);
 
-#ifndef __SVN__
+#ifndef __GIT__
 	static bool		ShowVersionOnTitle()		{ return s_showVersionOnTitle; }
 #else
 	static bool		ShowVersionOnTitle()		{ return true; }
@@ -521,6 +572,19 @@ public:
 
 	static bool ShareHiddenFiles() { return s_ShareHiddenFiles; }
 	static void SetShareHiddenFiles(bool val) { s_ShareHiddenFiles = val; }
+
+	// Automatic rescan of shared directories via wxFileSystemWatcher.
+	// On by default; when disabled, the user must hit "Reload shared
+	// files" manually after adding files to a share.
+	static bool AutoRescanSharedDirs() { return s_AutoRescanSharedDirs; }
+	static void SetAutoRescanSharedDirs(bool val) { s_AutoRescanSharedDirs = val; }
+
+	// Whether shared-folder walks should descend into symbolic links.
+	// Default true to preserve historical behaviour; turning it off
+	// passes wxDIR_NO_FOLLOW to the iterator so symlinked files and
+	// directories are skipped entirely.
+	static bool FollowSymlinksInShares() { return s_FollowSymlinksInShares; }
+	static void SetFollowSymlinksInShares(bool val) { s_FollowSymlinksInShares = val; }
 
 	static bool AutoSortDownload()		{ return s_AutoSortDownload; }
 	static bool AutoSortDownload(bool val)	{ bool tmp = s_AutoSortDownload; s_AutoSortDownload = val; return tmp; }
@@ -612,9 +676,9 @@ protected:
 	static Cfg_Lang_Base * s_cfgLang;
 
 ////////////// CONNECTION
-	static uint16	s_maxupload;
-	static uint16	s_maxdownload;
-	static uint16	s_slotallocation;
+	static uint32	s_maxupload;
+	static uint32	s_maxdownload;
+	static uint32	s_slotallocation;
 	static wxString s_Addr;
 	static uint16	s_port;
 	static uint16	s_udpport;
@@ -646,6 +710,7 @@ protected:
 
 	static bool	s_scorsystem;
 	static bool	s_hideonclose;
+	static bool	s_appimageIntegrationDeclined;
 	static bool	s_mintotray;
 	static bool	s_notify;
 	static bool	s_trayiconenabled;
@@ -669,7 +734,7 @@ protected:
 	static uint8	s_iToolDelayTime;	// tooltip delay time in seconds
 	static uint8	s_splitterbarPosition;
 	static uint16	s_deadserverretries;
-	static uint32	s_dwServerKeepAliveTimeoutMins;
+	static uint64	s_dwServerKeepAliveTimeoutMins;
 
 	static uint8	s_statsMax;
 	static uint8	s_statsAverageMinutes;
@@ -693,7 +758,7 @@ protected:
 	static bool	s_bDAP;
 	static bool	s_bUAP;
 
-#ifndef __SVN__
+#ifndef __GIT__
 	static bool	s_showVersionOnTitle;
 #endif
 	static uint8_t	s_showRatesOnTitle;	// 0=no, 1=after app name, 2=before app name
@@ -779,6 +844,12 @@ protected:
 
 	// Hidden files sharing
 	static bool	s_ShareHiddenFiles;
+
+	// Auto-rescan of shared dirs via wxFileSystemWatcher.
+	static bool	s_AutoRescanSharedDirs;
+
+	// Follow symlinks while walking shared dirs.
+	static bool	s_FollowSymlinksInShares;
 
 	static bool s_AutoSortDownload;
 

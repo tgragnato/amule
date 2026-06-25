@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2010-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -33,8 +33,8 @@
 
 
 CCanceledFileList::CCanceledFileList()
+	: m_filename("canceled.met")
 {
-	m_filename = wxT("canceled.met");
 	Init();
 }
 
@@ -64,17 +64,17 @@ bool CCanceledFileList::Init()
 
 		uint32 RecordsNumber = file.ReadUInt32();
 		AddDebugLogLineN(logKnownFiles,
-			CFormat(wxT("Reading %i canceled files from file format 0x%02x."))
+			CFormat("Reading %i canceled files from file format 0x%02x.")
 			% RecordsNumber % version);
 		for (uint32 i = 0; i < RecordsNumber; i++) {
 			CMD4Hash hash;
 			file.Read(hash.GetHash(), 16);
-			AddDebugLogLineN(logKnownFiles, CFormat(wxT("Canceled file read: %s")) % hash.Encode());
+			AddDebugLogLineN(logKnownFiles, CFormat("Canceled file read: %s") % hash.Encode());
 			if (!hash.IsEmpty()) {
 				m_canceledFileList.insert(hash);
 			}
 		}
-		AddDebugLogLineN(logKnownFiles, wxT("Finished reading canceled files"));
+		AddDebugLogLineN(logKnownFiles, "Finished reading canceled files");
 
 		return true;
 	} catch (const CSafeIOException& e) {

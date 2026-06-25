@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2004-2011 Angel Vidal ( kry@amule.org )
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -33,9 +33,9 @@
 
 CAsyncDNS::CAsyncDNS(const wxString& ipName, DnsSolveType type, wxEvtHandler* handler, void* socket)
 	: wxThread(wxTHREAD_DETACHED)
+	, m_ipName(ipName.wc_str())		// make a deep copy to to circument the thread-unsafe wxString reference counting
 {
 	m_type = type;
-	m_ipName = ipName.wc_str();		// make a deep copy to to circument the thread-unsafe wxString reference counting
 	m_socket = socket;
 	m_handler = handler;
 }
@@ -61,14 +61,14 @@ wxThread::ExitCode CAsyncDNS::Entry()
 			event_data = m_socket;
 			break;
 		default:
-			AddLogLineN(wxT("WRONG TYPE ID ON ASYNC DNS SOLVING!!!"));
+			AddLogLineN("WRONG TYPE ID ON ASYNC DNS SOLVING!!!");
 	}
 
 	if (event_id) {
 		CMuleInternalEvent evt(event_id);
 		evt.SetExtraLong(result);
 		evt.SetClientData(event_data);
-		wxPostEvent(m_handler,evt);
+		wxQueueEvent(m_handler, (evt).Clone());
 	}
 
 	return NULL;

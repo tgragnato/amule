@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2008-2011 Dévai Tamás ( gonosztopi@amule.org )
-// Copyright (c) 2008-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -37,13 +37,13 @@ namespace Kademlia
 
 struct TrackPackets_Struct {
 	uint32_t ip;
-	uint32_t inserted;
+	uint64_t inserted;
 	uint8_t  opcode;
 };
 
 struct TrackChallenge_Struct {
 	uint32_t	ip;
-	uint32_t	inserted;
+	uint64_t	inserted;
 	uint8_t		opcode;
 	CUInt128	contactID;
 	CUInt128	challenge;
@@ -52,7 +52,7 @@ struct TrackChallenge_Struct {
 struct TrackPacketsIn_Struct {
 	struct TrackedRequestIn_Struct {
 		uint32_t m_count;
-		uint32_t m_firstAdded;
+		uint64_t m_firstAdded;
 		uint8_t	 m_opcode;
 		bool	 m_dbgLogged;
 	};
@@ -64,7 +64,7 @@ struct TrackPacketsIn_Struct {
 	}
 
 	uint32_t m_ip;
-	uint32_t m_lastExpire;
+	uint64_t m_lastExpire;
 	typedef std::list<TrackedRequestIn_Struct>	TrackedRequestList;
 	TrackedRequestList	m_trackedRequests;
 };
@@ -72,7 +72,7 @@ struct TrackPacketsIn_Struct {
 class CPacketTracking
 {
       public:
-	CPacketTracking() throw() { lastTrackInCleanup = 0; }
+	CPacketTracking() noexcept { lastTrackInCleanup = 0; }
 	virtual ~CPacketTracking();
 
       protected:
@@ -85,14 +85,14 @@ class CPacketTracking
 	bool HasActiveLegacyChallenge(uint32_t ip) const;
 
       private:
-	static bool IsTrackedOutListRequestPacket(uint8_t opcode) throw();
+	static bool IsTrackedOutListRequestPacket(uint8_t opcode) noexcept;
 	typedef std::list<TrackPackets_Struct>		TrackedPacketList;
 	typedef std::list<TrackChallenge_Struct>	TrackChallengeList;
 	typedef std::map<uint32_t, TrackPacketsIn_Struct*>	TrackedPacketInMap;
 	TrackedPacketList	listTrackedRequests;
 	TrackChallengeList	listChallengeRequests;
 	TrackedPacketInMap	m_mapTrackPacketsIn;
-	uint32_t		lastTrackInCleanup;
+	uint64_t		lastTrackInCleanup;
 };
 
 } // namespace Kademlia

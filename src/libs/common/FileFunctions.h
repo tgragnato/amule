@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -49,10 +49,14 @@ public:
 	CDirIterator(const CPath& dir);
 	~CDirIterator();
 
-	CPath GetFirstFile(FileType type, const wxString& mask = wxEmptyString);
+	// extraFlags is OR'd into the wxDir search flags on top of `type`,
+	// so callers that need wxDIR_NO_FOLLOW (or any other wx flag) can
+	// pass it through without this common library knowing about
+	// application-level preferences.
+	CPath GetFirstFile(FileType type, const wxString& mask = "", int extraFlags = 0);
 	CPath GetNextFile();
 
-	bool HasSubDirs(const wxString& spec = wxEmptyString);
+	bool HasSubDirs(const wxString& spec = "");
 };
 
 
@@ -89,7 +93,7 @@ typedef std::pair<bool, EFileType> UnpackResult;
  * Zip archive, the first file found matching any in the files array (case-
  * insensitive) will be unpacked and overwrite the archive.
  */
-UnpackResult UnpackArchive(const CPath& file, const wxChar* files[]);
+UnpackResult UnpackArchive(const CPath& file, const char* files[]);
 
 #endif
 // File_checked_for_headers

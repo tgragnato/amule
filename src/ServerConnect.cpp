@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -160,7 +160,7 @@ void CServerConnect::ConnectToServer(CServer* server, bool multiconnect, bool bN
 	m_lstOpenSockets.push_back(newsocket);
 	newsocket->ConnectToServer(server, bNoCrypt);
 
-	connectionattemps[GetTickCount()] = newsocket;
+	connectionattemps[GetTickCount64()] = newsocket;
 }
 
 
@@ -258,12 +258,12 @@ void CServerConnect::ConnectionEstablished(CServerSocket* sender)
 
 		CPacket* packet = new CPacket(data, OP_EDONKEYPROT, OP_LOGINREQUEST);
 		#ifdef DEBUG_CLIENT_PROTOCOL
-		AddLogLineC(wxT("Client: OP_LOGINREQUEST"));
-		AddLogLineC(wxString(wxT("        Hash     : ")) << thePrefs::GetUserHash().Encode());
-		AddLogLineC(wxString(wxT("        ClientID : ")) << GetClientID());
-		AddLogLineC(wxString(wxT("        Port     : ")) << thePrefs::GetPort());
-		AddLogLineC(wxString(wxT("        User Nick: ")) << thePrefs::GetUserNick());
-		AddLogLineC(wxString(wxT("        Edonkey  : ")) << EDONKEYVERSION);
+		AddLogLineC("Client: OP_LOGINREQUEST");
+		AddLogLineC(wxString("        Hash     : ") << thePrefs::GetUserHash().Encode());
+		AddLogLineC(wxString("        ClientID : ") << GetClientID());
+		AddLogLineC(wxString("        Port     : ") << thePrefs::GetPort());
+		AddLogLineC(wxString("        User Nick: ") << thePrefs::GetUserNick());
+		AddLogLineC(wxString("        Edonkey  : ") << EDONKEYVERSION);
 		#endif
 		theStats::AddUpOverheadServer(packet->GetPacketSize());
 		SendPacket(packet, true, sender);
@@ -291,7 +291,7 @@ void CServerConnect::ConnectionEstablished(CServerSocket* sender)
 			theStats::AddUpOverheadServer(packet->GetPacketSize());
 			SendPacket(packet, true);
 			#ifdef DEBUG_CLIENT_PROTOCOL
-			AddLogLineC(wxT("Client: OP_GETSERVERLIST"));
+			AddLogLineC("Client: OP_GETSERVERLIST");
 			#endif
 		}
 	}
@@ -454,7 +454,7 @@ void CServerConnect::ConnectionFailed(CServerSocket* sender)
 
 void CServerConnect::CheckForTimeout()
 {
-	uint32 dwCurTick = GetTickCount();
+	uint64 dwCurTick = GetTickCount64();
 
 	ServerSocketMap::iterator it = connectionattemps.begin();
 	while ( it != connectionattemps.end() ){
@@ -465,7 +465,7 @@ void CServerConnect::CheckForTimeout()
 		}
 
 		if ( dwCurTick - it->first > CONSERVTIMEOUT) {
-			uint32 key = it->first;
+			uint64 key = it->first;
 			CServerSocket* value = it->second;
 			++it;
 			if (!value->IsSolving()) {
@@ -583,12 +583,38 @@ bool CServerConnect::IsLocalServer(uint32 dwIP, uint16 nPort)
 }
 
 
+bool CServerConnect::IsServerIP(uint32 ip) const
+{
+	if (ip == 0) {
+		return false;
+	}
+	// Match the live connection first -- cheapest, hottest case.
+	if (connectedsocket && connectedsocket->cur_server
+		&& connectedsocket->cur_server->GetIP() == ip) {
+		return true;
+	}
+	// Then any login still in flight.  m_lstOpenSockets includes
+	// connectedsocket too, but the early-out above keeps the common
+	// case to a single pointer chase; the loop only runs when we're
+	// actively trying multiple servers in parallel, which is bounded
+	// by max_simcons (typically 2-3) so it's negligible.
+	for (SocketsList::const_iterator it = m_lstOpenSockets.begin();
+		 it != m_lstOpenSockets.end(); ++it) {
+		const CServerSocket* sock = *it;
+		if (sock && sock->cur_server && sock->cur_server->GetIP() == ip) {
+			return true;
+		}
+	}
+	return false;
+}
+
+
 void CServerConnect::KeepConnectionAlive()
 {
-	uint32 dwServerKeepAliveTimeout = thePrefs::GetServerKeepAliveTimeout();
+	uint64 dwServerKeepAliveTimeout = thePrefs::GetServerKeepAliveTimeout();
 	if (dwServerKeepAliveTimeout && connected && connectedsocket &&
 	connectedsocket->connectionstate == CS_CONNECTED &&
-	GetTickCount() - connectedsocket->GetLastTransmission() >= dwServerKeepAliveTimeout) {
+	GetTickCount64() - connectedsocket->GetLastTransmission() >= dwServerKeepAliveTimeout) {
 		// "Ping" the server if the TCP connection was not used for the specified interval with
 		// an empty publish files packet -> recommended by lugdunummaster himself!
 
@@ -597,7 +623,7 @@ void CServerConnect::KeepConnectionAlive()
 
 		CPacket* packet = new CPacket(files, OP_EDONKEYPROT, OP_OFFERFILES);
 		#ifdef DEBUG_CLIENT_PROTOCOL
-		AddLogLineC(wxT("Client: OP_OFFERFILES"));
+		AddLogLineC("Client: OP_OFFERFILES");
 		#endif
 		// compress packet
 		//   - this kind of data is highly compressible (N * (1 MD4 and at least 3 string meta data tags and 1 integer meta data tag))
@@ -608,7 +634,7 @@ void CServerConnect::KeepConnectionAlive()
 		theStats::AddUpOverheadServer(packet->GetPacketSize());
 		connectedsocket->SendPacket(packet,true);
 
-		AddDebugLogLineN(logServer, wxT("Refreshing server connection"));
+		AddDebugLogLineN(logServer, "Refreshing server connection");
 	}
 }
 

@@ -15,8 +15,10 @@ if (BUILD_MONOLITHIC OR BUILD_DAEMON)
 		ClientTCPSocket.cpp
 		ClientUDPSocket.cpp
 		CorruptionBlackBox.cpp
+		DownloadBandwidthThrottler.cpp
 		DownloadClient.cpp
 		DownloadQueue.cpp
+		ECFullResponseCache.cpp
 		ECSpecialCoreTags.cpp
 		EMSocket.cpp
 		EncryptedStreamSocket.cpp
@@ -34,18 +36,25 @@ if (BUILD_MONOLITHIC OR BUILD_DAEMON)
 		ServerSocket.cpp
 		ServerUDPSocket.cpp
 		SHAHashSet.cpp
+		SharedDirWatcher.cpp
 		SharedFileList.cpp
 		UploadBandwidthThrottler.cpp
 		UploadClient.cpp
+		UploadDiskIOThread.cpp
 		UploadQueue.cpp
+		PartFileWriteThread.cpp
+		PartFileHashThread.cpp
 		ThreadTasks.cpp
 	)
 endif()
 
 if (BUILD_MONOLITHIC OR BUILD_REMOTEGUI)
 	set (GUI_SOURCES
+		CamuleArtProvider.cpp
+		${AMULE_ICON_DATA_C}
 		AddFriend.cpp
 		amule-gui.cpp
+		AppImageIntegration.cpp
 		amuleDlg.cpp
 		CatDialog.cpp
 		ChatSelector.cpp
@@ -66,6 +75,7 @@ if (BUILD_MONOLITHIC OR BUILD_REMOTEGUI)
 		SearchListCtrl.cpp
 		ServerListCtrl.cpp
 		ServerWnd.cpp
+		SharedDirsApplyTask.cpp
 		SharedFilePeersListCtrl.cpp
 		SharedFilesCtrl.cpp
 		SharedFilesWnd.cpp
@@ -73,11 +83,16 @@ if (BUILD_MONOLITHIC OR BUILD_REMOTEGUI)
 		StatisticsDlg.cpp
 		TransferWnd.cpp
 	)
+
+	if (APPLE)
+		list (APPEND GUI_SOURCES MacAppHelper.mm)
+	endif()
 endif()
 
 if (BUILD_MONOLITHIC OR BUILD_DAEMON OR BUILD_REMOTEGUI)
 	set (COMMON_SOURCES
 		amuleAppCommon.cpp
+		AutostartManager.cpp
 		ClientRef.cpp
 		ECSpecialMuleTags.cpp
 		GetTickCount.cpp

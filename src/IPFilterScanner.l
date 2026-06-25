@@ -2,7 +2,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2009-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2009-2011 Stu Redman ( sturedman@amule.org )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -143,7 +143,7 @@ WS		[ \t\r]*
 ^.			{
 		/* Bad line */
 		yyip_Bad++;
-		AddDebugLogLineN(logIPFilter, CFormat(wxT("error in line %d: %s")) % yyip_Line % wxString(char2unicode(yytext)));
+		AddDebugLogLineN(logIPFilter, CFormat("error in line %d: %s") % yyip_Line % wxString(char2unicode(yytext)));
 	}
 
 %%

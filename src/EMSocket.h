@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -25,6 +25,8 @@
 
 #ifndef EMSOCKET_H
 #define EMSOCKET_H
+
+#include <mutex>
 
 #include "EncryptedStreamSocket.h"				// Needed for CEncryptedStreamSocket
 
@@ -52,31 +54,56 @@ public:
 	virtual void	SendPacket(CPacket* packet, bool delpacket = true, bool controlpacket = true, uint32 actualPayloadSize = 0);
 	bool	IsConnected() { return byConnected==ES_CONNECTED;};
 	uint8	GetConState()	{return byConnected;}
-	void	SetDownloadLimit(uint32 limit);
-	void	DisableDownloadLimit();
+	// Re-trigger OnReceive if this socket suspended its read loop last
+	// tick because CDownloadBandwidthThrottler's bucket was empty.
+	// Called once per tick from CPartFile::Process via
+	// CUpDownClient::TickDownloadAndMeasure.
+	void	WakeIfPaused();
 
-	virtual uint32	GetTimeOut() const;
-	virtual void	SetTimeOut(uint32 uTimeOut);
+	virtual uint64	GetTimeOut() const;
+	virtual void	SetTimeOut(uint64 uTimeOut);
 
-    uint32	GetLastCalledSend() { return lastCalledSend; }
+    uint64	GetLastCalledSend() override { return lastCalledSend; }
 
     uint64	GetSentBytesCompleteFileSinceLastCallAndReset();
     uint64	GetSentBytesPartFileSinceLastCallAndReset();
     uint64	GetSentBytesControlPacketSinceLastCallAndReset();
     uint64	GetSentPayloadSinceLastCallAndReset();
+    uint64	PeekSentPayload();   // Non-resetting peek — for disk I/O thread buffer check
     void	TruncateQueues();
 
-    virtual SocketSentBytes SendControlData(uint32 maxNumberOfBytesToSend, uint32 minFragSize) { return Send(maxNumberOfBytesToSend, minFragSize, true); };
-    virtual SocketSentBytes SendFileAndControlData(uint32 maxNumberOfBytesToSend, uint32 minFragSize) { return Send(maxNumberOfBytesToSend, minFragSize, false); };
+    SocketSentBytes SendControlData(uint32 maxNumberOfBytesToSend, uint32 minFragSize) override { return Send(maxNumberOfBytesToSend, minFragSize, true); };
+    SocketSentBytes SendFileAndControlData(uint32 maxNumberOfBytesToSend, uint32 minFragSize) override { return Send(maxNumberOfBytesToSend, minFragSize, false); };
 
-    uint32	GetNeededBytes();
+    uint32	GetNeededBytes() override;
+    bool    HasSent() { return m_hasSent; }  // eMule ref: used by CUploadDiskIOThread to detect socket starvation
+    bool    HasQueues(bool bOnlyStandardPackets = false) const;
+    bool    IsBusyQuickCheck() const { return m_bBusy; }
+
+	// Whether OnReceive should gate reads through the global
+	// download bandwidth budget. Peer file-transfer sockets do;
+	// server-control sockets do not, since their traffic is tiny
+	// and latency-sensitive and would stall silently under a
+	// download cap tight enough to exhaust the throttler bucket.
+	virtual bool	IsDownloadThrottled() const { return true; }
 
 	//protected:
 	// these functions are public on our code because of the amuleDlg::socketHandler
-	virtual void	OnError(int WXUNUSED(nErrorCode)) { };
-	virtual void	OnSend(int nErrorCode);
-	virtual void	OnReceive(int nErrorCode);
-	virtual void	OnConnect(int nErrorCode) = 0;
+	void	OnError(int WXUNUSED(nErrorCode)) override { };
+	void	OnSend(int nErrorCode) override;
+	void	OnReceive(int nErrorCode) override;
+	void	OnConnect(int nErrorCode) override = 0;
+
+	// The Asio reactor's HandleRead dispatches peer FIN / RST via
+	// CLibSocket::OnLost(int), whose default is an empty no-op. Without
+	// an override on this path, the eD2k server socket (CServerSocket)
+	// and peer socket (CClientTCPSocket) never see the close event:
+	// CServerSocket stays at CS_CONNECTED after a server disappears
+	// (#905, #393), and peer sockets sit in CLOSE_WAIT forever as
+	// silent half-open sources. Forward to OnClose(int) so virtual
+	// dispatch reaches the per-class teardown that was already there
+	// for the (now-defunct) wxSocket close path.
+	void OnLost(int nErrorCode) override { OnClose(nErrorCode); }
 
 protected:
 
@@ -91,11 +118,12 @@ private:
 	void	ClearQueues();
 
     uint32	GetNextFragSize(uint32 current, uint32 minFragSize);
-    bool    HasSent() { return m_hasSent; }
 
-	// Download (pseudo) rate control
-	uint32	downloadLimit;
-	bool	downloadLimitEnable;
+	// Download rate control: the global cap is enforced by
+	// CDownloadBandwidthThrottler. pendingOnReceive is the only
+	// per-socket bit -- set when OnReceive() suspended its read loop
+	// because the throttler's bucket was empty, cleared on the next
+	// successful read or when WakeIfPaused() retries the loop.
 	bool	pendingOnReceive;
 
 	// Download partial header
@@ -125,7 +153,7 @@ private:
 
     bool m_currentPacket_is_controlpacket;
 
-	wxMutex	m_sendLocker;
+	std::mutex	m_sendLocker;
 
 	uint64 m_numberOfSentBytesCompleteFile;
     uint64 m_numberOfSentBytesPartFile;
@@ -133,9 +161,9 @@ private:
     bool m_currentPackageIsFromPartFile;
 
 	bool	m_bAccelerateUpload;
-	uint32	lastCalledSend;
-    uint32	lastSent;
-	uint32	lastFinishedStandard;
+	uint64	lastCalledSend;
+	uint64	lastSent;
+	uint64	lastFinishedStandard;
 
     uint32 m_actualPayloadSize;
     uint32 m_actualPayloadSizeSent;

@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -27,7 +27,7 @@
 
 #include <cmath>
 
-#include "GetTickCount.h"	// Needed for GetTickCount
+#include "GetTickCount.h"	// Needed for GetTickCount64
 #include "Logger.h"			// Needed for Add(Debug)LogLine
 
 CreditStruct::CreditStruct()
@@ -57,8 +57,7 @@ CClientCredits::CClientCredits(const CMD4Hash& key)
 	m_pCredits->key = key;
 
 	InitalizeIdent();
-	m_dwUnSecureWaitTime = ::GetTickCount();
-	m_dwSecureWaitTime = ::GetTickCount();
+	m_dwUnSecureWaitTime = m_dwSecureWaitTime = ::GetTickCount64();
 	m_dwWaitTimeIP = 0;
 }
 
@@ -198,7 +197,7 @@ void CClientCredits::Verified(uint32 dwForIP)
 			// in order to save this client, set 1 byte
 			m_pCredits->downloaded = 1;
 			m_pCredits->uploaded = 1;
-			AddDebugLogLineN( logCredits, wxT("Credits deleted due to new SecureIdent") );
+			AddDebugLogLineN( logCredits, "Credits deleted due to new SecureIdent" );
 		}
 	}
 	m_identState = IS_IDENTIFIED;
@@ -232,7 +231,7 @@ EIdentState	CClientCredits::GetCurrentIdentState(uint32 dwForIP) const
 }
 
 
-uint32 CClientCredits::GetSecureWaitStartTime(uint32 dwForIP)
+uint64 CClientCredits::GetSecureWaitStartTime(uint32 dwForIP)
 {
 	if (m_dwUnSecureWaitTime == 0 || m_dwSecureWaitTime == 0)
 		SetSecWaitStartTime(dwForIP);
@@ -248,7 +247,7 @@ uint32 CClientCredits::GetSecureWaitStartTime(uint32 dwForIP)
 			else{	// bad boy
 				// this can also happen if the client has not identified himself yet, but will do later - so maybe he is not a bad boy :) .
 
-				m_dwUnSecureWaitTime = ::GetTickCount();
+				m_dwUnSecureWaitTime = ::GetTickCount64();
 				m_dwWaitTimeIP = dwForIP;
 				return m_dwUnSecureWaitTime;
 			}
@@ -262,8 +261,7 @@ uint32 CClientCredits::GetSecureWaitStartTime(uint32 dwForIP)
 
 void CClientCredits::SetSecWaitStartTime(uint32 dwForIP)
 {
-	m_dwUnSecureWaitTime = ::GetTickCount()-1;
-	m_dwSecureWaitTime = ::GetTickCount()-1;
+	m_dwUnSecureWaitTime = m_dwSecureWaitTime = ::GetTickCount64()-1;
 	m_dwWaitTimeIP = dwForIP;
 }
 

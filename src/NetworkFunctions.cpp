@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2004-2011 Angel Vidal ( kry@amule.org )
-// Copyright (c) 2003-2016 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -47,10 +47,10 @@ bool StringIPtoUint32(const wxString &strIP, uint32& Ip)
 	for (size_t i = 0; i < str.Length(); i++) {
 		wxChar c = str.GetChar( i );
 
-		if ( c >= wxT('0') && c <= wxT('9') && (value >> 8) == 0) {
-			value = ( value * 10 ) + ( c - wxT('0') );
+		if ( c >= '0' && c <= '9' && (value >> 8) == 0) {
+			value = ( value * 10 ) + ( c - '0' );
 			++digit;
-		} else if ( c == wxT('.') ) {
+		} else if ( c == '.' ) {
 			if ( digit && (value >> 8) == 0) {
 				tmp_ip = tmp_ip | value << ( field * 8 );
 
@@ -130,7 +130,7 @@ static filter_st lan_ranges[] = {
 };
 
 
-bool IsGoodIP(uint32 ip, bool filterLAN) throw()
+bool IsGoodIP(uint32 ip, bool filterLAN) noexcept
 {
 	for (unsigned int i = 0; i < itemsof(reserved_ranges); ++i) {
 		if (((ip ^ reserved_ranges[i].addr) & reserved_ranges[i].mask) == 0) {
@@ -141,7 +141,7 @@ bool IsGoodIP(uint32 ip, bool filterLAN) throw()
 	return !(filterLAN && IsLanIP(ip));
 }
 
-bool IsLanIP(uint32_t ip) throw()
+bool IsLanIP(uint32_t ip) noexcept
 {
 	for (unsigned int i = 0; i < itemsof(lan_ranges); ++i) {
 		if (((ip ^ lan_ranges[i].addr) & lan_ranges[i].mask) == 0) {
@@ -149,4 +149,21 @@ bool IsLanIP(uint32_t ip) throw()
 		}
 	}
 	return false;
+}
+
+
+bool IsLoopbackIP(uint32_t ip) noexcept
+{
+	// 127.0.0.0/8 in anti-host order — the first octet (127 = 0x7f) sits
+	// in the low byte of the uint32 (matches the encoding used by
+	// StringIPtoUint32 / IsLanIP).
+	return (ip & 0x000000ff) == 0x0000007f;
+}
+
+
+bool IsLinkLocalIP(uint32_t ip) noexcept
+{
+	// 169.254.0.0/16 in anti-host order: 169 = 0xa9 in the low byte,
+	// 254 = 0xfe in the next byte → 0x0000fea9 with mask 0x0000ffff.
+	return (ip & 0x0000ffff) == 0x0000fea9;
 }

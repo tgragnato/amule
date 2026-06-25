@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 1998 Vadim Zeitlin ( zeitlin@dptmaths.ens-cachan.fr )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -300,6 +300,6 @@ void CFileArea::CheckError()
 	bool err = m_error;
 	m_error = false;
 	if (err)
-		throw CIOFailureException(wxT("Read error, failed to read from file."));
+		throw CIOFailureException("Read error, failed to read from file.");
 }
 

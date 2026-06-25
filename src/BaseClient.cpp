@@ -263,9 +263,6 @@ void CUpDownClient::Init()
 	m_lastClientSoft = (uint32)(-1);
 	m_lastClientVersion = 0;
 
-	/* Creation time (for buddies timeout) */
-	m_nCreationTime = ::GetTickCount();
-
 	m_MaxBlockRequests = STANDARD_BLOCKS_REQUEST; // Safe starting amount
 
 	m_last_block_start = 0;
@@ -1465,7 +1462,7 @@ bool CUpDownClient::TryToConnect(bool bIgnoreMaxCon)
 		// a direct callback is possible - since no other parties are involved and only one additional packet overhead
 		// is used we basically handle it like a normal connection try, no restrictions apply
 		// we already check above with !theApp->CanDoCallback(this) if any callback is possible at all
-		m_dwDirectCallbackTimeout = ::GetTickCount() + SEC2MS(45);
+		m_dwDirectCallbackTimeout = ::GetTickCount64() + SEC2MS(45);
 		theApp->clientlist->AddDirectCallbackClient(this);
 		AddDebugLogLineN(logClient, CFormat(wxT("Direct Callback on port %u to client on ip %s")) % GetKadPort() % Uint32toStringIP(GetConnectIP()));
 
@@ -2337,40 +2334,17 @@ bool CUpDownClient::SendPacket(CPacket* packet, bool delpacket, bool controlpack
 	}
 }
 
-float CUpDownClient::SetDownloadLimit(uint32 reducedownload)
+
+float CUpDownClient::TickDownloadAndMeasure()
 {
-	// lfroen: in daemon it actually can happen
-		wxASSERT( m_socket );
+	wxASSERT( m_socket );
 
 	float kBpsClient = CalculateKBpsDown();
 
 	if ( m_socket ) {
-
-		if (reducedownload) {
-			// (% to reduce * current speed) / 100 and THEN, / (1000 / CORE_TIMER_PERIOD)
-			// which is how often it is called per second.
-			uint32 limit = (uint32)(reducedownload * kBpsClient * 1024.0 / 100000.0 * CORE_TIMER_PERIOD);
-
-			if(limit<1024 && reducedownload >= 200) {
-				// If we're going up and this download is < 1kB,
-				// we want it to go up fast. Can be reduced later,
-				// and it'll probably be in a more fair way with
-				// other downloads that are faster.
-				limit +=1024;
-			} else if(limit == 0) {
-				// This download is not transferring yet... make it
-				// 1024 so we don't fill the TCP stack and lose the
-				// connection.
-				limit = 1024;
-			}
-
-			m_socket->SetDownloadLimit(limit);
-		} else {
-			m_socket->DisableDownloadLimit();
-		}
-
+		m_socket->WakeIfPaused();
 	} else {
-		AddLogLineNS(CFormat(wxT("CAUGHT DEAD SOCKET IN SETDOWNLOADLIMIT() WITH SPEED %f")) % kBpsClient);
+		AddLogLineNS(CFormat("CAUGHT DEAD SOCKET IN TICKDOWNLOADANDMEASURE() WITH SPEED %f") % kBpsClient);
 	}
 
 	return kBpsClient;

@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2004-2011 Angel Vidal ( kry@amule.org )
 // Copyright (c) 2004-2011 Froenchenko Leonid (lfroen@users.sourceforge.net)
 //
@@ -45,8 +45,7 @@ class CLibSocketServer;
 class CMuleUDPSocket;
 
 
-DECLARE_LOCAL_EVENT_TYPE(MULE_EVT_NOTIFY, -1)
-
+wxDECLARE_EVENT(MULE_EVT_NOTIFY, wxEvent);
 
 /**
  * This namespaces contains a number of functions and classes
@@ -87,6 +86,8 @@ namespace MuleNotify
 	void SharedFilesRemoveAllFiles();
 	void SharedFilesShowFileList();
 	void SharedFilesUpdateItem(CKnownFile* file);
+	void SharedFilesBeginBulkUpdate();
+	void SharedFilesEndBulkUpdate();
 
 	void DownloadCtrlUpdateItem(const void* item);
 	void SourceCtrlUpdateSource(uint32 source, SourceItemType type);
@@ -101,6 +102,26 @@ namespace MuleNotify
 	void SharedCtrlAddClient(CKnownFile* owner, CClientRef client, SourceItemType type);
 	void SharedCtrlRefreshClient(uint32 client, SourceItemType type);
 	void SharedCtrlRemoveClient(uint32 client, const CKnownFile* owner);
+
+	// Broadcast: a CKnownFile (or CPartFile, which is-a CKnownFile) is
+	// about to be destroyed. Every component that holds a raw
+	// CKnownFile* / CPartFile* outside the canonical owner containers
+	// (CKnownFileList / CSharedFileList / CDownloadQueue / EC mirrors)
+	// must subscribe and drop its reference before the delete returns.
+	//
+	// Contract for subscribers: handle the event using ONLY pointer-
+	// value comparison (==), never dereference the pointer. By the
+	// time a subscriber on the main thread sees the event, the file
+	// has typically already been freed by the destruction site that
+	// fired the broadcast. The pointer value is meaningful as a
+	// stable key; the bytes it points at are not.
+	//
+	// Fired from every CKnownFile / CPartFile destruction site BEFORE
+	// the delete: CKnownFileList::~CKnownFileList, PruneDuplicates,
+	// CPartFile::Delete(), CSharedFileList::Reload() (when destroying
+	// stale entries during rebuild), and CKnownFilesRem::DeleteItem
+	// in the amulegui build.
+	void KnownFileBeingDestroyed(CKnownFile* file);
 
 	void ServerAdd(CServer* server);
 	void ServerRemove(CServer* server);
@@ -454,11 +475,9 @@ using MuleNotify::CMuleGUIEvent;
 //! The event-handler type that takes a CMuleGUIEvent.
 typedef void (wxEvtHandler::*MuleNotifyEventFunction)(CMuleGUIEvent&);
 
-//! Event-handler for completed hashings of new shared files and partfiles.
+//! Event-handler for cross-thread GUI notification events.
 #define EVT_MULE_NOTIFY(func) \
-	DECLARE_EVENT_TABLE_ENTRY(MULE_EVT_NOTIFY, -1, -1, \
-	(wxObjectEventFunction) (wxEventFunction) \
-	wxStaticCastEvent(MuleNotifyEventFunction, &func), (wxObject*) NULL),
+	wx__DECLARE_EVT0(MULE_EVT_NOTIFY, wxEVENT_HANDLER_CAST(MuleNotifyEventFunction, func))
 
 
 
@@ -470,6 +489,8 @@ typedef void (wxEvtHandler::*MuleNotifyEventFunction)(CMuleGUIEvent&);
 #define Notify_SharedFilesShowFileList()		MuleNotify::DoNotify(&MuleNotify::SharedFilesShowFileList)
 #define Notify_SharedFilesSort()			MuleNotify::DoNotify(&MuleNotify::SharedFilesSort)
 #define Notify_SharedFilesUpdateItem(file)		MuleNotify::DoNotify(&MuleNotify::SharedFilesUpdateItem, file)
+#define Notify_SharedFilesBeginBulkUpdate()		MuleNotify::DoNotify(&MuleNotify::SharedFilesBeginBulkUpdate)
+#define Notify_SharedFilesEndBulkUpdate()		MuleNotify::DoNotify(&MuleNotify::SharedFilesEndBulkUpdate)
 
 // download ctrl
 #define Notify_DownloadCtrlUpdateItem(ptr)		MuleNotify::DoNotify(&MuleNotify::DownloadCtrlUpdateItem, ptr)
@@ -487,6 +508,10 @@ typedef void (wxEvtHandler::*MuleNotifyEventFunction)(CMuleGUIEvent&);
 #define Notify_SharedCtrlAddClient(p0, p1, val)			MuleNotify::DoNotify(&MuleNotify::SharedCtrlAddClient, p0, p1, val)
 #define Notify_SharedCtrlRefreshClient(ptr, val)		MuleNotify::DoNotify(&MuleNotify::SharedCtrlRefreshClient, ptr, val)
 #define Notify_SharedCtrlRemoveClient(p0, p1)		MuleNotify::DoNotify(&MuleNotify::SharedCtrlRemoveClient, p0, p1)
+
+// CKnownFile/CPartFile destruction broadcast — see MuleNotify::
+// KnownFileBeingDestroyed doc-comment in this header.
+#define Notify_KnownFileBeingDestroyed(file)		MuleNotify::DoNotify(&MuleNotify::KnownFileBeingDestroyed, file)
 
 // server
 #define Notify_ServerAdd(ptr)				MuleNotify::DoNotify(&MuleNotify::ServerAdd, ptr)
@@ -530,7 +555,7 @@ typedef void (wxEvtHandler::*MuleNotifyEventFunction)(CMuleGUIEvent&);
 #define Notify_ServersURLChanged(url)			MuleNotify::DoNotify(&MuleNotify::ServersURLChanged, url)
 
 // Partfile conversion: Core -> GUI
-#define Notify_ConvertUpdateProgress(val, text)		Notify_ConvertUpdateProgressFull(val, text, wxEmptyString)
+#define Notify_ConvertUpdateProgress(val, text)		Notify_ConvertUpdateProgressFull(val, text, "")
 #define Notify_ConvertUpdateProgressFull(val, text, hdr) MuleNotify::DoNotify(&MuleNotify::ConvertUpdateProgress, val, text, hdr)
 #define Notify_ConvertUpdateJobInfo(info)		MuleNotify::DoNotify(&MuleNotify::ConvertUpdateJobInfo, info)
 #define Notify_ConvertRemoveJobInfo(id)			MuleNotify::DoNotify(&MuleNotify::ConvertRemoveJobInfo, id)

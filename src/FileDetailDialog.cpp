@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -38,10 +38,12 @@
 #include "OtherFunctions.h"
 #include "MuleColour.h"
 
+#include <set>
+
 #define ID_MY_TIMER 1652
 
 //IMPLEMENT_DYNAMIC(CFileDetailDialog, CDialog)
-BEGIN_EVENT_TABLE(CFileDetailDialog,wxDialog)
+wxBEGIN_EVENT_TABLE(CFileDetailDialog,wxDialog)
 	EVT_BUTTON(ID_CLOSEWNDFD, CFileDetailDialog::OnClosewnd)
 	EVT_BUTTON(IDC_BUTTONSTRIP, CFileDetailDialog::OnBnClickedButtonStrip)
 	EVT_BUTTON(IDC_TAKEOVER, CFileDetailDialog::OnBnClickedTakeOver)
@@ -53,7 +55,21 @@ BEGIN_EVENT_TABLE(CFileDetailDialog,wxDialog)
 	EVT_BUTTON(IDC_PREVFILE, CFileDetailDialog::OnBnClickedPrevFile)
 	EVT_BUTTON(IDC_NEXTFILE, CFileDetailDialog::OnBnClickedNextFile)
 	EVT_TIMER(ID_MY_TIMER,CFileDetailDialog::OnTimer)
-END_EVENT_TABLE()
+wxEND_EVENT_TABLE()
+
+namespace {
+// Registry of open CFileDetailDialog instances. See CCommentDialog.cpp
+// for the rationale — the broadcast handler in GuiEvents.cpp iterates
+// this on every CKnownFile destruction. UAF would otherwise fire from
+// the 5-second update-timer's deref of m_file (issue #755, same family
+// as #748).
+std::set<CFileDetailDialog*>& OpenInstances()
+{
+	static std::set<CFileDetailDialog*> instances;
+	return instances;
+}
+} // namespace
+
 
 CFileDetailDialog::CFileDetailDialog(wxWindow *parent, std::vector<CPartFile *> & files, int index)
 :
@@ -70,11 +86,51 @@ m_filenameChanged(false)
 	UpdateData(true);
 	content->SetSizeHints(this);
 	content->Show(this, true);
+	OpenInstances().insert(this);
 }
 
 CFileDetailDialog::~CFileDetailDialog()
 {
+	OpenInstances().erase(this);
 	m_timer.Stop();
+}
+
+void CFileDetailDialog::DropReferencesTo(const CKnownFile* file)
+{
+	for (CFileDetailDialog* d : OpenInstances()) {
+		// Strip the file from m_files first so Next/Prev navigation
+		// doesn't re-select it. m_files is a reference to the
+		// caller's vector (CDownloadListCtrl's stack-allocated list
+		// of selected files), so erasing here mutates the caller's
+		// state too — that's fine; the caller holds it only for the
+		// duration of the modal dialog and the dialog is what owns
+		// the visible UI sourcing from it.
+		for (std::vector<CPartFile*>::iterator it = d->m_files.begin();
+			it != d->m_files.end(); /* manual ++ */) {
+			if (static_cast<const CKnownFile*>(*it) == file) {
+				ptrdiff_t offset = it - d->m_files.begin();
+				it = d->m_files.erase(it);
+				if (d->m_index > offset) {
+					--d->m_index;
+				} else if (d->m_index == offset) {
+					// The active file is the one being
+					// destroyed. The dialog will dismiss
+					// below, so the index value won't be
+					// read again.
+				}
+			} else {
+				++it;
+			}
+		}
+		// Dismiss if the active file vanished. Stop the update
+		// timer first so the next tick doesn't try to deref
+		// m_file before EndModal unwinds.
+		if (static_cast<const CKnownFile*>(d->m_file) == file) {
+			d->m_file = NULL;
+			d->m_timer.Stop();
+			d->EndModal(0);
+		}
+	}
 }
 
 void CFileDetailDialog::OnTimer(wxTimerEvent& WXUNUSED(evt))
@@ -98,10 +154,10 @@ void CFileDetailDialog::UpdateData(bool resetFilename)
 	}
 
 	CastChild(IDC_FHASH,wxStaticText)->SetLabel(m_file->GetFileHash().Encode());
-	bufferS = CFormat(wxT("%u bytes (%s)")) % m_file->GetFileSize() % CastItoXBytes(m_file->GetFileSize());
+	bufferS = CFormat("%u bytes (%s)") % m_file->GetFileSize() % CastItoXBytes(m_file->GetFileSize());
 	CastChild(IDC_FSIZE,wxControl)->SetLabel(bufferS);
 	CastChild(IDC_PFSTATUS,wxControl)->SetLabel(m_file->getPartfileStatus());
-	bufferS = CFormat(wxT("%i (%i)")) % m_file->GetPartCount() % m_file->GetHashCount();
+	bufferS = CFormat("%i (%i)") % m_file->GetPartCount() % m_file->GetHashCount();
 	CastChild(IDC_PARTCOUNT,wxControl)->SetLabel(bufferS);
 	CastChild(IDC_TRANSFERRED,wxControl)->SetLabel(CastItoXBytes(m_file->GetTransferred()));
 	CastChild(IDC_FD_STATS1,wxControl)->SetLabel(CastItoXBytes(m_file->GetLostDueToCorruption()));
@@ -112,11 +168,11 @@ void CFileDetailDialog::UpdateData(bool resetFilename)
 	CastChild(IDC_PROCCOMPL,wxControl)->SetLabel(bufferS);
 	bufferS = CFormat(_("%.2f kB/s")) % m_file->GetKBpsDown();
 	CastChild(IDC_DATARATE,wxControl)->SetLabel(bufferS);
-	bufferS = CFormat(wxT("%i")) % m_file->GetSourceCount();
+	bufferS = CFormat("%i") % m_file->GetSourceCount();
 	CastChild(IDC_SOURCECOUNT,wxControl)->SetLabel(bufferS);
-	bufferS = CFormat(wxT("%i")) % m_file->GetTransferingSrcCount();
+	bufferS = CFormat("%i") % m_file->GetTransferingSrcCount();
 	CastChild(IDC_SOURCECOUNT2,wxControl)->SetLabel(bufferS);
-	bufferS = CFormat(wxT("%i (%.1f%%)"))
+	bufferS = CFormat("%i (%.1f%%)")
 		% m_file->GetAvailablePartCount()
 		% ((m_file->GetAvailablePartCount() * 100.0)/ m_file->GetPartCount());
 	CastChild(IDC_PARTAVAILABLE,wxControl)->SetLabel(bufferS);
@@ -127,7 +183,7 @@ void CFileDetailDialog::UpdateData(bool resetFilename)
 		bufferS = wxString(_("Unknown")).MakeLower();
 	} else {
 		wxDateTime last_seen(m_file->lastseencomplete);
-		bufferS = last_seen.FormatISODate() + wxT(" ") + last_seen.FormatISOTime();
+		bufferS = last_seen.FormatISODate() + " " + last_seen.FormatISOTime();
 	}
 
 	CastChild(IDC_LASTSEENCOMPL,wxControl)->SetLabel(bufferS);
@@ -212,7 +268,7 @@ void CFileDetailDialog::FillSourcenameList()
 			pmyListCtrl->DeleteItem(i);
 			i--;  // PA: one step back is enough, no need to go back to 0
 		} else {
-			pmyListCtrl->SetItem(i, 1, CFormat(wxT("%i")) % item->count);
+			pmyListCtrl->SetItem(i, 1, CFormat("%i") % item->count);
 		}
 	}
 
@@ -373,36 +429,36 @@ void CFileDetailDialog::OnBnClickedButtonStrip(wxCommandEvent& WXUNUSED(evt))
 		ext.MakeLower();
 		// get rid of extension and replace . with space
 		filename.Truncate(extpos);
-		filename.Replace(wxT("."),wxT(" "));
+		filename.Replace("."," ");
 	}
 
 	// Replace Space-holders with Spaces
-	filename.Replace(wxT("_"),wxT(" "));
-	filename.Replace(wxT("%20"),wxT(" "));
+	filename.Replace("_"," ");
+	filename.Replace("%20"," ");
 
 	// Some additional formatting
-	filename.Replace(wxT("hYPNOTiC"), wxEmptyString);
+	filename.Replace("hYPNOTiC", "");
 	filename.MakeLower();
-	filename.Replace(wxT("xxx"), wxT("XXX"));
-//	filename.Replace(wxT("xdmnx"), wxEmptyString);
-//	filename.Replace(wxT("pmp"), wxEmptyString);
-//	filename.Replace(wxT("dws"), wxEmptyString);
-	filename.Replace(wxT("www pornreactor com"), wxEmptyString);
-	filename.Replace(wxT("sharereactor"), wxEmptyString);
-	filename.Replace(wxT("found via www filedonkey com"), wxEmptyString);
-	filename.Replace(wxT("deviance"), wxEmptyString);
-	filename.Replace(wxT("adunanza"), wxEmptyString);
-	filename.Replace(wxT("-ftv"), wxEmptyString);
-	filename.Replace(wxT("flt"), wxEmptyString);
-	filename.Replace(wxT("[]"), wxEmptyString);
-	filename.Replace(wxT("()"), wxEmptyString);
+	filename.Replace("xxx", "XXX");
+//	filename.Replace("xdmnx", "");
+//	filename.Replace("pmp", "");
+//	filename.Replace("dws", "");
+	filename.Replace("www pornreactor com", "");
+	filename.Replace("sharereactor", "");
+	filename.Replace("found via www filedonkey com", "");
+	filename.Replace("deviance", "");
+	filename.Replace("adunanza", "");
+	filename.Replace("-ftv", "");
+	filename.Replace("flt", "");
+	filename.Replace("[]", "");
+	filename.Replace("()", "");
 
 	// Change CD, CD#, VCD{,#}, DVD{,#}, ISO, PC to uppercase
-	ReplaceWord(filename, wxT("cd"), wxT("CD"), true);
-	ReplaceWord(filename, wxT("vcd"), wxT("VCD"), true);
-	ReplaceWord(filename, wxT("dvd"), wxT("DVD"), true);
-	ReplaceWord(filename, wxT("iso"), wxT("ISO"), false);
-	ReplaceWord(filename, wxT("pc"), wxT("PC"), false);
+	ReplaceWord(filename, "cd", "CD", true);
+	ReplaceWord(filename, "vcd", "VCD", true);
+	ReplaceWord(filename, "dvd", "DVD", true);
+	ReplaceWord(filename, "iso", "ISO", false);
+	ReplaceWord(filename, "pc", "PC", false);
 
 	// Make leading Caps
 	// and delete 1+ spaces
@@ -445,7 +501,7 @@ void CFileDetailDialog::OnBnClickedButtonStrip(wxCommandEvent& WXUNUSED(evt))
 	}
 
 	// should stay lowercase
-	ReplaceWord(filename, wxT("By"), wxT("by"));
+	ReplaceWord(filename, "By", "by");
 
 	// re-add extension
 	filename += ext;

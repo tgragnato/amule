@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -89,8 +89,12 @@ class EC_IPv4_t {
 		}
 		#endif
 
-		uint8 m_ip[4];
-		uint16 m_port;
+		// Default member initialisers so a stack-allocated EC_IPv4_t
+		// constructed via the trivial ctor above starts with defined
+		// fields. Caught on lint as
+		// clang-analyzer-optin.cplusplus.UninitializedObject.
+		uint8 m_ip[4] = {0, 0, 0, 0};
+		uint16 m_port = 0;
 };
 
 
@@ -142,12 +146,29 @@ class CECTag {
 
 		size_t			GetTagCount() const { return m_tagList.size(); }
 		bool			HasChildTags() const { return !m_tagList.empty(); }
+
+		// Serialize this tag (name + type + length + body + children) to a
+		// CECSocket using the wire format the receiver's matching ReadTag
+		// expects. Public so daemon-side code can pre-serialize per-file
+		// tag trees into a cache (used by the amulecmd FULL-fetch cache);
+		// inside the EC library itself this is the primitive invoked by
+		// `CECTag::WriteChildren` for each child of a packet.
+		bool			Serialize(CECSocket& socket) const { return WriteTag(socket); }
 		const void *	GetTagData() const {
 			EC_ASSERT(m_dataType == EC_TAGTYPE_CUSTOM);
 			return m_tagData;
 		}
 		uint16_t		GetTagDataLen() const { return m_dataLen; }
-		uint32_t		GetTagLen() const;
+		// useLargeCount: when true, account for the +4 bytes that
+		// CECTag::WriteChildren emits as the sentinel-extended count
+		// follow-up for any nested tag with >= 0xFFFF children. Writer
+		// (WriteTag) and reader (ReadFromSocket) must pass the SAME
+		// value (derived from CECSocket::m_tx_flags / m_rx_flags &
+		// EC_FLAG_LARGE_TAG_COUNT) so their independently-computed
+		// tagLen values agree and m_dataLen subtraction stays
+		// consistent. Default false preserves the historical wire size
+		// for callers that don't have a socket context (e.g. tests).
+		uint32_t		GetTagLen(bool useLargeCount = false) const;
 		ec_tagname_t		GetTagName() const { return m_tagName; }
 
 		// Retrieving special data types

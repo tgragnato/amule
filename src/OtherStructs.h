@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -60,7 +60,11 @@ struct Pending_Block_Struct{
 	struct z_stream_s*       zStream;       // Barry - Used to unzip packets
 	uint32		totalUnzipped; // Barry - This holds the total unzipped bytes for all packets so far
 	uint32		fZStreamError : 1,
-				fRecovered    : 1;
+				fRecovered    : 1,
+				fQueued       : 1; // 0 = block sits in m_PendingBlocks_list waiting to be asked over the wire,
+				                   // 1 = block has been written to an OP_REQUESTPARTS packet and the sender owes us bytes for it.
+				                   // Lets m_MaxBlockRequests act as the local queue depth while each wire packet still
+				                   // carries the protocol-mandated 3 blocks (eMule 0.70 SendBlockRequests pattern).
 };
 
 struct Gap_Struct{

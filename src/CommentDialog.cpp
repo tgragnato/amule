@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -28,7 +28,25 @@
 #include "GuiEvents.h"
 #include "KnownFile.h"		// Needed for CKnownFile
 #include "muuli_wdr.h"		// Needed for commentDlg
+
+#include <set>
+
 // CommentDialog dialog
+
+namespace {
+// Registry of open CCommentDialog instances. Iterated by
+// CCommentDialog::DropReferencesTo when a CKnownFile is destroyed, so
+// any dialog whose m_file matches can be dismissed before its modal
+// loop tries to deref the freed pointer (issue #755 / #748 family).
+//
+// All access is on the GUI main thread (modal dialogs only exist on
+// that thread), so no synchronisation is needed.
+std::set<CCommentDialog*>& OpenInstances()
+{
+	static std::set<CCommentDialog*> instances;
+	return instances;
+}
+} // namespace
 
 //IMPLEMENT_DYNAMIC(CCommentDialog, CDialog)
 CCommentDialog::CCommentDialog(wxWindow* parent,CKnownFile* file)
@@ -42,18 +60,33 @@ wxDefaultPosition,wxDefaultSize,wxDEFAULT_DIALOG_STYLE|wxSYSTEM_MENU)
 	Center();
 	ratebox = CastChild( IDC_RATELIST, wxChoice );
 	OnInitDialog();
+	OpenInstances().insert(this);
 }
 
 CCommentDialog::~CCommentDialog()
 {
+	OpenInstances().erase(this);
 }
 
-BEGIN_EVENT_TABLE(CCommentDialog,wxDialog)
+void CCommentDialog::DropReferencesTo(const CKnownFile* file)
+{
+	// Pointer-value comparison only — `file` may already be freed.
+	for (CCommentDialog* d : OpenInstances()) {
+		if (d->m_file == file) {
+			d->m_file = NULL;
+			// Self-dismiss: the dialog is showing data that no
+			// longer exists on disk. Returning 0 matches Cancel.
+			d->EndModal(0);
+		}
+	}
+}
+
+wxBEGIN_EVENT_TABLE(CCommentDialog,wxDialog)
 	EVT_TEXT_ENTER(IDC_CMT_TEXT, CCommentDialog::OnBnClickedApply)
 	EVT_BUTTON(IDCOK, CCommentDialog::OnBnClickedApply)
 	EVT_BUTTON(IDC_FC_CLEAR, CCommentDialog::OnBnClickedClear)
 	EVT_BUTTON(IDCCANCEL, CCommentDialog::OnBnClickedCancel)
-END_EVENT_TABLE()
+wxEND_EVENT_TABLE()
 
 void CCommentDialog::OnBnClickedApply(wxCommandEvent& WXUNUSED(evt))
 {
@@ -64,7 +97,7 @@ void CCommentDialog::OnBnClickedApply(wxCommandEvent& WXUNUSED(evt))
 
 void CCommentDialog::OnBnClickedClear(wxCommandEvent& WXUNUSED(evt))
 {
-	CastChild(IDC_CMT_TEXT, wxTextCtrl)->SetValue(wxEmptyString);
+	CastChild(IDC_CMT_TEXT, wxTextCtrl)->SetValue("");
 }
 
 void CCommentDialog::OnBnClickedCancel(wxCommandEvent& WXUNUSED(evt))

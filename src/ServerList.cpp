@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -34,7 +34,7 @@
 
 #include <wx/txtstrm.h>
 #include <wx/wfstream.h>
-#include <wx/url.h>			// Needed for wxURL
+#include <wx/uri.h>			// Needed for wxURI
 #include <wx/tokenzr.h>
 
 #include "DownloadQueue.h"		// Needed for CDownloadQueue
@@ -58,7 +58,6 @@ CServerList::CServerList()
 {
 	m_serverpos = m_servers.end();
 	m_statserverpos = m_servers.end();
-	m_nLastED2KServerLinkCheck = ::GetTickCount();
 	m_initialized = false;
 }
 
@@ -66,20 +65,29 @@ CServerList::CServerList()
 bool CServerList::Init()
 {
 	// Load Metfile
-	bool bRes = LoadServerMet(CPath(thePrefs::GetConfigDir() + wxT("server.met")));
+	bool bRes = LoadServerMet(CPath(thePrefs::GetConfigDir() + "server.met"));
 
 	// insert static servers from textfile
-	m_staticServersConfig = thePrefs::GetConfigDir() + wxT("staticservers.dat");
+	m_staticServersConfig = thePrefs::GetConfigDir() + "staticservers.dat";
 	LoadStaticServers();
 
-	// Send the auto-update of server.met via HTTPThread requests
-	current_url_index = 0;
-	if ( thePrefs::AutoServerlist()) {
-		AutoUpdate();
-	}
+	// The HTTP auto-update of server.met used to be kicked from here, but
+	// that fires the libcurl request before the heavy local I/O (partfile
+	// load + shared-file scan) — the wxWebSession worker thread then
+	// competes with the saturated main thread for CPU, libcurl state
+	// machine advances less, and the DNS resolution can time out on
+	// slower setups. The kick now lives in CamuleApp::OnInit() after
+	// sharedfiles->Reload() finishes. See StartAutoUpdate() / #714.
 
 	m_initialized = true;
 	return bRes;
+}
+
+
+void CServerList::StartAutoUpdate()
+{
+	current_url_index = 0;
+	AutoUpdate();
 }
 
 
@@ -95,7 +103,7 @@ bool CServerList::LoadServerMet(const CPath& path)
 	}
 
 	// Try to unpack the file, might be an archive
-	const wxChar* mets[] = { wxT("server.met"), NULL };
+	const char* mets[] = { "server.met", NULL };
 	// Try to unpack the file, might be an archive
 	if (UnpackArchive(path, mets).second != EFT_Met) {
 		AddLogLineC(CFormat(_("Failed to load server.met file '%s', unknown format encountered.")) % path);
@@ -147,7 +155,7 @@ bool CServerList::LoadServerMet(const CPath& path)
 
 			// set listname for server
 			if ( newserver->GetListName().IsEmpty() ) {
-				newserver->SetListName(wxT("Server ") +newserver->GetAddress());
+				newserver->SetListName("Server " +newserver->GetAddress());
 			}
 
 
@@ -262,7 +270,8 @@ bool CServerList::AddServer(CServer* in_server, bool fromUser)
 
 void CServerList::ServerStats()
 {
-	uint32 tNow = ::GetTickCount();
+	uint64 tNow = ::GetTickCount64();
+	time_t currentTime = time(NULL);
 
 	if (theApp->IsConnectedED2K() && !m_servers.empty()) {
 		CServer* ping_server = GetNextStatServer();
@@ -271,7 +280,7 @@ void CServerList::ServerStats()
 			return;
 		}
 
-		while (ping_server->GetLastPingedTime() && (tNow - ping_server->GetLastPingedTime()) < UDPSERVSTATREASKTIME) {
+		while (ping_server->GetLastPingedTime() && currentTime < (ping_server->GetLastPingedTime() + UDPSERVSTATREASKTIME)) {
 			ping_server = GetNextStatServer();
 			if (ping_server == test) {
 				return;
@@ -284,8 +293,8 @@ void CServerList::ServerStats()
 		}
 
 		srand((unsigned)time(NULL));
-		ping_server->SetRealLastPingedTime(tNow); // this is not used to calculate the next ping, but only to ensure a minimum delay for premature pings
-		if (!ping_server->GetCryptPingReplyPending() && (!ping_server->GetLastPingedTime() || (tNow - ping_server->GetLastPingedTime()) >= UDPSERVSTATREASKTIME) && theApp->GetPublicIP() && thePrefs::IsServerCryptLayerUDPEnabled()) {
+		ping_server->SetRealLastPingedTime(currentTime); // this is not used to calculate the next ping, but only to ensure a minimum delay for premature pings
+		if (!ping_server->GetCryptPingReplyPending() && (!ping_server->GetLastPingedTime() || currentTime >= (ping_server->GetLastPingedTime() + UDPSERVSTATREASKTIME)) && theApp->GetPublicIP() && thePrefs::IsServerCryptLayerUDPEnabled()) {
 			// We try a obfsucation ping first and wait 20 seconds for an answer
 			// if it doesn't get responded to, we don't count it as error but continue with a normal ping
 			ping_server->SetCryptPingReplyPending(true);
@@ -302,10 +311,10 @@ void CServerList::ServerStats()
 			}
 
 			ping_server->SetChallenge(dwChallenge);
-			ping_server->SetLastPinged(tNow);
-			ping_server->SetLastPingedTime((tNow - (uint32)UDPSERVSTATREASKTIME) + 20); // give it 20 seconds to respond
+			ping_server->SetLastPinged(tNow); //in milliseconds, to calculate the ping
+			ping_server->SetLastPingedTime((currentTime - UDPSERVSTATREASKTIME) + 20); //in seconds, give it 20 extra seconds to respond
 
-			AddDebugLogLineN(logServerUDP, CFormat(wxT(">> Sending OP__GlobServStatReq (obfuscated) to server %s:%u")) % ping_server->GetAddress() % ping_server->GetPort());
+			AddDebugLogLineN(logServerUDP, CFormat(">> Sending OP__GlobServStatReq (obfuscated) to server %s:%u") % ping_server->GetAddress() % ping_server->GetPort());
 
 			CPacket* packet = new CPacket(pRawPacket[1], nPacketLen - 2, pRawPacket[0]);
 			packet->CopyToDataBuffer(0, pRawPacket.get() + 2, nPacketLen - 2);
@@ -316,9 +325,9 @@ void CServerList::ServerStats()
 			// our obfsucation ping request was not answered, so probably the server doesn'T supports obfuscation
 			// continue with a normal request
 			if (ping_server->GetCryptPingReplyPending() && thePrefs::IsServerCryptLayerUDPEnabled()) {
-				AddDebugLogLineN(logServerUDP, wxT("CryptPing failed for server ") + ping_server->GetListName());
+				AddDebugLogLineN(logServerUDP, "CryptPing failed for server " + ping_server->GetListName());
 			} else if (thePrefs::IsServerCryptLayerUDPEnabled()) {
-				AddDebugLogLineN(logServerUDP, wxT("CryptPing skipped because our public IP is unknown for server ") + ping_server->GetListName());
+				AddDebugLogLineN(logServerUDP, "CryptPing skipped because our public IP is unknown for server " + ping_server->GetListName());
 			}
 
 			ping_server->SetCryptPingReplyPending(false);
@@ -328,7 +337,7 @@ void CServerList::ServerStats()
 			ping_server->SetChallenge(challenge);
 			packet->CopyUInt32ToDataBuffer(challenge);
 			ping_server->SetLastPinged(tNow);
-			ping_server->SetLastPingedTime(tNow - (rand() % HR2S(1)));
+			ping_server->SetLastPingedTime(currentTime - (rand() % HR2S(1)));
 			ping_server->AddFailedCount();
 			Notify_ServerRefresh(ping_server);
 			theStats::AddUpOverheadServer(packet->GetPacketSize());
@@ -460,7 +469,7 @@ void CServerList::LoadStaticServers()
 			continue;
 		}
 
-		wxStringTokenizer tokens( line, wxT(",") );
+		wxStringTokenizer tokens( line, "," );
 
 		if ( tokens.CountTokens() != 3 ) {
 			continue;
@@ -472,8 +481,8 @@ void CServerList::LoadStaticServers()
 		wxString prio = tokens.GetNextToken().Strip( wxString::both );
 		wxString name = tokens.GetNextToken().Strip( wxString::both );
 
-		wxString host = addy.BeforeFirst( wxT(':') );
-		wxString port = addy.AfterFirst( wxT(':') );
+		wxString host = addy.BeforeFirst( ':' );
+		wxString port = addy.AfterFirst( ':' );
 
 
 		int priority = StrToLong( prio );
@@ -523,7 +532,7 @@ void CServerList::SaveStaticServers()
 		const CServer* server = *it;
 
 		if (server->IsStaticMember()) {
-			file.WriteLine(CFormat(wxT("%s:%u,%u,%s"))
+			file.WriteLine(CFormat("%s:%u,%u,%s")
 				% server->GetAddress() % server->GetPort()
 				% server->GetPreferences() % server->GetListName());
 		}
@@ -679,7 +688,7 @@ void CServerList::SetServerPrio(CServer* server, uint32 prio)
 
 bool CServerList::SaveServerMet()
 {
-	CPath curservermet = CPath(thePrefs::GetConfigDir() + wxT("server.met"));
+	CPath curservermet = CPath(thePrefs::GetConfigDir() + "server.met");
 
 	CFile servermet(curservermet, CFile::write_safe);
 	if (!servermet.IsOpened()) {
@@ -766,10 +775,11 @@ bool CServerList::SaveServerMet()
 
 			CTagInt32( ST_FAIL,       server->GetFailedCount()   ).WriteTagToFile( &servermet );
 			CTagInt32( ST_PREFERENCE, server->GetPreferences()   ).WriteTagToFile( &servermet );
-			CTagInt32( wxT("users"),  server->GetUsers()         ).WriteTagToFile( &servermet );
-			CTagInt32( wxT("files"),  server->GetFiles()         ).WriteTagToFile( &servermet );
+			CTagInt32( "users",  server->GetUsers()         ).WriteTagToFile( &servermet );
+			CTagInt32( "files",  server->GetFiles()         ).WriteTagToFile( &servermet );
 			CTagInt32( ST_PING,       server->GetPing()          ).WriteTagToFile( &servermet );
-			CTagInt32( ST_LASTPING,   server->GetLastPingedTime()).WriteTagToFile( &servermet );
+			//CTagInt32 will actually save an uint32 - safe until Y2106
+			CTagInt32( ST_LASTPING,   (uint32)server->GetLastPingedTime()).WriteTagToFile( &servermet );
 			CTagInt32( ST_MAXUSERS,   server->GetMaxUsers()      ).WriteTagToFile( &servermet );
 			CTagInt32( ST_SOFTFILES,  server->GetSoftFiles()     ).WriteTagToFile( &servermet );
 			CTagInt32( ST_HARDFILES,  server->GetHardFiles()     ).WriteTagToFile( &servermet );
@@ -799,7 +809,7 @@ bool CServerList::SaveServerMet()
 		}
 		// Now server.met.new is ready to be closed and renamed to server.met.
 		// But first rename existing server.met to server.met.bak (replacing old .bak file).
-		const CPath oldservermet = CPath(thePrefs::GetConfigDir() + wxT("server.met.bak"));
+		const CPath oldservermet = CPath(thePrefs::GetConfigDir() + "server.met.bak");
 		if (curservermet.FileExists()) {
 			CPath::RenameFile(curservermet, oldservermet, true);
 		}
@@ -807,7 +817,7 @@ bool CServerList::SaveServerMet()
 		servermet.Close();
 
 	} catch (const CIOFailureException& e) {
-		AddLogLineC(wxT("IO failure while writing 'server.met': ") + e.what());
+		AddLogLineC("IO failure while writing 'server.met': " + e.what());
 		return false;
 	}
 
@@ -829,13 +839,13 @@ void CServerList::RemoveDeadServers()
 
 void CServerList::UpdateServerMetFromURL(const wxString& strURL)
 {
-	if (strURL.Find(wxT("://")) == -1) {
+	if (strURL.Find("://") == -1) {
 		AddLogLineC(_("Invalid URL"));
 		return;
 	}
 	m_URLUpdate = strURL;
-	wxString strTempFilename(thePrefs::GetConfigDir() + wxT("server.met.download"));
-	CHTTPDownloadThread *downloader = new CHTTPDownloadThread(strURL, strTempFilename, thePrefs::GetConfigDir() + wxT("server.met"), HTTP_ServerMet, false, false);
+	wxString strTempFilename(thePrefs::GetConfigDir() + "server.met.download");
+	CHTTPDownloadThread *downloader = new CHTTPDownloadThread(strURL, strTempFilename, thePrefs::GetConfigDir() + "server.met", HTTP_ServerMet, false, false);
 	downloader->Create();
 	downloader->Run();
 }
@@ -845,7 +855,7 @@ bool CServerList::DownloadFinished(uint32 result)
 {
 	bool ret = false;
 	if(result == HTTP_Success) {
-		const CPath tempFilename = CPath(thePrefs::GetConfigDir() + wxT("server.met.download"));
+		const CPath tempFilename = CPath(thePrefs::GetConfigDir() + "server.met.download");
 
 		// curl succeeded. proceed with server.met loading
 		LoadServerMet(tempFilename);
@@ -857,9 +867,9 @@ bool CServerList::DownloadFinished(uint32 result)
 		ret = true;
 	// cppcheck-suppress duplicateBranch
 	} else if (result == HTTP_Skipped) {
-		AddLogLineN(CFormat(_("Skipped download of %s, because requested file is not newer.")) % wxT("server.met"));
+		AddLogLineN(CFormat(_("Skipped download of %s, because requested file is not newer.")) % "server.met");
 	} else {
-		AddLogLineC(CFormat(_("Failed to download %s from %s")) % wxT("server.met") % m_URLUpdate);
+		AddLogLineC(CFormat(_("Failed to download %s from %s")) % "server.met" % m_URLUpdate);
 	}
 	return ret;
 }
@@ -868,7 +878,7 @@ bool CServerList::DownloadFinished(uint32 result)
 void CServerList::AutoUpdate()
 {
 
-	uint8 url_count = theApp->glob_prefs->adresses_list.GetCount();
+	uint8 url_count = theApp->glob_prefs->addresses_list.GetCount();
 
 	if (!url_count) {
 		AddLogLineC(_("No server list address entry in 'addresses.dat' found. Please paste a valid server list address into this file in order to auto-update your server list"));
@@ -876,17 +886,23 @@ void CServerList::AutoUpdate()
 	}
 	// Do current URL. Callback function will take care of the others.
 	while ( current_url_index < url_count ) {
-		wxString URI = theApp->glob_prefs->adresses_list[current_url_index];
-		// We use wxURL to validate the URI
-		if ( wxURL( URI ).GetError() == wxURL_NOERR ) {
+		wxString URI = theApp->glob_prefs->addresses_list[current_url_index];
+		// wxURL only registers protocol handlers for http and ftp, so
+		// any https URL would come back as wxURL_NOPROTO and be rejected
+		// here — but the download itself goes through wxWebRequest,
+		// which handles https fine (#714). Validate with wxURI (RFC
+		// 3986 parser) + an explicit scheme check instead.
+		wxURI uri(URI);
+		const wxString scheme = uri.HasScheme() ? uri.GetScheme().Lower() : wxString();
+		if ( uri.HasServer() && (scheme == "http" || scheme == "https") ) {
 			// Ok, got a valid URI
 			m_URLUpdate = URI;
 			wxString strTempFilename =
-				thePrefs::GetConfigDir() + wxT("server_auto.met");
+				thePrefs::GetConfigDir() + "server_auto.met";
 			AddLogLineC(CFormat(
 				_("Start downloading server list from %s")) % URI);
 			CHTTPDownloadThread *downloader = new CHTTPDownloadThread(
-				URI, strTempFilename, thePrefs::GetConfigDir() + wxT("server.met"), HTTP_ServerMetAuto, false, false);
+				URI, strTempFilename, thePrefs::GetConfigDir() + "server.met", HTTP_ServerMetAuto, false, false);
 			downloader->Create();
 			downloader->Run();
 
@@ -904,7 +920,7 @@ void CServerList::AutoUpdate()
 void CServerList::AutoDownloadFinished(uint32 result)
 {
 	if (result == HTTP_Success) {
-		CPath tempFilename = CPath(thePrefs::GetConfigDir() + wxT("server_auto.met"));
+		CPath tempFilename = CPath(thePrefs::GetConfigDir() + "server_auto.met");
 
 		// curl succeeded. proceed with server.met loading
 		LoadServerMet(tempFilename);
@@ -918,7 +934,7 @@ void CServerList::AutoDownloadFinished(uint32 result)
 
 	++current_url_index;
 
-	if (current_url_index < theApp->glob_prefs->adresses_list.GetCount()) {
+	if (current_url_index < theApp->glob_prefs->addresses_list.GetCount()) {
 		// Next!
 		AutoUpdate();
 	}
@@ -1008,7 +1024,7 @@ void CServerList::CheckForExpiredUDPKeys() {
 	uint32 cKeysExpired = 0;
 	uint32 cPingDelayed = 0;
 	const uint32 dwIP = theApp->GetPublicIP();
-	const uint32 tNow = ::GetTickCount();
+	const time_t currentTime = time(NULL);
 	wxASSERT( dwIP != 0 );
 
 	for (CInternalList::const_iterator it = m_servers.begin(); it != m_servers.end(); ++it) {
@@ -1016,10 +1032,10 @@ void CServerList::CheckForExpiredUDPKeys() {
 		if (pServer->SupportsObfuscationUDP() && pServer->GetServerKeyUDP(true) != 0 && pServer->GetServerKeyUDPIP() != dwIP){
 			cKeysTotal++;
 			cKeysExpired++;
-			if (tNow - pServer->GetRealLastPingedTime() < UDPSERVSTATMINREASKTIME){
+			if (currentTime < pServer->GetRealLastPingedTime() + UDPSERVSTATMINREASKTIME){
 				cPingDelayed++;
 				// next ping: Now + (MinimumDelay - already elapsed time)
-				pServer->SetLastPingedTime((tNow - (uint32)UDPSERVSTATREASKTIME) + (UDPSERVSTATMINREASKTIME - (tNow - pServer->GetRealLastPingedTime())));
+				pServer->SetLastPingedTime((currentTime - UDPSERVSTATREASKTIME) + (UDPSERVSTATMINREASKTIME - (currentTime - pServer->GetRealLastPingedTime())));
 			} else {
 				pServer->SetLastPingedTime(0);
 			}

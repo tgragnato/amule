@@ -1,8 +1,8 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2011-2011 aMule Team ( admin@amule.org / http://www.amule.org )
-// Copyright (c) 2011-2011 Stu Redman ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+// Copyright (c) 2011-2026 Stu Redman ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -27,11 +27,10 @@
 #ifndef __LIBSOCKET_H__
 #define __LIBSOCKET_H__
 
-#include "config.h"		// Needed for ASIO_SOCKETS
 #include "Types.h"
+#include <memory>		// shared_ptr for CAsioUDPSocketImpl ownership
 class amuleIPV4Address;
 
-#ifdef ASIO_SOCKETS
 
 // Socket flags (unused in ASIO implementation, just provide the names)
 enum {
@@ -117,18 +116,40 @@ public:
 	wxString	GetPeer();
 	uint32		GetPeerInt();
 
+	// Turn on TCP keepalive with per-socket timings so a half-open
+	// connection (peer gone, FIN/RST lost or never sent) gets torn
+	// down at the TCP layer instead of sitting idle forever. Used by
+	// the EC sockets on both ends — see CECMuleSocket / CECServerSocket.
+	// Idle seconds before the kernel starts probing, the interval
+	// between probes, and how many probes before declaring the peer
+	// dead.  Effective only on POSIX (TCP_KEEPIDLE / TCP_KEEPINTVL /
+	// TCP_KEEPCNT) and Windows (SIO_KEEPALIVE_VALS; only idle +
+	// interval are settable, count uses the system default). No-op if
+	// the underlying socket is not open.
+	void EnableTcpKeepalive(int idleSec, int probeIntervalSec, int probeCount);
+
 	// Handlers
 	virtual void OnConnect(int) {}
 	virtual void OnSend(int) {}
 	virtual void OnReceive(int) {}
-	virtual void OnLost() {}
+	// Int argument is unused — exists to give the CLibSocket-layer
+	// hook a different signature from CECSocket::OnLost(), so a class
+	// that multi-inherits from both (CECMuleSocket) can override the
+	// CLibSocket-side hook unambiguously and forward to the EC-layer
+	// OnLost().  Without that disambiguation, the Asio reactor's
+	// EOF-on-read dispatch lands on the empty CLibSocket::OnLost{}
+	// instead of CRemoteConnect / CECServerSocket overrides.
+	virtual void OnLost(int) {}
 	virtual void OnProxyEvent(int) {}
 
 private:
-	// Replace the internal socket
-	void	LinkSocketImpl(class CAsioSocketImpl *);
+	// Replace the internal socket. Takes ownership of the passed shared_ptr.
+	void	LinkSocketImpl(std::shared_ptr<class CAsioSocketImpl>);
 
-	class CAsioSocketImpl * m_aSocket;
+	// shared_ptr so the asio impl can outlive this wrapper for as long as
+	// any in-flight async callback still holds a shared_from_this() ref.
+	// Required to fix the wake-from-sleep use-after-free crash (issue #384).
+	std::shared_ptr<class CAsioSocketImpl> m_aSocket;
 	void LastCount();	// No. We don't have this. We return it directly with Read() and Write()
 	bool Error() const;	// Only use LastError
 };
@@ -162,7 +183,9 @@ public:
 	// Do we have a socket available if AcceptWith() is called ?
 	bool	SocketAvailable();
 private:
-	class CAsioSocketServerImpl * m_aServer;
+	// shared_ptr for the same reason as CLibSocket::m_aSocket — pending
+	// async_accept completions must keep the impl alive past wrapper death.
+	std::shared_ptr<class CAsioSocketServerImpl> m_aServer;
 };
 
 
@@ -195,7 +218,10 @@ public:
 	bool	BlocksWrite() const { return false; }
 
 private:
-	class	CAsioUDPSocketImpl * m_aSocket;
+	// shared_ptr so the asio impl can outlive this wrapper for as long as
+	// any in-flight async callback still holds a shared_from_this() ref.
+	// Required to fix the wake-from-sleep use-after-free crash (issue #384).
+	std::shared_ptr<class CAsioUDPSocketImpl> m_aSocket;
 	void	LastCount();	// block this
 	bool	Error() const;	// Only use LastError
 };
@@ -216,168 +242,5 @@ private:
 };
 
 
-#else /* ASIO_SOCKETS */
-
-// use wx sockets
-
-#include <wx/socket.h>
-#include "NetworkFunctions.h"		// Needed for StringIPtoUint32
-
-typedef wxSocketFlags muleSocketFlags;
-
-// Socket flags
-#define MULE_SOCKET_NONE		wxSOCKET_NONE
-#define MULE_SOCKET_NOWAIT_READ		wxSOCKET_NOWAIT_READ
-#define MULE_SOCKET_NOWAIT_WRITE	wxSOCKET_NOWAIT_WRITE
-#define MULE_SOCKET_NOWAIT		wxSOCKET_NOWAIT
-#define MULE_SOCKET_WAITALL_READ	wxSOCKET_WAITALL_READ
-#define MULE_SOCKET_WAITALL_WRITE	wxSOCKET_WAITALL_WRITE
-#define MULE_SOCKET_WAITALL		wxSOCKET_WAITALL
-#define MULE_SOCKET_BLOCK		wxSOCKET_BLOCK
-#define MULE_SOCKET_REUSEADDR		wxSOCKET_REUSEADDR
-#define MULE_SOCKET_BROADCAST		wxSOCKET_BROADCAST
-#define MULE_SOCKET_NOBIND		wxSOCKET_NOBIND
-
-// Socket events
-#define MULE_SOCKET_CONNECTION		wxSOCKET_CONNECTION
-#define MULE_SOCKET_INPUT		wxSOCKET_INPUT
-#define MULE_SOCKET_OUTPUT		wxSOCKET_OUTPUT
-#define MULE_SOCKET_LOST		wxSOCKET_LOST
-
-class CLibSocket : public wxSocketClient
-{
-public:
-	CLibSocket(wxSocketFlags flags = 0) : wxSocketClient(flags), m_isDestroying(false) {}
-
-	// not actually called
-	const wxChar * GetIP() const { return wxEmptyString; }
-	void EventProcessed() {}
-	bool GetProxyState() const { return false; }
-	// unused Handlers
-	virtual void OnConnect(int) {}
-	virtual void OnSend(int) {}
-	virtual void OnReceive(int) {}
-	virtual void OnLost() {}
-	virtual void OnProxyEvent(int) {}
-
-	// methods using amuleIPV4Address
-	bool Connect(amuleIPV4Address& adr, bool wait);		// Yes. adr is not const.
-	bool GetPeer(amuleIPV4Address& adr);
-	void SetLocal(amuleIPV4Address& local);				// Same here.
-
-	// Get last error, 0 == no error
-	// BLOCK is also not an error!
-	int	LastError() const
-	{
-		int ret = 0;
-		if (wxSocketClient::Error()) {
-			ret = wxSocketClient::LastError();
-			if (ret == wxSOCKET_WOULDBLOCK) {
-				ret = 0;
-			}
-		}
-		return ret;
-	}
-
-	// Check if socket is currently blocking for read or write
-	bool	BlocksRead() const
-	{
-		return wxSocketClient::Error() && wxSocketClient::LastError() == wxSOCKET_WOULDBLOCK;
-	}
-
-	bool	BlocksWrite() const { return BlocksRead(); }	// no difference here
-
-	uint32 Read(void *buffer, wxUint32 nbytes)
-	{
-		wxSocketClient::Read(buffer, nbytes);
-		return wxSocketClient::LastCount();
-	}
-
-	uint32 Write(const void *buffer, wxUint32 nbytes)
-	{
-		wxSocketClient::Write(buffer, nbytes);
-		return wxSocketClient::LastCount();
-	}
-
-	void	Destroy()
-	{
-		if (!m_isDestroying) {
-			m_isDestroying = true;
-			SetNotify(0);
-			Notify(false);
-			Close(); // Destroy is supposed to call Close(), but.. it doesn't hurt.
-			wxSocketClient::Destroy();
-		}
-	}
-
-	bool	IsDestroying() const { return m_isDestroying; }
-
-	// Get peer address (better API than wx)
-	wxString	GetPeer()
-	{
-		wxIPV4address adr;
-		wxSocketClient::GetPeer(adr);
-		return adr.IPAddress();
-	}
-
-	uint32		GetPeerInt() { return StringIPtoUint32(GetPeer()); }
-
-private:
-	bool	m_isDestroying;		// true if Destroy() was called
-
-	void LastCount();	// block this
-	bool Error() const;	// Only use LastError
-};
-
-
-class CLibSocketServer : public wxSocketServer
-{
-public:
-	CLibSocketServer(const amuleIPV4Address &address, wxSocketFlags flags);
-
-	CLibSocket * Accept(bool wait) { return static_cast<CLibSocket*>(wxSocketServer::Accept(wait)); }
-
-	bool SocketAvailable() { return true; }
-
-	virtual	void OnAccept() {}
-};
-
-
-class CLibUDPSocket : public wxDatagramSocket
-{
-public:
-	CLibUDPSocket(amuleIPV4Address &address, wxSocketFlags flags);
-
-	virtual uint32 RecvFrom(amuleIPV4Address& addr, void* buf, uint32 nBytes);
-
-	virtual uint32 SendTo(const amuleIPV4Address& addr, const void* buf, uint32 nBytes);
-
-	// Get last error, 0 == no error
-	int	LastError() const
-	{
-		int ret = 0;
-		if (wxDatagramSocket::Error()) {
-			ret = wxDatagramSocket::LastError();
-			if (ret == wxSOCKET_WOULDBLOCK) {
-				ret = 0;
-			}
-		}
-		return ret;
-	}
-
-	// Check if socket is currently blocking for write
-	// I wonder if this EVER returns true (see Asio)
-	bool	BlocksWrite() const
-	{
-		return wxDatagramSocket::Error() && wxDatagramSocket::LastError() == wxSOCKET_WOULDBLOCK;
-	}
-
-private:
-	void LastCount();	// block this
-	bool Error() const;	// Only use LastError
-};
-
-
-#endif /* ASIO_SOCKETS */
 
 #endif /* __LIBSOCKET_H__ */

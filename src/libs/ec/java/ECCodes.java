@@ -1,7 +1,7 @@
 // 
 //  This file is part of the aMule Project.
 // 
-//  Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+//  Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // 
 //  Any parts of this program derived from the xMule, lMule or eMule project,
 //  or contributed by third-party developers are copyrighted by their
@@ -152,7 +152,7 @@ public final static short 	EC_TAG_STATS_KAD_INDEXED_SOURCES          = 0x020F;
 public final static short 	EC_TAG_STATS_KAD_INDEXED_KEYWORDS         = 0x0210;
 public final static short 	EC_TAG_STATS_KAD_INDEXED_NOTES            = 0x0211;
 public final static short 	EC_TAG_STATS_KAD_INDEXED_LOAD             = 0x0212;
-public final static short 	EC_TAG_STATS_KAD_IP_ADRESS                = 0x0213;
+public final static short 	EC_TAG_STATS_KAD_IP_ADDRESS               = 0x0213;
 public final static short 	EC_TAG_STATS_BUDDY_STATUS                 = 0x0214;
 public final static short 	EC_TAG_STATS_BUDDY_IP                     = 0x0215;
 public final static short 	EC_TAG_STATS_BUDDY_PORT                   = 0x0216;
@@ -368,6 +368,7 @@ public final static short 		EC_TAG_DIRECTORIES_INCOMING               = 0x1A01;
 public final static short 		EC_TAG_DIRECTORIES_TEMP                   = 0x1A02;
 public final static short 		EC_TAG_DIRECTORIES_SHARED                 = 0x1A03;
 public final static short 		EC_TAG_DIRECTORIES_SHARE_HIDDEN           = 0x1A04;
+public final static short 		EC_TAG_DIRECTORIES_AUTO_RESCAN            = 0x1A05;
 public final static short 	EC_TAG_PREFS_STATISTICS                   = 0x1B00;
 public final static short 		EC_TAG_STATSGRAPH_WIDTH                   = 0x1B01;
 public final static short 		EC_TAG_STATSGRAPH_SCALE                   = 0x1B02;
@@ -378,6 +379,11 @@ public final static short 		EC_TAG_STATTREE_NODE                      = 0x1B06;
 public final static short 		EC_TAG_STAT_NODE_VALUE                    = 0x1B07;
 public final static short 		EC_TAG_STAT_VALUE_TYPE                    = 0x1B08;
 public final static short 		EC_TAG_STATTREE_NODEID                    = 0x1B09;
+public final static short 		EC_TAG_STATSGRAPH_DATA_CONN               = 0x1B0A;
+public final static short 		EC_TAG_STATSGRAPH_SESSION_DL              = 0x1B0B;
+public final static short 		EC_TAG_STATSGRAPH_SESSION_UL              = 0x1B0C;
+public final static short 		EC_TAG_STATSGRAPH_SESSION_KAD             = 0x1B0D;
+public final static short 		EC_TAG_STATSGRAPH_SESSION_TIMESPAN        = 0x1B0E;
 public final static short 	EC_TAG_PREFS_SECURITY                     = 0x1C00;
 public final static short 		EC_TAG_SECURITY_CAN_SEE_SHARES            = 0x1C01;
 public final static short 		EC_TAG_IPFILTER_CLIENTS                   = 0x1C02;

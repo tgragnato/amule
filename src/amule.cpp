@@ -74,6 +74,7 @@
 #include "Statistics.h"			// Needed for CStatistics
 #include "TerminationProcessAmuleweb.h"	// Needed for CTerminationProcessAmuleweb
 #include "ThreadTasks.h"
+#include "PartFileHashThread.h"
 #include "UploadQueue.h"		// Needed for CUploadQueue
 #include "UploadBandwidthThrottler.h"
 #include "UserEvents.h"
@@ -1217,6 +1218,25 @@ void CamuleApp::OnFinishedHashing(CHashingEvent& evt)
 }
 
 
+void CamuleApp::OnPartFileHashResult(CPartFileHashResultEvent& evt)
+{
+	if (m_app_state == APP_STATE_SHUTTINGDOWN || !theApp || !theApp->IsRunning()) {
+		return;
+	}
+
+	CPartFile* file = downloadqueue->GetFileByID(evt.FileHash());
+	if (!file) {
+		AddDebugLogLineN(logPartFile, CFormat(
+			"Hash result for part %u: file no longer in download queue, dropping")
+			% evt.PartNumber());
+		return;
+	}
+
+	file->OnAsyncHashComplete(evt.PartNumber(), evt.Ok(),
+		evt.FromAICHRecoveryDataAvailable());
+}
+
+
 void CamuleApp::OnFinishedAICHHashing(CHashingEvent& evt)
 {
 	wxCHECK_RET(evt.GetResult(), wxT("No result of AICH-hashing"));
@@ -1243,8 +1263,8 @@ void CamuleApp::OnFinishedCompletion(CCompletionEvent& evt)
 	wxCHECK_RET(completed, wxT("Completion event sent for unspecified file"));
 	wxASSERT_MSG(downloadqueue->IsPartFile(completed), wxT("CCompletionEvent for unknown partfile."));
 
-	completed->CompleteFileEnded(evt.ErrorOccured(), evt.GetFullPath());
-	if (evt.ErrorOccured()) {
+	completed->CompleteFileEnded(evt.ErrorOccurred(), evt.GetFullPath());
+	if (evt.ErrorOccurred()) {
 		CUserEvents::ProcessEvent(CUserEvents::ErrorOnCompletion, completed);
 	}
 
@@ -1632,7 +1652,7 @@ uint32 CamuleApp::GetKadIndexedLoad() const
 
 
 // True IP of machine
-uint32 CamuleApp::GetKadIPAdress() const
+uint32 CamuleApp::GetKadIPAddress() const
 {
 	return wxUINT32_SWAP_ALWAYS(Kademlia::CKademlia::GetPrefs()->GetIPAddress());
 }
@@ -1961,8 +1981,8 @@ uint32 CamuleApp::GetID() const {
 	return ID;
 }
 
-DEFINE_LOCAL_EVENT_TYPE(wxEVT_CORE_FINISHED_HTTP_DOWNLOAD)
-DEFINE_LOCAL_EVENT_TYPE(wxEVT_CORE_SOURCE_DNS_DONE)
-DEFINE_LOCAL_EVENT_TYPE(wxEVT_CORE_UDP_DNS_DONE)
-DEFINE_LOCAL_EVENT_TYPE(wxEVT_CORE_SERVER_DNS_DONE)
+wxDEFINE_EVENT(wxEVT_CORE_FINISHED_HTTP_DOWNLOAD, wxEvent);
+wxDEFINE_EVENT(wxEVT_CORE_SOURCE_DNS_DONE, wxEvent);
+wxDEFINE_EVENT(wxEVT_CORE_UDP_DNS_DONE, wxEvent);
+wxDEFINE_EVENT(wxEVT_CORE_SERVER_DNS_DONE, wxEvent);
 // File_checked_for_headers

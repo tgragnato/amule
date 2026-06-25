@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -183,8 +183,8 @@ public:
 	CUpDownClient* FindClientByECID(uint32 ecid) const;
 
 
-	//! The list-type used to store clients IPs and other information
-	typedef std::map<uint32, uint32> ClientMap;
+	//! The list-type used to store clients IPs and ban time information
+	typedef std::map<uint32, uint64> ClientMap;
 
 
 	/**
@@ -201,7 +201,7 @@ public:
 	/**
 	 * Returns the number of tracked client.
 	 *
-	 * @param dwIP The IP-adress which of the clients.
+	 * @param dwIP The IP-address which of the clients.
 	 * @return The number of clients tracked at the specified IP.
 	 */
 	uint16	GetClientsFromIP(uint32 dwIP);
@@ -349,7 +349,7 @@ public:
 
 	// Direct Callback list
 	void	AddDirectCallbackClient(CUpDownClient *toAdd);
-	void	RemoveDirectCallback(CUpDownClient *toRemove) { m_currentDirectCallbacks.remove(CCLIENTREF(toRemove, wxEmptyString)); }
+	void	RemoveDirectCallback(CUpDownClient *toRemove) { m_currentDirectCallbacks.remove(CCLIENTREF(toRemove, "")); }
 	void	AddTrackCallbackRequests(uint32_t ip);
 	bool	AllowCallbackRequest(uint32_t ip) const;
 
@@ -417,15 +417,15 @@ private:
 	//! This is the map of banned clients.
 	ClientMap m_bannedList;
 	//! This variable is used to keep track of the last time the banned-list was pruned.
-	uint32	m_dwLastBannCleanUp;
+	uint64	m_dwLastBannCleanUp;
 
 	//! This is the map of tracked clients.
 	std::map<uint32, CDeletedClient*> m_trackedClientsList;
 	//! This keeps track of the last time the tracked-list was pruned.
-	uint32	m_dwLastTrackedCleanUp;
+	uint64	m_dwLastTrackedCleanUp;
 
 	//! This keeps track of the last time the client-list was pruned.
-	uint32 m_dwLastClientCleanUp;
+	uint64 m_dwLastClientCleanUp;
 
 	//! List of unusable sources.
 	CDeadSourceList	m_deadSources;
@@ -437,7 +437,7 @@ private:
 
 	typedef struct {
 		uint32 ip;
-		uint32 inserted;
+		uint64 inserted;
 	} IpAndTicks;
 	typedef std::list<IpAndTicks>	IpAndTicksList;
 	IpAndTicksList			m_firewallCheckRequests;

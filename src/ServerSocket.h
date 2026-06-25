@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -49,15 +49,20 @@ public:
 
 	void	ConnectToServer(CServer* server, bool bNoCrypt = false);
 	sint8	GetConnectionState()	const	{ return connectionstate; }
-	uint32  GetLastTransmission() const	{ return m_dwLastTransmission; }
+	uint64  GetLastTransmission() const	{ return m_dwLastTransmission; }
 	wxString info;
 
-	void	OnClose(int nErrorCode);
-	void	OnConnect(int nErrorCode);
-	void	OnReceive(int nErrorCode);
-	void	OnError(int nErrorCode);
-	bool	PacketReceived(CPacket* packet);
-	void	SendPacket(CPacket* packet, bool delpacket = true, bool controlpacket = true, uint32 actualPayloadSize = 0);
+	void	OnClose(int nErrorCode) override;
+	void	OnConnect(int nErrorCode) override;
+	void	OnReceive(int nErrorCode) override;
+	void	OnError(int nErrorCode) override;
+	bool	PacketReceived(CPacket* packet) override;
+
+	// Server control traffic is not subject to the global download
+	// bandwidth budget — search/source/MOTD packets are tiny and
+	// latency-sensitive.
+	bool	IsDownloadThrottled() const override { return false; }
+	void	SendPacket(CPacket* packet, bool delpacket = true, bool controlpacket = true, uint32 actualPayloadSize = 0) override;
 	bool	IsSolving() const { return m_IsSolving;};
 	void	OnHostnameResolved(uint32 ip);
 	CServer *GetServerConnected() const { return serverconnect->GetCurrentServer(); }
@@ -76,7 +81,7 @@ private:
 	int32	sizereceived;
 	char*	rbuffer;
 	bool	m_bIsDeleting;	// true: socket is already in deletion phase, don't destroy it in ::StopConnectionTry
-	uint32	m_dwLastTransmission;
+	uint64	m_dwLastTransmission;
 
 	bool m_IsSolving;
 

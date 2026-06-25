@@ -2,7 +2,7 @@
 // This file is part of the aMule Project.
 //
 // Copyright (c) 2003-2011 Alo Sarv ( madcat_@users.sourceforge.net )
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Timo Kujala ( tiku@users.sourceforge.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -27,16 +27,15 @@
 #ifndef GETTICKCOUNT_H
 #define GETTICKCOUNT_H
 
-#include "Types.h"		// Needed for uint32
+#include "Types.h"		// Needed for uint32, uint64
 
-uint32 GetTickCount();
+#ifdef _WIN32
+	// GetTickCount64 is a system function in Vista so rename it
+	#define GetTickCount64 GetTickCount_64
+#endif
 
-// Ideally, same than GetTickCount.
-// However, on GUI, GetTickCount does only work in
-// 20 msecs increment, and some classes need better.
 
-uint32 GetTickCountFullRes();
-
+//return units are milliseconds, not seconds!!!
 uint64 GetTickCount64();
 
 // Functions used to init the timer on GUI
@@ -46,6 +45,7 @@ void StartTickTimer();
 void StopTickTimer();
 
 // A cheap global time (in s) without any function calls updated in OnCoreTimer
+// It counts from app startup, so uint32 shall be enough for a 136 years long session
 extern uint32 TheTime;
 
 #endif // GETTICKCOUNT_H

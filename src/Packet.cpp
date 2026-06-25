@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -278,7 +278,7 @@ bool CPacket::UnPackPacket(uint32 uMaxDecompressedSize) {
 	// this should not happen yet. Leave a warning in the log.
 	if (prot == OP_ED2KV2PACKEDPROT) {
 		AddDebugLogLineN(logPacketErrors,
-			wxT("Received OP_ED2KV2PACKEDPROT."));
+			"Received OP_ED2KV2PACKEDPROT.");
 	}
 
 	uint32 nNewSize = size * 10 + 300;
@@ -315,7 +315,7 @@ void CPacket::Copy16ToDataBuffer(const void* data)
 
 void CPacket::CopyUInt32ToDataBuffer(uint32 data, unsigned int offset)
 {
-	wxCHECK_RET(offset <= size - sizeof(uint32), wxT("Bad offset in CopyUInt32ToDataBuffer."));
+	wxCHECK_RET(offset <= size - sizeof(uint32), "Bad offset in CopyUInt32ToDataBuffer.");
 	PokeUInt32( pBuffer + offset, data );
 }
 // File_checked_for_headers

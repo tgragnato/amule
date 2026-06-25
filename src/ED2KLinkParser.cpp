@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2003-2011 Alo Sarv ( madcat_@users.sourceforge.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -55,25 +55,21 @@ static string GetLinksFilePath(const string& configDir)
 
 #ifdef __APPLE__
 
-	std::string strDir;
-
-	FSRef fsRef;
-	if (FSFindFolder(kUserDomain, kApplicationSupportFolderType, kCreateFolder, &fsRef) == noErr) {
-		CFURLRef urlRef = CFURLCreateFromFSRef(NULL, &fsRef);
-		if (urlRef != NULL) {
-			UInt8 buffer[PATH_MAX + 1];
-			if (CFURLGetFileSystemRepresentation(urlRef, true, buffer, sizeof(buffer))) {
-				strDir.assign((char*) buffer);
-			}
-			CFRelease(urlRef) ;
-		}
-	}
-
-	return strDir + "/aMule/ED2KLinks";
+	// ~/Library/Application Support always exists on macOS >= 10.5 and
+	// is the user-domain equivalent of FSFindFolder(kUserDomain,
+	// kApplicationSupportFolderType, ...) that we used to call via the
+	// Carbon FSRef API (removed in 64-bit macOS).
+	const char* home = getenv("HOME");
+	std::string strDir = (home ? home : "");
+	return strDir + "/Library/Application Support/aMule/ED2KLinks";
 
 #else
 
-	return string( getenv("HOME") ) + "/.aMule/ED2KLinks";
+	// Mirror the macOS branch above: getenv may return NULL if HOME is
+	// unset (rare in practice, but constructing std::string(NULL) is
+	// undefined behaviour).
+	const char* home = getenv("HOME");
+	return string(home ? home : "") + "/.aMule/ED2KLinks";
 
 #endif
 }

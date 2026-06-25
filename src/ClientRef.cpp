@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2003-2011 Stu Redman ( sturedman@amule.org / http://www.amule.org )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -44,7 +44,7 @@
 CClientRef::CClientRef(const CClientRef& ref)
 {
 	m_client = ref.m_client;
-	ASSIGN_MFROM(wxT("copy ctor of ") + ref.m_from);
+	ASSIGN_MFROM("copy ctor of " + ref.m_from);
 	if (m_client) {
 		m_client->Link(MFROM);
 	}

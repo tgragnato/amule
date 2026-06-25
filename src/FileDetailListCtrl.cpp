@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -28,9 +28,9 @@
 
 #define wxLIST_STATE_DESELECTED 0x0000
 
-BEGIN_EVENT_TABLE(CFileDetailListCtrl, CMuleListCtrl)
+wxBEGIN_EVENT_TABLE(CFileDetailListCtrl, CMuleListCtrl)
 	EVT_LIST_ITEM_SELECTED(IDC_LISTCTRLFILENAMES, CFileDetailListCtrl::OnSelect) // Care for single selection
-END_EVENT_TABLE()
+wxEND_EVENT_TABLE()
 
 
 CFileDetailListCtrl::CFileDetailListCtrl(wxWindow * &parent, int id, const wxPoint & pos, wxSize siz, int flags):CMuleListCtrl(parent, id, pos, siz, flags)
@@ -47,7 +47,7 @@ CFileDetailListCtrl::CFileDetailListCtrl(wxWindow * &parent, int id, const wxPoi
 	SortList();
 }
 
-int CFileDetailListCtrl::SortProc(wxUIntPtr param1, wxUIntPtr param2, long sortData)
+int CFileDetailListCtrl::SortProc(wxUIntPtr param1, wxUIntPtr param2, wxIntPtr sortData)
 {
 	// Comparison for different sortings
 	SourcenameItem *item1 = reinterpret_cast<SourcenameItem*>(param1);

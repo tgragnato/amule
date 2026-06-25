@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -38,8 +38,8 @@
 #define	SOURCECLIENTREASKS			MIN2MS(40)	//40 mins
 #define	SOURCECLIENTREASKF			MIN2MS(5)	//5 mins
 #define	UDPSERVERSTATTIME		SEC2MS(5)	//5 secs
-#define	UDPSERVSTATREASKTIME	HR2MS(4.5)		//4 hours - eMule uses HR2S, we are based on GetTickCount, hence MS
-#define	UDPSERVSTATMINREASKTIME	MIN2MS(20)	//minimum time between two pings even when trying to force a premature ping for a new UDP key
+#define	UDPSERVSTATREASKTIME	HR2S(4.5)	//4.5 hours - server last ping timestamp. Stored on server.met, which follows the eMule format (seconds from epoch)
+#define	UDPSERVSTATMINREASKTIME	MIN2S(20)	//in seconds, same logic as UDPSERVSTATREASKTIME
 #define	MINCOMMONPENALTY		4 // For file sources reask
 
 #define	ED2KREPUBLISHTIME		MIN2MS(1)	//1 min
@@ -87,7 +87,7 @@ const uint32 EMBLOCKSIZE	= 184320u;
 
 // This 'identifier' is used for referencing shared part (incomplete) files with the OP_ASKSHAREDDIRS and related opcodes
 // it was introduced with eDonkeyHybrid and is considered as part of the protocol.
-#define OP_INCOMPLETE_SHARED_FILES wxT("!Incomplete Files")
+#define OP_INCOMPLETE_SHARED_FILES "!Incomplete Files"
 
 // ed2k search expression comparison operators
 // kad operators used to be different, but are the same since eMule 0.47a

@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2004-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
 // or contributed by third-party developers are copyrighted by their
@@ -32,11 +32,11 @@
 #include "Types.h"
 
 
-BEGIN_EVENT_TABLE(MuleGifCtrl, wxControl)
+wxBEGIN_EVENT_TABLE(MuleGifCtrl, wxControl)
 	EVT_TIMER(GIFTIMERID, MuleGifCtrl::OnTimer)
 	EVT_PAINT(MuleGifCtrl::OnPaint)
 	EVT_ERASE_BACKGROUND(MuleGifCtrl::OnErase)
-END_EVENT_TABLE()
+wxEND_EVENT_TABLE()
 
 class MuleGIFDecoder : public wxGIFDecoder
 {

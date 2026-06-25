@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -32,6 +32,7 @@
 class CMuleListCtrl;
 class wxCommandEvent;
 class CPartFile;
+class CKnownFile;
 
 /**
  * This dialog is used to display file-comments received from other clients.
@@ -45,7 +46,15 @@ public:
 	/**
 	 * Sorter function for the CMuleListCtrl used to contain the lists.
 	 */
-	static int wxCALLBACK SortProc(wxUIntPtr item1, wxUIntPtr item2, long sortData);
+	static int wxCALLBACK SortProc(wxUIntPtr item1, wxUIntPtr item2, wxIntPtr sortData);
+
+	/**
+	 * Drop every reference to `file` from any open instance of this
+	 * dialog before the CKnownFile / CPartFile is destroyed.
+	 * Pointer-value comparison only — `file` may already be freed.
+	 * Wired via MuleNotify::KnownFileBeingDestroyed (GuiEvents.cpp).
+	 */
+	static void DropReferencesTo(const CKnownFile* file);
 
 private:
 	void OnBnClickedApply(wxCommandEvent& evt);
@@ -68,7 +77,7 @@ private:
 	CMuleListCtrl* m_list;
 
 
-	DECLARE_EVENT_TABLE()
+	wxDECLARE_EVENT_TABLE();
 };
 
 #endif // COMMENTDIALOGLST_H

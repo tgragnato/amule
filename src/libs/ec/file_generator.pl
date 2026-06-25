@@ -4,7 +4,7 @@
 ## This file is part of the aMule Project
 ##
 ## Copyright (c) 2004-2011 Angel Vidal ( kry@amule.org )
-## Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+## Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License
@@ -346,7 +346,7 @@ sub write_cpp_enum_end {
 
 	print OUTPUT "\n};\n";
 
-	push @debugOut, "\t\tdefault: return CFormat(wxT(\"unknown %d 0x%x\")) % arg % arg;\n\t}\n}\n";
+	push @debugOut, "\t\tdefault: return CFormat(\"unknown %d 0x%x\") % arg % arg;\n\t}\n}\n";
 }
 
 
@@ -362,7 +362,7 @@ sub write_cpp_enum_line {
 
 	my $arg = $_[1];
 	$arg =~ s/\s//g;	# remove whitespace
-	push @debugOut, "\t\tcase $_[2]: return wxT(\"$arg\");";
+	push @debugOut, "\t\tcase $_[2]: return \"$arg\";";
 
 }
 

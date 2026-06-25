@@ -1252,7 +1252,7 @@ yyreduce:
   case 4:
 #line 55 "./Parser.y" /* yacc.c:1646  */
     {
-						yyerror(wxT("Undefined search expression error"));
+						yyerror("Undefined search expression error");
 						delete (yyvsp[-1].pexpr);
 						return 1;
 					}
@@ -1312,7 +1312,7 @@ yyreduce:
   case 10:
 #line 100 "./Parser.y" /* yacc.c:1646  */
     {
-						yyerror(wxT("Missing right operand for OR on search expression"));
+						yyerror("Missing right operand for OR on search expression");
 						delete (yyvsp[-2].pexpr);
 						return 1;
 					}
@@ -1322,7 +1322,7 @@ yyreduce:
   case 11:
 #line 106 "./Parser.y" /* yacc.c:1646  */
     {
-						yyerror(wxT("Missing operand for NOT on search expression"));
+						yyerror("Missing operand for NOT on search expression");
 						delete (yyvsp[-2].pexpr);
 						return 1;
 					}
@@ -1332,7 +1332,7 @@ yyreduce:
   case 12:
 #line 112 "./Parser.y" /* yacc.c:1646  */
     {
-						yyerror(wxT("Missing left parenthesis on search expression"));
+						yyerror("Missing left parenthesis on search expression");
 						return 1;
 					}
 #line 1346 "Parser.cpp" /* yacc.c:1646  */
@@ -1341,7 +1341,7 @@ yyreduce:
   case 13:
 #line 117 "./Parser.y" /* yacc.c:1646  */
     {
-						yyerror(wxT("Missing closing parenthesis on search expression"));
+						yyerror("Missing closing parenthesis on search expression");
 						delete (yyvsp[-1].pexpr);
 						return 1;
 					}
@@ -1351,7 +1351,7 @@ yyreduce:
   case 14:
 #line 123 "./Parser.y" /* yacc.c:1646  */
     {
-						yyerror(wxT("Missing left operand for AND on search expression"));
+						yyerror("Missing left operand for AND on search expression");
 						return 1;
 					}
 #line 1365 "Parser.cpp" /* yacc.c:1646  */
@@ -1360,7 +1360,7 @@ yyreduce:
   case 15:
 #line 128 "./Parser.y" /* yacc.c:1646  */
     {
-						yyerror(wxT("Missing left operand for OR on search expression"));
+						yyerror("Missing left operand for OR on search expression");
 						return 1;
 					}
 #line 1374 "Parser.cpp" /* yacc.c:1646  */
@@ -1369,7 +1369,7 @@ yyreduce:
   case 16:
 #line 133 "./Parser.y" /* yacc.c:1646  */
     {
-						yyerror(wxT("Missing left operand for NOT on search expression (?)"));
+						yyerror("Missing left operand for NOT on search expression (?)");
 						return 1;
 					}
 #line 1383 "Parser.cpp" /* yacc.c:1646  */

@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -187,7 +187,7 @@ public:
 	 * Writes a text-string to the file.
 	 *
 	 * @param str The string to be written.
-	 * @param encoding The text-ecoding, see EUtf8Str.
+	 * @param encoding The text-encoding, see EUtf8Str.
 	 * @param lenBytes The number of bytes used to store the string length.
 	 *
 	 * Valid values for the 'lenBytes' parameters is 0 bytes (no length field),

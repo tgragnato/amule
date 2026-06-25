@@ -1,7 +1,7 @@
 //
 // This file is part of the aMule Project.
 //
-// Copyright (c) 2003-2011 aMule Team ( admin@amule.org / http://www.amule.org )
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
 // Copyright (c) 2002-2011 Merkur ( devs@emule-project.net / http://www.emule-project.net )
 //
 // Any parts of this program derived from the xMule, lMule or eMule project,
@@ -27,7 +27,7 @@
 #define TYPES_H
 
 #ifndef USE_STD_STRING
-#include <wx/string.h>		// Needed for wxString and wxEmptyString
+#include <wx/string.h>		// Needed for wxString and ""
 #endif
 
 #include <list>			// Needed for std::list
@@ -119,7 +119,7 @@ typedef std::list<uint32>	ListOfUInts32;
 //
 
 #ifndef USE_STD_STRING
-static const wxString EmptyString = wxEmptyString;
+static const wxString EmptyString = "";
 #endif
 
 #ifndef __cplusplus
