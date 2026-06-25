@@ -20,6 +20,7 @@ build
 config.h
 docs/man/*.1
 po/POTFILES
+po/*.gmo
 src/amule
 src/amulecmd
 src/amuled
