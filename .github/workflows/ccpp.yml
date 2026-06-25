@@ -28,7 +28,7 @@ jobs:
     - name: Install some dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libboost-dev libcrypto++-dev libwxgtk3.2-dev
+        sudo apt-get install -y gettext libboost-dev libcrypto++-dev libwxgtk3.2-dev
 
     - name: Set reusable strings
       id: strings
