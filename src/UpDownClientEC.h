@@ -111,6 +111,7 @@ public:
 	uint32				GetUploadDatarate() const				{ return m_nUpDatarate; }
 	uint64				GetUploadedTotal() const;
 	const CKnownFile*	GetUploadFile() const					{ return m_uploadingfile; }
+	void				ClearUploadFileID()						{ m_uploadingfile = NULL; }
 	uint16				GetUploadQueueWaitingPosition() const	{ return m_waitingPosition; }
 	uint8				GetUploadState() const					{ return m_nUploadState; }
 	size_t				GetUpPartCount() const					{ return m_upPartStatus.size(); }

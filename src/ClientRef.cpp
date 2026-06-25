@@ -168,13 +168,13 @@ bool				WRAPC(IsFriend)
 bool				WRAPC(IsIdentified)
 bool				WRAPC(IsRemoteQueueFull)
 void				WRAPC(RequestSharedFileList)
+void				WRAPC(ClearUploadFileID)
 
 bool		CClientRef::IsUpPartAvailable(uint16 iPart) const { return m_client->IsUpPartAvailable(iPart); }
 void		CClientRef::SetFriend(CFriend* newfriend) const { m_client->SetFriend(newfriend); }
 void		CClientRef::SetFriendSlot(bool bNV) const { m_client->SetFriendSlot(bNV); }
 
 #ifndef CLIENT_GUI
-void				WRAPC(ClearUploadFileID)
 uint16				WRAPC(GetUDPPort)
 void		CClientRef::SetCommentDirty(bool bDirty) const { m_client->SetCommentDirty(bDirty); }
 #endif
