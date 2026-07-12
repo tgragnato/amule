@@ -1338,7 +1338,7 @@ void CGenericClientListCtrl::DrawSourceStatusBar(
 									? source.GetLastDownloadingPart() : 0xffff;
 		uint16 nextRequestedPart = source.GetNextRequestedPart();
 
-		for ( uint16 i = 0; i < partStatus.size(); i++ ) {
+		for ( uint32 i = 0; i < partStatus.size(); i++ ) {
 			uint64 uStart = PARTSIZE * i;
 			uint64 uEnd = uStart + reqfile->GetPartSize(i) - 1;
 
