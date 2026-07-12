@@ -4958,15 +4958,10 @@ void wxListMainWindow::SortItems( MuleListCtrlCompare fn, wxIntPtr data )
 
 void wxListMainWindow::OnScroll(wxScrollWinEvent& event)
 {
-      // wxScrolledWindows::OnScroll is deprecated in wx 3.0.0 and it does not exist anymore in 3.1.0.
-    // Please also notice that call to
-    // - wxScrolledWindow::OnScroll
-    // - HandleOnScroll
-    // have been removed in code present in
-    // src/generic/listctrl.cpp, wxListMainWindow::OnScroll
-    // of wxWidgets 3.0
-    // FIXME
-    HandleOnScroll( event );
+    // wxScrolledWindows::OnScroll is deprecated in wx 3.0.0 and it does not exist anymore in 3.1.0.
+    // The actual scrolling is already performed by the wxScrollHelperEvtHandler pushed onto this window,
+    // so this handler only needs to update its own state below.
+    event.Skip();
 
     // update our idea of which lines are shown when we redraw the window the
     // next time
