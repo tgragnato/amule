@@ -1429,7 +1429,10 @@ wxString CamuleApp::GetLog(bool reset)
 	if (tmp_buffer[0] && tmp_buffer[1]) {
 		str = wxString(UTF82unicode(tmp_buffer));
 	} else {
-		str = wxWCharBuffer((wchar_t *)tmp_buffer);
+		size_t numChars = len / sizeof(wxChar);
+		wxWCharBuffer wbuffer(numChars);
+		memcpy(wbuffer.data(), tmp_buffer, numChars * sizeof(wxChar));
+		str = wbuffer;
 	}
 
 	delete [] tmp_buffer;
