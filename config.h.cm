@@ -196,6 +196,7 @@
 
 /* Where the webserver finds it's themes */
 #cmakedefine WEBSERVERDIR "${WEBSERVERDIR}"
+#cmakedefine AMULE_MACOS_LOCALEDIR "${AMULE_MACOS_LOCALEDIR}"
 
 /* Compile-time install path of amuleapi's bundled static frontend.
    amuleapi falls back to this when [Server]/StaticRoot is empty. */

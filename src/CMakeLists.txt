@@ -421,6 +421,14 @@ if (BUILD_MONOLITHIC)
 			message(FATAL_ERROR "ApplicationServices not found")
 		endif()
 
+		target_link_libraries (amule
+			PRIVATE "-framework CoreServices"
+			PRIVATE "-framework ApplicationServices"
+			PRIVATE "-framework AppKit"
+		)
+	endif()
+
+	if (APPLE AND BUILD_MACOS_BUNDLE)
 		set_target_properties (amule PROPERTIES
 			MACOSX_BUNDLE TRUE
 			MACOSX_BUNDLE_BUNDLE_NAME "aMule"
@@ -438,17 +446,6 @@ if (BUILD_MONOLITHIC)
 		set_source_files_properties (${AMULE_ICNS} "${CMAKE_SOURCE_DIR}/LICENSE.md"
 			"${CMAKE_SOURCE_DIR}/docs/THIRDPARTY.md" PROPERTIES
 			MACOSX_PACKAGE_LOCATION "Resources"
-		)
-
-		target_link_libraries (amule
-			PRIVATE "-framework CoreServices"
-			PRIVATE "-framework ApplicationServices"
-			# AppKit: MacAppHelper.mm calls [NSApp setActivationPolicy:]
-			# (used by amuleDlg's tray-icon hide path to drop the Dock
-			# icon). Was implicitly satisfied by wx-3.2's wx-config
-			# --libs; wx-3.3 dropped that transitive link, so we now
-			# have to name AppKit ourselves.
-			PRIVATE "-framework AppKit"
 		)
 
 		# aMule performs HTTP downloads to user-configurable URLs
@@ -573,6 +570,7 @@ if (BUILD_MONOLITHIC)
 
 	install (TARGETS amule
 		RUNTIME DESTINATION bin
+		BUNDLE DESTINATION bin
 	)
 
 	# Legacy /usr/share/pixmaps/ fallback for desktops that don't
@@ -645,6 +643,14 @@ if (BUILD_REMOTEGUI)
 	endif()
 
 	if (APPLE)
+		target_link_libraries (amulegui
+			PRIVATE "-framework CoreServices"
+			PRIVATE "-framework ApplicationServices"
+			PRIVATE "-framework AppKit"
+		)
+	endif()
+
+	if (APPLE AND BUILD_MACOS_BUNDLE)
 		# amulegui is a GUI wxApp (remote-control UI) — bundle it as a
 		# .app so macOS gives it an icon in the Dock, a menu bar and
 		# normal application lifecycle events, matching the monolithic
@@ -667,13 +673,6 @@ if (BUILD_REMOTEGUI)
 		set_source_files_properties (${AMULEGUI_ICNS} "${CMAKE_SOURCE_DIR}/LICENSE.md"
 			"${CMAKE_SOURCE_DIR}/docs/THIRDPARTY.md" PROPERTIES
 			MACOSX_PACKAGE_LOCATION "Resources"
-		)
-
-		target_link_libraries (amulegui
-			PRIVATE "-framework CoreServices"
-			PRIVATE "-framework ApplicationServices"
-			# AppKit: see comment on the amule target above.
-			PRIVATE "-framework AppKit"
 		)
 
 		# Same ATS opt-out as the monolithic amule.app: wxWebRequest on
@@ -731,6 +730,7 @@ if (BUILD_REMOTEGUI)
 
 	install (TARGETS amulegui
 		RUNTIME DESTINATION bin
+		BUNDLE DESTINATION bin
 	)
 endif()
 

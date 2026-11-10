@@ -30,6 +30,7 @@ option (BUILD_DAEMON "compile aMule daemon version")
 option (BUILD_ED2K "compile aMule ed2k links handler" ON)
 option (BUILD_EVERYTHING "compile all parts of aMule")
 option (BUILD_MONOLITHIC "enable building of the monolithic aMule app" ON)
+option (BUILD_MACOS_BUNDLE "build macOS application bundles" OFF)
 
 option (BUILD_REMOTEGUI "compile aMule remote GUI")
 option (BUILD_WEBSERVER "compile aMule WebServer")
@@ -44,6 +45,10 @@ if (PREFIX)
 endif()
 
 include (GNUInstallDirs)
+
+if (APPLE AND NOT BUILD_MACOS_BUNDLE)
+	set (AMULE_MACOS_LOCALEDIR "${CMAKE_INSTALL_FULL_LOCALEDIR}")
+endif()
 
 set (PKGDATADIR "${CMAKE_INSTALL_DATADIR}/${PACKAGE}")
 

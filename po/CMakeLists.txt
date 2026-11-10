@@ -63,14 +63,7 @@ foreach (PO_FILE ${PO_FILES})
 		list (APPEND PO_BUILD ${PO_FILE}.po)
 		list (APPEND AMULE_TRANSLATIONS ${PO_FILE})
 
-		# aMule's InitLocale() (src/OtherFunctions.cpp) adds
-		# <DataDir>/locale as a wxLocale lookup prefix on macOS and
-		# Windows.  GetDataDir() resolves to the bundle's Resources dir
-		# on macOS and the directory containing the .exe on Windows, so
-		# the .mo catalogs need to live there — not under share/locale.
-		# Linux/*BSD use libintl's system search paths under
-		# ${CMAKE_INSTALL_LOCALEDIR}.
-		if (APPLE)
+		if (APPLE AND BUILD_MACOS_BUNDLE)
 			# Bundling into the .app happens in src/CMakeLists.txt
 			# via a POST_BUILD on the amule target, since `po` is
 			# processed before `src` and the target doesn't exist yet.

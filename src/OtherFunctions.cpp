@@ -1572,6 +1572,9 @@ void InitLocale(wxLocale &locale, int language)
 	// live under <bundle>/Contents/Resources, which is what GetResourcesDir() returns. On
 	// Windows both return the .exe's directory.
 	locale.AddCatalogLookupPathPrefix(JoinPaths(wxStandardPaths::Get().GetResourcesDir(), "locale"));
+#ifdef AMULE_MACOS_LOCALEDIR
+	locale.AddCatalogLookupPathPrefix(wxString::FromUTF8(AMULE_MACOS_LOCALEDIR));
+#endif
 #elif defined(__WXGTK__) || defined(__UNIX__)
 	// On Linux/*BSD the .mo catalogs are installed under
 	// ${CMAKE_INSTALL_PREFIX}/share/locale/<lang>/LC_MESSAGES/amule.mo, while libintl's default
