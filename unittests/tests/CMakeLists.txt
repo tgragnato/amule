@@ -152,7 +152,7 @@ if (BUILD_MONOLITHIC OR BUILD_REMOTEGUI)
 	add_executable (TextClearButtonTest
 		TextClearButtonTest.cpp
 		${CMAKE_SOURCE_DIR}/src/CamuleArtProvider.cpp
-		${CMAKE_SOURCE_DIR}/src/icons/icon_data.c
+		${AMULE_ICON_DATA_C}
 	)
 	target_include_directories (TextClearButtonTest PRIVATE ${CMAKE_SOURCE_DIR}/src)
 	target_link_libraries (TextClearButtonTest PRIVATE wxWidgets::CORE)
@@ -163,7 +163,7 @@ if (BUILD_MONOLITHIC OR BUILD_REMOTEGUI)
 		IconArtworkTest.cpp
 		${CMAKE_SOURCE_DIR}/src/CamuleArtProvider.cpp
 		${CMAKE_SOURCE_DIR}/src/MenuIcons.cpp
-		${CMAKE_SOURCE_DIR}/src/icons/icon_data.c
+		${AMULE_ICON_DATA_C}
 	)
 	target_include_directories (IconArtworkTest PRIVATE ${CMAKE_SOURCE_DIR}/src)
 	find_package (Threads REQUIRED)
@@ -3431,7 +3431,7 @@ if (TARGET wxWidgets::CORE)
 		ShutdownStatusTest.cpp
 		${CMAKE_SOURCE_DIR}/src/SplashScreen.cpp
 		${CMAKE_SOURCE_DIR}/src/CamuleArtProvider.cpp
-		${CMAKE_SOURCE_DIR}/src/icons/icon_data.c
+		${AMULE_ICON_DATA_C}
 		${CMAKE_SOURCE_DIR}/src/LoggerConsole.cpp
 	)
 	target_include_directories (ShutdownStatusTest PRIVATE

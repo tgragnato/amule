@@ -94,6 +94,7 @@ if (Python3_FOUND)
 else()
 	set (AMULE_ICON_DATA_C ${CMAKE_CURRENT_SOURCE_DIR}/icons/icon_data.c)
 endif()
+set (AMULE_ICON_DATA_C "${AMULE_ICON_DATA_C}" PARENT_SCOPE)
 
 add_custom_command (
 	OUTPUT ${EC_INCLUDE_DIR}/ECCodes.h

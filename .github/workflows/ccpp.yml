@@ -1,4 +1,4 @@
-name: C/C++ CI
+name: C/C++ CI and CodeQL
 
 on:
   push:
@@ -14,41 +14,67 @@ jobs:
       actions: read
       contents: read
       packages: read
-      security-events: read
+      security-events: write
       pull-requests: read
 
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04]
-        c_compiler: [gcc, clang]
         include:
-          - c_compiler: clang
+          - os: ubuntu-latest
+            c_compiler: clang
             cpp_compiler: clang++
-          - c_compiler: gcc
+          - os: ubuntu-latest
+            c_compiler: gcc
             cpp_compiler: g++
+          - os: macos-latest
+            c_compiler: clang
+            cpp_compiler: clang++
 
     steps:
-    - uses: actions/checkout@v7
-    - uses: lukka/get-cmake@latest
+      - uses: actions/checkout@v7
+      - uses: lukka/get-cmake@latest
+        if: runner.os == 'Linux'
 
-    - name: Install some dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gettext libboost-dev libcrypto++-dev libwxgtk3.2-dev
+      - name: Initialize CodeQL
+        if: github.event_name == 'push' && matrix.os == 'ubuntu-latest' && matrix.c_compiler == 'gcc'
+        uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          build-mode: manual
 
-    - name: Set reusable strings
-      id: strings
-      shell: bash
-      run: |
-        echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gettext libboost-dev libcrypto++-dev libglib2.0-dev libwxgtk3.2-dev
 
-    - name: Configure CMake
-      run: >
-        cmake -B ${{ steps.strings.outputs.build-output-dir }}
-        -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
-        -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
-        -S ${{ github.workspace }}
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install gettext boost cryptopp glib wxwidgets
 
-    - name: Build
-      run: cmake --build ${{ steps.strings.outputs.build-output-dir }}
+      - name: Set reusable strings
+        id: strings
+        shell: bash
+        run: |
+          echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+
+      - name: Configure CMake
+        run: >
+          cmake -B ${{ steps.strings.outputs.build-output-dir }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
+          -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
+          -DBUILD_TESTING=ON
+          -S ${{ github.workspace }}
+
+      - name: Build
+        run: cmake --build ${{ steps.strings.outputs.build-output-dir }}
+
+      - name: Test
+        run: ctest --test-dir ${{ steps.strings.outputs.build-output-dir }} --output-on-failure
+
+      - name: Perform CodeQL Analysis
+        if: github.event_name == 'push' && matrix.os == 'ubuntu-latest' && matrix.c_compiler == 'gcc'
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:c-cpp"
