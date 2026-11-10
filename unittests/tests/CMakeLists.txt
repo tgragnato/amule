@@ -147,6 +147,10 @@ add_test (NAME QuicCMakeConfigTest
 		-P ${CMAKE_CURRENT_SOURCE_DIR}/QuicCMakeConfigTest.cmake
 )
 
+if (Python3_FOUND)
+	set_source_files_properties (${AMULE_ICON_DATA_C} PROPERTIES GENERATED TRUE)
+endif()
+
 # Native icon rendering needs wx core and a display (skipped if unavailable).
 if (BUILD_MONOLITHIC OR BUILD_REMOTEGUI)
 	add_executable (TextClearButtonTest
@@ -156,6 +160,9 @@ if (BUILD_MONOLITHIC OR BUILD_REMOTEGUI)
 	)
 	target_include_directories (TextClearButtonTest PRIVATE ${CMAKE_SOURCE_DIR}/src)
 	target_link_libraries (TextClearButtonTest PRIVATE wxWidgets::CORE)
+	if (Python3_FOUND)
+		add_dependencies (TextClearButtonTest generate_icon_data)
+	endif()
 	add_test (NAME TextClearButtonTest COMMAND TextClearButtonTest)
 	set_tests_properties (TextClearButtonTest PROPERTIES SKIP_RETURN_CODE 77 LABELS "gui")
 
@@ -168,6 +175,9 @@ if (BUILD_MONOLITHIC OR BUILD_REMOTEGUI)
 	target_include_directories (IconArtworkTest PRIVATE ${CMAKE_SOURCE_DIR}/src)
 	find_package (Threads REQUIRED)
 	target_link_libraries (IconArtworkTest PRIVATE wxWidgets::CORE Threads::Threads)
+	if (Python3_FOUND)
+		add_dependencies (IconArtworkTest generate_icon_data)
+	endif()
 	if (APPLE)
 		target_sources (IconArtworkTest PRIVATE ${CMAKE_SOURCE_DIR}/src/MenuIcons_mac.mm)
 		target_link_libraries (IconArtworkTest PRIVATE "-framework AppKit")
@@ -3438,6 +3448,9 @@ if (TARGET wxWidgets::CORE)
 		${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/libs ${CMAKE_BINARY_DIR}/src/libs
 		${CMAKE_SOURCE_DIR}/src/include ${CMAKE_BINARY_DIR})
 	target_link_libraries (ShutdownStatusTest PRIVATE wxWidgets::CORE mulecommon)
+	if (Python3_FOUND)
+		add_dependencies (ShutdownStatusTest generate_icon_data)
+	endif()
 	add_test (NAME ShutdownStatusTest COMMAND ShutdownStatusTest)
 	set_tests_properties (ShutdownStatusTest PROPERTIES SKIP_RETURN_CODE 77)
 endif()

@@ -91,6 +91,7 @@ if (Python3_FOUND)
 		COMMENT "Embedding ${CMAKE_CURRENT_SOURCE_DIR}/icons -> icon_data.c"
 	)
 	set (AMULE_ICON_DATA_C ${CMAKE_CURRENT_BINARY_DIR}/icons/icon_data.c)
+	add_custom_target (generate_icon_data DEPENDS ${AMULE_ICON_DATA_C})
 else()
 	set (AMULE_ICON_DATA_C ${CMAKE_CURRENT_SOURCE_DIR}/icons/icon_data.c)
 endif()
