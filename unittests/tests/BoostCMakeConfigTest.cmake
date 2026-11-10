@@ -60,4 +60,19 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --build "${_work}/build" --config Rel
 if (NOT _result EQUAL 0)
 	message(FATAL_ERROR "Selected Boost headers did not reach the target:\n${_out}\n${_err}")
 endif()
+
+foreach (_configuration IN ITEMS monolithic amulecmd)
+	if (_configuration STREQUAL "monolithic")
+		set (_build_options -DBUILD_MONOLITHIC=ON -DBUILD_AMULECMD=OFF)
+	else()
+		set (_build_options -DBUILD_MONOLITHIC=OFF -DBUILD_AMULECMD=ON)
+	endif()
+	execute_process(COMMAND "${CMAKE_COMMAND}" -S "${AMULE_SOURCE_DIR}"
+		-B "${_work}/${_configuration}" ${_configure_args} ${_build_options}
+		-DBUILD_TESTING=OFF -DBUILD_ED2K=OFF -DCMAKE_DISABLE_FIND_PACKAGE_Boost=TRUE
+		RESULT_VARIABLE _result OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
+	if (_result EQUAL 0 OR NOT "${_out}${_err}" MATCHES "find_package for module Boost called with REQUIRED")
+		message(FATAL_ERROR "${_configuration} did not require Boost:\n${_out}\n${_err}")
+	endif()
+endforeach()
 file(REMOVE_RECURSE "${_work}")

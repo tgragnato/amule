@@ -82,7 +82,7 @@ if (BUILD_WEBSERVER)
 	include (cmake/png.cmake)
 endif()
 
-if (ENABLE_BOOST)
+if (NEED_LIB_MULESOCKET OR BUILD_TESTING)
 	include (cmake/boost.cmake)
 endif()
 

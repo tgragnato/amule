@@ -81,8 +81,8 @@ if (BUILD_AMULEAPI)
 	#   * cryptopp — `NEED_LIB_EC` (set below) implies `NEED_LIB_CRYPTO`,
 	#     which includes cmake/cryptopp.cmake; that file FATAL_ERRORs
 	#     on a missing `cryptlib.h`.
-	#   * Boost   — `cmake/boost.cmake` runs unconditionally at the
-	#     project root and uses `find_package(Boost CONFIG REQUIRED)`,
+	#   * Boost   — `cmake/boost.cmake` runs when the socket library is
+	#     needed and uses `find_package(Boost CONFIG REQUIRED)`,
 	#     which FATAL_ERRORs on miss.
 	# If a future refactor breaks either chain (e.g. moves Boost
 	# behind a conditional `if`), add an explicit `find_package(Boost
@@ -202,7 +202,6 @@ if (NEED_LIB_MULEAPPCOMMON)
 	set (NEED_LIB_MULEAPPCORE TRUE)
 	set (wx_NEED_BASE TRUE)
 else()
-	set (ENABLE_BOOST FALSE)
 	set (ENABLE_MMAP FALSE)
 	set (ENABLE_NLS FALSE)
 	set (BUNDLE_WX_CATALOGS FALSE)
