@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 15 15">
+  <rect x="0.8" y="0.8" width="13.4" height="13.4" rx="1.4" fill="#aad1ff" stroke="#0000ff" stroke-width="1.5"/>
+  <!-- the 'i' glyph, as paths (dot + serif stem) -->
+  <rect x="6.2" y="2.4" width="2.5" height="2.2" rx="0.4" fill="#0000ff"/>
+  <path d="M5.6 5.9 H8.7 V11 H9.6 V12.4 H5.6 V11 H6.5 V7.3 H5.6 Z" fill="#0000ff"/>
+</svg>

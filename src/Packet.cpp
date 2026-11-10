@@ -23,34 +23,49 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include <zlib.h>		// Needed for uLongf
+#include <zlib.h> // Needed for uLongf
 
-#include "Packet.h"				// Interface declarations
+#include "Packet.h" // Interface declarations
 
 #include <protocol/Protocols.h>
 
-#include "Logger.h"			// Needed for AddDebugLogLineN
-#include "MemFile.h"			// Needed for CMemFile
-#include "OtherStructs.h"		// Needed for Header_Struct
-#include "ArchSpecific.h"		// Needed for ENDIAN_*
+#include "Logger.h"       // Needed for AddDebugLogLineN
+#include "MemFile.h"      // Needed for CMemFile
+#include "OtherStructs.h" // Needed for Header_Struct
+#include "ArchSpecific.h" // Needed for ENDIAN_*
+#include <common/MuleDebug.h>
+#include <algorithm>
+#include <memory>
+
+namespace
+{
+// Match the legacy receive-header limit, leaving room for allocation overhead.
+constexpr uint32 MaxPacketPayload = 0x7fffffeeu;
+
+uint32 CheckedPayloadSize(uint64 bytes)
+{
+	MULE_VALIDATE_PARAMS(bytes <= MaxPacketPayload, "Packet payload is too large.");
+	return static_cast<uint32>(bytes);
+}
+} // namespace
 
 // Copy constructor
 CPacket::CPacket(CPacket &p)
 {
-	size		= p.size;
-	opcode		= p.opcode;
-	prot		= p.prot;
-	m_bSplitted	= p.m_bSplitted;
+	size = p.size;
+	opcode = p.opcode;
+	prot = p.prot;
+	m_bSplitted = p.m_bSplitted;
 	m_bLastSplitted = p.m_bLastSplitted;
-	m_bPacked	= p.m_bPacked;
-	m_bFromPF	= p.m_bFromPF;
+	m_bPacked = p.m_bPacked;
+	m_bFromPF = p.m_bFromPF;
 	memcpy(head, p.head, sizeof head);
-	tempbuffer	= NULL;
+	tempbuffer = NULL;
 	if (p.completebuffer) {
-		completebuffer	= new uint8_t[size + 10];;
-		pBuffer	= completebuffer + sizeof(Header_Struct);
+		completebuffer = new uint8_t[static_cast<size_t>(size) + 10];
+		pBuffer = completebuffer + sizeof(Header_Struct);
 	} else {
-		completebuffer	= NULL;
+		completebuffer = NULL;
 		if (p.pBuffer) {
 			pBuffer = new uint8_t[size];
 		} else {
@@ -58,77 +73,80 @@ CPacket::CPacket(CPacket &p)
 		}
 	}
 	if (pBuffer)
-		memcpy( pBuffer, p.pBuffer, size );
+		memcpy(pBuffer, p.pBuffer, size);
 }
 
 CPacket::CPacket(uint8 protocol)
 {
-	size		= 0;
-	opcode		= 0;
-	prot		= protocol;
-	m_bSplitted	= false;
+	size = 0;
+	opcode = 0;
+	prot = protocol;
+	m_bSplitted = false;
 	m_bLastSplitted = false;
-	m_bPacked	= false;
-	m_bFromPF	= false;
+	m_bPacked = false;
+	m_bFromPF = false;
 	memset(head, 0, sizeof head);
-	tempbuffer	= NULL;
-	completebuffer	= NULL;
-	pBuffer	= NULL;
+	tempbuffer = NULL;
+	completebuffer = NULL;
+	pBuffer = NULL;
 }
 
 // only used for receiving packets
-CPacket::CPacket(uint8_t* rawHeader, uint8_t *buf)
+CPacket::CPacket(uint8_t *rawHeader, uint8_t *buf)
 {
 	memset(head, 0, sizeof head);
-	Header_Struct* header = reinterpret_cast<Header_Struct*>(rawHeader);
-	size		= ENDIAN_SWAP_32(header->packetlength) - 1;
-	opcode		= header->command;
-	prot		= header->eDonkeyID;
-	m_bSplitted	= false;
+	Header_Struct *header = reinterpret_cast<Header_Struct *>(rawHeader);
+	const uint32 length = ENDIAN_SWAP_32(header->packetlength);
+	MULE_CHECK_THROW(
+		length >= 1 && length - 1 <= MaxPacketPayload, CInvalidPacket, "Invalid packet length.");
+	size = length - 1;
+	opcode = header->command;
+	prot = header->eDonkeyID;
+	m_bSplitted = false;
 	m_bLastSplitted = false;
-	m_bPacked	= false;
-	m_bFromPF	= false;
-	tempbuffer	= NULL;
-	completebuffer	= NULL;
-	pBuffer	= buf;
+	m_bPacked = false;
+	m_bFromPF = false;
+	tempbuffer = NULL;
+	completebuffer = NULL;
+	pBuffer = buf;
 }
 
-CPacket::CPacket(const CMemFile& datafile, uint8 protocol, uint8 ucOpcode)
+CPacket::CPacket(const CMemFile &datafile, uint8 protocol, uint8 ucOpcode)
 {
-	size		= datafile.GetLength();
-	opcode		= ucOpcode;
-	prot		= protocol;
-	m_bSplitted	= false;
+	size = CheckedPayloadSize(datafile.GetLength());
+	opcode = ucOpcode;
+	prot = protocol;
+	m_bSplitted = false;
 	m_bLastSplitted = false;
-	m_bPacked	= false;
-	m_bFromPF	= false;
+	m_bPacked = false;
+	m_bFromPF = false;
 	memset(head, 0, sizeof head);
 	tempbuffer = NULL;
-	completebuffer = new uint8_t[size + sizeof(Header_Struct)/*Why this 4?*/];
+	completebuffer = new uint8_t[size + sizeof(Header_Struct) /*Why this 4?*/];
 	pBuffer = completebuffer + sizeof(Header_Struct);
 
 	// Write contents of MemFile to buffer (while keeping original position in file)
-	off_t position = datafile.GetPosition();
+	const uint64 position = datafile.GetPosition();
 	datafile.Seek(0, wxFromStart);
 	datafile.Read(pBuffer, size);
 	datafile.Seek(position, wxFromStart);
 }
 
-CPacket::CPacket(int8 in_opcode, uint32 in_size, uint8 protocol, bool bFromPF)
+CPacket::CPacket(int8 in_opcode, uint64 in_size, uint8 protocol, bool bFromPF)
 {
-	size		= in_size;
-	opcode		= in_opcode;
-	prot		= protocol;
-	m_bSplitted	= false;
+	size = CheckedPayloadSize(in_size);
+	opcode = in_opcode;
+	prot = protocol;
+	m_bSplitted = false;
 	m_bLastSplitted = false;
-	m_bPacked	= false;
-	m_bFromPF	= bFromPF;
+	m_bPacked = false;
+	m_bFromPF = bFromPF;
 	memset(head, 0, sizeof head);
-	tempbuffer	= NULL;
-	if (in_size) {
-		completebuffer = new uint8_t[in_size + sizeof(Header_Struct) + 4 /*Why this 4?*/];
+	tempbuffer = NULL;
+	if (size) {
+		completebuffer = new uint8_t[static_cast<size_t>(size) + sizeof(Header_Struct) + 4];
 		pBuffer = completebuffer + sizeof(Header_Struct);
-		memset(completebuffer, 0, in_size + sizeof(Header_Struct) + 4 /*Why this 4?*/);
+		memset(completebuffer, 0, static_cast<size_t>(size) + sizeof(Header_Struct) + 4);
 	} else {
 		completebuffer = NULL;
 		pBuffer = NULL;
@@ -136,120 +154,129 @@ CPacket::CPacket(int8 in_opcode, uint32 in_size, uint8 protocol, bool bFromPF)
 }
 
 // only used for splitted packets!
-CPacket::CPacket(uint8_t* pPacketPart, uint32 nSize, bool bLast, bool bFromPF)
+CPacket::CPacket(uint8_t *pPacketPart, uint64 nSize, bool bLast, bool bFromPF)
 {
-	size		= nSize - sizeof(Header_Struct);
-	opcode		= 0;
-	prot		= 0;
-	m_bSplitted	= true;
-	m_bLastSplitted	= bLast;
-	m_bPacked	= false;
-	m_bFromPF	= bFromPF;
+	std::unique_ptr<uint8_t[]> ownedPacketPart(pPacketPart);
+	MULE_VALIDATE_PARAMS(nSize >= sizeof(Header_Struct), "Split packet is shorter than its header.");
+	size = CheckedPayloadSize(nSize - sizeof(Header_Struct));
+	opcode = 0;
+	prot = 0;
+	m_bSplitted = true;
+	m_bLastSplitted = bLast;
+	m_bPacked = false;
+	m_bFromPF = bFromPF;
 	memset(head, 0, sizeof head);
-	tempbuffer	= NULL;
-	completebuffer	= pPacketPart;
-	pBuffer		= NULL;
+	tempbuffer = NULL;
+	completebuffer = ownedPacketPart.release();
+	pBuffer = NULL;
 }
 
 CPacket::~CPacket()
 {
-	// Never deletes pBuffer when completebuffer is not NULL
+	// Never deletes pBuffer when completebuffer is not NULL. Not a redundant null-guard: pBuffer
+	// aliases into completebuffer when that is set, so exactly one of the two owns the allocation.
+	// NOLINTNEXTLINE(readability-delete-null-pointer)
 	if (completebuffer) {
-		delete [] completebuffer;
-	} else if (pBuffer) {
-	// On the other hand, if completebuffer is NULL and pBuffer is not NULL
-		delete [] pBuffer;
+		delete[] completebuffer;
+	} else {
+		// If completebuffer is NULL, pBuffer is ours to free (delete[] on a
+		// null pBuffer is a no-op).
+		delete[] pBuffer;
 	}
 
-	if (tempbuffer) {
-		delete [] tempbuffer;
-	}
+	delete[] tempbuffer;
 }
 
-uint32 CPacket::GetPacketSizeFromHeader(const uint8_t* rawHeader)
+uint32 CPacket::GetPacketSizeFromHeader(const uint8_t *rawHeader)
 {
-	const Header_Struct* header = reinterpret_cast<const Header_Struct*>(rawHeader);
+	const Header_Struct *header = reinterpret_cast<const Header_Struct *>(rawHeader);
 	uint32 size = ENDIAN_SWAP_32(header->packetlength);
-	if (size < 1 || size >= 0x7ffffff0u)
-		return 0;
+	if (size < 1 || size - 1 > MaxPacketPayload)
+		return InvalidPacketSize;
 	return size - 1;
 }
 
-void CPacket::CopyToDataBuffer(unsigned int offset, const uint8_t* data, unsigned int n)
+void CPacket::CopyToDataBuffer(unsigned int offset, const uint8_t *data, unsigned int n)
 {
-	wxASSERT(offset + n <= size + 1);
-	memcpy(pBuffer + offset, data, n);
+	wxCHECK_RET(offset <= size && n <= size - offset, "Bad span in CopyToDataBuffer.");
+	if (n) {
+		wxCHECK_RET(data && pBuffer, "Invalid buffer in CopyToDataBuffer.");
+		memcpy(pBuffer + offset, data, n);
+	}
 }
 
-uint8_t* CPacket::GetPacket() {
+uint8_t *CPacket::GetPacket()
+{
 	if (completebuffer) {
 		if (!m_bSplitted) {
 			memcpy(completebuffer, GetHeader(), sizeof(Header_Struct));
 		}
 		return completebuffer;
 	} else {
-		if (tempbuffer){
-			delete [] tempbuffer;
+		if (tempbuffer) {
+			delete[] tempbuffer;
 			tempbuffer = NULL;
 		}
 		tempbuffer = new uint8_t[size + sizeof(Header_Struct) + 4 /* why this 4?*/];
-		memcpy(tempbuffer    , GetHeader(), sizeof(Header_Struct));
-		memcpy(tempbuffer + sizeof(Header_Struct), pBuffer    , size);
+		memcpy(tempbuffer, GetHeader(), sizeof(Header_Struct));
+		memcpy(tempbuffer + sizeof(Header_Struct), pBuffer, size);
 		return tempbuffer;
 	}
 }
 
-uint8_t* CPacket::DetachPacket() {
+uint8_t *CPacket::DetachPacket()
+{
 	if (completebuffer) {
 		if (!m_bSplitted) {
 			memcpy(completebuffer, GetHeader(), sizeof(Header_Struct));
 		}
-		uint8_t* result = completebuffer;
+		uint8_t *result = completebuffer;
 		completebuffer = pBuffer = NULL;
 		return result;
-	} else{
-		if (tempbuffer){
+	} else {
+		if (tempbuffer) {
 			delete[] tempbuffer;
 			tempbuffer = NULL;
 		}
-		tempbuffer = new uint8_t[size+sizeof(Header_Struct)+4 /* Why this 4?*/];
-		memcpy(tempbuffer,GetHeader(),sizeof(Header_Struct));
-		memcpy(tempbuffer+sizeof(Header_Struct),pBuffer,size);
-		uint8_t* result = tempbuffer;
+		tempbuffer = new uint8_t[size + sizeof(Header_Struct) + 4 /* Why this 4?*/];
+		memcpy(tempbuffer, GetHeader(), sizeof(Header_Struct));
+		memcpy(tempbuffer + sizeof(Header_Struct), pBuffer, size);
+		uint8_t *result = tempbuffer;
 		tempbuffer = 0;
 		return result;
 	}
 }
 
-uint8_t* CPacket::GetHeader() {
-	wxASSERT( !m_bSplitted );
+uint8_t *CPacket::GetHeader()
+{
+	wxASSERT(!m_bSplitted);
 
-	Header_Struct* header = reinterpret_cast<Header_Struct*>(head);
+	Header_Struct *header = reinterpret_cast<Header_Struct *>(head);
 	header->command = opcode;
-	header->eDonkeyID =  prot;
+	header->eDonkeyID = prot;
 	header->packetlength = ENDIAN_SWAP_32(size + 1);
 
 	return head;
 }
 
-uint8_t* CPacket::GetUDPHeader() {
-	wxASSERT( !m_bSplitted );
+uint8_t *CPacket::GetUDPHeader()
+{
+	wxASSERT(!m_bSplitted);
 
 	memset(head, 0, 6);
-	UDP_Header_Struct* header = reinterpret_cast<UDP_Header_Struct*>(head);
-	header->eDonkeyID =  prot;
+	UDP_Header_Struct *header = reinterpret_cast<UDP_Header_Struct *>(head);
+	header->eDonkeyID = prot;
 	header->command = opcode;
 
 	return head;
 }
 
-
 void CPacket::PackPacket()
 {
 	wxASSERT(!m_bSplitted);
 
-	uLongf newsize = size + 300;
-	uint8_t* output = new uint8_t[newsize];
+	uLongf newsize = static_cast<uLongf>(size) + 300;
+	uint8_t *output = new uint8_t[newsize];
 
 	uint16 result = compress2(output, &newsize, pBuffer, size, Z_BEST_COMPRESSION);
 
@@ -271,29 +298,33 @@ void CPacket::PackPacket()
 	size = newsize;
 }
 
-
-bool CPacket::UnPackPacket(uint32 uMaxDecompressedSize) {
-	wxASSERT( prot == OP_PACKEDPROT || prot == OP_ED2KV2PACKEDPROT);
+bool CPacket::UnPackPacket(uint32 uMaxDecompressedSize)
+{
+	wxASSERT(prot == OP_PACKEDPROT || prot == OP_ED2KV2PACKEDPROT);
 	// OP_ED2KV2PACKEDPROT is experimental aMule test code,
 	// this should not happen yet. Leave a warning in the log.
 	if (prot == OP_ED2KV2PACKEDPROT) {
-		AddDebugLogLineN(logPacketErrors,
-			"Received OP_ED2KV2PACKEDPROT.");
+		AddDebugLogLineN(logPacketErrors, "Received OP_ED2KV2PACKEDPROT.");
 	}
 
-	uint32 nNewSize = size * 10 + 300;
+	const uint64 estimate = static_cast<uint64>(size) * 10 + 300;
+	uint32 nNewSize = static_cast<uint32>(std::min<uint64>(estimate, uMaxDecompressedSize));
 
-	if (nNewSize > uMaxDecompressedSize){
-		nNewSize = uMaxDecompressedSize;
-	}
-
-	uint8_t* unpack = new uint8_t[nNewSize];
+	uint8_t *unpack = new uint8_t[nNewSize];
 	uLongf unpackedsize = nNewSize;
-	uint16 result = uncompress(unpack, &unpackedsize, pBuffer, size);
+	int result = uncompress(unpack, &unpackedsize, pBuffer, size);
+	if (result == Z_BUF_ERROR && nNewSize < uMaxDecompressedSize) {
+		// Packed better than the 10x estimate: retry at the caller's limit.
+		delete[] unpack;
+		nNewSize = uMaxDecompressedSize;
+		unpack = new uint8_t[nNewSize];
+		unpackedsize = nNewSize;
+		result = uncompress(unpack, &unpackedsize, pBuffer, size);
+	}
 
 	if (result == Z_OK) {
-		wxASSERT( completebuffer == NULL );
-		wxASSERT( pBuffer != NULL );
+		wxASSERT(completebuffer == NULL);
+		wxASSERT(pBuffer != NULL);
 
 		size = unpackedsize;
 		delete[] pBuffer;
@@ -306,16 +337,15 @@ bool CPacket::UnPackPacket(uint32 uMaxDecompressedSize) {
 	return false;
 }
 
-
-void CPacket::Copy16ToDataBuffer(const void* data)
+void CPacket::Copy16ToDataBuffer(const void *data)
 {
-	md4cpy(pBuffer, data);
+	CopyToDataBuffer(0, static_cast<const uint8_t *>(data), 16);
 }
-
 
 void CPacket::CopyUInt32ToDataBuffer(uint32 data, unsigned int offset)
 {
-	wxCHECK_RET(offset <= size - sizeof(uint32), "Bad offset in CopyUInt32ToDataBuffer.");
-	PokeUInt32( pBuffer + offset, data );
+	wxCHECK_RET(pBuffer && size >= sizeof(uint32) && offset <= size - sizeof(uint32),
+		"Bad offset in CopyUInt32ToDataBuffer.");
+	PokeUInt32(pBuffer + offset, data);
 }
 // File_checked_for_headers

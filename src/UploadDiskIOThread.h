@@ -27,53 +27,83 @@
 #define UPLOADDISKIOTHREAD_H
 
 #include <list>
-#include <utility>		// Needed for std::pair
+#include <atomic>
+#include <memory>
+#include <set>
+#include <string>
+#include <map>
+#include <vector>
+#include "StorageReadPool.h"
+#include "UploadStorageMap.h"
+#include "UploadReadDiagnostics.h"
 
 #include <wx/thread.h>
 
 #include "Types.h"
-#include "FileArea.h"	// Needed for CFileArea
+#include "FileArea.h"      // Needed for CFileArea
+#include "FileAutoClose.h" // Needed for CFileAutoClose
+#include <common/Path.h>   // Needed for CPath
 
 class CPacket;
+class CPartFile;
 class CUpDownClient;
 
-// Mirrors eMule's OpenOvFile_Struct (UploadDiskIOThread.h:20-28)
-// HANDLE hFile replaced with aMule's file-open-on-demand model:
-// we don't cache file handles; CFileArea opens/closes as needed.
+// The coordinator owns cache metadata; only a worker with the storage permit
+// may open/read/close the handle. A request pins its entry until completion.
 struct OpenFile_Struct
 {
-	uint8    ucMD4FileHash[16];
-	uint32   nInUse;
-	uint64   uFileSize;
-	bool     bCompress;             // true if this file type should be compressed
+	uint8 ucMD4FileHash[16];
+	CFileAutoClose file;
+	CPath path;
+	std::string storage;
+	uint64 lastRead = 0;
+	bool cached = false;
 };
 
-struct Requested_Block_Struct;
+enum UploadReadResult
+{
+	READ_OK,
+	READ_DEFERRED,
+	READ_FAILED,
+	READ_OPEN_FAILED
+};
 
-// Mirrors eMule's OverlappedEx_Struct (UploadDiskIOThread.h:32-41)
-// OVERLAPPED removed — reads are synchronous on this thread via CFileArea.
 struct ReadRequest_Struct
 {
-	OpenFile_Struct*          pFileStruct;
-	CUpDownClient*            pClient;
-	uint64                    uStartOffset;
-	uint64                    uEndOffset;
-	Requested_Block_Struct*   pBlock;      // the block this IO is for (set in StartCreateNextBlockPackage)
-	CFileArea                 area;        // holds read buffer; replaces BYTE* pBuffer + OVERLAPPED
+	~ReadRequest_Struct();
+	void ReleasePartFile();
+	std::shared_ptr<OpenFile_Struct> pFileStruct; // complete files only
+	uint32 clientId = 0;
+	uint64 session = 0;
+	uint8 ucMD4FileHash[16];
+	uint64 uStartOffset = 0;
+	uint64 uEndOffset = 0;
+	CPartFile *pPartFile = nullptr;
+	CPath path;
+	std::string storage;
+	CFileArea area;
+	std::vector<uint8> data; // owned copy only when area was mapped
+	UploadReadResult result = READ_FAILED;
+	// Timing is enabled at submission and remains immutable on the worker.
+	uint64 diagnosticEpoch = 0;
+	std::atomic<uint64_t> readStarted{ 0 };
+	uint64_t readFinished = 0;
+	mutable bool pendingReported = false; // coordinator only
+	bool bCompress = false;
+	bool closeOnly = false;
+	bool continues = false;                       // the client's next block starts where this one ends
+	std::unique_ptr<UploadStorageMap> storageMap; // discovery job, without a file/client
+	std::vector<std::string> resolveDirectories;  // discovery job only
+	bool discoverNetwork = true;
 };
 
-// Packet + payload-size pair, used by the static packet-creation helpers.
-// Mirrors eMule's CPacketList + Packet::uStatsPayLoad approach; aMule's CPacket
-// has no uStatsPayLoad member so we carry the value alongside the pointer.
-typedef std::list< std::pair<CPacket*, uint32> > CPacketList;
-
-// Port of eMule's CUploadDiskIOThread (UploadDiskIOThread.h:48-86).
-// Windows primitives replaced with wxWidgets equivalents:
+// Port of eMule's CUploadDiskIOThread (UploadDiskIOThread.h:48-86). Windows primitives replaced
+// with wxWidgets equivalents:
 //   CWinThread           -> wxThread (joinable)
 //   CEvent               -> wxCondition + wxMutex
 //   WaitForMultipleObjects -> wxCondition::WaitTimeout()
-//   ReadFile(OVERLAPPED) -> CFileArea::ReadAt() (synchronous, on this thread)
-//   HANDLE file handles  -> aMule's CFileAutoClose (open per block)
+//   ReadFile(OVERLAPPED) -> bounded blocking workers, coordinated by this thread
+//   HANDLE file handles  -> CFileAutoClose cached per file in OpenFile_Struct
 //   CCriticalSection     -> wxMutex + wxMutexLocker
 class CUploadDiskIOThread : public wxThread
 {
@@ -81,36 +111,79 @@ public:
 	CUploadDiskIOThread();
 	~CUploadDiskIOThread();
 
-	void EndThread();                  // eMule ref: UploadDiskIOThread.cpp:77
-	void NewBlockRequestsAvailable();  // eMule ref: UploadDiskIOThread.h:55
-	void SocketNeedsMoreData();        // eMule ref: UploadDiskIOThread.h:56
-
-	// eMule ref: UploadDiskIOThread.h:72-73 — static packet creation helpers
-	// uploadDatarate (bytes/s) scales per-packet chunk size (10 KiB floor, 128 KiB ceiling).
-	static void CreateStandardPackets(const uint8_t* buffer, uint64 startOffset, uint64 endOffset, CPacketList& packetList, const uint8_t* fileHash, uint32 uploadDatarate = 0);
-	static void CreatePackedPackets(const uint8_t* buffer, uint64 startOffset, uint64 endOffset, CPacketList& packetList, const uint8_t* fileHash, uint32 uploadDatarate = 0);
+	void EndThread(); // eMule ref: UploadDiskIOThread.cpp:77
+	// Main thread. Measures how late the core timer runs, which any queued event also waits for.
+	void ObserveCoreTick(uint64 now);
+	void NewBlockRequestsAvailable(); // eMule ref: UploadDiskIOThread.h:55
+	void SocketNeedsMoreData();       // eMule ref: UploadDiskIOThread.h:56
 
 private:
-	void* Entry() override;            // replaces RunProc/RunInternal
+	void *Entry() override; // replaces RunProc/RunInternal
 
-	void StartCreateNextBlockPackage(CUpDownClient* client);           // eMule ref: line 185
-	void ReadCompletionRoutine(ReadRequest_Struct* req);               // eMule ref: line 369
-	bool ReleaseOpenFile(OpenFile_Struct* pFileStruct);                // eMule ref: line 498
+	using ReadResult = UploadReadResult;
+	void DispatchReads();
+	void ObserveDiagnostics(uint64 now);
+	void ReportDiagnostics(uint64 now);
+	void DrainCompletions(bool deliver);
+	void QueueIdleCloses();
+	std::unique_ptr<ReadRequest_Struct> PrepareRead(uint32 clientId);
+	static ReadResult ReadBlock(ReadRequest_Struct *req);
+	bool CommitRead(ReadRequest_Struct &req, ReadResult result);
+	bool ReadCompletionRoutine(ReadRequest_Struct &req); // true if payload was queued
 
-	volatile bool   m_bRun;            // eMule ref: m_bRun (line 77)
-	bool            m_bSignalThrottler;// eMule ref: m_bSignalThrottler (line 78)
+	bool m_diagnostics = false;
+	uint64 m_diagnosticEpoch = 0;
+	uint64 m_reportStarted = 0;
+	uint64 m_lastSample = 0;
+	std::map<std::string, UploadReadDiagnostics::Volume> m_volumes;
+	std::map<uint32, UploadReadDiagnostics::DispatchWait> m_waitingReads;
+	using SlotSamples =
+		std::array<uint64, static_cast<unsigned>(UploadReadDiagnostics::SlotState::Count)>;
+	SlotSamples m_slotSamples{};
+	std::map<uint32, SlotSamples> m_slotSamplesByClient;
+	// Main thread writes, this thread takes.
+	std::atomic<uint64> m_coreTicks{ 0 };
+	std::atomic<uint64> m_coreTickGapMaximum{ 0 };
+	std::atomic<uint64> m_coreTickGapsOverSecond{ 0 };
+	uint64 m_lastCoreTick = 0; // main thread only
+	uint64 m_slotSamplePasses = 0;
+	bool m_started = false;
+	std::atomic<bool> m_bRun{ false }; // eMule ref: m_bRun (line 77)
 
-	wxMutex         m_mutex;
-	wxCondition     m_condition;       // replaces m_eventNewBlockRequests + m_eventSocketNeedsData
+	wxMutex m_mutex;
+	wxCondition m_condition; // replaces m_eventNewBlockRequests + m_eventSocketNeedsData
 	// Sticky flags: set by Signal() callers, consumed by Entry() before sleeping.
 	// Prevents lost wakeups when signal arrives before WaitTimeout() is entered.
-	bool            m_bNewBlocksPending;   // set by NewBlockRequestsAvailable()
-	bool            m_bSocketNeedsPending; // set by SocketNeedsMoreData()
-	// m_eventAsyncIOFinished not needed — reads complete synchronously on this thread
+	bool m_bNewBlocksPending;   // set by NewBlockRequestsAvailable()
+	bool m_bSocketNeedsPending; // set by SocketNeedsMoreData()
 
-	std::list<OpenFile_Struct*>       m_listOpenFiles;   // eMule ref: line 83
-	std::list<ReadRequest_Struct*>    m_listFinishedIO;  // eMule ref: line 85
-	// m_listPendingIO not needed — reads are synchronous, go straight to m_listFinishedIO
+	std::unique_ptr<StorageReadPool<ReadRequest_Struct>> m_pool;
+	std::set<uint32> m_pendingClients;
+	std::map<uint32, uint64> m_retryAfter;
+	// Oldest successful dispatch wins, independently of activity on other volumes.
+	std::map<uint32, uint64> m_lastDispatch;
+	uint64 m_dispatchSequence = 0;
+	// A disk reads a client's next contiguous block without seeking, so a volume
+	// stays with that client for a short turn before the oldest dispatch wins.
+	struct Turn
+	{
+		uint32 client = 0;
+		unsigned reads = 0;
+		uint64 started = 0;
+		bool continues = false;
+	};
+	std::map<std::string, Turn> m_turns;
+	// Each client's last storage key, to skip it cheaply while that volume is busy.
+	std::map<uint32, std::string> m_clientStorage;
+	// Directories read from, resolved by each discovery job.
+	std::set<std::string> m_readDirectories;
+	UploadStorageMap m_storageMap;
+	uint64 m_storageRefreshed = 0;
+	bool m_storageMapReady = false;
+	// Resolve each spelled path once per mount-table snapshot, including busy volumes.
+	std::map<std::string, std::string> m_storageKeys;
+	bool m_needCacheSlot = false;
+	std::list<std::shared_ptr<OpenFile_Struct>> m_listOpenFiles;
 };
 
 #endif

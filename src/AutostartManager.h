@@ -27,48 +27,54 @@
 
 #include <wx/string.h>
 
-// Cross-platform "start aMule when the user logs in" toggle. The
-// per-OS store of record is:
+// Cross-platform "start aMule when the user logs in" toggle. The per-OS store of record is:
 //
 //   Windows : HKCU\Software\Microsoft\Windows\CurrentVersion\Run\aMule
-//   Linux   : $XDG_CONFIG_HOME/autostart/amule.desktop (per XDG spec)
+//   Linux   : $XDG_CONFIG_HOME/autostart/amule.desktop (per XDG spec); under Flatpak the
+//             host's autostart/<app id>.desktop, written by the Background portal
 //   macOS   : ~/Library/LaunchAgents/org.amule.amule.plist
 //
-// All three are per-user — no elevation required. Toggling reads/writes
-// the OS directly, never aMule.conf, so the OS is always the source of
-// truth (matches what the user sees in Task Manager / Login Items /
-// `systemctl --user list-unit-files` etc.).
+// All three are per-user -- no elevation required. Toggling reads and writes the OS directly, never
+// aMule.conf, so the OS is always the source of truth, matching what the user sees in Task Manager
+// / Login Items / `systemctl --user list-unit-files`.
+//
+// amule, amuled and amulegui share that one slot. Each binary only reports, removes or heals an
+// entry that starts itself; enabling one replaces whichever another had set.
 class AutostartManager
 {
 public:
-	// Returns true if an autostart entry for aMule exists in the
-	// OS's per-user store. Doesn't validate the registered path
-	// against the running binary (use SelfHealOnStartup() for that).
+	// True if the per-user entry starts this binary and the user has not switched it off in the
+	// OS's startup settings. Does not validate the registered path -- use SelfHealOnStartup()
+	// for that.
 	static bool IsEnabled();
 
-	// Writes/overwrites the autostart entry to point at the running
-	// binary's canonical path. Idempotent; returns true on success.
+	// Writes/overwrites the autostart entry to start this binary, at GetTarget(), switched on in
+	// the OS's startup settings too. Idempotent; returns true on success.
 	static bool Enable();
 
-	// Removes the autostart entry if present. Idempotent (no-op if
-	// already disabled); returns true on success.
+	// Removes the entry if it starts this binary. Idempotent; returns true on success.
 	static bool Disable();
 
-	// Called once from CamuleApp::OnInit. If an autostart entry
-	// exists AND its registered path differs from the canonical
-	// path of the currently-running binary, rewrites it so the
-	// next login launches the right binary. Handles the
-	// "user moved the AppImage / .app / install dir" case without
-	// requiring them to re-toggle the checkbox.
+	// Called once from CamuleApp::OnInit. If the entry starts this binary from another path,
+	// rewrites it to GetTarget() so the next login launches the right one. Handles a moved
+	// AppImage, .app or install dir without making the user re-toggle the checkbox, and keeps an
+	// entry the user switched off in the OS switched off.
 	//
-	// Does nothing if no entry exists — disabling autostart is
-	// always a deliberate user choice we don't second-guess.
+	// Does nothing if no entry exists -- disabling autostart is always a deliberate user
+	// choice.
 	static void SelfHealOnStartup();
 
-	// Resolves argv[0] to its canonical absolute path (realpath()
-	// on POSIX, GetModuleFileNameW() on Windows). Used by both the
-	// Enable() write and the SelfHealOnStartup() comparison.
+	// Resolves argv[0] to its canonical absolute path (realpath() on POSIX,
+	// GetModuleFileNameW() on Windows).
 	static wxString GetCanonicalExecutablePath();
+
+	// What the entry registers for this binary: its executable, its .app for the macOS GUIs, or
+	// the path an AppImage was started as. Empty when nothing on disk would start it.
+	static wxString GetTarget();
+
+	// Under Flatpak, asks the Background portal for permission to keep running with no window,
+	// which the portal otherwise kills on some desktops. No-op elsewhere.
+	static void RequestFlatpakBackground();
 };
 
 #endif // AUTOSTARTMANAGER_H

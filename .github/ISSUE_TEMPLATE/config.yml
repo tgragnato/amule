@@ -1,9 +1,8 @@
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
-  - name: ➡️ Please file new issues at the new repository
-    url: https://github.com/amule-org/amule/issues
+  - name: 💬 Discussions
+    url: https://github.com/amule-org/amule/discussions
     about: |
-      Issue tracking has moved to github.com/amule-org/amule. All new
-      issues should be filed there. This repository is kept as a mirror
-      of the codebase only; issues opened here are auto-closed and
-      locked because nobody monitors them.
+      Have a question, an idea, or want to chat with the community?
+      Try Discussions first — they're better suited to open-ended
+      topics than the issue tracker.

@@ -30,9 +30,8 @@ class CTimerThread;
 
 #include <wx/event.h>
 
-
 /**
- * Replacement for wxTimer as it doesn't work on non-X builds
+ * Replacement for wxTimer, which does not work on non-X builds.
  */
 class CTimer
 {
@@ -54,34 +53,28 @@ public:
 	bool IsRunning() const;
 
 	/**
-	 * Stops the timer.
-	 *
-	 * Note that this does not delete the actual thread
-	 * immediately, but no new events will be queued after
-	 * calling this function.
+	 * Stops the timer. The thread is not deleted immediately, but no new events are queued
+	 * after this call.
 	 */
 	void Stop();
 
 private:
-	CTimerThread* m_thread;
-	wxEvtHandler* m_owner;
+	CTimerThread *m_thread;
+	wxEvtHandler *m_owner;
 	int m_id;
 };
-
-
 
 class CTimerEvent : public wxEvent
 {
 public:
 	CTimerEvent(int id = 0);
 
-	virtual wxEvent* Clone() const;
+	virtual wxEvent *Clone() const;
 };
-
 
 wxDECLARE_EVENT(MULE_EVT_TIMER, wxEvent);
 
-typedef void (wxEvtHandler::*MuleTimerEventFunction)(CTimerEvent&);
+typedef void (wxEvtHandler::*MuleTimerEventFunction)(CTimerEvent &);
 
 #define EVT_MULE_TIMER(id, func) \
 	wx__DECLARE_EVT1(MULE_EVT_TIMER, id, wxEVENT_HANDLER_CAST(MuleTimerEventFunction, func))

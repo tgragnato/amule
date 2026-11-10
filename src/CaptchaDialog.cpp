@@ -22,33 +22,22 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
-#include "CaptchaDialog.h"	// Interface declarations
-#include "muuli_wdr.h"		// Needed for ID_CLOSEWND
+#include "CaptchaDialog.h" // Interface declarations
+#include "muuli_wdr.h"     // Needed for ID_CLOSEWND
 #include "GuiEvents.h"
 
-
-wxBEGIN_EVENT_TABLE(CCaptchaDialog,wxDialog)
+wxBEGIN_EVENT_TABLE(CCaptchaDialog, wxDialog)
 	EVT_BUTTON(wxID_OK, CCaptchaDialog::OnBnClose)
 wxEND_EVENT_TABLE()
 
-
 CCaptchaDialog::CCaptchaDialog(
-	wxWindow *parent,
-	const wxImage& captchaImage,
-	uint64 id)
-:
-wxDialog(
-	parent,
-	-1,
-	_("Enter Captcha"),
-	wxDefaultPosition,
-	wxDefaultSize,
-	wxDEFAULT_DIALOG_STYLE)
+	wxWindow *parent, const wxImage &captchaImage, CChatTarget id, uint32 challengeId)
+: wxDialog(parent, -1, _("Enter Captcha"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE)
 {
 	m_captchaBitmap = new wxBitmap(captchaImage);
 	m_id = id;
-	wxSizer* content = captchaDlg(this);
+	m_challengeId = challengeId;
+	wxSizer *content = captchaDlg(this);
 	OnInitDialog();
 	content->SetSizeHints(this);
 	content->Show(this, true);
@@ -60,30 +49,54 @@ CCaptchaDialog::~CCaptchaDialog()
 	delete m_captchaBitmap;
 }
 
-void CCaptchaDialog::OnBnClose(wxCommandEvent& WXUNUSED(evt))
+void CCaptchaDialog::CloseForPeer(wxWindow *parent, const CChatTarget &peer, uint32 keepId)
 {
-	Notify_ChatSendCaptcha(m_TextCtrl->GetLineText(0), m_id);
+	for (wxWindow *child : parent->GetChildren()) {
+		auto *dialog = dynamic_cast<CCaptchaDialog *>(child);
+		if (dialog && !dialog->IsBeingDeleted() && dialog->m_id == peer &&
+			(!keepId || dialog->m_challengeId != keepId)) {
+			dialog->Destroy();
+		}
+	}
+}
+
+bool CCaptchaDialog::Exists(wxWindow *parent, const CChatTarget &peer, uint32 challengeId)
+{
+	for (wxWindow *child : parent->GetChildren()) {
+		const auto *dialog = dynamic_cast<const CCaptchaDialog *>(child);
+		if (dialog && !dialog->IsBeingDeleted() && dialog->m_id == peer &&
+			dialog->m_challengeId == challengeId) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void CCaptchaDialog::OnBnClose(wxCommandEvent &WXUNUSED(evt))
+{
+	Notify_ChatSendCaptcha(m_TextCtrl->GetLineText(0), m_id, m_challengeId);
 	Destroy();
 }
 
-wxSizer * CCaptchaDialog::captchaDlg( wxWindow *parent )
+wxSizer *CCaptchaDialog::captchaDlg(wxWindow *parent)
 {
-    wxBoxSizer *item0 = new wxBoxSizer( wxVERTICAL );
+	wxBoxSizer *item0 = new wxBoxSizer(wxVERTICAL);
 
-    wxStaticBitmap *item1 = new wxStaticBitmap( parent, -1, *m_captchaBitmap, wxDefaultPosition, wxSize(160,60) );
-    item0->Add( item1, wxSizerFlags().Center().Border(wxALL, 5) );
+	wxStaticBitmap *item1 =
+		new wxStaticBitmap(parent, -1, *m_captchaBitmap, wxDefaultPosition, wxSize(160, 60));
+	item0->Add(item1, wxSizerFlags().Center().Border(wxALL, 5));
 
-	m_TextCtrl = new wxTextCtrl( parent, -1, "", wxDefaultPosition, wxSize(80,20));
-    item0->Add( m_TextCtrl, wxSizerFlags().Center().Border(wxALL, 5) );
+	m_TextCtrl = new wxTextCtrl(parent, -1, "", wxDefaultPosition, wxSize(80, 20));
+	item0->Add(m_TextCtrl, wxSizerFlags().Center().Border(wxALL, 5));
 
-    wxButton *item3 = new wxButton( parent, wxID_OK  );
-    item3->SetDefault();
-    item0->Add( item3, wxSizerFlags().Center().Border(wxALL, 5) );
+	wxButton *item3 = new wxButton(parent, wxID_OK);
+	item3->SetDefault();
+	item0->Add(item3, wxSizerFlags().Center().Border(wxALL, 5));
 
-    parent->SetSizer( item0 );
-    item0->SetSizeHints( parent );
+	parent->SetSizer(item0);
+	item0->SetSizeHints(parent);
 
-    return item0;
+	return item0;
 }
 
 bool CCaptchaDialog::OnInitDialog()

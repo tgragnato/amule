@@ -28,23 +28,52 @@
 
 #include "MuleTextCtrl.h"
 #include "MuleNotebook.h"
-#include "Types.h"				// Needed for uint16
+#include "ChatSessionStore.h"
 
 class CClientRef;
 class CFriend;
+class CECPacket;
 
+// Label for a chat peer the core sent no nickname for. Deliberately NOT translated: the same
+// label is rendered by the monolithic chat selector, amulegui and amuleapi's /chats, and the
+// API contract fixes it as English. Translating the GUI copies alone would show one
+// conversation under two names depending on which client you opened.
+wxString ChatPeerFallbackName(const CChatPeer &peer);
+
+#ifdef CLIENT_GUI
+// Builds a locally-originated target (from a friend or a live client), dropping the
+// hash when the daemon has not confirmed EC_TAG_CAN_CHAT_PEER_HASH. A hash-keyed local
+// tab would never match a poll reply from such a daemon, which never carries the hash
+// tag and always decodes a route-only CChatPeer -- so building the SAME shape here is
+// what keeps StartSessionByID() finding the existing tab instead of opening a second one.
+CChatTarget BuildLocalChatTarget(const CMD4Hash &hash, uint32 ip, uint16 port);
+
+// Adds whichever chat target tags this connection's capabilities and this target's known
+// route/hash allow: EC_TAG_CHAT_CLIENT_ID whenever the route is IPv4 -- the pre-hash addressing
+// mode, and also a dial hint alongside a hash -- and EC_TAG_CHAT_PEER_HASH only once the daemon
+// has confirmed EC_TAG_CAN_CHAT_PEER_HASH. An old daemon must never be sent a request it cannot
+// resolve at all, so the legacy id is never the one that gets dropped.
+void AddChatTargetTags(CECPacket &req, const CChatTarget &target);
+#endif
 
 /**
- * This class is used to display chat sessions.
+ * Displays chat sessions.
  */
 class CChatSession : public CMuleTextCtrl
 {
 public:
-	CChatSession(wxWindow *parent, wxWindowID id = -1, const wxString& value = "", const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxDefaultSize, long style = 0, const wxValidator& validator = wxDefaultValidator, const wxString& name = wxTextCtrlNameStr );
+	CChatSession(wxWindow *parent,
+		wxWindowID id = -1,
+		const wxString &value = "",
+		const wxPoint &pos = wxDefaultPosition,
+		const wxSize &size = wxDefaultSize,
+		long style = 0,
+		const wxValidator &validator = wxDefaultValidator,
+		const wxString &name = wxTextCtrlNameStr);
 	~CChatSession();
 
-	uint64	m_client_id;
-	bool	m_active;
+	CChatTarget m_client_id;
+	bool m_active;
 
 	/**
 	 * Appends the specified text.
@@ -53,29 +82,48 @@ public:
 	 * @param style The style of the new text.
 	 * @param newline If a newline should be added to the end of the line.
 	 *
-	 * If newline is false, then no newlines will be at the end of added text,
-	 * even if the passed string ends with newlines. Multiline strings are
-	 * broken into individual lines and each are timestamped with the same date.
+	 * With @a newline false the added text never ends in a newline, even if the passed string
+	 * does. Multiline strings are broken into individual lines, each timestamped with the same
+	 * date.
 	 */
-	void AddText( const wxString& text, const wxTextAttr& style, bool newline = true );
+	void AddText(const wxString &text, const wxTextAttr &style, bool newline = true);
 };
-
 
 class CChatSelector : public CMuleNotebook
 {
 public:
-	CChatSelector(wxWindow* parent, wxWindowID id, const wxPoint& pos, wxSize siz, long style);
-	virtual			~CChatSelector() {};
-	CChatSession*	StartSession(uint64 client_id, const wxString& client_name, bool show = true);
-	void			EndSession(uint64 client_id = 0);
-	CChatSession*	GetPageByClientID(uint64 client_id);
-	int				GetTabByClientID(uint64 client_id);
-	bool			ProcessMessage(uint64 sender_id, const wxString& message);
-	bool			SendMessage(const wxString& message, const wxString& client_name = "", uint64 to_id = 0);
-	void			ConnectionResult(bool success, const wxString& message, uint64 id);
-	void			RefreshFriend(uint64 toupdate_id, const wxString& new_name);
-	void			ShowCaptchaResult(uint64 id, bool ok);
-	bool			GetCurrentClient(CClientRef&) const;
+	CChatSelector(wxWindow *parent, wxWindowID id, const wxPoint &pos, wxSize siz, long style);
+	virtual ~CChatSelector() {};
+	CChatSession *StartSession(
+		const CChatTarget &client_id, const wxString &client_name, bool show = true);
+	void EndSession(const CChatTarget &client_id = {});
+	void RekeySession(const CChatTarget &old_id, const CChatTarget &new_id);
+	CChatSession *GetPageByClientID(const CChatTarget &client_id);
+	int GetTabByClientID(const CChatTarget &client_id);
+	bool ProcessMessage(const CChatTarget &sender_id, const wxString &message);
+
+	/**
+	 * Render one message the core's session store already holds.
+	 *
+	 * Distinct from ProcessMessage, which parses the "name|text" wire form and always announces
+	 * the message. This takes an already decoded message with its direction, and does NOT touch
+	 * the new-message blink -- the caller decides that, because replaying history on connect
+	 * must not light the Messages button up for messages already read elsewhere.
+	 */
+	void AppendStoredMessage(
+		const CChatTarget &gui_id, const wxString &name, const wxString &text, bool outgoing);
+	bool SendMessage(const wxString &message,
+		const wxString &client_name = "",
+		const CChatTarget &to_id = {},
+		uint32 challengeId = 0);
+	void ConnectionResult(bool success, const wxString &message, const CChatTarget &id);
+	void RefreshFriend(const CChatTarget &toupdate_id, const wxString &new_name);
+	void ShowCaptchaResult(const CChatTarget &id, bool ok);
+	// The active tab's peer and name; false when no tab is open.
+	bool GetCurrentPeer(CChatTarget &peer, wxString &name) const;
+#ifndef CLIENT_GUI
+	bool GetCurrentClient(CClientRef &) const;
+#endif
 };
 
 #endif

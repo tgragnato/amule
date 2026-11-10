@@ -25,34 +25,106 @@
 
 #include "MagnetURI.h"
 
-
 #ifdef USE_STD_STRING
-#	ifdef _T
-#		undef	_T
-#	endif
-#	ifdef _C
-#		undef _C
-#	endif
-#	define	_T(str)	str
-#	define	_C(ch)	ch
+#ifdef _T
+#undef _T
+#endif
+#ifdef _C
+#undef _C
+#endif
+#define _T(str) str
+#define _C(ch) ch
 #else
-	// wx/chartype.h defines _T
-#	define	_C(ch)	wxChar(ch)
+// wx/chartype.h defines _T
+#define _C(ch) wxChar(ch)
 #endif
 
-
-CMagnetURI::CMagnetURI(const STRING& uri)
+namespace
 {
-	if (uri.compare(0, 7, _T("magnet:")) == 0) {
+
+unsigned CharCode(char c)
+{
+	return static_cast<unsigned char>(c);
+}
+
+#ifndef USE_STD_STRING
+unsigned CharCode(const wxUniChar &c)
+{
+	return c.GetValue();
+}
+#endif
+
+unsigned AsciiLower(unsigned c)
+{
+	return (c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c;
+}
+
+// Schemes and URN namespace names are case-insensitive (RFC 3986 section 3.1, RFC 8141).
+// @a lowerPrefix is ASCII lower case.
+bool StartsWithNoCase(const STRING &s, const char *lowerPrefix)
+{
+	for (size_t i = 0; lowerPrefix[i] != '\0'; ++i) {
+		if (i >= s.length() ||
+			AsciiLower(CharCode(s[i])) != static_cast<unsigned char>(lowerPrefix[i])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// Decode identity/length fields only. The name stays escaped when embedded in
+// an ed2k link so an escaped pipe cannot become a structural field separator.
+STRING DecodeAsciiEscapes(const STRING &value)
+{
+	STRING decoded;
+	const auto hex = [](unsigned c) -> int {
+		c = AsciiLower(c);
+		if (c >= '0' && c <= '9') {
+			return static_cast<int>(c - '0');
+		}
+		if (c >= 'a' && c <= 'f') {
+			return static_cast<int>(c - 'a' + 10);
+		}
+		return -1;
+	};
+	for (size_t i = 0; i < value.length(); ++i) {
+		if (value[i] == _C('%') && value.length() - i > 2) {
+			const int high = hex(CharCode(value[i + 1]));
+			const int low = hex(CharCode(value[i + 2]));
+			if (high >= 0 && low >= 0 && high < 8) {
+				decoded.append(1, static_cast<char>(high * 16 + low));
+				i += 2;
+				continue;
+			}
+		}
+		decoded.append(1, value[i]);
+	}
+	return decoded;
+}
+
+} // namespace
+
+bool CMagnetURI::IsMagnet(const STRING &uri)
+{
+	return StartsWithNoCase(uri, "magnet:");
+}
+
+CMagnetURI::CMagnetURI(const STRING &uri)
+{
+	if (IsMagnet(uri)) {
 		size_t start = uri.find(_C('?'));
-		if (start == STRING::npos) start = uri.length();
+		if (start == STRING::npos)
+			start = uri.length();
 		while (start < uri.length() - 1) {
 			size_t end = uri.find(_C('&'), start + 1);
-			if (end == STRING::npos) end = uri.length();
+			if (end == STRING::npos)
+				end = uri.length();
 			size_t pos = uri.find(_C('='), start + 1);
-			if (pos == STRING::npos) pos = uri.length();
+			if (pos == STRING::npos)
+				pos = uri.length();
 			if (pos < end) {
-				m_fields.push_back(Field_Type(uri.substr(start + 1, pos - start - 1), uri.substr(pos + 1, end - pos - 1)));
+				m_fields.push_back(Field_Type(uri.substr(start + 1, pos - start - 1),
+					uri.substr(pos + 1, end - pos - 1)));
 			}
 			start = end;
 		}
@@ -76,7 +148,7 @@ STRING CMagnetURI::GetLink() const
 	return retval;
 }
 
-CMagnetURI::Value_List CMagnetURI::GetField(const STRING& name) const
+CMagnetURI::Value_List CMagnetURI::GetField(const STRING &name) const
 {
 	Value_List retval;
 
@@ -87,7 +159,6 @@ CMagnetURI::Value_List CMagnetURI::GetField(const STRING& name) const
 	}
 	return retval;
 }
-
 
 bool CMagnetED2KConverter::CanConvertToED2K() const
 {
@@ -100,24 +171,48 @@ bool CMagnetED2KConverter::CanConvertToED2K() const
 			continue;
 		}
 		if (it->first.compare(_T("xt")) == 0) {
-			if ((it->second.compare(0, 9, _T("urn:ed2k:")) == 0) ||
-			    (it->second.compare(0, 13, _T("urn:ed2khash:")) == 0))
-			{
+			const STRING urn = DecodeAsciiEscapes(it->second);
+			if (StartsWithNoCase(urn, "urn:ed2k:") || StartsWithNoCase(urn, "urn:ed2khash:")) {
 				has_urn = true;
 				continue;
 			}
 		}
-		if (has_urn && has_xl) break;
+		if (has_urn && has_xl)
+			break;
 	}
 	return has_urn && has_xl;
 }
+
+namespace
+{
+
+// A base32-encoded AICH master hash is always 32 characters from [A-Z2-7] (RFC 4648, no padding --
+// 20 raw bytes need exactly ceil(160/5) = 32 symbols). ED2KLink.cpp's parser throws on anything
+// else, so a magnet carrying a junk or truncated urn:aich: must have it dropped here rather than
+// embedded -- otherwise a perfectly valid ed2k hash would be rejected wholesale just because the
+// AICH tagalong was malformed. A plain char-range check, with no CAICHHash dependency, so it works
+// in both build modes.
+bool IsWellFormedAich(const STRING &s)
+{
+	if (s.length() != 32) {
+		return false;
+	}
+	for (size_t i = 0; i < s.length(); ++i) {
+		if (!((s[i] >= _C('A') && s[i] <= _C('Z')) || (s[i] >= _C('2') && s[i] <= _C('7')))) {
+			return false;
+		}
+	}
+	return true;
+}
+
+} // namespace
 
 STRING CMagnetED2KConverter::GetED2KLink() const
 {
 	if (CanConvertToED2K()) {
 		STRING dn;
 		STRING hash;
-		STRING len(GetField(_T("xl")).front());
+		STRING len(DecodeAsciiEscapes(GetField(_T("xl")).front()));
 
 		Value_List dn_val = GetField(_T("dn"));
 		if (!dn_val.empty()) {
@@ -127,18 +222,43 @@ STRING CMagnetED2KConverter::GetED2KLink() const
 			// Just in case, assign a reasonable(?) name to that unnamed file.
 			dn = _T("FileName.ext");
 		}
+		if (dn.find(_C('|')) != STRING::npos) {
+			return STRING();
+		}
 		Value_List urn_list = GetField(_T("xt"));
-		// Use the first ed2k-hash found.
+		STRING aich;
+		// Use the first ed2k hash found, and separately the first AICH urn if the magnet
+		// carries one (amule-org/amule#331). Both loop over the same xt list, since either
+		// can come in any order relative to the other.
 		for (Value_List::iterator it = urn_list.begin(); it != urn_list.end(); ++it) {
-			if (it->compare(0, 9, _T("urn:ed2k:")) == 0) {
+			*it = DecodeAsciiEscapes(*it);
+			if (hash.empty() && StartsWithNoCase(*it, "urn:ed2k:")) {
 				hash = it->substr(9);
-				break;
-			} else if (it->compare(0, 13, _T("urn:ed2khash:")) == 0) {
+			} else if (hash.empty() && StartsWithNoCase(*it, "urn:ed2khash:")) {
 				hash = it->substr(13);
-				break;
+			} else if (aich.empty() && StartsWithNoCase(*it, "urn:aich:")) {
+				aich = it->substr(9);
 			}
 		}
-		return STRING(_T("ed2k://|file|")).append(dn).append(1, _C('|')).append(len).append(1, _C('|')).append(hash).append(_T("|/"));
+		// Base32 is case-insensitive too (RFC 4648 section 6); the ed2k link parser wants upper.
+		const STRING &readAich = aich;
+		for (size_t i = 0; i < aich.length(); ++i) {
+			const unsigned c = CharCode(readAich[i]);
+			if (c >= 'a' && c <= 'z') {
+				aich[i] = static_cast<char>(c - ('a' - 'A'));
+			}
+		}
+		STRING link = STRING(_T("ed2k://|file|"))
+				      .append(dn)
+				      .append(1, _C('|'))
+				      .append(len)
+				      .append(1, _C('|'))
+				      .append(hash)
+				      .append(1, _C('|'));
+		if (IsWellFormedAich(aich)) {
+			link.append(_T("h=")).append(aich).append(1, _C('|'));
+		}
+		return link.append(_T("/"));
 	} else {
 		return STRING();
 	}

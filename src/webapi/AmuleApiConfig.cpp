@@ -1,0 +1,668 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+//
+
+#include "AmuleApiConfig.h"
+#include "LogDiagnostic.h"
+
+#include <AtomicFile.h>
+#include <PathPatterns.h>
+
+#include <wx/file.h>
+#include <wx/fileconf.h>
+#include <wx/filefn.h>
+#include <wx/filename.h>
+#include <wx/tokenzr.h>
+#include <wx/utils.h>
+#include <wx/wfstream.h>
+#include <wx/mstream.h>
+
+#include "../WarningsPush_CryptoPP.h"
+#include <cryptopp/osrng.h>
+#include "../WarningsPop.h"
+
+#include <cctype>
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+namespace
+{
+
+bool HexDecode(const std::string &in, std::vector<unsigned char> &out)
+{
+	if (in.size() % 2 != 0)
+		return false;
+	out.clear();
+	out.reserve(in.size() / 2);
+	auto nibble = [](char c, unsigned &v) -> bool {
+		if (c >= '0' && c <= '9') {
+			v = c - '0';
+			return true;
+		}
+		if (c >= 'a' && c <= 'f') {
+			v = c - 'a' + 10;
+			return true;
+		}
+		if (c >= 'A' && c <= 'F') {
+			v = c - 'A' + 10;
+			return true;
+		}
+		return false;
+	};
+	for (size_t i = 0; i < in.size(); i += 2) {
+		unsigned hi, lo;
+		if (!nibble(in[i], hi) || !nibble(in[i + 1], lo))
+			return false;
+		out.push_back(static_cast<unsigned char>((hi << 4) | lo));
+	}
+	return true;
+}
+
+std::string HexEncode(const std::vector<unsigned char> &data)
+{
+	static const char hex[] = "0123456789abcdef";
+	std::string out;
+	out.resize(data.size() * 2);
+	for (size_t i = 0; i < data.size(); ++i) {
+		out[i * 2] = hex[(data[i] >> 4) & 0x0F];
+		out[i * 2 + 1] = hex[data[i] & 0x0F];
+	}
+	return out;
+}
+
+// Trim ASCII whitespace from both ends. Used on the jwt-secret file's single line; tolerates a
+// trailing CR (a Windows-edited file checked out on POSIX) and stray indentation.
+std::string Trim(const std::string &s)
+{
+	size_t a = 0;
+	while (a < s.size() && std::isspace(static_cast<unsigned char>(s[a])))
+		++a;
+	size_t b = s.size();
+	while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1])))
+		--b;
+	return s.substr(a, b - a);
+}
+
+wxString JoinPath(const wxString &dir, const wxString &leaf)
+{
+	wxFileName fn(dir, leaf);
+	return fn.GetFullPath();
+}
+
+// Thin wx wrapper over webcommon::WriteFileAtomic0600 so the call sites here can keep passing
+// wxString paths. The writer itself is shared with the credential store and with amuled, so the
+// permission and atomicity guarantees cannot drift.
+bool WriteFileAtomic0600(const wxString &target_path, const std::string &body)
+{
+	return webcommon::WriteFileAtomic0600(std::string(target_path.utf8_str()), body);
+}
+
+} // namespace
+
+bool CAmuleApiConfig::Load(const wxString &config_dir)
+{
+	m_configDir = config_dir;
+	m_lastError.clear();
+
+	if (!wxDirExists(m_configDir)) {
+		if (!wxMkdir(m_configDir, 0700)) {
+			m_lastError = "config dir does not exist and could not be created: " +
+				      std::string(m_configDir.utf8_str());
+			return false;
+		}
+	}
+
+	const wxString cfg_path = JoinPath(m_configDir, "amuleapi.conf");
+	const wxString secret_path = JoinPath(m_configDir, "amuleapi-jwt-secret");
+	const wxString pwfile_path = JoinPath(m_configDir, "amuleapi-passwords");
+
+	if (!LoadAmuleapiConf(cfg_path))
+		return false;
+	if (!LoadJwtSecret(secret_path))
+		return false;
+	if (!LoadPasswords(pwfile_path))
+		return false;
+
+	return true;
+}
+
+bool CAmuleApiConfig::LoadAmuleapiConf(const wxString &path)
+{
+	const char *defaults = "[Server]\n"
+			       "BindAddress=127.0.0.1\n"
+			       "Port=4713\n"
+			       "AllowCORS=0\n"
+			       // Written empty so the key is discoverable: with AllowCORS=1
+			       // and no entries the echo is anonymous-only, and a cross-origin
+			       // client that logs in needs its origin listed here.
+			       "CorsOriginAllowlist=\n"
+			       "StaticRoot=\n"
+			       "BasePath=\n"
+			       "\n"
+			       "[EC]\n"
+			       "Host=127.0.0.1\n"
+			       "Port=4712\n"
+			       "PasswordMD5=\n"
+			       "\n"
+			       "[Auth]\n"
+			       "LoginFailureWindowSeconds=60\n"
+			       "LoginFailureThreshold=5\n"
+			       "LoginLockoutSeconds=300\n"
+			       "TokenFailureWindowSeconds=60\n"
+			       "TokenFailureThreshold=30\n"
+			       "TokenLockoutSeconds=300\n"
+			       "ProxyAuthHeader=\n"
+			       "ProxyAuthTrustedAddresses=\n"
+			       "ProxyAuthRole=admin\n"
+			       "ProxyAuthLogoutUrl=\n"
+			       "\n"
+			       "[Metrics]\n"
+			       "Enabled=0\n"
+			       "Token=\n"
+			       "FailureWindowSeconds=60\n"
+			       "FailureThreshold=30\n"
+			       "LockoutSeconds=300\n"
+			       "\n"
+			       "[Streaming]\n"
+			       "EventBusRingCapacity=16384\n"
+			       "MaxConcurrentFileResponses=6\n";
+
+	if (!wxFileExists(path)) {
+		// First run: write a mode-0600 defaults file. The EC password stays empty and
+		// amuleapi refuses to connect until it is filled in; amuleapi.conf carries
+		// a reusable EC credential, so owner-only mode matches the jwt-secret and
+		// passwords files. WriteFileAtomic0600 (write-temp, fsync, rename) so a crash mid-
+		// write cannot leave a truncated config the next start would load as partial.
+		if (!WriteFileAtomic0600(path, std::string(defaults))) {
+			m_lastError = "cannot create amuleapi.conf: " + std::string(path.utf8_str());
+			return false;
+		}
+	}
+
+	// Enforce 0600 on every load so a hand-edit, or a `cp` from a
+	// loose-permission source, does not silently widen the password's exposure.
+	if (!EnforceOwnerOnly(path))
+		return false;
+
+	wxFileConfig cfg("", "", path, "", wxCONFIG_USE_LOCAL_FILE | wxCONFIG_USE_RELATIVE_PATH);
+
+	wxString s;
+	long n = 0;
+
+	if (cfg.Read("/Server/BindAddress", &s) && !s.IsEmpty()) {
+		m_server.bind_address = std::string(s.utf8_str());
+	}
+	if (cfg.Read("/Server/Port", &n) && n > 0 && n < 65536) {
+		m_server.port = static_cast<unsigned>(n);
+	}
+	{
+		long allow = 0;
+		if (cfg.Read("/Server/AllowCORS", &allow)) {
+			m_server.allow_cors = (allow != 0);
+		}
+	}
+	if (cfg.Read("/Server/CorsOriginAllowlist", &s) && !s.IsEmpty()) {
+		// Comma-separated. Trimmed; empty entries dropped.
+		wxStringTokenizer tk(s, ",");
+		while (tk.HasMoreTokens()) {
+			const wxString item = tk.GetNextToken().Trim(true).Trim(false);
+			if (!item.IsEmpty()) {
+				m_server.cors_origin_allowlist.emplace_back(item.utf8_str());
+			}
+		}
+	}
+	if (cfg.Read("/Server/StaticRoot", &s)) {
+		const wxString trimmed = s.Trim(true).Trim(false);
+		if (!trimmed.IsEmpty()) {
+			m_server.static_root = std::string(trimmed.utf8_str());
+		}
+	}
+	if (cfg.Read("/Server/BasePath", &s)) {
+		// Refused rather than defaulted: served at the root instead, the WebUI would load
+		// through the proxy and then fail every login.
+		const std::string raw(s.Trim(true).Trim(false).utf8_str());
+		if (!web_api_path::NormalizeBasePath(raw, m_server.base_path)) {
+			m_lastError = "invalid [Server]/BasePath '" + raw +
+				      "': use /name, with letters, digits, '-', '.', '_', '~' and '/' only";
+			return false;
+		}
+	}
+
+	if (cfg.Read("/EC/Host", &s) && !s.IsEmpty()) {
+		m_ec.host = std::string(s.utf8_str());
+	}
+	if (cfg.Read("/EC/Port", &n) && n > 0 && n < 65536) {
+		m_ec.port = static_cast<unsigned>(n);
+	}
+	m_ec.password.clear();
+	m_ec.password_md5.clear();
+	if (cfg.Read("/EC/Password", &s)) {
+		m_ec.password = std::string(s.utf8_str());
+	}
+	if (cfg.Read("/EC/PasswordMD5", &s)) {
+		m_ec.password_md5 = std::string(s.utf8_str());
+	}
+
+	if (cfg.Read("/Auth/LoginFailureWindowSeconds", &n) && n > 0) {
+		m_auth.login_failure_window_seconds = static_cast<unsigned>(n);
+	}
+	if (cfg.Read("/Auth/LoginFailureThreshold", &n) && n > 0) {
+		m_auth.login_failure_threshold = static_cast<unsigned>(n);
+	}
+	if (cfg.Read("/Auth/LoginLockoutSeconds", &n) && n > 0) {
+		m_auth.login_lockout_seconds = static_cast<unsigned>(n);
+	}
+	if (cfg.Read("/Auth/TokenFailureWindowSeconds", &n) && n > 0) {
+		m_auth.token_failure_window_seconds = static_cast<unsigned>(n);
+	}
+	if (cfg.Read("/Auth/TokenFailureThreshold", &n) && n > 0) {
+		m_auth.token_failure_threshold = static_cast<unsigned>(n);
+	}
+	if (cfg.Read("/Auth/TokenLockoutSeconds", &n) && n > 0) {
+		m_auth.token_lockout_seconds = static_cast<unsigned>(n);
+	}
+
+	if (!LoadProxyAuth(cfg)) {
+		return false;
+	}
+
+	// Restore defaults on every load, including when a reused config object reads
+	// a profile without a Metrics section. Never retain a previous scrape credential.
+	m_metrics = Metrics{};
+	if (cfg.Read("/Metrics/Enabled", &n)) {
+		m_metrics.enabled = (n != 0);
+	}
+	if (cfg.Read("/Metrics/Token", &s)) {
+		m_metrics.token = std::string(s.utf8_str());
+	}
+	if (cfg.Read("/Metrics/FailureWindowSeconds", &n) && n > 0)
+		m_metrics.failure_window_seconds = static_cast<unsigned>(n);
+	if (cfg.Read("/Metrics/FailureThreshold", &n) && n > 0)
+		m_metrics.failure_threshold = static_cast<unsigned>(n);
+	if (cfg.Read("/Metrics/LockoutSeconds", &n) && n > 0)
+		m_metrics.lockout_seconds = static_cast<unsigned>(n);
+	if (m_metrics.IsActive()) {
+		// RFC 6750 b64token alphabet: a printable token that survives a bearer header
+		// unchanged. Require a useful minimum length; generate 32 random bytes in practice.
+		const auto &token = m_metrics.token;
+		const auto end = token.find('=');
+		const auto body = token.substr(0, end);
+		if (token.size() < 32 || token.size() > 256 || body.empty() ||
+			body.find_first_not_of(
+				"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~+/") !=
+				std::string::npos ||
+			(end != std::string::npos &&
+				token.find_first_not_of('=', end) != std::string::npos)) {
+			webapi::CLogDiagnostic(LogLevel::Warning, "Metrics")
+				<< "invalid [Metrics]/Token (expected 32-256 bearer-token characters); "
+				   "metrics disabled";
+			m_metrics.enabled = false;
+			m_metrics.token.clear();
+		}
+	} else if (m_metrics.enabled) {
+		webapi::CLogDiagnostic(LogLevel::Warning, "Metrics")
+			<< "[Metrics]/Enabled=1 but [Metrics]/Token is empty; metrics disabled";
+	}
+
+	// `[Streaming]/EventBusRingCapacity`. Anything below the CEventBus floor is
+	// clamped up by the bus itself, so any positive value is accepted here.
+	if (cfg.Read("/Streaming/EventBusRingCapacity", &n) && n > 0) {
+		m_streaming.event_bus_ring_capacity = static_cast<unsigned>(n);
+	}
+
+	// `[Streaming]/MaxConcurrentFileResponses`. Bounded on both sides rather than merely
+	// positive: unlike the ring above, nothing downstream second-guesses this one, and every
+	// slot it grants pins a file descriptor and a 64 KiB buffer until the peer drains. 256
+	// keeps the worst case in the tens of megabytes; anything outside the band is a typo, and a
+	// typo gets the default.
+	if (cfg.Read("/Streaming/MaxConcurrentFileResponses", &n) && n > 0 && n <= 256) {
+		m_streaming.max_concurrent_file_responses = static_cast<unsigned>(n);
+	}
+
+	return true;
+}
+
+bool CAmuleApiConfig::LoadProxyAuth(wxFileConfig &cfg)
+{
+	webapi::ProxyAuthPolicy &proxy = m_auth.proxy;
+	proxy = webapi::ProxyAuthPolicy{};
+	wxString s;
+
+	if (cfg.Read("/Auth/ProxyAuthHeader", &s)) {
+		proxy.header = std::string(s.Trim(true).Trim(false).utf8_str());
+	}
+	if (!proxy.Enabled()) {
+		return true;
+	}
+	// RFC 9110 token characters, so the name can never match a header split or folded in transit.
+	if (proxy.header.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+					   "0123456789!#$%&'*+-.^_`|~") != std::string::npos) {
+		m_lastError = "invalid [Auth]/ProxyAuthHeader '" + proxy.header + "': not a header name";
+		return false;
+	}
+
+	if (cfg.Read("/Auth/ProxyAuthTrustedAddresses", &s)) {
+		wxStringTokenizer tk(s, ",");
+		while (tk.HasMoreTokens()) {
+			const std::string item(tk.GetNextToken().Trim(true).Trim(false).utf8_str());
+			if (item.empty()) {
+				continue;
+			}
+			std::string canonical;
+			if (!webapi::CanonicalIpAddress(item, canonical)) {
+				m_lastError = "invalid address '" + item +
+					      "' in [Auth]/ProxyAuthTrustedAddresses: list IP addresses only";
+				return false;
+			}
+			proxy.trusted_addresses.push_back(canonical);
+		}
+	}
+	// Without the list any client could name itself.
+	if (proxy.trusted_addresses.empty()) {
+		m_lastError = "[Auth]/ProxyAuthHeader is set but [Auth]/ProxyAuthTrustedAddresses is "
+			      "empty: list the reverse proxy's address, e.g. 127.0.0.1,::1";
+		return false;
+	}
+
+	if (cfg.Read("/Auth/ProxyAuthRole", &s)) {
+		const std::string role(s.Trim(true).Trim(false).Lower().utf8_str());
+		if (role == "guest") {
+			proxy.role = Role::GUEST;
+		} else if (role != "admin" && !role.empty()) {
+			m_lastError = "invalid [Auth]/ProxyAuthRole '" + role + "': use admin or guest";
+			return false;
+		}
+	}
+
+	if (cfg.Read("/Auth/ProxyAuthLogoutUrl", &s)) {
+		proxy.logout_url = std::string(s.Trim(true).Trim(false).utf8_str());
+	}
+	// The WebUI navigates to it, so no javascript: or data: URLs.
+	const std::string &url = proxy.logout_url;
+	if (!url.empty() && url.compare(0, 7, "http://") != 0 && url.compare(0, 8, "https://") != 0 &&
+		url[0] != '/') {
+		m_lastError = "invalid [Auth]/ProxyAuthLogoutUrl '" + url +
+			      "': use an http:// or https:// URL, or a path starting with /";
+		return false;
+	}
+	return true;
+}
+
+bool CAmuleApiConfig::ValidateEcPassword()
+{
+	m_lastError.clear();
+	if (!m_ec.password.empty() && !m_ec.password_md5.empty()) {
+		m_lastError = "[EC]/Password and [EC]/PasswordMD5 cannot both be nonempty; remove one";
+		return false;
+	}
+	std::vector<unsigned char> decoded;
+	if (!m_ec.password_md5.empty() &&
+		(m_ec.password_md5.size() != 32 || !HexDecode(m_ec.password_md5, decoded))) {
+		m_lastError = "[EC]/PasswordMD5 must contain exactly 32 hexadecimal characters";
+		return false;
+	}
+	return true;
+}
+
+bool CAmuleApiConfig::SetEcPasswordMD5(const std::string &digest)
+{
+	std::vector<unsigned char> decoded;
+	if (digest.size() != 32 || !HexDecode(digest, decoded)) {
+		m_lastError = "EC password digest must contain exactly 32 hexadecimal characters";
+		return false;
+	}
+	const wxString path = JoinPath(m_configDir, "amuleapi.conf");
+	wxFileConfig cfg("", "", path, "", wxCONFIG_USE_LOCAL_FILE | wxCONFIG_USE_RELATIVE_PATH);
+	// Save only through the owner-only atomic writer, never via wxFileConfig's destructor.
+	cfg.DisableAutoSave();
+	cfg.DeleteEntry("/EC/Password");
+	cfg.Write("/EC/PasswordMD5", wxString::FromUTF8(digest.c_str()).Lower());
+	wxMemoryOutputStream output;
+	if (!cfg.Save(output)) {
+		m_lastError = "cannot serialize amuleapi.conf";
+		return false;
+	}
+	std::string body(output.GetSize(), '\0');
+	output.CopyTo(&body[0], body.size());
+	if (!WriteFileAtomic0600(path, body)) {
+		m_lastError = "cannot write amuleapi.conf";
+		return false;
+	}
+	m_ec.password.clear();
+	m_ec.password_md5 = digest;
+	return true;
+}
+
+bool CAmuleApiConfig::LoadJwtSecret(const wxString &path)
+{
+	// Rotation is operator-manual: delete amuleapi-jwt-secret and restart amuleapi, which
+	// generates a fresh secret and invalidates every previously issued token. Documented in the
+	// amuleapi(1) FILES section.
+	if (!wxFileExists(path)) {
+		// Auto-generate 32 random bytes. The new file is 0600 from
+		// the moment it lands on disk (open + chmod before any data).
+		std::vector<unsigned char> secret(32, 0);
+		CryptoPP::AutoSeededRandomPool rng;
+		rng.GenerateBlock(secret.data(), secret.size());
+		if (!WriteJwtSecretFile(m_configDir, secret)) {
+			return false;
+		}
+		m_jwtSecret = std::move(secret);
+		return true;
+	}
+
+	if (!EnforceOwnerOnly(path))
+		return false;
+
+	wxFile f(path, wxFile::read);
+	if (!f.IsOpened()) {
+		m_lastError = "cannot open amuleapi-jwt-secret";
+		return false;
+	}
+	const wxFileOffset sz = f.Length();
+	// 64 hex chars + optional trailing newline. Capped generously to catch
+	// "someone pasted a 2 KB blob" without truncating valid edits.
+	if (sz < 64 || sz > 4096) {
+		m_lastError = "amuleapi-jwt-secret has unexpected size; "
+			      "expected 64 hex chars (256-bit secret)";
+		return false;
+	}
+	std::string buf(static_cast<size_t>(sz), '\0');
+	if (f.Read(&buf[0], buf.size()) != static_cast<ssize_t>(buf.size())) {
+		m_lastError = "amuleapi-jwt-secret read failed";
+		return false;
+	}
+	const std::string trimmed = Trim(buf);
+	if (trimmed.size() != 64) {
+		m_lastError = "amuleapi-jwt-secret is not 64 hex chars after trim";
+		return false;
+	}
+	std::vector<unsigned char> decoded;
+	if (!HexDecode(trimmed, decoded) || decoded.size() != 32) {
+		m_lastError = "amuleapi-jwt-secret is not valid hex";
+		return false;
+	}
+	m_jwtSecret = std::move(decoded);
+	return true;
+}
+
+bool CAmuleApiConfig::LoadPasswords(const wxString &path)
+{
+	const std::string dir(m_configDir.utf8_str());
+
+	if (!wxFileExists(path)) {
+		// Auto-create empty so the operator sees the file exists, with the right mode bits.
+		// `amuleapi --set-admin-pass-stdin` then hashes and writes the admin record;
+		// amulegui and the preferences dialog write the same file.
+		std::string err;
+		if (!webcommon::SaveCredentialsFile(dir, m_credentials, err)) {
+			m_lastError = "cannot create amuleapi-passwords: " + err;
+			return false;
+		}
+		return true;
+	}
+
+	if (!EnforceOwnerOnly(path))
+		return false;
+
+	std::string err;
+	if (!webcommon::LoadCredentialsFile(dir, m_credentials, err)) {
+		m_lastError = "amuleapi-passwords: " + err;
+		return false;
+	}
+	return true;
+}
+
+bool CAmuleApiConfig::HasAnyCredential() const
+{
+	return !m_credentials.admin.empty() || !m_credentials.guest.empty();
+}
+
+std::time_t CAmuleApiConfig::CredentialsChangedAt() const
+{
+	// Second granularity, which leaves a token minted in the same second as a password change
+	// alive. Bounded and self-correcting: the next change moves the cutoff again, and one
+	// second is far inside the time to notice a leak.
+	wxFileName fn(JoinPath(m_configDir, "amuleapi-passwords"));
+	if (!fn.FileExists()) {
+		return 0;
+	}
+	return fn.GetModificationTime().GetTicks();
+}
+
+void CAmuleApiConfig::ReloadCredentials()
+{
+	webcommon::Credentials fresh;
+	std::string err;
+	if (!webcommon::LoadCredentialsFile(std::string(m_configDir.utf8_str()), fresh, err)) {
+		// Keep what we have. A transient read failure, or a file another
+		// process is midway through replacing, must not lock anyone out.
+		return;
+	}
+	// A missing file loads as an empty set, deliberately: an operator who deletes amuleapi-
+	// passwords to lock everyone out should not have to restart the daemon for it to take
+	// effect.
+	m_credentials = fresh;
+}
+
+CAmuleApiConfig::MatchedRole CAmuleApiConfig::VerifyPassword(const std::string &md5_hex)
+{
+	ReloadCredentials();
+
+	bool needs_rehash = false;
+	if (!m_credentials.admin.empty() &&
+		webcommon::VerifyMd5Hex(md5_hex, m_credentials.admin, &needs_rehash)) {
+		if (needs_rehash)
+			RehashInPlace(webcommon::kAdminCredential, md5_hex);
+		return MatchedRole::Admin;
+	}
+	if (!m_credentials.guest.empty() &&
+		webcommon::VerifyMd5Hex(md5_hex, m_credentials.guest, &needs_rehash)) {
+		if (needs_rehash)
+			RehashInPlace(webcommon::kGuestCredential, md5_hex);
+		return MatchedRole::Guest;
+	}
+	return MatchedRole::None;
+}
+
+void CAmuleApiConfig::RehashInPlace(webcommon::CredentialRole role, const std::string &md5_hex)
+{
+	// Re-storing the same password at the current cost is housekeeping, not a rotation, so the
+	// file's modification time must not move: that timestamp is what invalidates sessions.
+	wxFileName fn(JoinPath(m_configDir, "amuleapi-passwords"));
+	const bool had_file = fn.FileExists();
+	wxDateTime access, modified, created;
+	if (had_file) {
+		fn.GetTimes(&access, &modified, &created);
+	}
+
+	if (!SetPassword(role, md5_hex)) {
+		// The old record still verifies, so a failed upgrade costs
+		// nothing but the next login trying again.
+		return;
+	}
+
+	if (had_file) {
+		fn.SetTimes(&access, &modified, nullptr);
+	}
+}
+
+bool CAmuleApiConfig::SetPassword(webcommon::CredentialRole role, const std::string &md5_hex)
+{
+	std::string record;
+	if (!webcommon::MakeRecord(md5_hex, record)) {
+		m_lastError = "password digest is not 32 hex chars";
+		return false;
+	}
+
+	std::string err;
+	if (!webcommon::UpdateCredentialFile(std::string(m_configDir.utf8_str()), role, record, err)) {
+		m_lastError = "cannot write amuleapi-passwords: " + err;
+		return false;
+	}
+
+	if (role == webcommon::kAdminCredential)
+		m_credentials.admin = record;
+	else
+		m_credentials.guest = record;
+	return true;
+}
+
+bool CAmuleApiConfig::EnforceOwnerOnly(const wxString &path)
+{
+	struct stat st;
+	const std::string p(path.utf8_str());
+	if (stat(p.c_str(), &st) != 0) {
+		m_lastError = "stat failed for " + p;
+		return false;
+	}
+	if ((st.st_mode & 0077) != 0) {
+		char buf[256];
+		std::snprintf(buf,
+			sizeof(buf),
+			"%s has mode 0%o; expected 0600 (owner read/write only). "
+			"Fix with: chmod 600 \"%s\"",
+			p.c_str(),
+			st.st_mode & 0777,
+			p.c_str());
+		m_lastError = buf;
+		return false;
+	}
+	return true;
+}
+
+bool CAmuleApiConfig::WriteJwtSecretFile(
+	const wxString &config_dir, const std::vector<unsigned char> &secret_32)
+{
+	if (secret_32.size() != 32) {
+		m_lastError = "WriteJwtSecretFile: expected 32 bytes";
+		return false;
+	}
+	const wxString path = JoinPath(config_dir, "amuleapi-jwt-secret");
+	return WriteFileAtomic0600(path, HexEncode(secret_32) + "\n");
+}

@@ -16,6 +16,15 @@
 
 #include "SharedDirWatcher.h"
 
+#include <cstdlib> // realpath, free
+#include <set>
+#include <utility>
+#include <vector>
+
+#ifndef __WXMSW__
+#include <sys/stat.h> // Needed for stat() -- inotify keys a watch by inode, not by path
+#endif
+
 #include <wx/app.h>
 #include <wx/evtloop.h>
 #include <wx/filename.h>
@@ -24,34 +33,32 @@
 #include <CoreFoundation/CFRunLoop.h>
 #endif
 
-#include <common/Format.h>		// Needed for CFormat
+#include <common/Format.h> // Needed for CFormat
 
 #include <common/Path.h>
-#include <common/FileFunctions.h>		// CDirIterator for cold-discover walk
+#include <common/FileFunctions.h> // CDirIterator for cold-discover walk
 
 #include "amule.h"
 #include "Logger.h"
 #include "Preferences.h"
 #include "SharedFileList.h"
 
-namespace {
+namespace
+{
 
-// Watcher event mask used by every Add()/AddTree() call below.
-// WARNING + ERROR are subscribed so the backend can signal overflow /
-// dropped events (inotify queue exhaust, kqueue race, Windows
-// ReadDirectoryChangesW buffer exhaust); on those we fall back to a
-// bulk Reload() because incremental state can't be trusted.
-constexpr int kWatchMask = wxFSW_EVENT_CREATE | wxFSW_EVENT_DELETE |
-	wxFSW_EVENT_RENAME | wxFSW_EVENT_MODIFY |
-	wxFSW_EVENT_WARNING | wxFSW_EVENT_ERROR;
+// Watcher event mask used by every Add()/AddTree() call below. WARNING + ERROR are
+// subscribed so the backend can signal overflow / dropped events (inotify queue exhaust,
+// kqueue race, Windows ReadDirectoryChangesW buffer exhaust); on those we fall back to a
+// bulk Reload() because incremental state cannot be trusted.
+constexpr int kWatchMask = wxFSW_EVENT_CREATE | wxFSW_EVENT_DELETE | wxFSW_EVENT_RENAME | wxFSW_EVENT_MODIFY |
+			   wxFSW_EVENT_WARNING | wxFSW_EVENT_ERROR;
 
 #ifdef __WXOSX__
-// Returns true if `inner` is a strict descendant of `outer` (i.e. `inner`
-// lives inside `outer`'s subtree, not equal to it). Used on macOS to skip
-// shareddir_list entries whose ancestor is also in the list — wx FSEvents
-// rejects overlapping tree watches by silently returning false from a
+// Returns true if `inner` is a strict descendant of `outer` -- inside `outer`'s subtree, not
+// equal to it. Used on macOS to skip shareddir_list entries whose ancestor is also in the
+// list: wx FSEvents rejects overlapping tree watches by silently returning false from a
 // second AddTree() on a path already covered by an earlier stream.
-bool IsStrictlyInside(const CPath & inner, const CPath & outer)
+bool IsStrictlyInside(const CPath &inner, const CPath &outer)
 {
 	if (!inner.IsOk() || !outer.IsOk() || inner.IsSameDir(outer)) {
 		return false;
@@ -66,50 +73,62 @@ bool IsStrictlyInside(const CPath & inner, const CPath & outer)
 
 } // namespace
 
-// Coalesce a burst of FS events into one Reload. 5 s is long enough to
-// merge the thousands of events a tar-extract produces, short enough for
-// a "drop a file into a shared folder" interaction to feel responsive.
-// macOS FSEvents debounces ~30 s on its own anyway, so on Mac the user-
-// perceived latency is bounded by FSEvents, not by this timer.
+// Coalesce a burst of FS events into one Reload. 5 s is long enough to merge the thousands
+// of events a tar-extract produces, short enough for a "drop a file into a shared folder"
+// interaction to feel responsive. macOS FSEvents debounces ~30 s on its own anyway, so on
+// Mac the user-perceived latency is bounded by FSEvents, not by this timer.
 static constexpr int kDebounceMs = 5000;
 
 // Timer IDs are wx-local; use ones not clashing with the prefs dialog.
-static const int ID_FSWATCHER_DEBOUNCE   = wxID_HIGHEST + 8231;
+static const int ID_FSWATCHER_DEBOUNCE = wxID_HIGHEST + 8231;
 #ifdef __APPLE__
-static const int ID_FSWATCHER_MAC_PUMP   = wxID_HIGHEST + 8232;
+static const int ID_FSWATCHER_MAC_PUMP = wxID_HIGHEST + 8232;
 
-// CFRunLoop pump cadence on macOS amuled. 200 ms keeps user-perceived
-// latency below the 5 s debounce window's resolution while costing only
-// ~5 non-blocking wakeups/second on the main thread.
+// CFRunLoop pump cadence on macOS amuled. 200 ms keeps user-perceived latency below the 5 s
+// debounce window's resolution while costing only ~5 non-blocking wakeups/second on the main
+// thread.
 static constexpr int kMacPumpMs = 200;
 #endif
 
 BEGIN_EVENT_TABLE(CSharedDirWatcher, wxEvtHandler)
-	EVT_FSWATCHER(wxID_ANY, CSharedDirWatcher::OnFileSystemEvent)
-	EVT_TIMER(ID_FSWATCHER_DEBOUNCE, CSharedDirWatcher::OnDebounceTimer)
+EVT_FSWATCHER(wxID_ANY, CSharedDirWatcher::OnFileSystemEvent)
+EVT_TIMER(ID_FSWATCHER_DEBOUNCE, CSharedDirWatcher::OnDebounceTimer)
 #ifdef __APPLE__
-	EVT_TIMER(ID_FSWATCHER_MAC_PUMP, CSharedDirWatcher::OnMacRunLoopPump)
+EVT_TIMER(ID_FSWATCHER_MAC_PUMP, CSharedDirWatcher::OnMacRunLoopPump)
 #endif
 END_EVENT_TABLE()
 
-
-CSharedDirWatcher::CSharedDirWatcher(CSharedFileList * parent) :
-	m_parent(parent),
-	m_watcher(NULL),
-	m_debounceTimer(this, ID_FSWATCHER_DEBOUNCE),
-	m_fallbackPending(false)
+CSharedDirWatcher::CSharedDirWatcher(CSharedFileList *parent)
+: m_parent(parent)
+, m_watcher(NULL)
+, m_debounceTimer(this, ID_FSWATCHER_DEBOUNCE)
 #ifdef __APPLE__
-	, m_macPumpTimer(this, ID_FSWATCHER_MAC_PUMP)
+, m_macPumpTimer(this, ID_FSWATCHER_MAC_PUMP)
 #endif
 {
 }
 
-
 CSharedDirWatcher::~CSharedDirWatcher()
 {
-	Disable();
+	StopTimers();
+	// Synchronous here, unlike Disable(): a CallAfter queued on a handler that is being
+	// destroyed is purged along with it, so a deferred delete would never run -- leaking the
+	// watcher along with its inotify fd and the event loop source wx registered for it.
+	//
+	// This can run from inside a dispatch: the macOS daemon build calls OnExit() straight out of
+	// OnCoreTimer. It is safe there for reasons that do not generalise -- macOS watches through
+	// FSEvents/CFRunLoop rather than a wxFDIOHandler, so there is no epoll source to dangle, and
+	// the call is followed by _exit(0). Treat it as that exception, not as a guarantee.
+	//
+	// Detach before the delete, for the reason spelled out in Disable():
+	// ~wxFileSystemWatcherBase runs RemoveAll(), which can emit a synchronous
+	// wxFSW_EVENT_WARNING against the object under destruction.
+	if (m_watcher) {
+		m_watcher->SetOwner(nullptr);
+	}
+	delete m_watcher;
+	ReapPendingWatchers();
 }
-
 
 void CSharedDirWatcher::Enable()
 {
@@ -117,21 +136,16 @@ void CSharedDirWatcher::Enable()
 		return;
 	}
 
-	// wx 3.2.x's inotify backend hard-requires an active wx event loop
-	// when wxFileSystemWatcher's ctor runs — Init() checks
-	// wxEventLoopBase::GetActive() and silently leaves m_service null
-	// when there isn't one, after which every Add() returns false. The
-	// daemon's CamuleApp::OnInit() runs before the event loop starts, so
-	// the first Enable() call from there must be deferred. (FSEvents on
-	// macOS and ReadDirectoryChangesW on Windows don't have this gate;
-	// deferring is still safe there.) Subsequent calls from the prefs
-	// dialog or EC apply path already run inside an active loop, so they
-	// take the immediate branch.
+	// wx 3.2.x's inotify backend hard-requires an active wx event loop when
+	// wxFileSystemWatcher's ctor runs -- Init() checks wxEventLoopBase::GetActive() and silently
+	// leaves m_service null when there is none, after which every Add() returns false. The
+	// daemon's OnInit() runs before the event loop starts, so the first Enable() call from there
+	// must be deferred. Later calls from the prefs dialog or the EC apply path already run
+	// inside an active loop and take the immediate branch.
 	if (!wxEventLoopBase::GetActive()) {
-		// Queue on `this` (a wxEvtHandler) rather than the app, so that
-		// if Disable()/~CSharedDirWatcher() runs before the loop drains,
-		// wx purges the pending event with the handler instead of firing
-		// it against a dead object.
+		// Queue on `this` (a wxEvtHandler) rather than the app, so that if Disable() or the
+		// destructor runs before the loop drains, wx purges the pending event with the handler
+		// instead of firing it against a dead object.
 		CallAfter(&CSharedDirWatcher::Enable);
 		return;
 	}
@@ -139,19 +153,16 @@ void CSharedDirWatcher::Enable()
 	m_watcher = new wxFileSystemWatcher();
 	m_watcher->SetOwner(this);
 	RegisterAllPaths();
-	// First-enable also needs the cold-discovery pass; otherwise
-	// subdirs that grew while the daemon was offline are never seen
-	// until Reload() fires Refresh() (which happens only when
+	// First-enable also needs the cold-discovery pass; otherwise subdirs that grew while the
+	// daemon was offline are never seen until Reload() fires Refresh() (which happens only when
 	// shareddir_list itself changes -- not at startup).
 	ColdDiscoverSubdirs();
 
 #ifdef __APPLE__
-	// wx's FSEvents wrapper schedules its stream on the thread's
-	// CFRunLoop at AddTree() time. aMule.app has a real Cocoa event
-	// loop that pumps that runloop, so callbacks deliver normally.
-	// amuled (wxAppConsole) does not — its event loop never spins
-	// CFRunLoop, so events would queue forever. Start a periodic
-	// non-blocking pump only in that case.
+	// wx's FSEvents wrapper schedules its stream on the thread's CFRunLoop at AddTree() time.
+	// aMule.app has a real Cocoa event loop that pumps that runloop, so callbacks deliver
+	// normally. amuled (wxAppConsole) does not -- its event loop never spins CFRunLoop, so
+	// events would queue forever. Start a periodic non-blocking pump only in that case.
 	if (wxTheApp && !wxTheApp->IsGUI()) {
 		m_macPumpTimer.Start(kMacPumpMs, wxTIMER_CONTINUOUS);
 	}
@@ -160,8 +171,7 @@ void CSharedDirWatcher::Enable()
 	AddDebugLogLineN(logKnownFiles, "Shared-dir watcher enabled");
 }
 
-
-void CSharedDirWatcher::Disable()
+void CSharedDirWatcher::StopTimers()
 {
 	if (m_debounceTimer.IsRunning()) {
 		m_debounceTimer.Stop();
@@ -171,52 +181,76 @@ void CSharedDirWatcher::Disable()
 		m_macPumpTimer.Stop();
 	}
 #endif
+}
+
+void CSharedDirWatcher::ReapPendingWatchers()
+{
+	// Walk a local copy: ~wxFileSystemWatcher can re-enter this object through wx (see
+	// Disable()), and a Disable() reached from there would push_back into the vector being
+	// iterated.
+	std::vector<wxFileSystemWatcher *> doomed;
+	doomed.swap(m_pendingDelete);
+	for (wxFileSystemWatcher *w : doomed) {
+		delete w;
+	}
+}
+
+void CSharedDirWatcher::Disable()
+{
+	StopTimers();
 	if (!m_watcher) {
 		return;
 	}
-	delete m_watcher;
+	// Detach now, destroy from the pending-event queue. ~wxFileSystemWatcher frees the
+	// wxFDIOEventLoopSourceHandler wx registered for its inotify fd, and
+	// wxEpollDispatcher::Dispatch walks a stack snapshot of the ready events without re-checking
+	// a handler -- so freeing one from inside that loop leaves it calling OnReadWaiting() on
+	// freed memory the moment the same batch reaches this fd.
+	//
+	// No caller reaches here from inside that loop today: Disable() comes from the destructor,
+	// the prefs dialog, the guarded call in CamuleApp::OnInit, and CEC_Prefs_Packet::Apply(),
+	// which the EC layer reaches through a queued wx event -- the phase drained BEFORE Dispatch.
+	// But fs-watcher events themselves are delivered from inside the loop, so one caller reached
+	// from OnFileSystemEvent would make this fatal. Deferring costs nothing.
+	//
+	// Drop the owner as part of the detach: a detached watcher outlives the call, and
+	// SetOwner(nullptr) points its owner back at itself, where nothing is bound, so everything
+	// it still emits goes nowhere.
+	m_watcher->SetOwner(nullptr);
+	m_pendingDelete.push_back(m_watcher);
 	m_watcher = NULL;
+	CallAfter(&CSharedDirWatcher::ReapPendingWatchers);
 	AddDebugLogLineN(logKnownFiles, "Shared-dir watcher disabled");
 }
-
 
 void CSharedDirWatcher::Refresh()
 {
 	if (!m_watcher) {
 		return;
 	}
-	// wxFileSystemWatcher::RemoveAll() drops every registration; we then
-	// re-Add everything from the current (possibly updated) shareddir_list.
-	// This is simpler than diffing old vs new path sets and is cheap given
-	// the typical list size (low hundreds at most).
+	// wxFileSystemWatcher::RemoveAll() drops every registration; we then re-Add everything from
+	// the current (possibly updated) shareddir_list. This is simpler than diffing old vs new
+	// path sets and is cheap given the typical list size (low hundreds at most).
 	m_watcher->RemoveAll();
 	RegisterAllPaths();
-	// Cold-discovery is one-shot at Enable() only. Re-running it from
-	// Refresh() risks adding duplicate entries when a runtime
-	// RegisterNewSubdirectory wrote a path in one canonical form
-	// (e.g. macOS-resolved "/private/tmp/...") while the disk walk
-	// later produces the unresolved form ("/tmp/...") -- both go in
-	// as distinct strings. Startup is the only moment we genuinely
-	// have to walk to catch up; runtime new-dirs are covered by
-	// RegisterNewSubdirectory from OnFileSystemEvent.
+	// Cold-discovery is one-shot at Enable() only. Re-running it from Refresh() risks adding
+	// duplicate entries when a runtime RegisterNewSubdirectory wrote a path in one canonical
+	// form (a macOS-resolved "/private/tmp/...") while the disk walk later produces the
+	// unresolved form -- both go in as distinct strings. Startup is the only moment a walk is
+	// genuinely needed.
 }
-
 
 void CSharedDirWatcher::RegisterAllPaths()
 {
-	// Build the effective watch list by mirroring what
-	// CSharedFileList::Reload() treats as shared (SharedFileList.cpp ~L370):
-	//   1) the global Incoming dir,
-	//   2) every category's Incoming dir,
-	//   3) the explicit shareddir_list.
-	// Without (1) and (2) the watcher misses new files dropped into
-	// Incoming -- a completed download notifies the scanner directly,
-	// but a file copied into Incoming manually (or by another tool)
-	// is only picked up the next time some unrelated CREATE event
-	// fires elsewhere in the shared tree (#741).
+	// Build the effective watch list by mirroring what CSharedFileList::Reload() treats as
+	// shared (SharedFileList.cpp ~L370): the global Incoming dir, every category's Incoming dir,
+	// and the explicit shareddir_list. Without the first two the watcher misses new files
+	// dropped into Incoming -- a completed download notifies the scanner directly, but a file
+	// copied into Incoming manually (or by another tool) is only picked up the next time some
+	// unrelated CREATE event fires elsewhere in the shared tree (#741).
 	thePrefs::PathList shared = theApp->glob_prefs->shareddir_list;
 
-	auto append_unique = [&](const CPath & extra) {
+	auto append_unique = [&](const CPath &extra) {
 		if (!extra.IsOk()) {
 			return;
 		}
@@ -229,25 +263,51 @@ void CSharedDirWatcher::RegisterAllPaths()
 		shared.push_back(extra);
 	};
 
+	// Counted across both platform branches below and reported once at the end. The names are
+	// kept as well as the count: which directories failed is what shows whether this is a flat
+	// limit or something about particular paths. Capped because the point of the cap is to not
+	// be the per-directory flood this replaced.
+	constexpr size_t kMaxNamedFailures = 10;
+	unsigned failed = 0;
+	std::vector<wxString> failedPaths;
+	auto note_failure = [&](const CPath &path) {
+		if (failedPaths.size() < kMaxNamedFailures) {
+			failedPaths.push_back(path.GetRaw());
+		}
+		++failed;
+	};
+
 	append_unique(thePrefs::GetIncomingDir());
 	for (unsigned int i = 1; i < theApp->glob_prefs->GetCatCount(); ++i) {
 		append_unique(theApp->glob_prefs->GetCatPath(i));
 	}
 
 #ifdef __WXOSX__
-	// macOS: route through AddTree() which uses FSEvents (kernel-level
-	// recursive watch). wx 3.3.2's bare Add() falls through to the kqueue
-	// base and returns false on otherwise-openable directories — verified
-	// against wx upstream and reproduced locally. AddTree() is also the
-	// API Apple recommends for directory monitoring, so this is the
-	// preferred path even once the kqueue bug is fixed.
+	// FSEvents reports symlink-resolved paths (/private/tmp for /tmp), which the recursive roots
+	// as stored would not prefix-match.
+	m_resolvedRecursiveRoots.clear();
+	for (const CPath &root : theApp->glob_prefs->shareddir_recursive_list) {
+		char *resolved = realpath(root.GetRaw().fn_str(), nullptr);
+		if (resolved) {
+			const CPath real(wxString(resolved, wxConvFile));
+			free(resolved);
+			if (real.GetRaw() != root.GetRaw()) {
+				m_resolvedRecursiveRoots.push_back(real);
+			}
+		}
+	}
+
+	// macOS: route through AddTree(), which uses FSEvents (kernel-level recursive watch). wx
+	// 3.3.2's bare Add() falls through to the kqueue base and returns false on otherwise-openable
+	// directories -- verified against wx upstream and reproduced locally. AddTree() is also the
+	// API Apple recommends for directory monitoring, so this is the preferred path even once the
+	// kqueue bug is fixed.
 	//
-	// AddTree() is recursive, so an entry whose ancestor is also in
-	// shareddir_list would create overlapping streams; wx FSEvents
-	// rejects the second AddTree() on the inner path. Pre-prune
+	// AddTree() is recursive, so an entry whose ancestor is also in shareddir_list would create
+	// overlapping streams; wx FSEvents rejects the second AddTree() on the inner path. Pre-prune
 	// descendants here so we only AddTree() each top-level entry.
 	for (size_t i = 0; i < shared.size(); ++i) {
-		const CPath & p = shared[i];
+		const CPath &p = shared[i];
 		if (!p.IsOk() || !p.DirExists()) {
 			continue;
 		}
@@ -263,71 +323,136 @@ void CSharedDirWatcher::RegisterAllPaths()
 		}
 		wxFileName fn = wxFileName::DirName(p.GetRaw());
 		if (!m_watcher->AddTree(fn, kWatchMask)) {
-			AddDebugLogLineC(logKnownFiles,
-				CFormat("Shared-dir watcher: failed to AddTree %s") % p.GetRaw());
+			note_failure(p);
 		}
 	}
 #else
-	// Linux (inotify), BSD (kqueue), Windows (ReadDirectoryChangesW):
-	// per-dir Add(). shareddir_list already enumerates every subdirectory
-	// individually when the user uses the recursive-share button, so
-	// inotify watch count tracks shareddir_list.size() rather than total
-	// subtree depth.
+	// Linux (inotify), BSD (kqueue), Windows (ReadDirectoryChangesW): per-dir Add().
+	// shareddir_list already enumerates every subdirectory individually when the user uses the
+	// recursive-share button, so the inotify watch count tracks shareddir_list.size() rather
+	// than total subtree depth.
+#ifndef __WXMSW__
+	// inotify keys a watch by inode, so a second path reaching the same directory is refused
+	// rather than watched twice. That happens whenever "Follow symbolic links" pulls in a
+	// symlink whose target is already shared. Skip those instead of letting the add fail: the
+	// watch already in place reports their events, under the target's name.
+	std::set<std::pair<dev_t, ino_t>> seen;
+#endif
+	unsigned aliased = 0;
 	for (size_t i = 0; i < shared.size(); ++i) {
-		const CPath & p = shared[i];
+		const CPath &p = shared[i];
 		if (!p.IsOk() || !p.DirExists()) {
 			continue;
 		}
+#ifndef __WXMSW__
+		struct stat st;
+		if (stat((const char *)p.GetRaw().utf8_str(), &st) == 0 &&
+			!seen.emplace(st.st_dev, st.st_ino).second) {
+			++aliased;
+			continue;
+		}
+#endif
 		wxFileName fn = wxFileName::DirName(p.GetRaw());
 		if (!m_watcher->Add(fn, kWatchMask)) {
-			// Most likely cause on Linux is hitting
-			// /proc/sys/fs/inotify/max_user_watches. Log and continue —
-			// partial coverage is better than zero coverage.
-			AddDebugLogLineC(logKnownFiles,
-				CFormat("Shared-dir watcher: failed to add %s") % p.GetRaw());
+			note_failure(p);
 		}
 	}
+	if (aliased) {
+		AddDebugLogLineN(logKnownFiles,
+			CFormat("Shared-dir watcher: %u shared path(s) already watched under another "
+				"name") %
+				aliased);
+	}
 #endif
+
+	// One line for the lot. This used to print per directory, which on a large share meant
+	// hundreds of identical-looking lines the user could do nothing with, at a level that is
+	// always compiled in.
+	if (failed) {
+		AddDebugLogLineC(logKnownFiles,
+			CFormat("Shared-dir watcher: could not watch %u of %u shared directories. On "
+				"Linux this is usually the inotify watch limit "
+				"(fs.inotify.max_user_watches). Those files stay shared; only automatic "
+				"pickup of changes in them is lost.") %
+				failed % (unsigned)shared.size());
+		for (const wxString &path : failedPaths) {
+			AddDebugLogLineC(logKnownFiles, CFormat("Shared-dir watcher:   %s") % path);
+		}
+		if (failed > failedPaths.size()) {
+			AddDebugLogLineC(logKnownFiles,
+				CFormat("Shared-dir watcher:   ... and %u more") %
+					(unsigned)(failed - failedPaths.size()));
+		}
+	}
 }
 
-
-void CSharedDirWatcher::OnFileSystemEvent(wxFileSystemWatcherEvent & event)
+void CSharedDirWatcher::OnFileSystemEvent(wxFileSystemWatcherEvent &event)
 {
-	const int changeType = event.GetChangeType();
-	const wxFileName & path = event.GetPath();
+	// Nothing to act on with no live watcher. Disable() drops the doomed watcher's owner, so
+	// nothing it emits afterwards gets here; what this catches is an event a backend had
+	// *queued* to us before that, which the MSW one does (wxFSWatcherImplMSW::SendEvent
+	// wxQueueEvent()s from its worker thread). Acting on it would re-arm the debounce timer
+	// StopTimers() just stopped, and a directory CREATE would reach RegisterNewSubdirectory and
+	// change shareddir_list after the user turned auto-rescan off.
+	if (!m_watcher) {
+		return;
+	}
+
+	int changeType = event.GetChangeType();
+	const wxFileName &path = event.GetPath();
 
 	AddDebugLogLineN(logKnownFiles,
-		CFormat("Shared-dir watcher: event 0x%x on '%s'")
-			% changeType % path.GetFullPath());
+		CFormat("Shared-dir watcher: event 0x%x on '%s'") % changeType % path.GetFullPath());
 
-	// Watcher-backend overflow / drop signal. inotify reports
-	// IN_Q_OVERFLOW when its per-instance queue exhausts (typical
-	// cause: a multi-million-file `cp -r` into a watched tree),
-	// kqueue can drop on rapid rename storms, and Windows
-	// ReadDirectoryChangesW reports buffer exhaust the same way. In
-	// all three cases the watcher's incremental view of the tree is
-	// now stale, so we have to fall back to a full bulk Reload().
-	// This is the only path that re-walks every shared dir on a
-	// huge shareset (#745); rare in normal operation.
+	// A RENAME of a path onto itself is not a rename. wx's inotify backend sends one for a move
+	// into or out of the watched set (an IN_MOVED_TO or IN_MOVED_FROM with no partner), and its
+	// FSEvents backend for a rename that arrives with other flags. As a rename it would unshare a
+	// completed download, which arrives in Incoming from Temp already shared under that path.
+	// Decide by what is on disk instead, as wx's FSEvents backend does for a lone rename.
+	if ((changeType & wxFSW_EVENT_RENAME) && event.GetNewPath().GetFullPath() == path.GetFullPath()) {
+		changeType &= ~wxFSW_EVENT_RENAME;
+		changeType |=
+			wxFileName::Exists(path.GetFullPath()) ? wxFSW_EVENT_CREATE : wxFSW_EVENT_DELETE;
+	}
+
+	// Watcher-backend overflow / drop signal. inotify reports IN_Q_OVERFLOW when its
+	// per-instance queue exhausts (typical cause: a multi-million-file `cp -r` into a watched
+	// tree), kqueue can drop on rapid rename storms, and Windows ReadDirectoryChangesW reports
+	// buffer exhaust the same way. In all three cases the watcher's incremental view of the tree
+	// is now stale, so fall back to a full bulk Reload(). This is the only path that re-walks
+	// every shared dir on a huge shareset (#745); rare in normal operation.
 	if (changeType & (wxFSW_EVENT_WARNING | wxFSW_EVENT_ERROR)) {
-		AddLogLineC(CFormat(
-			_("Shared-dir watcher: backend overflow/error (%s); "
-			  "falling back to full reload"))
-				% (event.GetErrorDescription().IsEmpty()
-					? wxString("unspecified")
-					: event.GetErrorDescription()));
-		m_fallbackPending = true;
+		AddLogLineC(CFormat(_("Shared-dir watcher: backend overflow/error (%s); "
+				      "falling back to full reload")) %
+			    (event.GetErrorDescription().IsEmpty() ? wxString("unspecified")
+								   : event.GetErrorDescription()));
+		m_resyncReason = ResyncDroppedEvents;
 		ScheduleProcessing();
 		return;
 	}
 
-	// Auto-share new subdirectories of any watched path. A user who has
-	// already shared /Music gets new subdirs of /Music auto-included
-	// without having to revisit the prefs dialog. Existing subdirs that
-	// were originally excluded (non-recursive share) are not
-	// retroactively scanned — only newly-created ones get added.
-	if ((changeType & wxFSW_EVENT_CREATE) && path.IsOk() && path.DirExists()) {
+	// Auto-share new subdirectories of any watched path. A user who has already shared /Music
+	// gets new subdirs of /Music auto-included without having to revisit the prefs dialog.
+	// Existing subdirs that were originally excluded (non-recursive share) are not
+	// retroactively scanned -- only newly-created ones get added.
+	//
+	// Early-return after registration: a directory CREATE is fully handled inside
+	// RegisterNewSubdirectory (add to shareddir_list, install a watch, race-scan the contents).
+	// Falling through to the file-add accumulator below would enqueue the directory path as if
+	// it were a file, and AddPathToShares's FileExists() check would reject it with a misleading
+	// "Shared file does not exist (possibly a broken link)" debug line on every new subdir.
+	//
+	// Use wxDirExists(GetFullPath()), NOT the path.DirExists() instance method, because
+	// wxFileName::DirExists() checks GetPath() (the parent directory portion) for its
+	// truthiness, not the full path. Calling .DirExists() on a wxFileName built from
+	// /tv/Season 9/Episode.mkv returns true whenever /tv/Season 9 exists, which it always does
+	// inside a watched share. Without the static overload, every FILE CREATE would route through
+	// RegisterNewSubdirectory (which then no-ops on its own CPath directory check) and the early
+	// return below would suppress slot accumulation entirely -- meaning no file ever reaches
+	// NotifyPathAdded.
+	if ((changeType & wxFSW_EVENT_CREATE) && path.IsOk() && wxFileName::DirExists(path.GetFullPath())) {
 		RegisterNewSubdirectory(path.GetFullPath());
+		return;
 	}
 
 	// Per-path event accumulation. Coalesces a CREATE → MODIFY × N →
@@ -337,13 +462,13 @@ void CSharedDirWatcher::OnFileSystemEvent(wxFileSystemWatcherEvent & event)
 		return;
 	}
 
-	const int interesting = changeType & (wxFSW_EVENT_CREATE | wxFSW_EVENT_DELETE |
-		wxFSW_EVENT_RENAME | wxFSW_EVENT_MODIFY);
+	const int interesting = changeType & (wxFSW_EVENT_CREATE | wxFSW_EVENT_DELETE | wxFSW_EVENT_RENAME |
+						     wxFSW_EVENT_MODIFY);
 	if (!interesting) {
 		return;
 	}
 
-	PendingPathEvents & slot = m_pendingEvents[rawPath];
+	PendingPathEvents &slot = m_pendingEvents[rawPath];
 	slot.flags |= interesting;
 	if (changeType & wxFSW_EVENT_RENAME) {
 		slot.renamedTo = event.GetNewPath().GetFullPath();
@@ -352,27 +477,24 @@ void CSharedDirWatcher::OnFileSystemEvent(wxFileSystemWatcherEvent & event)
 	ScheduleProcessing();
 }
 
-
-void CSharedDirWatcher::RegisterNewSubdirectory(const wxString & path)
+void CSharedDirWatcher::RegisterNewSubdirectory(const wxString &path)
 {
 	CPath p(path);
 	if (!p.IsOk() || !p.DirExists()) {
 		return;
 	}
 
-	// Only auto-add when an ancestor is in the user's recursive set
-	// (shareddir-recursive.dat). Non-recursive shares are now strict
-	// -- a new subdir under /Music does NOT get auto-shared unless
-	// /Music (or some ancestor of it) was marked recursive via the
-	// UI. This protects desktop users with sensitive nested folders
-	// from silent recursion.
+	// Only auto-add when an ancestor is in the user's recursive set (shareddir-recursive.dat).
+	// Non-recursive shares are now strict -- a new subdir under /Music does NOT get auto-shared
+	// unless /Music (or some ancestor of it) was marked recursive via the UI. This protects
+	// desktop users with sensitive nested folders from silent recursion.
 	if (!theApp->glob_prefs->IsRecursiveAncestor(p)) {
 		return;
 	}
 
-	// Skip if already on the list (defensive — duplicate inotify
+	// Skip if already on the list (defensive -- duplicate inotify
 	// events for the same mkdir are possible).
-	thePrefs::PathList & shared = theApp->glob_prefs->shareddir_list;
+	thePrefs::PathList &shared = theApp->glob_prefs->shareddir_list;
 	for (size_t i = 0; i < shared.size(); ++i) {
 		if (shared[i].IsSameDir(p)) {
 			return;
@@ -382,9 +504,9 @@ void CSharedDirWatcher::RegisterNewSubdirectory(const wxString & path)
 	shared.push_back(p);
 
 #ifndef __WXOSX__
-	// Linux/BSD/Windows: explicitly register the new subdir so events
-	// for its own contents are observed. On macOS the enclosing tree's
-	// FSEvents stream already covers descendants, so nothing to add.
+	// Linux/BSD/Windows: explicitly register the new subdir so events for its own contents are
+	// observed. On macOS the enclosing tree's FSEvents stream already covers descendants, so
+	// there is nothing to add.
 	if (m_watcher) {
 		wxFileName fn = wxFileName::DirName(path);
 		if (!m_watcher->Add(fn, kWatchMask)) {
@@ -394,13 +516,124 @@ void CSharedDirWatcher::RegisterNewSubdirectory(const wxString & path)
 	}
 #endif
 
-	AddDebugLogLineN(logKnownFiles,
-		CFormat("Shared-dir watcher: auto-shared new subdir %s") % path);
+	AddDebugLogLineN(logKnownFiles, CFormat("Shared-dir watcher: auto-shared new subdir %s") % path);
 
-	// Persist the new entry so the change survives a restart.
-	theApp->glob_prefs->SaveSharedFolders();
+	// Close the inotify race window. Between the kernel mkdir() that fired this CREATE event and
+	// our wxFileSystemWatcher::Add() above, any file or subdir created inside `path` fires on a
+	// watch that does not exist yet, so the event is silently dropped. Common with tools that
+	// batch a mkdir + a content-drop within microseconds (Sonarr "mkdir /tv/$show; symlink
+	// $episode" being the canonical case). Walk the new dir now and feed any pre-existing
+	// entries through the same NotifyPathAdded / RegisterNewSubdirectory pipeline they would
+	// have gone through if events had been observed. Idempotent: NotifyPathAdded short-circuits
+	// on the shared-file path index if the file is already known (covers macOS, where FSEvents
+	// may still deliver the same events later), and RegisterNewSubdirectory short-circuits on
+	// the shareddir_list dedup check.
+	ScanNewSubdirRace(p);
 }
 
+bool CSharedDirWatcher::IsInExcludedFolder(const wxString &filePath) const
+{
+	// macOS watches whole trees, so files inside an excluded folder raise events too.
+	const CPath dir = CPath(filePath).GetPath();
+	if (!dir.IsOk()) {
+		return false;
+	}
+	return theApp->glob_prefs->IsInExcludedFolder(dir) ||
+	       (!m_resolvedRecursiveRoots.empty() &&
+		       CPreferences::IsInExcludedFolder(m_resolvedRecursiveRoots, dir));
+}
+
+bool CSharedDirWatcher::IsInSharedSet(const wxString &path) const
+{
+	CPath p(path);
+	if (!p.IsOk()) {
+		return false;
+	}
+	const thePrefs::PathList &shared = theApp->glob_prefs->shareddir_list;
+	for (size_t i = 0; i < shared.size(); ++i) {
+		if (shared[i].IsSameDir(p)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void CSharedDirWatcher::HandleDirRemoved(const wxString &path)
+{
+	// Detach the vanished dir's subtree (NotifyPathRemoved is per-file only).
+	m_parent->NotifyDirRemoved(path);
+
+	// Drop it from the runtime union so scans stop chasing a dead path. Leave the user's
+	// explicit/recursive config alone -- the union is recomputed from it on reload anyway.
+	const CPath gone(path);
+	if (!gone.IsOk()) {
+		return;
+	}
+	thePrefs::PathList &shared = theApp->glob_prefs->shareddir_list;
+	auto it = shared.begin();
+	while (it != shared.end() && !it->IsSameDir(gone)) {
+		++it;
+	}
+	if (it == shared.end()) {
+		return;
+	}
+	shared.erase(it);
+	AddDebugLogLineN(logKnownFiles,
+		CFormat("Shared-dir watcher: dropped '%s' from shared set (directory removed)") % path);
+
+#ifndef __WXOSX__
+	// Remove its per-subdir watch (macOS covers the whole tree via FSEvents). Only if wx still
+	// tracks it: when a directory vanishes the OS drops the inotify watch on its own (a
+	// cross-filesystem move is a delete, firing IN_IGNORED), so the path is no longer in the
+	// watcher's map. Calling Remove() on an untracked path trips wx's `it != m_watches.end()`
+	// assertion and aborts amuled (issue #458). A same-filesystem rename keeps the inode watch
+	// under the old key, so the guarded Remove() still cleans that up. GetWatchedPaths() reports
+	// the exact key Remove() looks up.
+	if (m_watcher) {
+		const wxFileName dir = wxFileName::DirName(path);
+		wxArrayString watched;
+		m_watcher->GetWatchedPaths(&watched);
+		if (watched.Index(dir.GetFullPath()) != wxNOT_FOUND) {
+			m_watcher->Remove(dir);
+		}
+	}
+#endif
+}
+
+void CSharedDirWatcher::ScanNewSubdirRace(const CPath &parent)
+{
+	if (!parent.IsOk() || !parent.DirExists()) {
+		return;
+	}
+
+	const int dirFlags = thePrefs::FollowSymlinksInShares() ? 0 : wxDIR_NO_FOLLOW;
+
+	// Files first: each is routed through NotifyPathAdded, which dedups against the shared-file
+	// path index and queues a CHashingTask for genuinely new entries.
+	{
+		CDirIterator files(parent);
+		for (CPath f = files.GetFirstFile(CDirIterator::File, wxEmptyString, dirFlags); f.IsOk();
+			f = files.GetNextFile()) {
+			CPath fullFile = parent.JoinPaths(f);
+			// bulkScan: this is a whole-tree walk, so an already-known file is
+			// counted into one summary rather than announced per file.
+			m_parent->NotifyPathAdded(fullFile.GetRaw(), /*bulkScan=*/true);
+		}
+	}
+
+	// Subdirs: recurse via RegisterNewSubdirectory so each gets added to shareddir_list, picks
+	// up its own watch on Linux/BSD/Windows, and runs its own race-scan. Handles arbitrary
+	// nesting created inside the original race window (e.g. mkdir /tv/show; mkdir
+	// /tv/show/season; ln -s /downloads/ep /tv/show/season/ep.mkv).
+	{
+		CDirIterator subdirs(parent);
+		for (CPath sub = subdirs.GetFirstFile(CDirIterator::Dir, wxEmptyString, dirFlags); sub.IsOk();
+			sub = subdirs.GetNextFile()) {
+			CPath fullSub = parent.JoinPaths(sub);
+			RegisterNewSubdirectory(fullSub.GetRaw());
+		}
+	}
+}
 
 void CSharedDirWatcher::ColdDiscoverSubdirs()
 {
@@ -408,44 +641,36 @@ void CSharedDirWatcher::ColdDiscoverSubdirs()
 		return;
 	}
 
-	thePrefs::PathList & shared = theApp->glob_prefs->shareddir_list;
+	thePrefs::PathList &shared = theApp->glob_prefs->shareddir_list;
 	if (shared.empty()) {
 		return;
 	}
 
-	// Walk only the user's recursive roots, not every shared dir.
-	// Non-recursive (explicit) shares are strict: their pre-existing
-	// subdirs do NOT get auto-included. Same policy as the HOT path
-	// (RegisterNewSubdirectory) -- both auto-add behaviours gate on
-	// IsRecursiveAncestor.
-	const thePrefs::PathList & roots =
-		theApp->glob_prefs->shareddir_recursive_list;
+	// Walk only the user's recursive roots, not every shared dir. Non-recursive (explicit)
+	// shares are strict: their pre-existing subdirs do NOT get auto-included. Same policy as the
+	// HOT path (RegisterNewSubdirectory) -- both auto-add behaviours gate on IsRecursiveAncestor.
+	const thePrefs::PathList &roots = theApp->glob_prefs->shareddir_recursive_list;
 	if (roots.empty()) {
 		return;
 	}
 
-	// Membership index over the current list: avoids O(N*M) string
-	// comparisons when M (newly-discovered subdirs) is large. Keys are
-	// raw path strings -- matches the comparison RegisterNewSubdirectory
-	// uses for its own dedup check, just lifted into a set.
-	// std::set rather than unordered_set: wxString has operator< but
-	// no stdlib std::hash specialization, and N here is at most a
-	// few thousand even on heavy users -- log-N membership is fine.
+	// Membership index over the current list: avoids O(N*M) string comparisons when M
+	// (newly-discovered subdirs) is large. Keys are raw path strings -- matches the comparison
+	// RegisterNewSubdirectory uses for its own dedup check, just lifted into a set. std::set
+	// rather than unordered_set: wxString has operator< but no stdlib std::hash specialization,
+	// and N here is at most a few thousand even on heavy users, so log-N membership is fine.
 	std::set<wxString> known;
 	for (size_t i = 0; i < shared.size(); ++i) {
 		known.insert(shared[i].GetRaw());
 	}
 
-	// Discovered new subdirs go here; we add them in bulk after the
-	// walk so a single SaveSharedFolders() flushes the whole batch
-	// rather than rewriting shareddir.dat once per discovery.
+	// Discovered new subdirs go here; they are added in bulk after the walk.
 	std::vector<CPath> discovered;
 
-	// Walk each recursive root's subtree. CSharedFileList's Reload
-	// already handled the root itself; this surfaces previously-
-	// uncovered descendants only.
+	// Walk each recursive root's subtree. CSharedFileList's Reload already handled the root
+	// itself; this surfaces previously-uncovered descendants only.
 	for (size_t i = 0; i < roots.size(); ++i) {
-		const CPath & root = roots[i];
+		const CPath &root = roots[i];
 		if (!root.IsOk() || !root.DirExists()) {
 			continue;
 		}
@@ -457,68 +682,66 @@ void CSharedDirWatcher::ColdDiscoverSubdirs()
 	}
 
 	for (size_t i = 0; i < discovered.size(); ++i) {
-		const CPath & sub = discovered[i];
+		const CPath &sub = discovered[i];
 		shared.push_back(sub);
 #ifndef __WXOSX__
-		// On Linux/BSD/Windows the inotify/kqueue/RDCW backends need
-		// each subdir registered explicitly. macOS's FSEvents stream
-		// from the enclosing AddTree() already covers descendants.
+		// On Linux/BSD/Windows the inotify/kqueue/RDCW backends need each subdir registered
+		// explicitly. macOS's FSEvents stream from the enclosing AddTree() already covers
+		// descendants.
 		wxFileName fn = wxFileName::DirName(sub.GetRaw());
 		if (!m_watcher->Add(fn, kWatchMask)) {
 			AddDebugLogLineC(logKnownFiles,
-				CFormat("Shared-dir watcher: failed to add cold-discovered %s")
-					% sub.GetRaw());
+				CFormat("Shared-dir watcher: failed to add cold-discovered %s") %
+					sub.GetRaw());
 		}
 #endif
 		AddDebugLogLineN(logKnownFiles,
-			CFormat("Shared-dir watcher: cold-discovered subdir %s")
-				% sub.GetRaw());
+			CFormat("Shared-dir watcher: cold-discovered subdir %s") % sub.GetRaw());
 	}
 
 	AddDebugLogLineN(logKnownFiles,
-		CFormat("Shared-dir watcher: cold discovery added %u subdir(s)")
-			% (unsigned)discovered.size());
+		CFormat("Shared-dir watcher: cold discovery added %u subdir(s)") %
+			(unsigned)discovered.size());
 
-	// Single rewrite of shareddir.dat for the whole batch.
-	theApp->glob_prefs->SaveSharedFolders();
-
-	// The initial share-scan already ran (amule.cpp invokes Reload
-	// before EnableDirectoryWatcher), so the in-memory shared file
-	// list doesn't yet reflect the newly-discovered subdirs. We
-	// can't enumerate them via per-file events (they happened while
-	// the watcher was offline), so route through the fallback path:
-	// FlushPendingEvents will see m_fallbackPending and call the
-	// bulk Reload() once the debounce fires.
-	m_fallbackPending = true;
+	// The initial share-scan already ran (amule.cpp invokes Reload before
+	// EnableDirectoryWatcher), so the in-memory shared file list does not yet reflect the
+	// newly-discovered subdirs. They cannot be enumerated via per-file events (those happened
+	// while the watcher was offline), so route through the fallback path: FlushPendingEvents
+	// sees m_resyncReason and calls the bulk Reload() once the debounce fires.
+	//
+	// Never downgrade a pending fault: if the backend already reported dropped events, that is
+	// the more serious reason and must keep its critical message. Enable() can run again while a
+	// resync is still owed (toggling the auto-rescan preference, for one), which is how the two
+	// could meet.
+	if (m_resyncReason == ResyncNone) {
+		m_resyncReason = ResyncColdDiscovery;
+	}
+	m_coldDiscoveredDirs = static_cast<unsigned>(discovered.size());
 	ScheduleProcessing();
 }
 
-
 void CSharedDirWatcher::WalkForUnknownSubdirs(
-	const CPath & root,
-	std::set<wxString> & known,
-	std::vector<CPath> & out)
+	const CPath &root, std::set<wxString> &known, std::vector<CPath> &out)
 {
 	const int extraFlags = thePrefs::FollowSymlinksInShares() ? 0 : wxDIR_NO_FOLLOW;
 	CDirIterator dir(root);
-	for (CPath sub = dir.GetFirstFile(CDirIterator::Dir, wxEmptyString, extraFlags);
-		sub.IsOk();
-		sub = dir.GetNextFile())
-	{
+	for (CPath sub = dir.GetFirstFile(CDirIterator::Dir, wxEmptyString, extraFlags); sub.IsOk();
+		sub = dir.GetNextFile()) {
+		if (thePrefs::IsShareExcluded(sub.GetPrintable())) {
+			continue;
+		}
 		CPath full = root.JoinPaths(sub);
 		const wxString key = full.GetRaw();
 		if (known.find(key) == known.end()) {
 			known.insert(key);
 			out.push_back(full);
 		}
-		// Always recurse: known subdirs may themselves contain
-		// unknown grandchildren, and we want a single Refresh() to
-		// pick up the whole offline-created tree, not just the top
-		// layer of new dirs.
+		// Always recurse: known subdirs may themselves contain unknown grandchildren, and a single
+		// Refresh() should pick up the whole offline-created tree, not just the top layer of new
+		// dirs.
 		WalkForUnknownSubdirs(full, known, out);
 	}
 }
-
 
 void CSharedDirWatcher::ScheduleProcessing()
 {
@@ -527,27 +750,38 @@ void CSharedDirWatcher::ScheduleProcessing()
 	m_debounceTimer.Start(kDebounceMs, wxTIMER_ONE_SHOT);
 }
 
-
-void CSharedDirWatcher::OnDebounceTimer(wxTimerEvent & WXUNUSED(event))
+void CSharedDirWatcher::OnDebounceTimer(wxTimerEvent &WXUNUSED(event))
 {
 	FlushPendingEvents();
 }
 
-
 void CSharedDirWatcher::FlushPendingEvents()
 {
-	// Fallback path: the watcher backend signalled it dropped events
-	// since the last flush. We can't trust the per-path deltas in
-	// m_pendingEvents because some events may never have been
-	// delivered. Drop the queue and fall back to a full Reload, which
-	// re-syncs everything from scratch at the cost of one expensive
-	// re-walk. Log at error level so the user sees it.
-	if (m_fallbackPending) {
-		AddLogLineC(_("Shared-dir watcher: events dropped by backend, "
-			"forcing a full shared-files reload to resync"));
+	// Fallback path: the watcher backend signalled it dropped events since the last flush. The
+	// per-path deltas in m_pendingEvents cannot be trusted, because some events may never have
+	// been delivered. Drop the queue and fall back to a full Reload, which re-syncs everything
+	// from scratch at the cost of one expensive re-walk. Log at error level so the user sees it.
+	if (m_resyncReason != ResyncNone) {
+		if (m_resyncReason == ResyncColdDiscovery) {
+			// Routine, not a fault: directories appeared while aMule was off. Reported at info
+			// level and saying what actually happened, so the extra share rescan right after
+			// startup has a stated reason instead of looking like an unexplained second scan.
+			AddLogLineN(CFormat(wxPLURAL("Shared-dir watcher: %u new subdirectory found "
+						     "since last run, rescanning shares",
+					    "Shared-dir watcher: %u new subdirectories found "
+					    "since last run, rescanning shares",
+					    m_coldDiscoveredDirs)) %
+				    m_coldDiscoveredDirs);
+		} else {
+			AddLogLineC(_("Shared-dir watcher: events dropped by backend, "
+				      "forcing a full shared-files reload to resync"));
+		}
 		m_pendingEvents.clear();
-		m_fallbackPending = false;
-		m_parent->Reload();
+		m_resyncReason = ResyncNone;
+		m_coldDiscoveredDirs = 0;
+		// Scheduled: this flush runs on the core event loop, so an inline walk
+		// would block it (and any EC request behind it) for the walk's length.
+		m_parent->RequestReload();
 		return;
 	}
 
@@ -556,61 +790,82 @@ void CSharedDirWatcher::FlushPendingEvents()
 	}
 
 	AddDebugLogLineN(logKnownFiles,
-		CFormat("Shared-dir watcher: applying %zu incremental delta(s) after debounce")
-			% m_pendingEvents.size());
+		CFormat("Shared-dir watcher: applying %zu incremental delta(s) after debounce") %
+			m_pendingEvents.size());
 
-	// Drain into a local copy first so an inline call back into the
-	// watcher (e.g. via a Notify_* macro that pumps the event loop on
-	// some backends) can't mutate the container while we iterate.
+	// Drain into a local copy first so an inline call back into the watcher (e.g. via a Notify_*
+	// macro that pumps the event loop on some backends) cannot mutate the container while we
+	// iterate.
 	std::unordered_map<wxString, PendingPathEvents> drained;
 	drained.swap(m_pendingEvents);
 
-	for (const auto & entry : drained) {
-		const wxString & path = entry.first;
-		const PendingPathEvents & ev = entry.second;
+	for (const auto &entry : drained) {
+		const wxString &path = entry.first;
+		const PendingPathEvents &ev = entry.second;
 
-		// RENAME first: if the destination is the same as the
-		// CREATE path elsewhere in the batch, the destination's
-		// own event slot will handle the add. Treat the rename as
-		// (delete-old) then schedule new-path processing.
+		// RENAME first: if the destination is the same as the CREATE path elsewhere in the batch,
+		// the destination's own event slot handles the add. Treat the rename as (delete-old) then
+		// schedule new-path processing.
 		if (ev.flags & wxFSW_EVENT_RENAME) {
+			// Directory rename: the subtree moved with no per-file events, so the file pipeline
+			// would just log a bogus "does not exist" and share nothing. Register the new dir
+			// (watch + walk contents); it only re-shares under a recursive ancestor, so an
+			// explicitly picked folder is not resurrected at its new name.
+			if (!ev.renamedTo.IsEmpty() && wxFileName::DirExists(ev.renamedTo)) {
+				// Tear down the old path only if it is gone (inotify shape). Backends that
+				// report the rename against the still-existing parent deliver the old subtree
+				// via a separate DELETE, so never touch a path that still exists (that is the
+				// parent).
+				if (!wxFileName::DirExists(path) && IsInSharedSet(path)) {
+					HandleDirRemoved(path);
+				}
+				RegisterNewSubdirectory(ev.renamedTo);
+				continue;
+			}
 			m_parent->NotifyPathRemoved(path);
-			if (!ev.renamedTo.IsEmpty()) {
-				m_parent->NotifyPathAdded(ev.renamedTo);
+			// Modified, not added: the rename can land on a shared file, whose old hash
+			// NotifyPathAdded() would keep.
+			if (!ev.renamedTo.IsEmpty() && !IsInExcludedFolder(ev.renamedTo)) {
+				m_parent->NotifyPathModified(ev.renamedTo);
 			}
 			continue;
 		}
 
-		// DELETE dominates: if a file was created AND deleted in
-		// the same window we don't want to add then remove; the
-		// remove-effect is the net result. Same path can carry
-		// multiple flags because fs-watcher fires DELETE for the
-		// rename's source on some backends.
-		if (ev.flags & wxFSW_EVENT_DELETE) {
-			m_parent->NotifyPathRemoved(path);
+		// DELETE wins only if the file is gone. One deleted and created again in the same window,
+		// or replaced by a move (Windows reports that as a DELETE and a CREATE), is still on disk
+		// and is handled as modified below. The same path can carry several flags, because
+		// fs-watcher fires DELETE for the rename's source on some backends.
+		if ((ev.flags & wxFSW_EVENT_DELETE) && !wxFileName::FileExists(path)) {
+			// A vanished shared *dir* is not in the file index, so NotifyPathRemoved would no-op.
+			// Detach its subtree only when it is a shared dir AND genuinely gone from disk -- a
+			// spurious/transient DELETE, or a delete-then-recreate coalesced into this debounce
+			// window, must not unshare a directory that still exists. The shared-set check also
+			// keeps this off the hot path of ordinary file DELETEs (no O(files) scan per file).
+			if (IsInSharedSet(path) && !wxFileName::DirExists(path)) {
+				HandleDirRemoved(path);
+			} else {
+				m_parent->NotifyPathRemoved(path);
+			}
 			continue;
 		}
 
-		// CREATE → add. MODIFY-only without CREATE → modify (which
-		// in NotifyPathModified is a stat-and-rehash-if-changed
-		// path; cheap when nothing actually moved).
-		if (ev.flags & wxFSW_EVENT_CREATE) {
-			m_parent->NotifyPathAdded(path);
-		} else if (ev.flags & wxFSW_EVENT_MODIFY) {
+		// The file is on disk: created, modified, or replaced. Not NotifyPathAdded(): a file that
+		// replaced a shared one keeps that path in the index, so it would keep the old hash.
+		// NotifyPathModified() re-hashes on a size or mtime change -- cheap when nothing changed --
+		// and adds a path not shared yet.
+		if (!IsInExcludedFolder(path)) {
 			m_parent->NotifyPathModified(path);
 		}
 	}
 }
 
-
 #ifdef __APPLE__
-void CSharedDirWatcher::OnMacRunLoopPump(wxTimerEvent & WXUNUSED(event))
+void CSharedDirWatcher::OnMacRunLoopPump(wxTimerEvent &WXUNUSED(event))
 {
-	// Non-blocking drain (returnAfterSourceHandled=true, timeout=0):
-	// dispatches any FSEvents callbacks queued on this thread's
-	// CFRunLoop since the last tick, then returns immediately. wx's
-	// FSEvents wrapper translates those callbacks into wx events and
-	// posts them to our OnFileSystemEvent via the normal event queue.
+	// Non-blocking drain (returnAfterSourceHandled=true, timeout=0): dispatches any FSEvents
+	// callbacks queued on this thread's CFRunLoop since the last tick, then returns immediately.
+	// wx's FSEvents wrapper translates those callbacks into wx events and posts them to our
+	// OnFileSystemEvent via the normal event queue.
 	CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, true);
 }
 #endif

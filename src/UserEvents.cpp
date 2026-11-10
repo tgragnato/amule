@@ -22,22 +22,17 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
 #include "UserEvents.h"
-
+#include "ExternalCommand.h"
 
 #include <common/Format.h>
 #include "Logger.h"
 #include "Preferences.h"
 #include "PartFile.h"
-#include "TerminationProcess.h"	// Needed for CTerminationProcess
 
-
-#include <wx/process.h>
-
-
-#define USEREVENTS_EVENT(ID, NAME, VARS)	{ #ID, NAME, false, "", false, "" },
-static struct {
+#define USEREVENTS_EVENT(ID, NAME, VARS) { #ID, NAME, false, "", false, "" },
+static struct
+{
 	const wxString key;
 	const wxString name;
 	bool core_enabled;
@@ -51,11 +46,10 @@ static struct {
 };
 #undef USEREVENTS_EVENT
 
-
-// Always defined: the wxCHECK_* macros below evaluate their condition in
-// both debug and release, unlike the wxASSERT_* family this used to be
-// paired with. Returns false for any out-of-range event so accessors below
-// can fall through to a safe sentinel instead of reading past s_EventList.
+// Always defined: the wxCHECK_* macros below evaluate their condition in both debug and release,
+// unlike the wxASSERT_* family this used to be paired with. Returns false for any out-of-range
+// event, so the accessors below can fall through to a safe sentinel instead of reading past
+// s_EventList.
 inline bool CheckIndex(const unsigned int idx)
 {
 	return (idx < itemsof(s_EventList));
@@ -66,103 +60,104 @@ unsigned int CUserEvents::GetCount()
 	return itemsof(s_EventList);
 }
 
-// wxCHECK rather than wxASSERT in the accessors below: a release build
-// would otherwise read past s_EventList on a bad index instead of
-// aborting (wxASSERT is a no-op in release). Each accessor returns a
-// safe sentinel — entry [0] — when the index is out of range; the
-// debug-build behaviour (assert + abort on first mis-use) is unchanged.
+// wxCHECK rather than wxASSERT in the accessors below: a release build would otherwise read past
+// s_EventList on a bad index instead of aborting, wxASSERT being a no-op in release. Each accessor
+// returns a safe sentinel, entry [0], when the index is out of range; the debug-build assert +
+// abort on first misuse is unchanged.
 
-const wxString& CUserEvents::GetDisplayName(enum EventType event)
+const wxString &CUserEvents::GetDisplayName(enum EventType event)
 {
-	wxCHECK_MSG(CheckIndex(event), s_EventList[0].name,
+	wxCHECK_MSG(CheckIndex(event),
+		s_EventList[0].name,
 		"CUserEvents::GetDisplayName: event index out of range");
 	return s_EventList[event].name;
 }
 
 bool CUserEvents::IsCoreCommandEnabled(enum EventType event)
 {
-	wxCHECK_MSG(CheckIndex(event), false,
-		"CUserEvents::IsCoreCommandEnabled: event index out of range");
+	wxCHECK_MSG(CheckIndex(event), false, "CUserEvents::IsCoreCommandEnabled: event index out of range");
 	return s_EventList[event].core_enabled;
 }
 
 bool CUserEvents::IsGUICommandEnabled(enum EventType event)
 {
-	wxCHECK_MSG(CheckIndex(event), false,
-		"CUserEvents::IsGUICommandEnabled: event index out of range");
+	wxCHECK_MSG(CheckIndex(event), false, "CUserEvents::IsGUICommandEnabled: event index out of range");
 	return s_EventList[event].gui_enabled;
 }
 
-const wxString& CUserEvents::GetKey(const unsigned int event)
+const wxString &CUserEvents::GetKey(const unsigned int event)
 {
-	wxCHECK_MSG(CheckIndex(event), s_EventList[0].key,
-		"CUserEvents::GetKey: event index out of range");
+	wxCHECK_MSG(CheckIndex(event), s_EventList[0].key, "CUserEvents::GetKey: event index out of range");
 	return s_EventList[event].key;
 }
 
-bool& CUserEvents::GetCoreEnableVar(const unsigned int event)
+bool &CUserEvents::GetCoreEnableVar(const unsigned int event)
 {
-	wxCHECK_MSG(CheckIndex(event), s_EventList[0].core_enabled,
+	wxCHECK_MSG(CheckIndex(event),
+		s_EventList[0].core_enabled,
 		"CUserEvents::GetCoreEnableVar: event index out of range");
 	return s_EventList[event].core_enabled;
 }
 
-wxString& CUserEvents::GetCoreCommandVar(const unsigned int event)
+wxString &CUserEvents::GetCoreCommandVar(const unsigned int event)
 {
-	wxCHECK_MSG(CheckIndex(event), s_EventList[0].core_command,
+	wxCHECK_MSG(CheckIndex(event),
+		s_EventList[0].core_command,
 		"CUserEvents::GetCoreCommandVar: event index out of range");
 	return s_EventList[event].core_command;
 }
 
-bool& CUserEvents::GetGUIEnableVar(const unsigned int event)
+bool &CUserEvents::GetGUIEnableVar(const unsigned int event)
 {
-	wxCHECK_MSG(CheckIndex(event), s_EventList[0].gui_enabled,
+	wxCHECK_MSG(CheckIndex(event),
+		s_EventList[0].gui_enabled,
 		"CUserEvents::GetGUIEnableVar: event index out of range");
 	return s_EventList[event].gui_enabled;
 }
 
-wxString& CUserEvents::GetGUICommandVar(const unsigned int event)
+wxString &CUserEvents::GetGUICommandVar(const unsigned int event)
 {
-	wxCHECK_MSG(CheckIndex(event), s_EventList[0].gui_command,
+	wxCHECK_MSG(CheckIndex(event),
+		s_EventList[0].gui_command,
 		"CUserEvents::GetGUICommandVar: event index out of range");
 	return s_EventList[event].gui_command;
 }
 
-#define USEREVENTS_EVENT(ID, NAME, VARS)	case CUserEvents::ID: { VARS break; }
-#define USEREVENTS_REPLACE_VAR(VAR, DESC, CODE)	command.Replace("%" VAR, CODE);
-static void ExecuteCommand(
-	enum CUserEvents::EventType event,
-	const void* object,
-	const wxString& cmd)
+#define USEREVENTS_EVENT(ID, NAME, VARS) \
+	case CUserEvents::ID: { \
+		VARS break; \
+	}
+#define USEREVENTS_REPLACE_VAR(VAR, DESC, CODE) values.emplace_back("%" VAR, CODE);
+static void ExecuteCommand(enum CUserEvents::EventType event, const void *object, const wxString &cmd)
 {
 	// This variable is needed by the USEREVENTS_EVENTLIST macro.
-	wxString command = cmd;
+	std::vector<std::pair<wxString, wxString>> values;
 	switch (event) {
 		USEREVENTS_EVENTLIST()
 		/* This macro expands to handle all user event types. Example:
-		   case CUserEvents::NewChatSession: {
-		       command.Replace( "%SENDER", *((wxString*)object) );
-			   break;
-		   } */
+		   case CUserEvents::NewChatSession:
+		       values.emplace_back("%SENDER", *static_cast<const wxString *>(object));
+		       break; */
 	}
-	if (!command.empty()) {
-		CTerminationProcess *p = new CTerminationProcess(cmd);
-		if (!wxExecute(command, wxEXEC_ASYNC, p)) {
-			// If wxExecute fails, we need to delete the CTerminationProcess
-			// otherwise it will leak.
-			delete p;
-			AddLogLineC(CFormat(_("Failed to execute command `%s' on `%s' event.")) %
-				command % s_EventList[event].name);
-		}
+	ExternalCommand::RejectionReason rejection;
+	bool substituted = false;
+	const wxArrayString args = ExternalCommand::Build(
+		cmd, values, &substituted, ExternalCommand::NativePlatform, nullptr, &rejection);
+	if (!cmd.empty() && rejection != ExternalCommand::RejectionReason::None) {
+		AddLogLineC(CFormat(_("Command '%s' was not run on '%s' event: %s")) % cmd %
+			    s_EventList[event].name % ExternalCommand::DescribeRejection(rejection));
+		return;
+	}
+	if (!cmd.empty() && !ExternalCommand::RunDetached(cmd, args, substituted ? nullptr : &cmd)) {
+		AddLogLineC(CFormat(_("Failed to execute command '%s' on '%s' event.")) % cmd %
+			    s_EventList[event].name);
 	}
 }
 
-void CUserEvents::ProcessEvent(enum EventType event, const void* object)
+void CUserEvents::ProcessEvent(enum EventType event, const void *object)
 {
-	wxCHECK_RET(CheckIndex(event),
-		"CUserEvents::ProcessEvent: event index out of range");
-	wxCHECK_RET(object != NULL,
-		"CUserEvents::ProcessEvent: NULL object");
+	wxCHECK_RET(CheckIndex(event), "CUserEvents::ProcessEvent: event index out of range");
+	wxCHECK_RET(object != NULL, "CUserEvents::ProcessEvent: NULL object");
 
 #ifndef CLIENT_GUI
 	if (s_EventList[event].core_enabled) {

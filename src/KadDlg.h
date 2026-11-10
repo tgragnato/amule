@@ -26,36 +26,52 @@
 #ifndef KADDLG_H
 #define KADDLG_H
 
-#include <wx/panel.h>		// Needed for wxPanel
+#include "KadLookupView.h"
+#include <wx/timer.h>
+#include <wx/panel.h> // Needed for wxPanel
 
 class COScopeCtrl;
+class CKadContactHistogram;
 class wxListEvent;
 class wxCommandEvent;
 class wxMouseEvent;
 typedef struct UpdateInfo GraphUpdateInfo;
 
-
 class CKadDlg : public wxPanel
 {
 public:
-	CKadDlg(wxWindow* pParent);
-	~CKadDlg() {};
+	CKadDlg(wxWindow *pParent);
+	~CKadDlg() = default;
 
 	void Init();
 	void SetUpdatePeriod(int step);
 	void SetGraphColors();
-	void UpdateGraph(const GraphUpdateInfo& update);
+	void UpdateGraph(const GraphUpdateInfo &update);
 	void UpdateNodeCount(unsigned nodes);
 
+	// Drives the pane's own Connect/Cancel/Disconnect toggle (ID_KADDISCONNECT) from Kad's
+	// current state. Called from CamuleDlg::ShowConnectionState() alongside the ED2K
+	// equivalent, and once from Init() for the initial paint.
+	void UpdateConnectButton();
+	void UpdateContactDistribution();
+	void ShowContactDistribution();
+	bool IsContactDistributionVisible() const;
+
 private:
-	COScopeCtrl* m_kad_scope;
+	COScopeCtrl *m_kad_scope;
+	CKadContactHistogram *m_contactHistogram = nullptr;
+	wxTimer m_distributionTimer;
+	wxButton *m_lookupButton = nullptr;
+	wxWeakRef<CKadLookupView> m_lookupView;
+#ifdef CLIENT_GUI
+	std::shared_ptr<CKadLookupRequestState> m_lookupRequest;
+#endif
 
 	// Event handlers
-	void		OnBnClickedBootstrapClient(wxCommandEvent& evt);
-	void		OnBnClickedBootstrapKnown(wxCommandEvent& evt);
-	void		OnBnClickedDisconnectKad(wxCommandEvent& evt);
-	void		OnBnClickedUpdateNodeList(wxCommandEvent& evt);
-	void		OnFieldsChange(wxCommandEvent& evt);
+	void OnBnClickedBootstrapClient(wxCommandEvent &evt);
+	void OnBnClickedDisconnectKad(wxCommandEvent &evt);
+	void OnBnClickedUpdateNodeList(wxCommandEvent &evt);
+	void OnFieldsChange(wxCommandEvent &evt);
 
 	wxDECLARE_EVENT_TABLE();
 };

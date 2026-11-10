@@ -27,6 +27,9 @@
 #define PARTFILEWRITETHREAD_H
 
 #include <list>
+#include <atomic>
+
+#include <common/Path.h> // Needed for CPath
 
 #include <wx/thread.h>
 
@@ -36,20 +39,27 @@ class PartFileBufferedData;
 
 // eMule ref: PartFile.h:104-108
 // Part file buffer write status
-#define PB_READY   0
+#define PB_READY 0
 #define PB_PENDING 1
-#define PB_ERROR   2
+#define PB_ERROR 2
 #define PB_WRITTEN 3
+// Not written: too little free space. The main thread puts it back and pauses the file.
+#define PB_NOSPACE 4
 
 // eMule ref: PartFileWriteThread.h:21-25
 struct ToWrite
 {
-	CPartFile           *pFile;
+	CPartFile *pFile;
 	PartFileBufferedData *pBuffer;
+	//! For the free-space check, taken on the main thread when queued: the part file's
+	//! directory and the user's limit, if it is on.
+	CPath dir;
+	bool checkSpace;
+	uint64 minFree;
 };
 
-// Port of eMule's CPartFileWriteThread (PartFileWriteThread.h:35-67).
-// Windows primitives replaced with wxWidgets equivalents:
+// Port of eMule's CPartFileWriteThread (PartFileWriteThread.h:35-67). Windows primitives
+// replaced with wxWidgets equivalents:
 //   CWinThread             -> wxThread (joinable)
 //   IOCP + overlapped I/O  -> synchronous CFileArea::FlushAt() on this thread
 //   GetQueuedCompletionStatus -> wxCondition::WaitTimeout()
@@ -61,28 +71,31 @@ public:
 	CPartFileWriteThread();
 	~CPartFileWriteThread();
 
-	void EndThread();                  // eMule ref: PartFileWriteThread.cpp:62
-	void QueueWrite(CPartFile* pFile, PartFileBufferedData* pBuffer);
+	void EndThread(); // eMule ref: PartFileWriteThread.cpp:62
+	void QueueWrite(CPartFile *pFile,
+		PartFileBufferedData *pBuffer,
+		const CPath &dir,
+		bool checkSpace,
+		uint64 minFree);
 	bool IsRunning() const { return m_bRun; }
 
-	// Pointer-value strip of any pending writes whose pFile == `file`.
-	// Called by MuleNotify::KnownFileBeingDestroyed before the
-	// CPartFile is freed. Takes m_mutex so the write loop can't race
-	// with the strip. Pending PartFileBufferedData entries are
-	// deleted here because the partfile they were meant for is
-	// gone — the bytes are dropped, matching the cancel semantics.
-	void DropReferencesTo(const CKnownFile* file);
+	// Pointer-value strip of any pending writes whose pFile == `file`. Called by
+	// MuleNotify::KnownFileBeingDestroyed before the CPartFile is freed. Takes m_mutex so the
+	// write loop cannot race with the strip. Pending PartFileBufferedData entries are deleted
+	// here because the partfile they were meant for is gone -- the bytes are dropped, matching
+	// the cancel semantics.
+	void DropReferencesTo(const CKnownFile *file);
 
 private:
-	void* Entry() override;
+	void *Entry() override;
 
-	volatile bool   m_bRun;
-	bool            m_bWorkPending;    // sticky wake flag
+	std::atomic<bool> m_bRun{ false };
+	bool m_bWorkPending; // sticky wake flag
 
-	wxMutex         m_mutex;
-	wxCondition     m_condition;
+	wxMutex m_mutex;
+	wxCondition m_condition;
 
-	std::list<ToWrite> m_flushList;    // protected by m_mutex
+	std::list<ToWrite> m_flushList; // protected by m_mutex
 };
 
 #endif // PARTFILEWRITETHREAD_H

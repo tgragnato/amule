@@ -14,6 +14,7 @@ amulecmd \- Console-based program to control aMule
 .RB_untranslated [ \-v ]
 .RB [ \-l " " \fI<lang> ]
 .RB { " " [ \-w ] " " | " " [ \-c " " \fI<command> ] " " }
+.RB_untranslated [ \-\-space\-separated ]
 
 .B_untranslated amulecmd
 .RB [ \-\-create\-config\-from = \fI<path> ]
@@ -65,6 +66,10 @@ Create config file based upon \fI<path>\fR, which must point to a valid aMule co
 Force ZLIB compression on the External Connection link regardless of the dialed-IP locality.
 Useful when the server side is reachable over a VPN tunnel that resolves to a LAN IP and the heuristic would otherwise skip compression.
 .TP
+.B_untranslated [ \-\-space\-separated ]\fR
+Separate the fields of the list commands with spaces, as earlier versions did, instead of tabs.
+Client names and file names may contain spaces, so the default tab separator is what lets a script split a row back into its fields; use this only for scripts written against the older output.
+.TP
 .B_untranslated [ \-\-version ]\fR
 Displays the current version number.
 .TP
@@ -99,12 +104,15 @@ IPv4 address or a resolvable DNS name) aMule will connect to that server only.
 .SS_untranslated Disconnect [ \fIed2k\fP | \fIkad\fP ]
 Disconnect from all networks you are connected to, or just disconnect from the
 specified network.
-.SS_untranslated Download \fI<number>\fP
+.SS_untranslated Download \fI<number>\fP \fI[<id>]\fP
 Start downloading a file.
 
-The \fI<number>\fR of a file from the last search has to be given.
-Example: `download 12' will start to download the file with the number 12 of the
-previous search.
+Give the \fI<number>\fR of a file as listed by \fBresults\fR, optionally followed
+by a search \fI<id>\fR (as printed by \fBsearch\fR). Without an id, the number
+refers to the last \fBresults\fR output, or to the most recently started search if
+nothing was listed yet.
+Example: 'download 12' downloads file 12 of the last results; 'download 12 3'
+downloads file 12 of search 3.
 .SS_untranslated Exit
 Disconnect from amule/amuled and quit amulecmd.
 .SS_untranslated Get \fI<what>\fP
@@ -137,8 +145,9 @@ Low priority.
 .IP Normal 10
 Normal priority.
 .RE
-.SS_untranslated Progress
-Shows the progress of an on\-going search.
+.SS_untranslated Progress \fI[<id>]\fP
+Shows the progress of an on\-going search. Optionally takes a search \fI<id>\fR
+(as printed by \fBsearch\fR); with no id, shows the most recently started search.
 .SS_untranslated Quit
 A synonym of the \fBexit\fR command.
 .SS_untranslated Reload \fI<what>\fP
@@ -153,17 +162,25 @@ Reload IP filter tables.
 .RE
 .SS_untranslated Reset
 Reset the log.
-.SS_untranslated Results
-Shows you the results of the last search.
+.SS_untranslated Results \fI[<id>]\fP
+Shows you the results of a search. Optionally takes a search \fI<id>\fR (as
+printed by \fBsearch\fR); with no id, shows the most recently started search.
+Several searches can be kept on the daemon at once and addressed by id.
 .SS_untranslated Resume \fI<hash>\fP | \fI<number>\fP
 Resumes the download specified by \fI<hash>\fR or \fI<number>\fR. To get the value use \fBshow\fR.
 .SS_untranslated Search \fI<type>\fP [\fI<filters>\fP] \fI<keyword>\fR
 Makes a search for the given \fI<keyword>\fR. A search type and a keyword
 to search is mandatory to do this.
-Example: `search kad amule' performs a kad search for `amule'.
+Example: 'search kad amule' performs a kad search for 'amule'.
+Prints a search id; pass it to \fBresults\fR or \fBprogress\fR to address this
+search. Several searches can run at once, each with its own id.
 
 Available search types:
 .RS
+.IP All 10
+Searches eD2k and Kad together, using the available network if the other cannot
+start. Requires a daemon advertising All search support; older daemons return
+a clear error without starting a search. Example: 'search all amule'.
 .IP Global 10
 Performs a global search.
 .IP Kad 10
@@ -188,8 +205,8 @@ Smallest file size to return. Suffixes use binary multipliers
 Largest file size to return. Same suffixes as \fB\-\-min\-size\fR.
 .RE
 .PP
-Example: `search global linux iso \-\-type Iso \-\-min-size 100M' returns
-results for \(lqlinux iso\(rq of file-type Iso at least 100 MiB.
+Example: 'search global linux iso \-\-type Iso \-\-min-size 100M' returns
+results for 'linux iso' of file-type Iso at least 100 MiB.
 .SS_untranslated Set \fI<what>\fR
 Sets a given preferences value.
 
@@ -224,9 +241,9 @@ Show statistics tree.
 
 The optional \fI<number>\fR in the range of 0-255 can be passed as argument to this
 command, which tells how many entries of the client version subtree should be
-shown. Passing 0, or omitting it means `unlimited'.
+shown. Passing 0, or omitting it means 'unlimited'.
 
-Example: `statistics 5' will show only the top 5 versions for each client
+Example: 'statistics 5' will show only the top 5 versions for each client
 type.
 .SS_untranslated Status
 Show connection status, current up/download speeds, etc.
@@ -273,6 +290,8 @@ Typically amulecmd will be first run as:
 or
 .PP
 \fBamulecmd\fR \fB\-\-create-config-from\fR=\fI/home/username/.aMule/amule.conf\fR
+.PP
+After daemon credential migration, supply the client password with \fB\-P\fR or enter it at the password prompt; the daemon verifier cannot supply it.
 .PP
 These will save settings to \fI$HOME/.aMule/remote.conf\fR, and later you only need to type:
 

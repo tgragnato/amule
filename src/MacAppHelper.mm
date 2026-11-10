@@ -13,6 +13,58 @@
 
 #include "MacAppHelper.h"
 
+extern "C" void mac_set_table_view_flush(void *windowHandle)
+{
+	if (!windowHandle) {
+		return;
+	}
+
+	// wxOSX hands back whichever view it made the peer from: the scroll
+	// view for a scrolled control, the table itself otherwise.
+	NSView *view = (NSView *)windowHandle;
+	NSTableView *table = nil;
+	if ([view isKindOfClass:[NSScrollView class]]) {
+		NSView *doc = [(NSScrollView *)view documentView];
+		if ([doc isKindOfClass:[NSTableView class]]) {
+			table = (NSTableView *)doc;
+		}
+	} else if ([view isKindOfClass:[NSTableView class]]) {
+		table = (NSTableView *)view;
+	}
+
+	if (!table) {
+		return;
+	}
+	// GCC does not support @available, so its builds keep the default style.
+#ifdef __clang__
+	if (@available(macOS 11.0, *)) {
+		table.style = NSTableViewStyleFullWidth;
+	}
+#endif
+}
+
+extern "C" double mac_tab_view_buttons_mid_y(void *windowHandle)
+{
+	NSView *view = (NSView *)windowHandle;
+	if (![view isKindOfClass:[NSTabView class]] || view.superview == nil) {
+		return -1;
+	}
+	NSTabView *tabView = (NSTabView *)view;
+	[tabView layoutSubtreeIfNeeded];
+
+	// The buttons are a private segmented-control subview; its frame is the only public way to
+	// learn where AppKit placed them. GCC does not support for...in in Objective-C++.
+	NSEnumerator *subviews = [tabView.subviews objectEnumerator];
+	while (NSView *sub = [subviews nextObject]) {
+		if ([sub isKindOfClass:[NSSegmentedControl class]]) {
+			NSView *parent = tabView.superview;
+			NSRect r = [sub convertRect:sub.bounds toView:parent];
+			return parent.isFlipped ? NSMidY(r) : NSHeight(parent.bounds) - NSMidY(r);
+		}
+	}
+	return -1;
+}
+
 extern "C" void mac_set_accessory_mode(bool accessory)
 {
 	[NSApp setActivationPolicy:
@@ -20,11 +72,25 @@ extern "C" void mac_set_accessory_mode(bool accessory)
 		          : NSApplicationActivationPolicyRegular];
 
 	if (!accessory) {
-		// Restoring from Accessory: switching policy gives us a
-		// Dock icon back but doesn't make the app active, so any
-		// subsequent Show(true)/Raise() lands behind whichever app
-		// currently holds focus. Activate explicitly so our window
-		// comes to the foreground.
+		// Restoring from Accessory: switching policy gives us a Dock icon back but does not
+		// make the app active, so any later Show(true)/Raise() lands behind whichever app
+		// currently holds focus. Activate explicitly so our window comes to the foreground.
 		[NSApp activateIgnoringOtherApps:YES];
 	}
+}
+
+bool mac_reveal_in_finder(const char *path)
+{
+	if (path == nullptr) {
+		return false;
+	}
+	// GCC does not support @autoreleasepool.
+	NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+	NSString *file = [NSString stringWithUTF8String:path];
+	// selectFile: with an empty root opens the enclosing folder and selects
+	// the file in it, which is the behaviour "Show in Finder" implies.
+	const bool revealed = file != nil && [[NSWorkspace sharedWorkspace] selectFile:file
+							inFileViewerRootedAtPath:@""];
+	[pool drain];
+	return revealed;
 }

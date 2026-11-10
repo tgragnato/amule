@@ -23,174 +23,137 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
+#include "CFile.h"       // Interface declarations.
+#include "Logger.h"      // Needed for AddDebugLogLineC
+#include <common/Path.h> // Needed for CPath
+#include "config.h"      // Needed for HAVE_SYS_PARAM_H
 
-#include "CFile.h"			// Interface declarations.
-#include "Logger.h"			// Needed for AddDebugLogLineC
-#include <common/Path.h>		// Needed for CPath
-#include "config.h"			// Needed for HAVE_SYS_PARAM_H
+#include <exception> // Needed for std::exception_ptr
+#include <vector>    // Needed for the CopyFile stream buffer
 
 #ifdef HAVE_SYS_PARAM_H
 #include <sys/param.h>
 #endif
 
 // standard
-#if defined(__WINDOWS__) && !defined(__GNUWIN32__) && !defined(__WXWINE__) && !defined(__WXMICROWIN__)
-#	include <io.h>
-#	ifndef __SALFORDC__
-#		define   WIN32_LEAN_AND_MEAN
-#		define   NOSERVICE
-#		define   NOIME
-#		define   NOATOM
-#		define   NOGDI
-#		define   NOGDICAPMASKS
-#		define   NOMETAFILE
-#ifndef NOMINMAX
-	#define   NOMINMAX
-#endif
-#		define   NOMSG
-#		define   NOOPENFILE
-#		define   NORASTEROPS
-#		define   NOSCROLL
-#		define   NOSOUND
-#		define   NOSYSMETRICS
-#		define   NOTEXTMETRIC
-#		define   NOWH
-#		define   NOCOMM
-#		define   NOKANJI
-#		define   NOCRYPT
-#		define   NOMCX
-#	endif
-#elif (defined(__UNIX__) || defined(__GNUWIN32__))
-#	ifdef __GNUWIN32__
-#		include <windows.h>
-#	endif
+#if (defined(__UNIX__))
 #elif (defined(__WXPM__))
-#	include <io.h>
+#include <io.h>
 #elif (defined(__WXSTUBS__))
-	// Have to ifdef this for different environments
-#	include <io.h>
+// Have to ifdef this for different environments
+#include <io.h>
 #elif (defined(__WXMAC__))
 #if __MSL__ < 0x6000
-int access( const char *path, int mode ) { return 0 ; }
+int access(const char *path, int mode)
+{
+	return 0;
+}
 #else
-int _access( const char *path, int mode ) { return 0 ; }
+int _access(const char *path, int mode)
+{
+	return 0;
+}
 #endif
-char* mktemp( char * path ) { return path ;}
-#	include <stat.h>
+char *mktemp(char *path)
+{
+	return path;
+}
+#include <stat.h>
 #else
-#	error  "Please specify the header with file functions declarations."
-#endif  //Win/UNIX
+#error "Please specify the header with file functions declarations."
+#endif // Win/UNIX
 
 // there is no distinction between text and binary files under Unix, so define
 // O_BINARY as 0 if the system headers don't do it already
 #if defined(__UNIX__) && !defined(O_BINARY)
-#	define   O_BINARY    (0)
-#endif  //__UNIX__
-
-
-// The following defines handle different names across platforms,
-// and ensures that we use 64b IO on windows (only 32b by default).
-#ifdef __WINDOWS__
-	#define FLUSH_FD(x)			_commit(x)
-	#define SEEK_FD(x, y, z)		_lseeki64(x, y, z)
-	#define TELL_FD(x)			_telli64(x)
-
-	#if (__MSVCRT_VERSION__ < 0x0601)
-		//#warning MSCVRT-Version smaller than 6.01
-		#define STAT_FD(x, y)		_fstati64(x, y)
-		#define STAT_STRUCT		struct _stati64
-	#else
-		#define STAT_FD(x, y)		_fstat64(x, y)
-		#define STAT_STRUCT		struct __stat64
-	#endif
-#else
+#define O_BINARY (0)
+#endif //__UNIX__
 
 // We don't need to sync all meta-data, just the contents,
 // so use fdatasync when possible (see man fdatasync).
-	#if defined(_POSIX_SYNCHRONIZED_IO) && (_POSIX_SYNCHRONIZED_IO > 0)
-		#define FLUSH_FD(x)		fdatasync(x)
-	#else
-		#define FLUSH_FD(x)		fsync(x)
-	#endif
-
-	#define SEEK_FD(x, y, z)		lseek(x, y, z)
-	#define TELL_FD(x)			wxTell(x)
-	#define STAT_FD(x, y)			fstat(x, y)
-	#define STAT_STRUCT			struct stat
+#if defined(_POSIX_SYNCHRONIZED_IO) && (_POSIX_SYNCHRONIZED_IO > 0)
+#define FLUSH_FD(x) fdatasync(x)
+#else
+#define FLUSH_FD(x) fsync(x)
 #endif
 
+#define SEEK_FD(x, y, z) lseek(x, y, z)
+#define TELL_FD(x) wxTell(x)
+#define STAT_FD(x, y) fstat(x, y)
+#define STAT_STRUCT struct stat
 
 // This function is used to check if a syscall failed, in that case
 // log an appropriate message containing the errno string.
-inline void syscall_check(
-	bool check,
-	const CPath& filePath,
-	const wxString& what)
+inline void syscall_check(bool check, const CPath &filePath, const wxString &what)
 {
 	if (!check) {
-		AddDebugLogLineC(logCFile,
-			CFormat("Error when %s (%s): %s")
-				% what % filePath % wxSysErrorMsg());
+		AddDebugLogLineC(
+			logCFile, CFormat("Error when %s (%s): %s") % what % filePath % wxSysErrorMsg());
 	}
 }
 
-
-CSeekFailureException::CSeekFailureException(const wxString& desc)
-	: CIOFailureException("SeekFailure", desc)
-{}
-
+CSeekFailureException::CSeekFailureException(const wxString &desc)
+: CIOFailureException("SeekFailure", desc)
+{
+}
 
 CFile::CFile()
-	: m_fd(fd_invalid), m_safeWrite(false),
-	  m_writeBufferPending(0), m_canBuffer(false)
-{}
+: m_fd(fd_invalid)
+, m_safeWrite(false)
+, m_writeBufferPending(0)
+, m_canBuffer(false)
+{
+}
 
-
-CFile::CFile(const CPath& fileName, OpenMode mode)
-	: m_fd(fd_invalid), m_writeBufferPending(0), m_canBuffer(false)
+CFile::CFile(const CPath &fileName, OpenMode mode)
+: m_fd(fd_invalid)
+, m_writeBufferPending(0)
+, m_canBuffer(false)
 {
 	Open(fileName, mode);
 }
 
-
-CFile::CFile(const wxString& fileName, OpenMode mode)
-	: m_fd(fd_invalid), m_writeBufferPending(0), m_canBuffer(false)
+CFile::CFile(const wxString &fileName, OpenMode mode)
+: m_fd(fd_invalid)
+, m_writeBufferPending(0)
+, m_canBuffer(false)
 {
 	Open(fileName, mode);
 }
-
 
 CFile::~CFile()
 {
 	if (IsOpened()) {
-		// If the writing gets aborted, dtor is still called.
-		// In this case do NOT replace the original file with the
-		// probably broken new one!
+		// The dtor still runs if the writing was aborted. Do NOT replace the original file
+		// with the probably broken new one.
 		m_safeWrite = false;
-		Close();
+		// A destructor must not throw: the process would terminate. Buffered writes surface
+		// their errors here (e.g. ENOSPC), so callers that care must Close() explicitly.
+		try {
+			Close();
+		} catch (const CSafeIOException &e) {
+			AddDebugLogLineC(logCFile,
+				CFormat("Error closing %s: %s") % m_filePath.GetPrintable() % e.what());
+		}
 	}
 }
-
 
 int CFile::fd() const
 {
 	return m_fd;
 }
 
-
 bool CFile::IsOpened() const
 {
 	return m_fd != fd_invalid;
 }
 
-
-const CPath& CFile::GetFilePath() const
+const CPath &CFile::GetFilePath() const
 {
 	return m_filePath;
 }
 
-
-bool CFile::Create(const CPath& path, bool overwrite, int accessMode)
+bool CFile::Create(const CPath &path, bool overwrite, int accessMode)
 {
 	if (!overwrite && path.FileExists()) {
 		return false;
@@ -199,21 +162,19 @@ bool CFile::Create(const CPath& path, bool overwrite, int accessMode)
 	return Open(path, write, accessMode);
 }
 
-bool CFile::Create(const wxString& path, bool overwrite, int accessMode)
+bool CFile::Create(const wxString &path, bool overwrite, int accessMode)
 {
 	return Create(CPath(path), overwrite, accessMode);
 }
 
-
-bool CFile::Open(const wxString& fileName, OpenMode mode, int accessMode)
+bool CFile::Open(const wxString &fileName, OpenMode mode, int accessMode, bool shareDelete)
 {
 	MULE_VALIDATE_PARAMS(fileName.Length(), "CFile: Cannot open, empty path.");
 
-	return Open(CPath(fileName), mode, accessMode);
+	return Open(CPath(fileName), mode, accessMode, shareDelete);
 }
 
-
-bool CFile::Open(const CPath& fileName, OpenMode mode, int accessMode)
+bool CFile::Open(const CPath &fileName, OpenMode mode, int accessMode, bool shareDelete)
 {
 	MULE_VALIDATE_PARAMS(fileName.IsOk(), "CFile: Cannot open, empty path.");
 
@@ -226,64 +187,57 @@ bool CFile::Open(const CPath& fileName, OpenMode mode, int accessMode)
 	m_safeWrite = false;
 	m_filePath = fileName;
 	m_writeBufferPending = 0;
-	// Buffer writes for any mode that can actually write. Read-only
-	// stays unbuffered so a misuse (like writing to a read-opened
-	// file) still fails immediately at the doWrite call site,
-	// preserving FileDataIOTest's CFile.Constructor contract.
-	m_canBuffer = (mode != read);
+	// Buffer writes for any mode that can actually write, unless SetWriteBuffering turned it
+	// off. Read-only stays unbuffered so a misuse still fails immediately at the doWrite call
+	// site, preserving FileDataIOTest's CFile.Constructor contract.
+	m_canBuffer = (mode != read) && m_bufferWrites;
 
 #ifdef __linux__
 	int flags = O_BINARY | O_LARGEFILE;
 #else
 	int flags = O_BINARY;
 #endif
-	switch ( mode ) {
-		case read:
-			flags |= O_RDONLY;
+	switch (mode) {
+	case read:
+		flags |= O_RDONLY;
+		break;
+
+	case write_append:
+		if (fileName.FileExists()) {
+			flags |= O_WRONLY | O_APPEND;
 			break;
+		}
+		// else: fall through as write_append is the same as write if the
+		//       file doesn't exist
 
-		case write_append:
-			if (fileName.FileExists())
-			{
-				flags |= O_WRONLY | O_APPEND;
-				break;
-			}
-			//else: fall through as write_append is the same as write if the
-			//      file doesn't exist
+	/* fall through */
+	case write:
+		flags |= O_WRONLY | O_CREAT | O_TRUNC;
+		break;
 
-		/* fall through */
-		case write:
-			flags |= O_WRONLY | O_CREAT | O_TRUNC;
-			break;
+	case write_safe:
+		flags |= O_WRONLY | O_CREAT | O_TRUNC;
+		m_filePath = m_filePath.AppendExt(".new");
+		m_safeWrite = true;
+		break;
 
-		case write_safe:
-			flags |= O_WRONLY | O_CREAT | O_TRUNC;
-			m_filePath = m_filePath.AppendExt(".new");
-			m_safeWrite = true;
-			break;
+	case write_excl:
+		flags |= O_WRONLY | O_CREAT | O_EXCL;
+		break;
 
-		case write_excl:
-			flags |= O_WRONLY | O_CREAT | O_EXCL;
-			break;
-
-		case read_write:
-			flags |= O_RDWR;
+	case read_write:
+		flags |= O_RDWR;
 		break;
 	}
 
-	// Windows needs wide character file names
-#ifdef __WINDOWS__
-	m_fd = _wopen(m_filePath.GetRaw().c_str(), flags, accessMode);
-#else
+	(void)shareDelete; // used only in the Windows branch above
 	Unicode2CharBuf tmpFileName = filename2char(m_filePath.GetRaw());
 	wxASSERT_MSG(tmpFileName, "Conversion failed in CFile::Open");
 	m_fd = open(tmpFileName, flags, accessMode);
-#endif
 	syscall_check(m_fd != fd_invalid, m_filePath, "opening file");
 
 	return IsOpened();
 }
-
 
 void CFile::Reopen(OpenMode mode)
 {
@@ -294,16 +248,22 @@ void CFile::Reopen(OpenMode mode)
 	}
 }
 
-
 bool CFile::Close()
 {
 	MULE_VALIDATE_STATE(IsOpened(), "CFile: Cannot close closed file.");
 
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
-	// Flush userspace write buffer to the fd before closing — otherwise
-	// any pending bytes from doWrite() would be silently dropped.
-	DrainWriteBuffer();
+	// Flush userspace write buffer to the fd before closing -- otherwise
+	// any pending bytes from doWrite() would be silently dropped. A failed drain still
+	// closes the fd, so the file is not leaked and a retried Close() cannot fail again.
+	std::exception_ptr drainError;
+	try {
+		DrainWriteBuffer();
+	} catch (const CIOFailureException &) {
+		drainError = std::current_exception();
+		m_writeBufferPending = 0;
+	}
 
 	bool closed = (close(m_fd) != -1);
 	syscall_check(closed, m_filePath, "closing file");
@@ -312,15 +272,25 @@ bool CFile::Close()
 
 	if (m_safeWrite) {
 		CPath filePathTemp(m_filePath);
-		m_filePath = m_filePath.RemoveExt();	// restore m_filePath for Reopen()
-		if (closed) {
-			closed = CPath::RenameFile(filePathTemp, m_filePath, true);
+		m_filePath = m_filePath.RemoveExt(); // restore m_filePath for Reopen()
+		// A short write must not replace the original file.
+		if (closed && !drainError) {
+			wxString detail;
+			closed = CPath::ReplaceEntry(filePathTemp, m_filePath, &detail);
+			if (!closed) {
+				AddDebugLogLineC(logCFile,
+					CFormat("Error replacing %s: %s") % m_filePath.GetPrintable() %
+						detail);
+			}
 		}
+	}
+
+	if (drainError) {
+		std::rethrow_exception(drainError);
 	}
 
 	return closed;
 }
-
 
 bool CFile::Flush()
 {
@@ -337,30 +307,31 @@ bool CFile::Flush()
 	return flushed;
 }
 
-
-sint64 CFile::doRead(void* buffer, size_t count) const
+sint64 CFile::doRead(void *buffer, size_t count) const
 {
 	MULE_VALIDATE_PARAMS(buffer, "CFile: Invalid buffer in read operation.");
 	MULE_VALIDATE_STATE(IsOpened(), "CFile: Cannot read from closed file.");
 
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
-	// Read-after-write (or interleaved read/write on a read_write file)
-	// must see preceding writes. For pure-read files the buffer is
-	// always empty so this is a single branch.
+	// Read-after-write (or interleaved read/write on a read_write file) must see preceding
+	// writes. For pure-read files the buffer is always empty, so this is a single branch.
 	DrainWriteBuffer();
 
 	size_t totalRead = 0;
 	while (totalRead < count) {
-		int current = ::read(m_fd, (char*)buffer + totalRead, count - totalRead);
+		// m_mutex is this CFile's own lock guarding its buffer and fd; holding it across the
+		// blocking read is intended, since it serialises access to this one file object rather
+		// than a shared global section.
+		// NOLINTNEXTLINE(clang-analyzer-unix.BlockInCriticalSection)
+		int current = ::read(m_fd, (char *)buffer + totalRead, count - totalRead);
 
 		if (current == -1) {
 			// Read error, nothing we can do other than abort.
 			throw CIOFailureException(wxString("Error reading from file: ") + wxSysErrorMsg());
 		} else if ((totalRead + current < count) && Eof()) {
-			// We may fail to read the specified count in a couple
-			// of situations: EOF and interrupts. The check for EOF
-			// is needed to avoid inf. loops.
+			// A short read happens on EOF and on interrupts. The EOF check avoids an
+			// infinite loop.
 			break;
 		}
 
@@ -369,7 +340,6 @@ sint64 CFile::doRead(void* buffer, size_t count) const
 
 	return totalRead;
 }
-
 
 void CFile::DrainWriteBuffer() const
 {
@@ -380,9 +350,7 @@ void CFile::DrainWriteBuffer() const
 	// Loop to handle partial writes (e.g. interrupted by a signal).
 	size_t total = 0;
 	while (total < m_writeBufferPending) {
-		ssize_t written = ::write(m_fd,
-			m_writeBuffer.get() + total,
-			m_writeBufferPending - total);
+		ssize_t written = ::write(m_fd, m_writeBuffer.get() + total, m_writeBufferPending - total);
 		if (written < 0) {
 			throw CIOFailureException(
 				wxString("Error flushing write buffer: ") + wxSysErrorMsg());
@@ -392,22 +360,16 @@ void CFile::DrainWriteBuffer() const
 	m_writeBufferPending = 0;
 }
 
-
-sint64 CFile::doWrite(const void* buffer, size_t nCount)
+sint64 CFile::doWrite(const void *buffer, size_t nCount)
 {
 	MULE_VALIDATE_PARAMS(buffer, "CFile: Invalid buffer in write operation.");
 	MULE_VALIDATE_STATE(IsOpened(), "CFile: Cannot write to closed file.");
 
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
-	// Read-only files: the kernel will reject the write with EBADF;
-	// surface that immediately by going direct, the same way the
-	// pre-buffering version did.
-	//
-	// Single payload that doesn't fit in the buffer at all also goes
-	// direct — no point splitting into 64 KB chunks just to copy
-	// through the buffer first. Drain pending bytes (if any) so
-	// ordering is preserved.
+	// Read-only files: the kernel rejects the write with EBADF, so go direct and surface that
+	// immediately, as the pre-buffering version did. A single payload too large for the buffer
+	// also goes direct, draining pending bytes first so ordering is preserved.
 	if (!m_canBuffer || nCount >= kWriteBufferSize) {
 		DrainWriteBuffer();
 		if (nCount == 0) {
@@ -415,8 +377,7 @@ sint64 CFile::doWrite(const void* buffer, size_t nCount)
 		}
 		sint64 result = ::write(m_fd, buffer, nCount);
 		if (result != (sint64)nCount) {
-			throw CIOFailureException(
-				wxString("Error writing to file: ") + wxSysErrorMsg());
+			throw CIOFailureException(wxString("Error writing to file: ") + wxSysErrorMsg());
 		}
 		return result;
 	}
@@ -430,9 +391,8 @@ sint64 CFile::doWrite(const void* buffer, size_t nCount)
 		DrainWriteBuffer();
 	}
 
-	// Lazy-allocate on first buffered write: a CFile that's opened
-	// write-capable but never written to (e.g. construct-then-close
-	// on an early error path) shouldn't pay for the buffer.
+	// Lazy-allocate on first buffered write: a CFile opened write-capable but never
+	// written to should not pay for the buffer.
 	if (!m_writeBuffer) {
 		m_writeBuffer.reset(new char[kWriteBufferSize]);
 	}
@@ -441,7 +401,6 @@ sint64 CFile::doWrite(const void* buffer, size_t nCount)
 	m_writeBufferPending += nCount;
 	return (sint64)nCount;
 }
-
 
 sint64 CFile::doSeek(sint64 offset) const
 {
@@ -453,10 +412,9 @@ sint64 CFile::doSeek(sint64 offset) const
 
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
-	// Pending bytes belong at the pre-seek position; flush before
-	// changing the fd's offset so writes don't end up in the wrong
-	// place. (CSafeFile / known.met save uses Seek() to back-patch
-	// the header after writing the body, so this matters in practice.)
+	// Pending bytes belong at the pre-seek position, so flush before changing the fd's offset.
+	// CSafeFile / the known.met save Seek() back to patch the header after writing the body, so
+	// this matters in practice.
 	DrainWriteBuffer();
 
 	sint64 result = SEEK_FD(m_fd, offset, SEEK_SET);
@@ -470,7 +428,6 @@ sint64 CFile::doSeek(sint64 offset) const
 	}
 }
 
-
 uint64 CFile::GetPosition() const
 {
 	MULE_VALIDATE_STATE(IsOpened(), "Cannot get position in closed file.");
@@ -483,12 +440,12 @@ uint64 CFile::GetPosition() const
 
 	sint64 pos = TELL_FD(m_fd);
 	if (pos == wxInvalidOffset) {
-		throw CSeekFailureException(wxString("Failed to retrieve position in file: ") + wxSysErrorMsg());
+		throw CSeekFailureException(
+			wxString("Failed to retrieve position in file: ") + wxSysErrorMsg());
 	}
 
 	return pos;
 }
-
 
 uint64 CFile::GetLength() const
 {
@@ -496,7 +453,7 @@ uint64 CFile::GetLength() const
 
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
-	// fstat reads inode metadata, not buffered bytes — drain so the
+	// fstat reads inode metadata, not buffered bytes -- drain so the
 	// reported size reflects pending buffered writes.
 	DrainWriteBuffer();
 
@@ -508,13 +465,11 @@ uint64 CFile::GetLength() const
 	return buf.st_size;
 }
 
-
 uint64 CFile::GetAvailable() const
 {
-	// Lock around both calls so length/position are taken atomically;
-	// otherwise a concurrent write could land between and skew the
-	// reported "available" count. Recursive so the inner GetLength /
-	// GetPosition calls (which lock again) don't deadlock.
+	// Lock around both calls so length and position are taken atomically, or a concurrent write
+	// could land between them and skew the reported "available" count. Recursive, so the inner
+	// GetLength / GetPosition calls do not deadlock.
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
 	const uint64 length = GetLength();
@@ -529,32 +484,79 @@ uint64 CFile::GetAvailable() const
 	return 0;
 }
 
-
 bool CFile::SetLength(uint64 new_len)
 {
 	MULE_VALIDATE_STATE(IsOpened(), "CFile: Cannot set length when no file is open.");
 
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
-	// ftruncate / chsize operate on the kernel-side size; drain the
-	// userspace buffer first so any pending bytes are part of the
-	// length-resolution decision (e.g. extend-then-write patterns).
+	// ftruncate / chsize operate on the kernel-side size; drain the userspace buffer first so
+	// pending bytes are part of the length-resolution decision (e.g. extend-then-write
+	// patterns).
 	DrainWriteBuffer();
 
-#ifdef __WINDOWS__
-#ifdef _MSC_VER
-// MSVC has a 64bit version
-	bool result = _chsize_s(m_fd, new_len) == 0;
-#else
-// MingW has an old runtime without it
-	bool result = chsize(m_fd, new_len) == 0;
-#endif
-#else
 	bool result = ftruncate(m_fd, new_len) != -1;
-#endif
 
 	syscall_check(result, m_filePath, "truncating file");
 
 	return result;
+}
+
+bool CFile::CloneFile(const CPath &src, const CPath &dst, bool overwrite)
+{
+	if (!overwrite && dst.FileExists()) {
+		return false;
+	}
+
+	CFile in;
+	if (!in.Open(src, CFile::read)) {
+		return false;
+	}
+
+	CFile out;
+	if (!out.Open(dst, CFile::write)) {
+		return false;
+	}
+
+	// Stream through a 1 MiB heap buffer. The previous implementation (wxCopyFile) used a hard-
+	// coded 4 KiB buffer, which throttled cross-filesystem copies over NFS / sshfs to a
+	// fraction of line speed (amule-org/amule#11). Heap-allocated, not a stack array: CopyFile
+	// can run on the completion worker thread, where musl caps the stack at 128 KiB.
+	const size_t bufferSize = 1u << 20;
+	std::vector<char> buffer(bufferSize);
+
+	try {
+		uint64 remaining = in.GetLength();
+		while (remaining) {
+			const size_t chunk =
+				(remaining < bufferSize) ? static_cast<size_t>(remaining) : bufferSize;
+			in.Read(buffer.data(), chunk);
+			out.Write(buffer.data(), chunk);
+			remaining -= chunk;
+		}
+		// Close rather than rely on the destructor: it flushes the trailing sub-buffer
+		// write and surfaces any deferred error, e.g. an ENOSPC that only shows up when the
+		// write buffer drains.
+		if (!out.Close()) {
+			CPath::RemoveFile(dst);
+			return false;
+		}
+	} catch (const CSafeIOException &e) {
+		AddDebugLogLineC(
+			logCFile, CFormat(wxT("Failed to copy %s to %s: %s")) % src % dst % e.what());
+		// Close before unlinking: Windows cannot remove an open file. Close may itself
+		// throw while draining, so guard it -- we are already on the failure path.
+		try {
+			if (out.IsOpened()) {
+				out.Close();
+			}
+		} catch (const CSafeIOException &) {
+			// best-effort
+		}
+		CPath::RemoveFile(dst);
+		return false;
+	}
+
+	return true;
 }
 // File_checked_for_headers

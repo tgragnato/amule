@@ -31,33 +31,25 @@
 #include <common/ClientVersion.h>
 #include <common/Constants.h>
 
-#include "amule.h"			// Needed for theApp
-#include "amuleDlg.h"		// Needed for IsShown
-#include "Preferences.h"	// Needed for thePrefs
-#include "ServerConnect.h"	// Needed for CServerConnect
-#include "Server.h"			// Needed for CServer
-#include "Statistics.h"		// Needed for theStats
-#include "NetworkFunctions.h"	// Needed for Uint32toStringIP
-#include "OtherFunctions.h"	// Needed for CastItoXBytes / CastSecondsToHM
-#include <common/Format.h>	// Needed for CFormat
-#include <common/MenuIDs.h>	// Needed to access menu item constants
-
-#ifdef __WXMAC__
-#include "MacAppHelper.h"	// mac_set_accessory_mode
-#endif
+#include "amule.h"            // Needed for theApp
+#include "amuleDlg.h"         // Needed for IsShown
+#include "Preferences.h"      // Needed for thePrefs
+#include "ServerConnect.h"    // Needed for CServerConnect
+#include "Server.h"           // Needed for CServer
+#include "Statistics.h"       // Needed for theStats
+#include "NetworkFunctions.h" // Needed for Uint32toStringIP
+#include "OtherFunctions.h"   // Needed for CastItoXBytes / CastSecondsToHM
+#include <common/Format.h>    // Needed for CFormat
+#include <common/MenuIDs.h>   // Needed to access menu item constants
 
 #ifdef WITH_LIBAYATANA_APPINDICATOR
-// gtk_window_present is the xdg-activation-aware way to request
-// focus on Wayland — wxFrame::Raise() alone doesn't reach the
-// compositor's activation path there. Needed early so DoShow()
-// below can call it.
+// gtk_window_present is the xdg-activation-aware way to request focus on Wayland --
+// wxFrame::Raise() alone does not reach the compositor's activation path there. Needed early so
+// DoShow() below can call it.
 #include <gtk/gtk.h>
 #endif
 
-
-// =====================================================================
-// Common action handlers — invoked from either backend.
-// =====================================================================
+// Common action handlers -- invoked from either backend.
 
 void CMuleTrayIcon::DoConnectDisconnect()
 {
@@ -67,71 +59,36 @@ void CMuleTrayIcon::DoConnectDisconnect()
 
 void CMuleTrayIcon::DoShowHide()
 {
-	// Treat an iconized window as not-visible: minimized-to-Dock on
-	// Mac, taskbar-iconized on Windows, and Iconize() on Linux all
-	// keep IsShown()==true even though the user can't actually see
-	// the frame. Acting on plain IsShown() would make the tray menu
-	// offer "Hide aMule" in those states, and clicking would make
-	// the window vanish entirely (no Dock thumbnail / no taskbar
-	// entry) — destructive UX. Treat iconized as "not visible" so
-	// the menu offers "Show aMule" and clicking restores the frame.
-	const bool visible = theApp->amuledlg->IsShown() && !theApp->amuledlg->IsTrayLogicallyIconized();
+	// Treat an iconized window as not-visible: minimized-to-Dock on Mac, taskbar-iconized on
+	// Windows and Iconize() on Linux all keep IsShown()==true even though the user cannot see
+	// the frame. On plain IsShown() the menu would offer "Hide aMule" in those states, and
+	// clicking would make the window vanish entirely, with no Dock thumbnail and no taskbar
+	// entry.
+	const bool visible = theApp->amuledlg->IsVisibleToUser();
 	if (visible) {
-#ifdef __WXMAC__
-		// Drop the Dock icon while the window is hidden; the tray
-		// icon (NSStatusItem) is the only recovery surface in this
-		// state. Restored when the user un-hides via the tray click
-		// or menu.
-		mac_set_accessory_mode(true);
-#endif
-		theApp->amuledlg->Show(false);
+		theApp->amuledlg->HideToTray();
 	} else {
-#ifdef __WXMAC__
-		mac_set_accessory_mode(false);
-#endif
-		// Clear the iconized bit on every platform — the window
-		// might be hidden (Show(false) via HideOnClose / minimize-to-
-		// tray) or just iconized to the OS dock/taskbar; in either
-		// case the user wants a normal restored frame. Without this
-		// Show(true) on a still-iconized window would leave it as a
-		// taskbar entry / Dock thumbnail without un-minimizing.
-		// Iconize(false) is idempotent on a non-iconized window —
-		// don't gate on IsIconized() because wxGTK can report a
-		// stale value during the tray-restore transition.
-		theApp->amuledlg->Iconize(false);
-		theApp->amuledlg->Show(true);
-		theApp->amuledlg->Raise();
+		theApp->amuledlg->RestoreMainWindow();
 	}
-#ifdef WITH_LIBAYATANA_APPINDICATOR
-	// Refresh so the menu label flips to "Hide aMule" / "Show aMule"
-	// to match the new window state. SNI menu is static between
-	// state changes — without this poke the label would lag a click.
+#ifdef __WXGTK__
+	// The SNI menu is static between state changes, so without this poke the
+	// "Hide aMule" / "Show aMule" label would lag a click behind.
 	RebuildMenu();
 #endif
 }
 
 void CMuleTrayIcon::DoShow()
 {
-#ifdef __WXMAC__
-	mac_set_accessory_mode(false);
-#endif
-	theApp->amuledlg->Iconize(false);
-	theApp->amuledlg->Show(true);
-	theApp->amuledlg->Raise();
+	theApp->amuledlg->RestoreMainWindow();
 #ifdef WITH_LIBAYATANA_APPINDICATOR
-	// Ask the compositor to bring our window forward. The timestamp
-	// matters on Wayland: GNOME Shell's focus-stealing-prevention
-	// treats GDK_CURRENT_TIME (0) as suspicious and shows an
-	// "app is ready" notification instead of granting focus. Pull
-	// the timestamp of the actual menu-click event via
-	// gtk_get_current_event_time() so the compositor sees this as
-	// a fresh user gesture and honours the request directly. If
-	// no event is currently being processed (returns
-	// GDK_CURRENT_TIME) we still pass it through — the worst case
-	// is the focus-denial notification, which is itself clickable.
-	if (GtkWidget* gtkw = static_cast<GtkWidget*>(theApp->amuledlg->GetHandle())) {
-		gtk_window_present_with_time(GTK_WINDOW(gtkw),
-			gtk_get_current_event_time());
+	// Ask the compositor to bring our window forward. The timestamp matters on Wayland: GNOME
+	// Shell's focus-stealing prevention treats GDK_CURRENT_TIME (0) as suspicious and shows an
+	// "app is ready" notification instead of granting focus, so pull the timestamp of the
+	// actual menu-click event and the request reads as a fresh user gesture. With no event
+	// being processed the call returns GDK_CURRENT_TIME and we pass it through anyway -- worst
+	// case is that notification, which is itself clickable.
+	if (GtkWidget *gtkw = static_cast<GtkWidget *>(theApp->amuledlg->GetHandle())) {
+		gtk_window_present_with_time(GTK_WINDOW(gtkw), gtk_get_current_event_time());
 	}
 	RebuildMenu();
 #endif
@@ -139,10 +96,7 @@ void CMuleTrayIcon::DoShow()
 
 void CMuleTrayIcon::DoHide()
 {
-#ifdef __WXMAC__
-	mac_set_accessory_mode(true);
-#endif
-	theApp->amuledlg->Show(false);
+	theApp->amuledlg->HideToTray();
 #ifdef WITH_LIBAYATANA_APPINDICATOR
 	RebuildMenu();
 #endif
@@ -151,10 +105,9 @@ void CMuleTrayIcon::DoHide()
 void CMuleTrayIcon::DoExit()
 {
 	if (theApp->amuledlg->IsEnabled()) {
-		// Mark as quitting so OnClose skips HideOnClose, but still
-		// pass force=false (Close()) so the confirm-exit prompt can
-		// run if enabled. If the user answers No there, the prompt
-		// vetoes and clears the IsQuitting flag.
+		// Mark as quitting so OnClose skips HideOnClose, but still pass force=false so the
+		// confirm-exit prompt can run; answering No there vetoes and clears the IsQuitting
+		// flag.
 		theApp->SetQuitting();
 		theApp->amuledlg->Close();
 	}
@@ -162,47 +115,91 @@ void CMuleTrayIcon::DoExit()
 
 void CMuleTrayIcon::DoSetUploadLimit(long kBytesPerSec)
 {
-	thePrefs::SetMaxUpload(kBytesPerSec < 0 ? UNLIMITED : (uint16)kBytesPerSec);
+	// uint32, not uint16: the preference, its setter and its getter are all uint32, and a
+	// 16-bit cast here silently wrapped anything above 65535 KiB/s -- a preset of 125000
+	// applied as 59464, with nothing logged either side.
+	thePrefs::SetMaxUpload(kBytesPerSec < 0 ? UNLIMITED : (uint32)kBytesPerSec);
 #ifdef CLIENT_GUI
-	theApp->glob_prefs->SendToRemote();
+	CECEmptyTag connection(EC_TAG_PREFS_CONNECTIONS);
+	connection.AddTag(CECTag(EC_TAG_CONN_MAX_UL, thePrefs::GetMaxUpload()));
+	theApp->glob_prefs->SendPartialToRemote(connection);
 #endif
 }
 
 void CMuleTrayIcon::DoSetDownloadLimit(long kBytesPerSec)
 {
-	thePrefs::SetMaxDownload(kBytesPerSec < 0 ? UNLIMITED : (uint16)kBytesPerSec);
+	// See the note in DoSetUploadLimit.
+	thePrefs::SetMaxDownload(kBytesPerSec < 0 ? UNLIMITED : (uint32)kBytesPerSec);
 #ifdef CLIENT_GUI
-	theApp->glob_prefs->SendToRemote();
+	CECEmptyTag connection(EC_TAG_PREFS_CONNECTIONS);
+	connection.AddTag(CECTag(EC_TAG_CONN_MAX_DL, thePrefs::GetMaxDownload()));
+	theApp->glob_prefs->SendPartialToRemote(connection);
 #endif
 }
 
+// The limit presets both tray backends offer, and their labels. The appindicator backend builds
+// GtkWidgets and the wx backend a wxMenu, but what goes in them is identical, and writing it out
+// twice is how the GTK side ended up showing "Unlimited" and "KiB/s" untranslated.
+//
+// The presets are fractions of the configured line capacity rather than of the current limit:
+// scaling from the limit would mean the menu could only ever lower it, with no way back up from a
+// throttled state.
+namespace
+{
+// Divisors applied to the line capacity, descending. Not fifths: an even ladder covers only one
+// order of magnitude, so on a fast line every entry lands high and there is no way to throttle hard
+// from the tray, while on a slow one they bunch near the top. Spread out, one setting works for a 4
+// Mbit line and a 200 Mbit one alike.
+const unsigned int TRAY_SPEED_DIVISORS[] = { 1, 2, 4, 10, 50 };
+const int TRAY_SPEED_PRESETS = (int)(sizeof(TRAY_SPEED_DIVISORS) / sizeof(TRAY_SPEED_DIVISORS[0]));
 
-// =====================================================================
-// Backend selection — see MuleTrayIcon.h for rationale.
-// =====================================================================
+// What to assume when the user has set their capacity to "unlimited": there is
+// nothing to take fractions of otherwise.
+const uint32 TRAY_FALLBACK_CAPACITY = 100;
+
+/// Fills @a speeds with the presets in descending order, highest first.
+void GetTraySpeedPresets(uint32 capacity, unsigned int (&speeds)[TRAY_SPEED_PRESETS])
+{
+	if (capacity == UNLIMITED) {
+		capacity = TRAY_FALLBACK_CAPACITY;
+	}
+	// Keep the smallest entry at 1 KiB/s or more: a preset of 0 would read as a limit and act
+	// as "unlimited", the opposite of what picking the bottom of the list means.
+	const uint32 smallest = TRAY_SPEED_DIVISORS[TRAY_SPEED_PRESETS - 1];
+	if (capacity < smallest) {
+		capacity = smallest;
+	}
+	for (int i = 0; i < TRAY_SPEED_PRESETS; i++) {
+		speeds[i] = (unsigned int)(capacity / TRAY_SPEED_DIVISORS[i]);
+	}
+}
+
+/// The menu label for one preset, e.g. "2500 KiB/s".
+wxString TraySpeedLabel(unsigned int kBytesPerSec)
+{
+	return CFormat("%u %s") % kBytesPerSec % _("KiB/s");
+}
+} // namespace
+
+// Backend selection -- see MuleTrayIcon.h for rationale.
 
 #ifdef WITH_LIBAYATANA_APPINDICATOR
 
-// ---------------------------------------------------------------------
-//  StatusNotifierItem (SNI) backend via libayatana-appindicator3.
-//
-//  This is what GNOME Shell with the AppIndicators extension (Ubuntu's
-//  default), KDE Plasma, Sway/Hyprland with waybar, and most other
-//  modern Linux desktops actually render. The legacy GtkStatusIcon API
-//  that wxTaskBarIcon talks was dropped in GNOME 3.26 (2017) and never
-//  implemented in wlroots-based compositors, so without this backend
-//  the tray icon is silently invisible on most current distros.
-// ---------------------------------------------------------------------
+// StatusNotifierItem (SNI) backend via libayatana-appindicator3. What GNOME Shell with the
+// AppIndicators extension, KDE Plasma and wlroots compositors with waybar actually render. The
+// legacy GtkStatusIcon API wxTaskBarIcon talks was dropped in GNOME 3.26 and never implemented on
+// wlroots, so without this backend the tray icon is silently invisible on most current distros.
 
 #include <libayatana-appindicator/app-indicator.h>
 #include <gtk/gtk.h>
 
-namespace {
+namespace
+{
 
-// All menu items reach the C++ side through this single callback. The
-// item carries two int "action" + "arg" fields via g_object_set_data,
-// so we don't need a separate static function per menu entry.
-enum TrayAction {
+// All menu items reach the C++ side through this single callback: the item carries int "action" and
+// "arg" fields via g_object_set_data, so no separate static function per entry is needed.
+enum TrayAction
+{
 	TRAY_ACTION_CONNECT_DISCONNECT = 1,
 	TRAY_ACTION_SHOW_HIDE,
 	TRAY_ACTION_SHOW,
@@ -212,93 +209,153 @@ enum TrayAction {
 	TRAY_ACTION_SET_DOWNLOAD_LIMIT,
 };
 
-void on_menu_item_activated(GtkMenuItem* item, gpointer user_data)
+// Left-click on the indicator. SNI hosts call org.kde.StatusNotifierItem.Activate for the primary
+// button, and libayatana-appindicator forwards it as this signal. The x/y of the click come from
+// AppIndicatorClass::activate_event and are not needed here.
+void on_indicator_activate(AppIndicator *, gint, gint, gpointer user_data)
 {
-	CMuleTrayIcon* tray = static_cast<CMuleTrayIcon*>(user_data);
-	intptr_t action = reinterpret_cast<intptr_t>(
-		g_object_get_data(G_OBJECT(item), "action"));
-	intptr_t arg = reinterpret_cast<intptr_t>(
-		g_object_get_data(G_OBJECT(item), "arg"));
+#ifndef CLIENT_GUI
+	// Native GTK signals bypass the shutdown repaint event filter.
+	if (theApp->IsOnShutDown()) {
+		return;
+	}
+#endif
+
+	CMuleTrayIcon *tray = static_cast<CMuleTrayIcon *>(user_data);
+	// Toggle rather than always-show, matching the Windows tray, where a
+	// single left click has flipped show/hide since 3.0.1.
+	tray->DoShowHide();
+}
+
+void on_menu_item_activated(GtkMenuItem *item, gpointer user_data)
+{
+#ifndef CLIENT_GUI
+	// Native GTK signals bypass the shutdown repaint event filter.
+	if (theApp->IsOnShutDown()) {
+		return;
+	}
+#endif
+
+	CMuleTrayIcon *tray = static_cast<CMuleTrayIcon *>(user_data);
+	intptr_t action = reinterpret_cast<intptr_t>(g_object_get_data(G_OBJECT(item), "action"));
+	intptr_t arg = reinterpret_cast<intptr_t>(g_object_get_data(G_OBJECT(item), "arg"));
 
 	switch (action) {
-		case TRAY_ACTION_CONNECT_DISCONNECT: tray->DoConnectDisconnect(); break;
-		case TRAY_ACTION_SHOW_HIDE:          tray->DoShowHide(); break;
-		case TRAY_ACTION_SHOW:               tray->DoShow(); break;
-		case TRAY_ACTION_HIDE:               tray->DoHide(); break;
-		case TRAY_ACTION_EXIT:               tray->DoExit(); break;
-		case TRAY_ACTION_SET_UPLOAD_LIMIT:   tray->DoSetUploadLimit((long)arg); break;
-		case TRAY_ACTION_SET_DOWNLOAD_LIMIT: tray->DoSetDownloadLimit((long)arg); break;
+	case TRAY_ACTION_CONNECT_DISCONNECT:
+		tray->DoConnectDisconnect();
+		break;
+	case TRAY_ACTION_SHOW_HIDE:
+		tray->DoShowHide();
+		break;
+	case TRAY_ACTION_SHOW:
+		tray->DoShow();
+		break;
+	case TRAY_ACTION_HIDE:
+		tray->DoHide();
+		break;
+	case TRAY_ACTION_EXIT:
+		tray->DoExit();
+		break;
+	case TRAY_ACTION_SET_UPLOAD_LIMIT:
+		tray->DoSetUploadLimit((long)arg);
+		break;
+	case TRAY_ACTION_SET_DOWNLOAD_LIMIT:
+		tray->DoSetDownloadLimit((long)arg);
+		break;
 	}
 }
 
-GtkWidget* make_action_item(const char* label, TrayAction action,
-                            long arg, gpointer user_data)
+GtkWidget *make_action_item(const char *label, TrayAction action, long arg, gpointer user_data)
 {
-	GtkWidget* item = gtk_menu_item_new_with_label(label);
-	g_object_set_data(G_OBJECT(item), "action",
-		reinterpret_cast<gpointer>(static_cast<intptr_t>(action)));
-	g_object_set_data(G_OBJECT(item), "arg",
-		reinterpret_cast<gpointer>(static_cast<intptr_t>(arg)));
-	g_signal_connect(item, "activate",
-		G_CALLBACK(on_menu_item_activated), user_data);
+	GtkWidget *item = gtk_menu_item_new_with_label(label);
+	g_object_set_data(
+		G_OBJECT(item), "action", reinterpret_cast<gpointer>(static_cast<intptr_t>(action)));
+	g_object_set_data(G_OBJECT(item), "arg", reinterpret_cast<gpointer>(static_cast<intptr_t>(arg)));
+	g_signal_connect(item, "activate", G_CALLBACK(on_menu_item_activated), user_data);
 	return item;
 }
 
-GtkWidget* make_speed_submenu(uint32 max_speed, TrayAction action,
-                              gpointer user_data)
+GtkWidget *make_speed_submenu(uint32 max_speed, TrayAction action, gpointer user_data)
 {
-	GtkWidget* submenu = gtk_menu_new();
+	GtkWidget *submenu = gtk_menu_new();
 	gtk_menu_shell_append(GTK_MENU_SHELL(submenu),
-		make_action_item("Unlimited", action, -1, user_data));
-	for (int i = 0; i < 5; i++) {
-		unsigned int spd = (unsigned int)((double)max_speed / 5) * (5 - i);
-		char label[64];
-		g_snprintf(label, sizeof(label), "%u kB/s", spd);
+		make_action_item(wxString(_("Unlimited")).utf8_str(), action, -1, user_data));
+	unsigned int speeds[TRAY_SPEED_PRESETS];
+	GetTraySpeedPresets(max_speed, speeds);
+	for (int i = 0; i < TRAY_SPEED_PRESETS; i++) {
 		gtk_menu_shell_append(GTK_MENU_SHELL(submenu),
-			make_action_item(label, action, (long)spd, user_data));
+			make_action_item(
+				TraySpeedLabel(speeds[i]).utf8_str(), action, (long)speeds[i], user_data));
 	}
 	gtk_widget_show_all(submenu);
 	return submenu;
 }
 
-// Append a non-clickable "info" label to the menu. SNI menus support
-// disabled items, but rendering varies between desktops — KDE shows
-// them grey, GNOME-with-AppIndicators shows them in the menu's normal
-// style. Either way they're not interactive.
-void append_info(GtkWidget* menu, const wxString& text)
+// Append a non-clickable "info" label. SNI menus support disabled items, though rendering varies
+// between desktops -- KDE greys them, GNOME shows them in the normal style. Either way they are not
+// interactive.
+void append_info(GtkWidget *menu, const wxString &text)
 {
-	GtkWidget* item = gtk_menu_item_new_with_label(
-		(const char*)text.utf8_str());
+	GtkWidget *item = gtk_menu_item_new_with_label((const char *)text.utf8_str());
 	gtk_widget_set_sensitive(item, FALSE);
 	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 }
 
 } // anonymous namespace
 
-
 CMuleTrayIcon::CMuleTrayIcon()
-	: m_indicator(nullptr)
-	, m_menu(nullptr)
-	, m_lastIconState(-1)
+: m_indicator(nullptr)
+, m_menu(nullptr)
+, m_lastIconState(-1)
 {
-	// `org.amule.aMule` is both the AppStream/.desktop id and the icon
-	// name installed under share/icons/hicolor/*/apps/. AppIndicator3
-	// looks the icon up via the standard XDG icon-theme path.
+	// Tray-state icons are installed under share/icons/hicolor alongside the application
+	// icon. AppIndicator resolves them through the standard XDG icon-theme path.
+	//
+	// AyatanaIndicators split the library into libayatana-appindicator-glib and started
+	// deprecating the GTK-based libayatana-appindicator3-0.1. Migrating is future work: -glib
+	// is not yet packaged on Ubuntu, Fedora, openSUSE or Debian, so switching today would lock
+	// out every major distro. Silence the warning locally so a project-wide -Werror=deprecated-
+	// declarations stays useful.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 	m_indicator = app_indicator_new(
-		"org.amule.aMule",
-		"org.amule.aMule",
-		APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
+		"org.amule.aMule", "org.amule.aMule", APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
+#pragma GCC diagnostic pop
 
-	// ACTIVE = visible. The user already opted in by enabling the tray
-	// icon in Preferences, so showing it immediately is the expected
-	// behaviour; SetTrayIcon below only updates the menu's
-	// Connect/Disconnect label and never re-hides the indicator.
-	// (We deliberately don't use APP_INDICATOR_STATUS_ATTENTION for
-	// the disconnected state — that requires a separately-set
-	// attention icon via app_indicator_set_attention_icon_full(), and
-	// without it some SNI hosts render the indicator as invisible.)
+	// AppRun adds the bundled icons to our XDG_DATA_DIRS, but the SNI host runs
+	// outside the AppImage. Export the search path so it can resolve them too.
+	const char *appDir = g_getenv("APPDIR");
+	if (appDir && *appDir) {
+		char *iconPath = g_build_filename(appDir, "usr", "share", "icons", nullptr);
+		app_indicator_set_icon_theme_path(m_indicator, iconPath);
+		g_free(iconPath);
+	}
+
+	// ACTIVE = visible: the user already opted in by enabling the tray icon, and SetTrayIcon
+	// below changes artwork and the menu label without changing visibility.
+	// APP_INDICATOR_STATUS_ATTENTION is deliberately not used for the disconnected state -- it
+	// needs a separately-set attention icon, and without one some SNI hosts render the
+	// indicator as invisible.
 	app_indicator_set_status(m_indicator, APP_INDICATOR_STATUS_ACTIVE);
 	app_indicator_set_title(m_indicator, "aMule");
+
+	// Left-click opens the main window instead of the menu, where the installed library can
+	// tell us about it. libayatana-appindicator only grew an Activate handler in 0.6.0; before
+	// that the primary click was not exposed at all.
+	//
+	// Looked up at RUNTIME rather than behind a build-time version check, because the two
+	// genuinely differ: a distro may ship a newer library than we built against, and our
+	// AppImage and Flatpak bundle their own. On an older library the lookup returns 0, nothing
+	// is connected, and the panel keeps opening the menu; the library answers the Activate
+	// D-Bus call with an error so the host falls back to it.
+	//
+	// APP_INDICATOR_TYPE, not G_OBJECT_TYPE(m_indicator): the latter is a raw dereference and
+	// app_indicator_new can return NULL. The GObject setters above only warn on NULL, so this
+	// must not be the line that crashes.
+	g_type_class_ref(APP_INDICATOR_TYPE);
+	if (m_indicator && g_signal_lookup("activate", APP_INDICATOR_TYPE)) {
+		g_signal_connect(m_indicator, "activate", G_CALLBACK(on_indicator_activate), this);
+	}
 
 	RebuildMenu();
 }
@@ -309,66 +366,91 @@ CMuleTrayIcon::~CMuleTrayIcon()
 		g_object_unref(m_indicator);
 		m_indicator = nullptr;
 	}
-	// m_menu is owned by the indicator (set_menu took the floating ref)
-	// so we don't unref it explicitly.
+	// m_menu is owned by the indicator (set_menu took the floating ref).
+}
+
+void CMuleTrayIcon::SetVisible(bool visible)
+{
+	if (m_indicator) {
+		app_indicator_set_status(
+			m_indicator, visible ? APP_INDICATOR_STATUS_ACTIVE : APP_INDICATOR_STATUS_PASSIVE);
+	}
 }
 
 void CMuleTrayIcon::SetTrayIcon(int Icon, uint32 /*percent*/)
 {
-	// SNI doesn't support per-frame icon overlays — the percent bar
-	// from the legacy backend is dropped on this path. We reflect the
-	// connection state purely through the menu (the Connect /
-	// Disconnect item label flips), not via the indicator's status,
-	// because flipping ACTIVE↔ATTENTION can hide the indicator on
-	// some hosts when no attention icon is configured.
+	wxCHECK_RET(Icon >= TRAY_ICON_DISCONNECTED && Icon <= TRAY_ICON_HIGHID, "Invalid tray icon state");
+	// Keep visibility independent of connection state, including updates while hidden.
+	static const char *const names[] = {
+		"org.amule.aMule-tray-disconnected", "org.amule.aMule-tray-low", "org.amule.aMule-tray-high"
+	};
 	if (Icon != m_lastIconState) {
+		const char *name = gtk_icon_theme_has_icon(gtk_icon_theme_get_default(), names[Icon])
+					   ? names[Icon]
+					   : "org.amule.aMule";
+		app_indicator_set_icon_full(m_indicator, name, name);
 		m_lastIconState = Icon;
-		// Rebuild so Connect/Disconnect label reflects current state.
 		RebuildMenu();
 	}
 }
 
-void CMuleTrayIcon::SetTrayToolTip(const wxString& Tip)
+void CMuleTrayIcon::SetTrayToolTip(const wxString &Tip)
 {
-	// SNI doesn't surface tooltips on hover (compositors disagree on
-	// whether to render them). Use it as the accessible title — screen
-	// readers and KDE's hover popup pick it up.
-	app_indicator_set_title(m_indicator, (const char*)Tip.utf8_str());
+	// SNI does not surface tooltips on hover (compositors disagree on rendering them), so use
+	// it as the accessible title: screen readers and KDE's hover popup pick it up.
+	app_indicator_set_title(m_indicator, (const char *)Tip.utf8_str());
 }
 
 void CMuleTrayIcon::RebuildMenu()
 {
-	// Static layout, rebuilt only on connection-state changes
-	// (driven by SetTrayIcon below). app_indicator_set_menu posts a
-	// dbusmenu LayoutUpdated D-Bus signal which some SNI hosts react
-	// to with a brief icon redraw — so refreshing on a 2 s timer
-	// would visibly flicker. Keeping the menu lean (action items
-	// only, no live stats) means we rebuild only when state actually
-	// changes, eliminating the flicker. Live values like download /
-	// upload speed are visible in the main aMule window.
-	GtkWidget* menu = gtk_menu_new();
+	// Static layout, rebuilt only on connection-state changes. app_indicator_set_menu posts a
+	// dbusmenu LayoutUpdated signal that some SNI hosts answer with a brief icon redraw, so a 2
+	// s refresh timer would visibly flicker. Keeping the menu to action items only means it
+	// rebuilds only when state changes; live speeds are in the main window.
+	GtkWidget *menu = gtk_menu_new();
 
-	// ---- Version banner ------------------------------------------
 	append_info(menu, MOD_VERSION_LONG);
 
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu),
-		gtk_separator_menu_item_new());
+	gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 
-	// ---- Client information submenu ------------------------------
-	// Snapshot at the moment of the last connection-state change.
-	// Skips truly-live fields (uptime, totals, queued clients) so the
-	// menu can stay static between state changes — putting those in
-	// would force a periodic rebuild and bring back the flicker.
+	// Show / Hide. On Wayland we cannot detect that the window was iconized by the OS minimize
+	// button (xdg-shell delivers no event), so a single toggle entry would mislabel itself
+	// there; show two deterministic entries instead. Elsewhere the toggle is reliable and the
+	// label-aware entry stays.
+	if (CamuleAppCommon::IsWaylandSession()) {
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu),
+			make_action_item((const char *)wxString(_("Show aMule")).utf8_str(),
+				TRAY_ACTION_SHOW,
+				0,
+				this));
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu),
+			make_action_item((const char *)wxString(_("Hide aMule")).utf8_str(),
+				TRAY_ACTION_HIDE,
+				0,
+				this));
+	} else {
+		// Treat iconized as not visible -- see DoShowHide for rationale.
+		const bool visible = theApp->amuledlg && theApp->amuledlg->IsShown() &&
+				     !theApp->amuledlg->IsTrayLogicallyIconized();
+		const wxString label = visible ? wxString(_("Hide aMule")) : wxString(_("Show aMule"));
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu),
+			make_action_item((const char *)label.utf8_str(), TRAY_ACTION_SHOW_HIDE, 0, this));
+	}
+
+	gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+
+	// Client information submenu. Snapshot at the last connection-state change. Truly live
+	// fields (uptime, totals, queued clients) are skipped so the menu can stay static;
+	// including them would force a periodic rebuild and bring back the flicker.
 	{
-		GtkWidget* sub = gtk_menu_new();
+		GtkWidget *sub = gtk_menu_new();
 
 		// ED2k status
 		{
 			wxString s = _("eD2k: ");
 			if (theApp->IsConnectedED2K()) {
-				s += theApp->IsFirewalled()
-					? wxString(_("Connected (LowID)"))
-					: wxString(_("Connected (HighID)"));
+				s += theApp->IsFirewalled() ? wxString(_("Connected (LowID)"))
+							    : wxString(_("Connected (HighID)"));
 			} else {
 				s += _("Disconnected");
 			}
@@ -379,9 +461,8 @@ void CMuleTrayIcon::RebuildMenu()
 		{
 			wxString s = _("Kad: ");
 			if (theApp->IsConnectedKad()) {
-				s += theApp->IsFirewalledKad()
-					? wxString(_("Connected (firewalled)"))
-					: wxString(_("Connected"));
+				s += theApp->IsFirewalledKad() ? wxString(_("Connected (firewalled)"))
+							       : wxString(_("Connected"));
 			} else {
 				s += _("Disconnected");
 			}
@@ -391,54 +472,48 @@ void CMuleTrayIcon::RebuildMenu()
 		// Server identity (only meaningful while connected)
 		{
 			wxString name = _("Server: ");
-			wxString ip   = _("Server IP: ");
+			wxString ip = _("Server IP: ");
 			if (theApp->serverconnect->GetCurrentServer()) {
 				name += theApp->serverconnect->GetCurrentServer()->GetListName();
-				ip   += theApp->serverconnect->GetCurrentServer()->GetFullIP();
+				ip += theApp->serverconnect->GetCurrentServer()->GetFullIP();
 			} else {
 				name += _("Not connected");
-				ip   += _("Not connected");
+				ip += _("Not connected");
 			}
 			append_info(sub, name);
 			append_info(sub, ip);
 		}
 
-		// Public IP — populated post-connect
-		append_info(sub, CFormat(_("IP: %s"))
-			% (theApp->GetPublicIP()
-				? Uint32toStringIP(theApp->GetPublicIP())
-				: wxString(_("Unknown"))));
+		// Public IP -- populated post-connect
+		append_info(sub,
+			CFormat(_("IP: %s")) % (theApp->GetPublicIP()
+							       ? Uint32toStringIP(theApp->GetPublicIP())
+							       : wxString(_("Unknown"))));
 
-		// Listen ports — change only on prefs save
-		append_info(sub, thePrefs::GetPort()
-			? wxString(CFormat(_("TCP port: %d")) % thePrefs::GetPort())
-			: wxString(_("TCP port: Not ready")));
+		// Listen ports -- change only on prefs save
+		append_info(sub,
+			thePrefs::GetPort() ? wxString(CFormat(_("TCP port: %d")) % thePrefs::GetPort())
+					    : wxString(_("TCP port: Not ready")));
 
-		append_info(sub, thePrefs::GetEffectiveUDPPort()
-			? wxString(CFormat(_("UDP port: %d")) % thePrefs::GetEffectiveUDPPort())
-			: wxString(_("UDP port: Not ready")));
+		append_info(sub,
+			thePrefs::GetEffectiveUDPPort()
+				? wxString(CFormat(_("UDP port: %d")) % thePrefs::GetEffectiveUDPPort())
+				: wxString(_("UDP port: Not ready")));
 
 		gtk_widget_show_all(sub);
-		GtkWidget* item = gtk_menu_item_new_with_label(
-			(const char*)wxString(_("Client Information")).utf8_str());
+		GtkWidget *item = gtk_menu_item_new_with_label(
+			(const char *)wxString(_("Client Information")).utf8_str());
 		gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), sub);
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 	}
 
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu),
-		gtk_separator_menu_item_new());
-
-	// ---- Action items --------------------------------------------
+	gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 
 	// Upload limit submenu
 	{
 		uint32 max_ul = thePrefs::GetMaxGraphUploadRate();
-		if (max_ul == UNLIMITED) max_ul = 100;
-		else if (max_ul < 10)    max_ul = 10;
-
-		GtkWidget* sub = make_speed_submenu(max_ul,
-			TRAY_ACTION_SET_UPLOAD_LIMIT, this);
-		GtkWidget* item = gtk_menu_item_new_with_label(_("Upload limit").utf8_str());
+		GtkWidget *sub = make_speed_submenu(max_ul, TRAY_ACTION_SET_UPLOAD_LIMIT, this);
+		GtkWidget *item = gtk_menu_item_new_with_label(_("Upload limit").utf8_str());
 		gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), sub);
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 	}
@@ -446,145 +521,97 @@ void CMuleTrayIcon::RebuildMenu()
 	// Download limit submenu
 	{
 		uint32 max_dl = thePrefs::GetMaxGraphDownloadRate();
-		if (max_dl == UNLIMITED) max_dl = 100;
-		else if (max_dl < 10)    max_dl = 10;
-
-		GtkWidget* sub = make_speed_submenu(max_dl,
-			TRAY_ACTION_SET_DOWNLOAD_LIMIT, this);
-		GtkWidget* item = gtk_menu_item_new_with_label(_("Download limit").utf8_str());
+		GtkWidget *sub = make_speed_submenu(max_dl, TRAY_ACTION_SET_DOWNLOAD_LIMIT, this);
+		GtkWidget *item = gtk_menu_item_new_with_label(_("Download limit").utf8_str());
 		gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), sub);
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 	}
 
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu),
-		gtk_separator_menu_item_new());
+	gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 
-	// Connect / Disconnect — label depends on current connection state.
+	// Connect / Disconnect -- label depends on current connection state.
 	{
-		const wxString label = theApp->IsConnected()
-			? wxString(_("Disconnect")) : wxString(_("Connect"));
+		const wxString label =
+			theApp->IsConnected() ? wxString(_("Disconnect")) : wxString(_("Connect"));
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu),
-			make_action_item((const char*)label.utf8_str(),
-				TRAY_ACTION_CONNECT_DISCONNECT, 0, this));
+			make_action_item(
+				(const char *)label.utf8_str(), TRAY_ACTION_CONNECT_DISCONNECT, 0, this));
 	}
 
-	// Show / Hide. On a Wayland session we can't reliably detect that
-	// the window has been iconized by the OS minimize button (xdg-shell
-	// doesn't deliver the event), so a single toggle entry would mis-
-	// label itself in that state. Show two deterministic entries
-	// instead — click Show to bring the window back, click Hide to
-	// hide it. On X11 / macOS / Windows the toggle is reliable, so
-	// the single label-aware entry stays.
-	if (CamuleAppCommon::IsWaylandSession()) {
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu),
-			make_action_item((const char*)wxString(_("Show aMule")).utf8_str(),
-				TRAY_ACTION_SHOW, 0, this));
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu),
-			make_action_item((const char*)wxString(_("Hide aMule")).utf8_str(),
-				TRAY_ACTION_HIDE, 0, this));
-	} else {
-		// Treat iconized as not visible — see DoShowHide for rationale.
-		const bool visible = theApp->amuledlg
-			&& theApp->amuledlg->IsShown()
-			&& !theApp->amuledlg->IsTrayLogicallyIconized();
-		const wxString label = visible ? wxString(_("Hide aMule"))
-		                               : wxString(_("Show aMule"));
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu),
-			make_action_item((const char*)label.utf8_str(),
-				TRAY_ACTION_SHOW_HIDE, 0, this));
-	}
+	gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 
 	gtk_menu_shell_append(GTK_MENU_SHELL(menu),
-		gtk_separator_menu_item_new());
-
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu),
-		make_action_item((const char*)wxString(_("Exit")).utf8_str(),
-			TRAY_ACTION_EXIT, 0, this));
+		make_action_item((const char *)wxString(_("Exit")).utf8_str(), TRAY_ACTION_EXIT, 0, this));
 
 	gtk_widget_show_all(menu);
 
-	// app_indicator_set_menu sinks the floating ref and unrefs any
-	// previously-set menu, so we can replace it on every rebuild
-	// without leaking.
+	// app_indicator_set_menu sinks the floating ref and unrefs any previous menu,
+	// so rebuilding does not leak.
 	app_indicator_set_menu(m_indicator, GTK_MENU(menu));
 	m_menu = menu;
 }
 
+#else // !WITH_LIBAYATANA_APPINDICATOR
 
-#else  // !WITH_LIBAYATANA_APPINDICATOR
+// Legacy wxTaskBarIcon backend. Correct on Windows (NOTIFYICONDATA), macOS (NSStatusItem) and X11
+// desktops that still consume GtkStatusIcon; on Wayland the icon goes nowhere, which is what the
+// libayatana-appindicator3 backend above is for.
 
-// ---------------------------------------------------------------------
-//  Legacy wxTaskBarIcon backend. Works correctly on Windows
-//  (NOTIFYICONDATA), macOS (NSStatusItem), and on X11 desktops that
-//  still consume GtkStatusIcon. On modern Wayland desktops the icon
-//  goes nowhere — build with libayatana-appindicator3 to fix that.
-// ---------------------------------------------------------------------
+#include "TrayIconBundle.h"
 
-#include <wx/artprov.h>           // Needed for wxArtProvider::GetIcon
+#include <wx/artprov.h> // Needed for wxArtProvider::GetBitmapBundle
 
 #include <wx/menu.h>
 
-#include "StatisticsDlg.h"	// Needed for CStatisticsDlg::getColors()
+#include "StatisticsDlg.h" // Needed for CStatisticsDlg::getColors()
 
+// Event table
 
-/****************************************************/
-/******************* Event Table ********************/
-/****************************************************/
-
-wxBEGIN_EVENT_TABLE(CMuleTrayIcon, wxTaskBarIcon)
-#ifdef __WINDOWS__
-	// Windows convention: single-left click on the tray icon toggles
-	// the primary action (show/hide the main window). NSStatusItem
-	// on macOS opens the menu on single-click via its own default,
-	// so leave that path alone.
-	EVT_TASKBAR_LEFT_UP(CMuleTrayIcon::SwitchShow)
-#endif
+wxBEGIN_EVENT_TABLE(CMuleTrayIcon, MuleTrayIconBase)
 	EVT_TASKBAR_LEFT_DCLICK(CMuleTrayIcon::SwitchShow)
-	EVT_MENU( TRAY_MENU_EXIT, CMuleTrayIcon::Close)
-	EVT_MENU( TRAY_MENU_CONNECT, CMuleTrayIcon::ServerConnection)
-	EVT_MENU( TRAY_MENU_DISCONNECT, CMuleTrayIcon::ServerConnection)
-	EVT_MENU( TRAY_MENU_HIDE, CMuleTrayIcon::ShowHide)
-	EVT_MENU( TRAY_MENU_SHOW, CMuleTrayIcon::ShowHide)
-	EVT_MENU( UPLOAD_ITEM1, CMuleTrayIcon::SetUploadSpeed)
-	EVT_MENU( UPLOAD_ITEM2, CMuleTrayIcon::SetUploadSpeed)
-	EVT_MENU( UPLOAD_ITEM3, CMuleTrayIcon::SetUploadSpeed)
-	EVT_MENU( UPLOAD_ITEM4, CMuleTrayIcon::SetUploadSpeed)
-	EVT_MENU( UPLOAD_ITEM5, CMuleTrayIcon::SetUploadSpeed)
-	EVT_MENU( UPLOAD_ITEM6, CMuleTrayIcon::SetUploadSpeed)
-	EVT_MENU( DOWNLOAD_ITEM1, CMuleTrayIcon::SetDownloadSpeed)
-	EVT_MENU( DOWNLOAD_ITEM2, CMuleTrayIcon::SetDownloadSpeed)
-	EVT_MENU( DOWNLOAD_ITEM3, CMuleTrayIcon::SetDownloadSpeed)
-	EVT_MENU( DOWNLOAD_ITEM4, CMuleTrayIcon::SetDownloadSpeed)
-	EVT_MENU( DOWNLOAD_ITEM5, CMuleTrayIcon::SetDownloadSpeed)
-	EVT_MENU( DOWNLOAD_ITEM6, CMuleTrayIcon::SetDownloadSpeed)
+	EVT_MENU(TRAY_MENU_EXIT, CMuleTrayIcon::Close)
+	EVT_MENU(TRAY_MENU_CONNECT, CMuleTrayIcon::ServerConnection)
+	EVT_MENU(TRAY_MENU_DISCONNECT, CMuleTrayIcon::ServerConnection)
+	EVT_MENU(TRAY_MENU_HIDE, CMuleTrayIcon::ShowHide)
+	EVT_MENU(TRAY_MENU_SHOW, CMuleTrayIcon::ShowHide)
+	EVT_MENU(UPLOAD_ITEM1, CMuleTrayIcon::SetUploadSpeed)
+	EVT_MENU(UPLOAD_ITEM2, CMuleTrayIcon::SetUploadSpeed)
+	EVT_MENU(UPLOAD_ITEM3, CMuleTrayIcon::SetUploadSpeed)
+	EVT_MENU(UPLOAD_ITEM4, CMuleTrayIcon::SetUploadSpeed)
+	EVT_MENU(UPLOAD_ITEM5, CMuleTrayIcon::SetUploadSpeed)
+	EVT_MENU(UPLOAD_ITEM6, CMuleTrayIcon::SetUploadSpeed)
+	EVT_MENU(DOWNLOAD_ITEM1, CMuleTrayIcon::SetDownloadSpeed)
+	EVT_MENU(DOWNLOAD_ITEM2, CMuleTrayIcon::SetDownloadSpeed)
+	EVT_MENU(DOWNLOAD_ITEM3, CMuleTrayIcon::SetDownloadSpeed)
+	EVT_MENU(DOWNLOAD_ITEM4, CMuleTrayIcon::SetDownloadSpeed)
+	EVT_MENU(DOWNLOAD_ITEM5, CMuleTrayIcon::SetDownloadSpeed)
+	EVT_MENU(DOWNLOAD_ITEM6, CMuleTrayIcon::SetDownloadSpeed)
 wxEND_EVENT_TABLE()
 
+// Constructor / destructor
 
-/****************************************************/
-/************ Constructor / Destructor **************/
-/****************************************************/
-
-static long GetSpeedFromString(wxString label){
+static long GetSpeedFromString(wxString label)
+{
 	long temp;
-	label.Replace(_("kB/s"),"",TRUE);
+	label.Replace(_("KiB/s"), "", TRUE);
 	label.Trim(FALSE);
 	label.Trim(TRUE);
 	label.ToLong(&temp);
 	return temp;
 }
 
-void CMuleTrayIcon::SetUploadSpeed(wxCommandEvent& event){
+void CMuleTrayIcon::SetUploadSpeed(wxCommandEvent &event)
+{
 
-	wxObject* obj=event.GetEventObject();
-	if (obj!=NULL) {
+	wxObject *obj = event.GetEventObject();
+	if (obj != NULL) {
 		wxMenu *menu = dynamic_cast<wxMenu *>(obj);
 		if (menu) {
-			wxMenuItem* item=menu->FindItem(event.GetId());
-			if (item!=NULL) {
-				if (item->GetItemLabelText()==(_("Unlimited"))) {
+			wxMenuItem *item = menu->FindItem(event.GetId());
+			if (item != NULL) {
+				if (item->GetItemLabelText() == (_("Unlimited"))) {
 					DoSetUploadLimit(-1);
-				}
-				else {
+				} else {
 					DoSetUploadLimit(GetSpeedFromString(item->GetItemLabelText()));
 				}
 			}
@@ -592,18 +619,18 @@ void CMuleTrayIcon::SetUploadSpeed(wxCommandEvent& event){
 	}
 }
 
-void CMuleTrayIcon::SetDownloadSpeed(wxCommandEvent& event){
+void CMuleTrayIcon::SetDownloadSpeed(wxCommandEvent &event)
+{
 
-	wxObject* obj=event.GetEventObject();
-	if (obj!=NULL) {
+	wxObject *obj = event.GetEventObject();
+	if (obj != NULL) {
 		wxMenu *menu = dynamic_cast<wxMenu *>(obj);
 		if (menu) {
-			wxMenuItem* item=menu->FindItem(event.GetId());
-			if (item!=NULL) {
-				if (item->GetItemLabelText()==(_("Unlimited"))) {
+			wxMenuItem *item = menu->FindItem(event.GetId());
+			if (item != NULL) {
+				if (item->GetItemLabelText() == (_("Unlimited"))) {
 					DoSetDownloadLimit(-1);
-				}
-				else {
+				} else {
 					DoSetDownloadLimit(GetSpeedFromString(item->GetItemLabelText()));
 				}
 			}
@@ -611,142 +638,111 @@ void CMuleTrayIcon::SetDownloadSpeed(wxCommandEvent& event){
 	}
 }
 
-
-void CMuleTrayIcon::ServerConnection(wxCommandEvent& WXUNUSED(event))
+void CMuleTrayIcon::ServerConnection(wxCommandEvent &WXUNUSED(event))
 {
 	DoConnectDisconnect();
 }
 
-
-void CMuleTrayIcon::ShowHide(wxCommandEvent& WXUNUSED(event))
+void CMuleTrayIcon::ShowHide(wxCommandEvent &WXUNUSED(event))
 {
 	DoShowHide();
 }
 
-
-void CMuleTrayIcon::Close(wxCommandEvent& WXUNUSED(event))
+void CMuleTrayIcon::Close(wxCommandEvent &WXUNUSED(event))
 {
 	DoExit();
 }
 
-
 CMuleTrayIcon::CMuleTrayIcon()
 {
 	Old_Icon = -1;
-	Old_SpeedSize = 0xFFFF; // must be > any possible one.
-
-	// Create the background icons (speed improvement)
-	HighId_Icon_size = wxArtProvider::GetIcon("amule:tray_high").GetHeight();
-	LowId_Icon_size = wxArtProvider::GetIcon("amule:tray_low").GetHeight();
-	Disconnected_Icon_size = wxArtProvider::GetIcon("amule:tray_disconnected").GetHeight();
+	Old_Percent = 0;
+	m_visible = true;
 }
 
-CMuleTrayIcon::~CMuleTrayIcon()
-{
-}
+CMuleTrayIcon::~CMuleTrayIcon() {}
 
-
-/****************************************************/
-/***************** Public Functions *****************/
-/****************************************************/
+// Public functions
 
 void CMuleTrayIcon::SetTrayIcon(int Icon, uint32 percent)
 {
-	int Bar_ySize = 0;
+	wxCHECK_RET(Icon >= 0 && Icon < (int)WXSIZEOF(BaseImage), "Invalid tray icon state");
 
-	switch (Icon) {
+	if (!BaseImage[Icon].IsOk()) {
+		const char *artId = "amule:tray_disconnected";
+		switch (Icon) {
 		case TRAY_ICON_HIGHID:
-			// Most likely case, test first
-			Bar_ySize = HighId_Icon_size;
+			artId = "amule:tray_high";
 			break;
 		case TRAY_ICON_LOWID:
-			Bar_ySize = LowId_Icon_size;
-			break;
-		case TRAY_ICON_DISCONNECTED:
-			Bar_ySize = Disconnected_Icon_size;
+			artId = "amule:tray_low";
 			break;
 		default:
-			wxFAIL;
-	}
-
-	// Lookup this values for speed improvement: don't draw if not needed
-	int NewSize = (Bar_ySize * percent) / 100;
-
-	if ((Old_Icon != Icon) || (Old_SpeedSize != NewSize)) {
-
-		if ((Old_SpeedSize > NewSize) || (Old_Icon != Icon)) {
-			// We have to rebuild the icon, because bar is lower now.
-			switch (Icon) {
-				case TRAY_ICON_HIGHID:
-					// Most likely case, test first
-					CurrentIcon = wxArtProvider::GetIcon("amule:tray_high");
-					break;
-				case TRAY_ICON_LOWID:
-					CurrentIcon = wxArtProvider::GetIcon("amule:tray_low");
-					break;
-				case TRAY_ICON_DISCONNECTED:
-					CurrentIcon = wxArtProvider::GetIcon("amule:tray_disconnected");
-					break;
-				default:
-					wxFAIL;
-			}
+			break;
 		}
-
-		Old_Icon = Icon;
-		Old_SpeedSize = NewSize;
-
-		// Do whatever to the icon before drawing it (percent)
-
-		wxBitmap TempBMP;
-		TempBMP.CopyFromIcon(CurrentIcon);
-
-		TempBMP.SetMask(NULL);
-
-		IconWithSpeed.SelectObject(TempBMP);
-
-
-		// Speed bar is: centered, taking 80% of the icon height, and
-		// right-justified taking a 10% of the icon width.
-
-		// X
-		int Bar_xSize = 4;
-		int Bar_xPos = CurrentIcon.GetWidth() - 5;
-
-		IconWithSpeed.SetBrush(*(wxTheBrushList->FindOrCreateBrush(CStatisticsDlg::getColors(11))));
-		IconWithSpeed.SetPen(*wxTRANSPARENT_PEN);
-
-		IconWithSpeed.DrawRectangle(Bar_xPos + 1, Bar_ySize - NewSize, Bar_xSize -2 , NewSize);
-
-		// Unselect the icon.
-		IconWithSpeed.SelectObject(wxNullBitmap);
-
-		// Do transparency
-
-		// Set a new mask with transparency set to red.
-		wxMask* new_mask = new wxMask(TempBMP, wxColour(0xFF, 0x00, 0x00));
-
-		TempBMP.SetMask(new_mask);
-		CurrentIcon.CopyFromBitmap(TempBMP);
-
-		UpdateTray();
+#ifdef __WXOSX_COCOA__
+		// Template images convey state through shape; colour is supplied by AppKit.
+		const wxString templateId = wxString(artId) + "_template";
+		BaseImage[Icon] = wxArtProvider::GetBitmapBundle(templateId, wxART_OTHER);
+#else
+		BaseImage[Icon] = wxArtProvider::GetBitmapBundle(artId, wxART_OTHER);
+#endif
+		if (!BaseImage[Icon].IsOk()) {
+			return;
+		}
 	}
-}
 
-void CMuleTrayIcon::SetTrayToolTip(const wxString& Tip)
-{
-	CurrentTip = Tip;
+	const wxColour barColour = CStatisticsDlg::getColors(11);
+	if (Old_Icon == Icon && Old_Percent == percent && Old_BarColour == barColour) {
+		return;
+	}
+	Old_Icon = Icon;
+	Old_Percent = percent;
+	Old_BarColour = barColour;
+
+	// Let SetIcon() choose the native size before rasterizing the SVG and bar.
+	// DPI changes invalidate Old_Icon so the next tick replaces the flattened icon.
+#ifdef __WXOSX_COCOA__
+	CurrentIcon = MuleTray::MakeIconBundle(BaseImage[Icon], percent, *wxBLACK);
+#else
+	CurrentIcon = MuleTray::MakeIconBundle(BaseImage[Icon], percent, barColour);
+#endif
 	UpdateTray();
 }
 
+void CMuleTrayIcon::SetTrayToolTip(const wxString &Tip)
+{
+	CurrentTip = Tip;
+#if !(defined(wxUSE_APPINDICATOR) && wxUSE_APPINDICATOR)
+	// Native backends flatten the bundle in SetIcon(). Refresh even with an unchanged tooltip:
+	// Cocoa does not emit wxEVT_DPI_CHANGED, and the tray's display can
+	// change independently of the main window. Reuse the bundle and let the backend select
+	// its current size. wx's AppIndicator backend has no tooltip and would instead write a
+	// new icon file and re-register the indicator on every tick.
+	UpdateTray();
+#endif
+}
 
-/****************************************************/
-/**************** Private Functions *****************/
-/****************************************************/
+// Private functions
+
+void CMuleTrayIcon::SetVisible(bool visible)
+{
+	m_visible = visible;
+	if (visible) {
+		Old_Icon = -1; // RemoveIcon() dropped the icon SetTrayIcon() remembers.
+	} else {
+		// With wx's AppIndicator backend this only sets the indicator passive.
+		RemoveIcon();
+	}
+}
 
 void CMuleTrayIcon::UpdateTray()
 {
-	// Icon update and Tip update
-#ifndef __WXCOCOA__
+	// A deferred RebuildMenu() must not bring back a hidden icon.
+	if (!m_visible) {
+		return;
+	}
+#ifndef __WXOSX_COCOA__
 	if (IsOk())
 #endif
 	{
@@ -754,63 +750,82 @@ void CMuleTrayIcon::UpdateTray()
 	}
 }
 
-
-wxMenu* CMuleTrayIcon::CreatePopupMenu()
+#ifdef __WXGTK__
+void CMuleTrayIcon::RebuildMenu()
 {
-	float kBpsUp = theStats::GetUploadRate() / 1024.0;
-	float kBpsDown = theStats::GetDownloadRate() / 1024.0;
-	float MBpsUp = kBpsUp / 1024.0;
-	float MBpsDown = kBpsDown / 1024.0;
+#if defined(wxUSE_APPINDICATOR) && wxUSE_APPINDICATOR
+	// wx's AppIndicator backend builds the menu inside SetIcon(). Deferred because this can run
+	// from an event of the current menu, which SetIcon() deletes.
+	CallAfter(&CMuleTrayIcon::UpdateTray);
+#endif
+}
+#endif
+
+wxMenu *CMuleTrayIcon::CreatePopupMenu()
+{
+	const double kBpsUp = static_cast<double>(theStats::GetDisplayUploadRate()) / 1024.0;
+	const double kBpsDown = static_cast<double>(theStats::GetDisplayDownloadRate()) / 1024.0;
+	const double MBpsUp = kBpsUp / 1024.0;
+	const double MBpsDown = kBpsDown / 1024.0;
 	bool showMBpsUp = (MBpsUp >= 1);
 	bool showMBpsDown = (MBpsDown >= 1);
 
-	// Dynamically creates the menu to show the user.
 	wxMenu *traymenu = new wxMenu();
 	traymenu->SetTitle(_("aMule Tray Menu"));
 
-	// Build the Top string name
 	wxString label = MOD_VERSION_LONG;
 	traymenu->Append(TRAY_MENU_INFO, label);
 	traymenu->AppendSeparator();
+
+	// Treat iconized as not visible -- see DoShowHide for rationale. wx's AppIndicator backend
+	// builds this menu inside SetIcon(), which first runs from the CamuleDlg constructor: before
+	// theApp->amuledlg is set, and in amule before theApp->serverconnect exists.
+	const CamuleDlg *dlg = theApp->amuledlg;
+	if (dlg && dlg->IsShown() && !dlg->IsTrayLogicallyIconized()) {
+		traymenu->Append(TRAY_MENU_HIDE, _("Hide aMule"));
+	} else {
+		traymenu->Append(TRAY_MENU_SHOW, _("Show aMule"));
+	}
+
+	traymenu->AppendSeparator();
+
 	label = wxString(_("Speed limits:")) + " ";
 
-	// Check for upload limits
 	unsigned int max_upload = thePrefs::GetMaxUpload();
-	if ( max_upload == UNLIMITED ) {
+	if (max_upload == UNLIMITED) {
 		label += _("UL: None");
-	}
-	else {
+	} else {
 		label += CFormat(_("UL: %u")) % max_upload;
 	}
 	label += ", ";
 
-	// Check for download limits
 	unsigned int max_download = thePrefs::GetMaxDownload();
-	if ( max_download == UNLIMITED ) {
+	if (max_download == UNLIMITED) {
 		label += _("DL: None");
-	}
-	else {
+	} else {
 		label += CFormat(_("DL: %u")) % max_download;
 	}
 
 	traymenu->Append(TRAY_MENU_INFO, label);
-	label = CFormat(_("Download speed: %.1f%s"))
-			% (showMBpsDown ? MBpsDown : kBpsDown) % (showMBpsDown ? _(" MB/s") : ((kBpsDown > 0) ? _(" kB/s") : ""));
+	label = CFormat(_("Download speed: %.1f%s")) % (showMBpsDown ? MBpsDown : kBpsDown) %
+		(showMBpsDown ? _(" MiB/s") : ((kBpsDown > 0) ? _(" KiB/s") : ""));
 	traymenu->Append(TRAY_MENU_INFO, label);
-	label = CFormat(_("Upload speed: %.1f%s"))
-			% (showMBpsUp ? MBpsUp : kBpsUp) % (showMBpsUp ? _(" MB/s") : ((kBpsUp > 0) ? _(" kB/s") : ""));
+	label = CFormat(_("Upload speed: %.1f%s")) % (showMBpsUp ? MBpsUp : kBpsUp) %
+		(showMBpsUp ? _(" MiB/s") : ((kBpsUp > 0) ? _(" KiB/s") : ""));
 	traymenu->Append(TRAY_MENU_INFO, label);
 	traymenu->AppendSeparator();
 
 	// Client Info
-	wxMenu* ClientInfoMenu = new wxMenu();
+	wxMenu *ClientInfoMenu = new wxMenu();
 	ClientInfoMenu->SetTitle(_("Client Information"));
 
 	// User nick-name
 	{
-		wxString temp = CFormat(_("Nickname: %s")) % ( thePrefs::GetUserNick().IsEmpty() ? wxString(_("No Nickname Selected!")) : thePrefs::GetUserNick() );
+		wxString temp = CFormat(_("Nickname: %s")) %
+				(thePrefs::GetUserNick().IsEmpty() ? wxString(_("No Nickname Selected!"))
+								   : thePrefs::GetUserNick());
 
-		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM,temp);
+		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM, temp);
 	}
 
 	// Client ID
@@ -822,30 +837,34 @@ wxMenu* CMuleTrayIcon::CreatePopupMenu()
 		} else {
 			temp += _("Not connected");
 		}
-		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM,temp);
+		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM, temp);
 	}
 
 	// Current Server and Server IP
 	{
 		wxString temp_name = _("ServerName: ");
-		wxString temp_ip   = _("ServerIP: ");
+		wxString temp_ip = _("ServerIP: ");
 
-		if ( theApp->serverconnect->GetCurrentServer() ) {
-			temp_name += theApp->serverconnect->GetCurrentServer()->GetListName();
-			temp_ip   += theApp->serverconnect->GetCurrentServer()->GetFullIP();
+		const CServer *server =
+			theApp->serverconnect ? theApp->serverconnect->GetCurrentServer() : nullptr;
+		if (server) {
+			temp_name += server->GetListName();
+			temp_ip += server->GetFullIP();
 		} else {
 			temp_name += _("Not connected");
-			temp_ip   += _("Not Connected");
+			temp_ip += _("Not Connected");
 		}
-		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM,temp_name);
-		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM,temp_ip);
+		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM, temp_name);
+		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM, temp_ip);
 	}
 
 	// IP Address
 	{
-		wxString temp = CFormat(_("IP: %s")) % ( (theApp->GetPublicIP()) ? Uint32toStringIP(theApp->GetPublicIP()) : wxString(_("Unknown")) );
+		wxString temp = CFormat(_("IP: %s")) %
+				((theApp->GetPublicIP()) ? Uint32toStringIP(theApp->GetPublicIP())
+							 : wxString(_("Unknown")));
 
-		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM,temp);
+		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM, temp);
 	}
 
 	// TCP PORT
@@ -854,9 +873,9 @@ wxMenu* CMuleTrayIcon::CreatePopupMenu()
 		if (thePrefs::GetPort()) {
 			temp = CFormat(_("TCP port: %d")) % thePrefs::GetPort();
 		} else {
-			temp=_("TCP port: Not ready");
+			temp = _("TCP port: Not ready");
 		}
-		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM,temp);
+		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM, temp);
 	}
 
 	// UDP PORT
@@ -865,145 +884,108 @@ wxMenu* CMuleTrayIcon::CreatePopupMenu()
 		if (thePrefs::GetEffectiveUDPPort()) {
 			temp = CFormat(_("UDP port: %d")) % thePrefs::GetEffectiveUDPPort();
 		} else {
-			temp=_("UDP port: Not ready");
+			temp = _("UDP port: Not ready");
 		}
-		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM,temp);
+		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM, temp);
 	}
 
 	// Online Signature
 	{
 		wxString temp;
 		if (thePrefs::IsOnlineSignatureEnabled()) {
-			temp=_("Online Signature: Enabled");
+			temp = _("Online Signature: Enabled");
+		} else {
+			temp = _("Online Signature: Disabled");
 		}
-		else {
-			temp=_("Online Signature: Disabled");
-		}
-		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM,temp);
+		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM, temp);
 	}
 
 	// Uptime
 	{
 		wxString temp = CFormat(_("Uptime: %s")) % CastSecondsToHM(theStats::GetUptimeSeconds());
-		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM,temp);
+		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM, temp);
 	}
 
 	// Number of shared files
 	{
 		wxString temp = CFormat(_("Shared files: %d")) % theStats::GetSharedFileCount();
-		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM,temp);
+		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM, temp);
 	}
 
 	// Number of queued clients
 	{
 		wxString temp = CFormat(_("Queued clients: %d")) % theStats::GetWaitingUserCount();
-		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM,temp);
+		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM, temp);
 	}
 
 	// Total Downloaded
 	{
 		wxString temp = CastItoXBytes(theStats::GetTotalReceivedBytes());
 		temp = CFormat(_("Total DL: %s")) % temp;
-		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM,temp);
+		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM, temp);
 	}
 
 	// Total Uploaded
 	{
 		wxString temp = CastItoXBytes(theStats::GetTotalSentBytes());
 		temp = CFormat(_("Total UL: %s")) % temp;
-		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM,temp);
+		ClientInfoMenu->Append(TRAY_MENU_CLIENTINFO_ITEM, temp);
 	}
 
-	traymenu->Append(TRAY_MENU_CLIENTINFO,ClientInfoMenu->GetTitle(),ClientInfoMenu);
+	traymenu->Append(TRAY_MENU_CLIENTINFO, ClientInfoMenu->GetTitle(), ClientInfoMenu);
 
-	// Separator
 	traymenu->AppendSeparator();
 
 	// Upload Speed sub-menu
-	wxMenu* UploadSpeedMenu = new wxMenu();
+	wxMenu *UploadSpeedMenu = new wxMenu();
 	UploadSpeedMenu->SetTitle(_("Upload limit"));
 
 	// Download Speed sub-menu
-	wxMenu* DownloadSpeedMenu = new wxMenu();
+	wxMenu *DownloadSpeedMenu = new wxMenu();
 	DownloadSpeedMenu->SetTitle(_("Download limit"));
 
-	// Upload Speed sub-menu
 	{
 		UploadSpeedMenu->Append(UPLOAD_ITEM1, _("Unlimited"));
 
-		uint32 max_ul_speed = thePrefs::GetMaxGraphUploadRate();
-
-		if ( max_ul_speed == UNLIMITED ) {
-			max_ul_speed = 100;
-		}
-		else if ( max_ul_speed < 10 ) {
-			max_ul_speed = 10;
-		}
-
-		for ( int i = 0; i < 5; i++ ) {
-			unsigned int tempspeed = (unsigned int)((double)max_ul_speed / 5) * (5 - i);
-			wxString temp = CFormat("%u %s") % tempspeed % _("kB/s");
-			UploadSpeedMenu->Append((int)UPLOAD_ITEM1+i+1,temp);
+		unsigned int speeds[TRAY_SPEED_PRESETS];
+		GetTraySpeedPresets(thePrefs::GetMaxGraphUploadRate(), speeds);
+		for (int i = 0; i < TRAY_SPEED_PRESETS; i++) {
+			UploadSpeedMenu->Append((int)UPLOAD_ITEM1 + i + 1, TraySpeedLabel(speeds[i]));
 		}
 	}
-	traymenu->Append(0,UploadSpeedMenu->GetTitle(),UploadSpeedMenu);
+	traymenu->Append(0, UploadSpeedMenu->GetTitle(), UploadSpeedMenu);
 
-	// Download Speed sub-menu
 	{
 		DownloadSpeedMenu->Append(DOWNLOAD_ITEM1, _("Unlimited"));
 
-		uint32 max_dl_speed = thePrefs::GetMaxGraphDownloadRate();
-
-		if ( max_dl_speed == UNLIMITED ) {
-			max_dl_speed = 100;
-		}
-		else if ( max_dl_speed < 10 ) {
-			max_dl_speed = 10;
-		}
-
-		for ( int i = 0; i < 5; i++ ) {
-			unsigned int tempspeed = (unsigned int)((double)max_dl_speed / 5) * (5 - i);
-			wxString temp = CFormat("%d %s") % tempspeed % _("kB/s");
-			DownloadSpeedMenu->Append((int)DOWNLOAD_ITEM1+i+1,temp);
+		unsigned int speeds[TRAY_SPEED_PRESETS];
+		GetTraySpeedPresets(thePrefs::GetMaxGraphDownloadRate(), speeds);
+		for (int i = 0; i < TRAY_SPEED_PRESETS; i++) {
+			DownloadSpeedMenu->Append((int)DOWNLOAD_ITEM1 + i + 1, TraySpeedLabel(speeds[i]));
 		}
 	}
 
-	traymenu->Append(0,DownloadSpeedMenu->GetTitle(),DownloadSpeedMenu);
-	// Separator
+	traymenu->Append(0, DownloadSpeedMenu->GetTitle(), DownloadSpeedMenu);
 	traymenu->AppendSeparator();
 
 	if (theApp->IsConnected()) {
-		//Disconnection Speed item
 		traymenu->Append(TRAY_MENU_DISCONNECT, _("Disconnect"));
 	} else {
-		//Connect item
 		traymenu->Append(TRAY_MENU_CONNECT, _("Connect"));
 	}
 
-	// Separator
 	traymenu->AppendSeparator();
 
-	// Treat iconized as not visible — see DoShowHide for rationale.
-	if (theApp->amuledlg->IsShown() && !theApp->amuledlg->IsTrayLogicallyIconized()) {
-		traymenu->Append(TRAY_MENU_HIDE, _("Hide aMule"));
-	} else {
-		traymenu->Append(TRAY_MENU_SHOW, _("Show aMule"));
-	}
-
-	// Separator
-	traymenu->AppendSeparator();
-
-	// Exit item
 	traymenu->Append(TRAY_MENU_EXIT, _("Exit"));
 
 	return traymenu;
 }
 
-void CMuleTrayIcon::SwitchShow(wxTaskBarIconEvent&)
+void CMuleTrayIcon::SwitchShow(wxTaskBarIconEvent &)
 {
 	DoShowHide();
 }
 
-#endif  // !WITH_LIBAYATANA_APPINDICATOR
+#endif // !WITH_LIBAYATANA_APPINDICATOR
 
 // File_checked_for_headers

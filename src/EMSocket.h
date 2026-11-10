@@ -26,24 +26,26 @@
 #ifndef EMSOCKET_H
 #define EMSOCKET_H
 
+#include <atomic>
 #include <mutex>
 
-#include "EncryptedStreamSocket.h"				// Needed for CEncryptedStreamSocket
+#include "EncryptedStreamSocket.h" // Needed for CEncryptedStreamSocket
 
-#include "ThrottledSocket.h"	// Needed for ThrottledFileSocket
+#include "UploadReadDiagnostics.h"
+#include "UploadRefill.h"
+
+#include "ThrottledSocket.h" // Needed for ThrottledFileSocket
 
 class CPacket;
 
-#define ERR_WRONGHEADER		0x01
-#define ERR_TOOBIG			0x02
+#define ERR_WRONGHEADER 0x01
+#define ERR_TOOBIG 0x02
 
-#define	ES_DISCONNECTED		0xFF
-#define	ES_NOTCONNECTED		0x00
-#define	ES_CONNECTED		0x01
+#define ES_DISCONNECTED 0xFF
+#define ES_NOTCONNECTED 0x00
+#define ES_CONNECTED 0x01
 
-
-const uint32 PACKET_HEADER_SIZE	= 6;
-
+const uint32 PACKET_HEADER_SIZE = 6;
 
 class CEMSocket : public CEncryptedStreamSocket, public ThrottledFileSocket
 {
@@ -51,127 +53,165 @@ public:
 	CEMSocket(const CProxyData *ProxyData = NULL);
 	virtual ~CEMSocket();
 
-	virtual void	SendPacket(CPacket* packet, bool delpacket = true, bool controlpacket = true, uint32 actualPayloadSize = 0);
-	bool	IsConnected() { return byConnected==ES_CONNECTED;};
-	uint8	GetConState()	{return byConnected;}
-	// Re-trigger OnReceive if this socket suspended its read loop last
-	// tick because CDownloadBandwidthThrottler's bucket was empty.
-	// Called once per tick from CPartFile::Process via
-	// CUpDownClient::TickDownloadAndMeasure.
-	void	WakeIfPaused();
+	virtual void SendPacket(CPacket *packet,
+		bool delpacket = true,
+		bool controlpacket = true,
+		uint32 actualPayloadSize = 0);
+	// Reports queue acceptance under the same lock as disconnect handling.
+	// With delpacket=true, ownership transfers even when the packet is rejected.
+	bool TrySendPacket(CPacket *packet,
+		bool delpacket = true,
+		bool controlpacket = true,
+		uint32 actualPayloadSize = 0);
+	// Includes the partially sent control packet, excludes kernel/Asio buffers.
+	size_t GetPendingControlPacketCount();
+	// The extra term is guarded so the TCP path keeps answering exactly as it
+	// did: byConnected is this class's own state machine, and only a stream the
+	// asio socket does not own can disagree with it.
+	bool IsConnected()
+	{
+		return byConnected == ES_CONNECTED && (!HasTransport() || CLibSocket::IsConnected());
+	};
+	uint8 GetConState() { return byConnected; }
+	// Re-trigger OnReceive if this socket suspended its read loop last tick because
+	// CDownloadBandwidthThrottler's bucket was empty.
+	//
+	// Two callers, once per tick each. CDownloadBandwidthThrottler::WakePaused() drives the
+	// sockets the bucket itself parked, the only wake a socket gets when it belongs to no
+	// download. CPartFile::Process(), via CUpDownClient::TickDownloadAndMeasure(), drives the
+	// downloading ones, and is the only wake for the two pendingOnReceive cases the throttler
+	// does not register: a read that would block, and a read that filled its grant with more
+	// still pending.
+	void WakeIfPaused();
 
-	virtual uint64	GetTimeOut() const;
-	virtual void	SetTimeOut(uint64 uTimeOut);
+	virtual uint64 GetTimeOut() const;
+	virtual void SetTimeOut(uint64 uTimeOut);
 
-    uint64	GetLastCalledSend() override { return lastCalledSend; }
+	uint64 GetLastCalledSend() override { return lastCalledSend; }
 
-    uint64	GetSentBytesCompleteFileSinceLastCallAndReset();
-    uint64	GetSentBytesPartFileSinceLastCallAndReset();
-    uint64	GetSentBytesControlPacketSinceLastCallAndReset();
-    uint64	GetSentPayloadSinceLastCallAndReset();
-    uint64	PeekSentPayload();   // Non-resetting peek — for disk I/O thread buffer check
-    void	TruncateQueues();
+	uint64 GetSentBytesCompleteFileSinceLastCallAndReset();
+	uint64 GetSentBytesPartFileSinceLastCallAndReset();
+	uint64 GetSentBytesControlPacketSinceLastCallAndReset();
+	// Separate from accounting: a file/session switch can discard its old display bytes.
+	uint64 GetSentFileBytesForDisplayAndReset();
+	void SetUploadBufferTarget(uint32 payload);
+	uint64 QueuedUploadPayload() const;
+	UploadReadDiagnostics::SendStats TakeUploadSendStats(uint64 now);
+	void TruncateQueues();
 
-    SocketSentBytes SendControlData(uint32 maxNumberOfBytesToSend, uint32 minFragSize) override { return Send(maxNumberOfBytesToSend, minFragSize, true); };
-    SocketSentBytes SendFileAndControlData(uint32 maxNumberOfBytesToSend, uint32 minFragSize) override { return Send(maxNumberOfBytesToSend, minFragSize, false); };
+	SocketSentBytes SendControlData(uint32 maxNumberOfBytesToSend, uint32 minFragSize) override
+	{
+		return Send(maxNumberOfBytesToSend, minFragSize, true);
+	};
+	SocketSentBytes SendFileAndControlData(uint32 maxNumberOfBytesToSend, uint32 minFragSize) override
+	{
+		return Send(maxNumberOfBytesToSend, minFragSize, false);
+	};
 
-    uint32	GetNeededBytes() override;
-    bool    HasSent() { return m_hasSent; }  // eMule ref: used by CUploadDiskIOThread to detect socket starvation
-    bool    HasQueues(bool bOnlyStandardPackets = false) const;
-    bool    IsBusyQuickCheck() const { return m_bBusy; }
+	uint32 GetNeededBytes() override;
+	bool HasSent()
+	{
+		return m_hasSent;
+	} // eMule ref: used by CUploadDiskIOThread to detect socket starvation
+	bool HasQueues(bool bOnlyStandardPackets = false) const;
+	bool IsBusyQuickCheck() const { return m_bBusy; }
 
-	// Whether OnReceive should gate reads through the global
-	// download bandwidth budget. Peer file-transfer sockets do;
-	// server-control sockets do not, since their traffic is tiny
-	// and latency-sensitive and would stall silently under a
-	// download cap tight enough to exhaust the throttler bucket.
-	virtual bool	IsDownloadThrottled() const { return true; }
+	// Whether OnReceive should gate reads through the global download bandwidth budget. Only
+	// client sockets we are downloading from do. Everything else is small and latency-sensitive,
+	// and would stall silently under a download cap tight enough to exhaust the throttler bucket.
+	virtual bool IsDownloadThrottled() const { return true; }
 
-	//protected:
-	// these functions are public on our code because of the amuleDlg::socketHandler
-	void	OnError(int WXUNUSED(nErrorCode)) override { };
-	void	OnSend(int nErrorCode) override;
-	void	OnReceive(int nErrorCode) override;
-	void	OnConnect(int nErrorCode) override = 0;
+	// protected:
+	//  these functions are public on our code because of the amuleDlg::socketHandler
+	void OnError(int WXUNUSED(nErrorCode)) override {};
+	void OnSend(int nErrorCode) override;
+	void OnReceive(int nErrorCode) override;
+	void OnConnect(int nErrorCode) override = 0;
 
-	// The Asio reactor's HandleRead dispatches peer FIN / RST via
-	// CLibSocket::OnLost(int), whose default is an empty no-op. Without
-	// an override on this path, the eD2k server socket (CServerSocket)
-	// and peer socket (CClientTCPSocket) never see the close event:
-	// CServerSocket stays at CS_CONNECTED after a server disappears
-	// (#905, #393), and peer sockets sit in CLOSE_WAIT forever as
-	// silent half-open sources. Forward to OnClose(int) so virtual
-	// dispatch reaches the per-class teardown that was already there
-	// for the (now-defunct) wxSocket close path.
+	// The Asio reactor's HandleRead dispatches peer FIN / RST via CLibSocket::OnLost(int),
+	// whose default is an empty no-op. Without an override on this path, the eD2k server socket
+	// (CServerSocket) and peer socket (CClientTCPSocket) never see the close event:
+	// CServerSocket stays at CS_CONNECTED after a server disappears (#905, #393), and peer
+	// sockets sit in CLOSE_WAIT forever as silent half-open sources. Forward to OnClose(int) so
+	// virtual dispatch reaches the per-class teardown that was already there for the now-
+	// defunct wxSocket close path.
 	void OnLost(int nErrorCode) override { OnClose(nErrorCode); }
 
 protected:
+	virtual bool PacketReceived(CPacket *WXUNUSED(packet)) { return false; };
+	virtual void OnClose(int nErrorCode);
 
-	virtual bool	PacketReceived(CPacket* WXUNUSED(packet)) { return false; };
-	virtual void	OnClose(int nErrorCode);
+	//! Quiesce a socket whose stream is gone, so it can be dialled again: wait out
+	//! any send in flight on the throttler thread, drop the dead stream's queues,
+	//! and return to the pre-connection state. OnClose() leaves ES_DISCONNECTED,
+	//! which no send or receive path clears.
+	void QuiesceForRedial();
 
-	uint8	byConnected;
-	uint32	m_uTimeOut;
+	// atomic: the throttler and disk I/O threads read it without m_sendLocker
+	std::atomic<uint8> byConnected;
+	uint32 m_uTimeOut;
 
 private:
-    virtual SocketSentBytes Send(uint32 maxNumberOfBytesToSend, uint32 minFragSize, bool onlyAllowedToSendControlPacket);
-	void	ClearQueues();
+	virtual SocketSentBytes Send(
+		uint32 maxNumberOfBytesToSend, uint32 minFragSize, bool onlyAllowedToSendControlPacket);
+	void ClearQueues();
 
-    uint32	GetNextFragSize(uint32 current, uint32 minFragSize);
+	uint32 GetNextFragSize(uint32 current, uint32 minFragSize);
 
-	// Download rate control: the global cap is enforced by
-	// CDownloadBandwidthThrottler. pendingOnReceive is the only
-	// per-socket bit -- set when OnReceive() suspended its read loop
-	// because the throttler's bucket was empty, cleared on the next
-	// successful read or when WakeIfPaused() retries the loop.
-	bool	pendingOnReceive;
+	// Download rate control: the global cap is enforced by CDownloadBandwidthThrottler.
+	// pendingOnReceive is the only per-socket bit -- set when OnReceive() suspended its read
+	// loop because the throttler's bucket was empty, cleared on the next successful read or
+	// when WakeIfPaused() retries the loop.
+	bool pendingOnReceive;
 
 	// Download partial header
-	uint8	pendingHeader[PACKET_HEADER_SIZE];
-	uint32	pendingHeaderSize;
+	uint8 pendingHeader[PACKET_HEADER_SIZE];
+	uint32 pendingHeaderSize;
 
 	// Download partial packet
-	uint8*	pendingPacket;
-	uint32	pendingPacketSize;
+	uint8 *pendingPacket;
+	uint32 pendingPacketSize;
 
 	// Upload control
-	uint8*	sendbuffer;
-	uint32	sendblen;
-	uint32	sent;
+	uint8 *sendbuffer;
+	uint32 sendblen;
+	uint32 sent;
 
-	typedef std::list<CPacket*> CPacketQueue;
+	typedef std::list<CPacket *> CPacketQueue;
 	CPacketQueue m_control_queue;
 
 	struct StandardPacketQueueEntry
 	{
 		uint32 actualPayloadSize;
-		CPacket* packet;
+		CPacket *packet;
 	};
 
-	typedef	std::list<StandardPacketQueueEntry> CStdPacketQueue;
+	typedef std::list<StandardPacketQueueEntry> CStdPacketQueue;
 	CStdPacketQueue m_standard_queue;
 
-    bool m_currentPacket_is_controlpacket;
+	bool m_currentPacket_is_controlpacket;
 
-	std::mutex	m_sendLocker;
+	mutable std::mutex m_sendLocker;
+	UploadRefill m_uploadRefill;
 
 	uint64 m_numberOfSentBytesCompleteFile;
-    uint64 m_numberOfSentBytesPartFile;
-    uint64 m_numberOfSentBytesControlPacket;
-    bool m_currentPackageIsFromPartFile;
+	uint64 m_numberOfSentBytesPartFile;
+	uint64 m_numberOfSentBytesControlPacket;
+	uint64 m_sentFileBytesForDisplay = 0;
+	UploadReadDiagnostics::SendStats m_sendStats;
+	bool m_currentPackageIsFromPartFile;
 
-	bool	m_bAccelerateUpload;
-	uint64	lastCalledSend;
-	uint64	lastSent;
-	uint64	lastFinishedStandard;
+	bool m_bAccelerateUpload;
+	uint64 lastCalledSend;
+	uint64 lastSent;
+	uint64 lastFinishedStandard;
 
-    uint32 m_actualPayloadSize;
-    uint32 m_actualPayloadSizeSent;
+	uint32 m_actualPayloadSize;
 
-    bool m_bBusy;
-    bool m_hasSent;
+	// atomic: IsBusyQuickCheck() reads it on the disk I/O thread without m_sendLocker
+	std::atomic<bool> m_bBusy;
+	bool m_hasSent;
 };
-
 
 #endif // EMSOCKET_H
 // File_checked_for_headers

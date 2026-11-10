@@ -23,60 +23,101 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include "muuli_wdr.h"		// Needed for ID_CLOSEWNDFD
-#include "FileDetailListCtrl.h"	// Interface declarations
+#include "FileDetailListCtrl.h" // Interface declarations
 
-#define wxLIST_STATE_DESELECTED 0x0000
+#include <common/Format.h> // Needed for CFormat
 
-wxBEGIN_EVENT_TABLE(CFileDetailListCtrl, CMuleListCtrl)
-	EVT_LIST_ITEM_SELECTED(IDC_LISTCTRLFILENAMES, CFileDetailListCtrl::OnSelect) // Care for single selection
+#include "OtherFunctions.h" // Needed for CmpAny
+#include "PartFile.h"       // Needed for SourcenameItem
+
+wxBEGIN_EVENT_TABLE(CFileDetailListCtrl, CMuleVirtualDataViewCtrl)
+	EVT_DATAVIEW_SELECTION_CHANGED(wxID_ANY, CFileDetailListCtrl::OnSelectionChanged)
 wxEND_EVENT_TABLE()
 
-
-CFileDetailListCtrl::CFileDetailListCtrl(wxWindow * &parent, int id, const wxPoint & pos, wxSize siz, int flags):CMuleListCtrl(parent, id, pos, siz, flags)
+CFileDetailListCtrl::CFileDetailListCtrl(wxWindow *parent, int id, const wxPoint &pos, wxSize siz, int flags)
+: CMuleVirtualDataViewCtrl(parent, id, pos, siz, flags)
 {
-	// Set sorter function
-	SetSortFunc(SortProc);
+	const int columnFlags = wxDATAVIEW_COL_RESIZABLE | wxDATAVIEW_COL_SORTABLE;
+	AddTextColumn(_("File Name"), COLUMN_FILEDETAIL_NAME, "N", 370, wxALIGN_LEFT, columnFlags);
+	AddTextColumn(_("Sources"), COLUMN_FILEDETAIL_SOURCES, "S", 70, wxALIGN_LEFT, columnFlags);
 
-	// Initial sorting: Sources descending
-	InsertColumn(0, _("File Name"), wxLIST_FORMAT_LEFT, 370);
-	InsertColumn(1, _("Sources"), wxLIST_FORMAT_LEFT, 70);
+	AppendSpacerColumn(COLUMN_FILEDETAIL_SPACER);
+	AssociateVirtualModel();
 
-	SetSorting(1, CMuleListCtrl::SORT_DES);
+	// Initial sorting: Sources descending, matching the pre-port default.
+	// LoadColumnSettings() replaces it once the config has something saved.
+	ApplySorting(COLUMN_FILEDETAIL_SOURCES, SORT_DES);
 
-	SortList();
+	// This list gains persistence here: it is the one dataview list that never had it, so a
+	// user who widened "File Name" lost it the moment the dialog closed, and the sort reset to
+	// Sources-descending on every open. There is no GetOldColumnOrder() override because there
+	// is no pre-dataview config to migrate -- nothing was ever written under this name.
+	m_columnStore.SetTableName("FileDetail");
+	LoadColumnSettings();
+
+	InitColumnState();
 }
 
-int CFileDetailListCtrl::SortProc(wxUIntPtr param1, wxUIntPtr param2, wxIntPtr sortData)
+void CFileDetailListCtrl::AddSource(SourcenameItem *item)
 {
-	// Comparison for different sortings
-	SourcenameItem *item1 = reinterpret_cast<SourcenameItem*>(param1);
-	SourcenameItem *item2 = reinterpret_cast<SourcenameItem*>(param2);
+	AddItemData(reinterpret_cast<wxUIntPtr>(item));
+}
 
-	int mod = (sortData & CMuleListCtrl::SORT_DES) ? -1 : 1;
+void CFileDetailListCtrl::RefreshSource(SourcenameItem *item)
+{
+	RefreshItemData(reinterpret_cast<wxUIntPtr>(item));
+}
 
-	switch (sortData & CMuleListCtrl::COLUMN_MASK) {
-		case 1: return mod * (item1->count - item2->count);			// Sources descending
-		case 0: return mod * item1->name.CmpNoCase(item2->name);	// Name descending
-		default: return 0;
+void CFileDetailListCtrl::RemoveSource(SourcenameItem *item)
+{
+	RemoveItemData(reinterpret_cast<wxUIntPtr>(item));
+}
+
+wxString CFileDetailListCtrl::GetItemColumnText(wxUIntPtr item, unsigned column) const
+{
+	const SourcenameItem *source = reinterpret_cast<const SourcenameItem *>(item);
+	switch (column) {
+	case COLUMN_FILEDETAIL_NAME:
+		return source->name;
+	case COLUMN_FILEDETAIL_SOURCES:
+		return CFormat("%i") % source->count;
+	default:
+		return wxEmptyString;
 	}
 }
 
-
-void CFileDetailListCtrl::OnSelect(wxListEvent& event)
+int CFileDetailListCtrl::CompareItemData(
+	wxUIntPtr data1, wxUIntPtr data2, unsigned column, bool WXUNUSED(alt), int modifier) const
 {
-	// Damn wxLC_SINGLE_SEL does not work! So we have to care for single selection ourselves:
-	long realpos = event.m_itemIndex;
-	long pos = -1;
-	do {
-		// Loop through all selected items
-		pos = GetNextItem(pos, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED);
-		if (pos != realpos && pos != -1) {
-			// Deselect all items except the one we have just clicked
-			SetItemState(pos, wxLIST_STATE_DESELECTED, wxLIST_STATE_SELECTED);
-		}
-	} while (pos != -1);
+	const SourcenameItem *s1 = reinterpret_cast<const SourcenameItem *>(data1);
+	const SourcenameItem *s2 = reinterpret_cast<const SourcenameItem *>(data2);
 
-	event.Skip();
+	switch (column) {
+	case COLUMN_FILEDETAIL_NAME:
+		return modifier * s1->name.CmpNoCase(s2->name);
+	case COLUMN_FILEDETAIL_SOURCES:
+		return modifier * CmpAny(s1->count, s2->count);
+	default:
+		return 0;
+	}
+}
+
+bool CFileDetailListCtrl::IsLiveSortColumn() const
+{
+	// Only the source count moves on its own; a row's name is the key it was created under and
+	// never changes. Answering "yes" for the name column would schedule a re-sort on every
+	// refresh tick that could not reorder anything. Same shape as CServerListCtrl.
+	if (m_sort_orders.empty()) {
+		return false;
+	}
+	return static_cast<int>(m_sort_orders.front().first) == COLUMN_FILEDETAIL_SOURCES;
+}
+
+void CFileDetailListCtrl::OnSelectionChanged(wxDataViewEvent &event)
+{
+	if (GetSelectedItemsCount() > 1 && event.GetItem().IsOk()) {
+		UnselectAll();
+		Select(event.GetItem());
+	}
 }
 // File_checked_for_headers

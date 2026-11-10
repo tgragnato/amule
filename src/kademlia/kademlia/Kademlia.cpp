@@ -43,6 +43,12 @@ there client on the eMule forum..
 #include "Defines.h"
 #include "Indexed.h"
 #include "UDPFirewallTester.h"
+#include "UDPVerificationExpiry.h"
+#ifdef ENABLE_KAD_NODE_PROTECTION
+#include "../net/FastKad.h"
+#include "../net/SafeKad.h"
+#include "../../Statistics.h" // Needed for theStats::SetKadBannedAddresses
+#endif
 #include "../routing/RoutingZone.h"
 #include "../utils/KadUDPKey.h"
 #include "../utils/KadClientSearcher.h"
@@ -50,29 +56,28 @@ there client on the eMule forum..
 #include "../../Logger.h"
 #include <protocol/kad2/Client2Client/UDP.h>
 
-
-const CUInt128	Kademlia::s_nullUInt128(false);
+const CUInt128 Kademlia::s_nullUInt128(false);
 
 ////////////////////////////////////////
 using namespace Kademlia;
 ////////////////////////////////////////
 
-CKademlia *	CKademlia::instance = NULL;
-EventMap	CKademlia::m_events;
-time_t		CKademlia::m_nextSearchJumpStart;
-time_t		CKademlia::m_nextSelfLookup;
-time_t		CKademlia::m_statusUpdate;
-time_t		CKademlia::m_bigTimer;
-time_t		CKademlia::m_nextFirewallCheck;
-time_t		CKademlia::m_nextFindBuddy;
-time_t		CKademlia::m_bootstrap;
-time_t		CKademlia::m_consolidate;
-time_t		CKademlia::m_externPortLookup;
-time_t		CKademlia::m_lanModeCheck = 0;
-bool		CKademlia::m_running = false;
-bool		CKademlia::m_lanMode = false;
-ContactList	CKademlia::s_bootstrapList;
-std::list<uint32_t>	CKademlia::m_statsEstUsersProbes;
+CKademlia *CKademlia::instance = NULL;
+EventMap CKademlia::m_events;
+time_t CKademlia::m_nextSearchJumpStart;
+time_t CKademlia::m_nextSelfLookup;
+time_t CKademlia::m_statusUpdate;
+time_t CKademlia::m_bigTimer;
+time_t CKademlia::m_nextFirewallCheck;
+time_t CKademlia::m_nextFindBuddy;
+time_t CKademlia::m_bootstrap;
+time_t CKademlia::m_consolidate;
+time_t CKademlia::m_externPortLookup;
+time_t CKademlia::m_lanModeCheck = 0;
+bool CKademlia::m_running = false;
+bool CKademlia::m_lanMode = false;
+ContactList CKademlia::s_bootstrapList;
+std::list<uint32_t> CKademlia::m_statsEstUsersProbes;
 
 void CKademlia::Start(CPrefs *prefs)
 {
@@ -91,37 +96,27 @@ void CKademlia::Start(CPrefs *prefs)
 
 	AddDebugLogLineN(logKadMain, "Starting Kademlia");
 
-	// Init jump start timer.
 	m_nextSearchJumpStart = time(NULL);
-	// Force a FindNodeComplete within the first 3 minutes.
 	m_nextSelfLookup = time(NULL) + MIN2S(3);
-	// Init status timer.
 	m_statusUpdate = time(NULL);
-	// Init big timer for Zones
 	m_bigTimer = time(NULL);
 	// First Firewall check is done on connect, init next check.
-	m_nextFirewallCheck = time(NULL) + (HR2S(1));
+	m_nextFirewallCheck =
+		time(nullptr) + static_cast<time_t>(CUDPVerificationExpiry::kRecheckIntervalMs / 1000);
 	// Find a buddy after the first 5mins of starting the client.
 	// We wait just in case it takes a bit for the client to determine firewall status..
 	m_nextFindBuddy = time(NULL) + (MIN2S(5));
-	// Init contact consolidate timer;
 	m_consolidate = time(NULL) + (MIN2S(45));
-	// Look up our extern port
 	m_externPortLookup = time(NULL);
-	// Init bootstrap time.
 	m_bootstrap = 0;
-	// Init our random seed.
 	srand((uint32_t)time(NULL));
-	// Create our Kad objects.
 	instance = new CKademlia();
 	instance->m_prefs = prefs;
 	instance->m_indexed = new CIndexed();
 	instance->m_routingZone = new CRoutingZone();
 	instance->m_udpListener = new CKademliaUDPListener();
-	// Mark Kad as running state.
 	m_running = true;
 }
-
 
 void CKademlia::Stop()
 {
@@ -132,16 +127,12 @@ void CKademlia::Stop()
 
 	AddDebugLogLineN(logKadMain, "Stopping Kademlia");
 
-	// Mark Kad as being in the stop state to make sure nothing else is used.
 	m_running = false;
 
-	// Reset Firewallstate
 	CUDPFirewallTester::Reset();
 
-	// Remove all active searches.
 	CSearchManager::StopAllSearches();
 
-	// Delete all Kad Objects.
 	delete instance->m_udpListener;
 	instance->m_udpListener = NULL;
 
@@ -162,10 +153,15 @@ void CKademlia::Stop()
 	}
 	s_bootstrapList.clear();
 
-	// Make sure all zones are removed.
 	m_events.clear();
 
-//	theApp->ShowConnectionState();
+#ifdef ENABLE_KAD_NODE_PROTECTION
+	// The protection tables and the response-time window are keyed on addresses from a Kad
+	// session that has just ended; carrying them into the next one would judge fresh contacts
+	// on stale evidence, and Kad restarts on every reconnect.
+	safeKad.Clear();
+	fastKad.Clear();
+#endif
 }
 
 void CKademlia::Process()
@@ -174,6 +170,8 @@ void CKademlia::Process()
 	if (instance == NULL || !m_running) {
 		return;
 	}
+
+	instance->m_indexed->ProcessIndexLoad();
 
 	time_t now = time(NULL);
 	uint32_t maxUsers = 0;
@@ -204,15 +202,24 @@ void CKademlia::Process()
 		m_nextFindBuddy = MIN2S(20) + now;
 	}
 
-	if (m_externPortLookup <= now && CUDPFirewallTester::IsFWCheckUDPRunning() && GetPrefs()->FindExternKadPort(false)) {
-		// If our UDP firewallcheck is running and we don't know our external port, we send a request every 15 seconds
+	if (m_externPortLookup <= now && CUDPFirewallTester::IsFWCheckUDPRunning() &&
+		GetPrefs()->FindExternKadPort(false)) {
+		// If our UDP firewallcheck is running and we don't know our external port, we send a request
+		// every 15 seconds
 		CContact *contact = GetRoutingZone()->GetRandomContact(3, 6);
 		if (contact != NULL) {
-			AddDebugLogLineN(logKadPrefs, "Requesting our external port from " + KadIPToString(contact->GetIPAddress()));
+			AddDebugLogLineN(logKadPrefs,
+				"Requesting our external port from " +
+					KadIPToString(contact->GetIPAddress()));
 			DebugSend(Kad2Ping, contact->GetIPAddress(), contact->GetUDPPort());
-			GetUDPListener()->SendNullPacket(KADEMLIA2_PING, contact->GetIPAddress(), contact->GetUDPPort(), contact->GetUDPKey(), &contact->GetClientID());
+			GetUDPListener()->SendNullPacket(KADEMLIA2_PING,
+				contact->GetIPAddress(),
+				contact->GetUDPPort(),
+				contact->GetUDPKey(),
+				&contact->GetClientID());
 		} else {
-			AddDebugLogLineN(logKadPrefs, "No valid client for requesting external port available");
+			AddDebugLogLineN(
+				logKadPrefs, "No valid client for requesting external port available");
 		}
 		m_externPortLookup = 15 + now;
 	}
@@ -220,8 +227,9 @@ void CKademlia::Process()
 	for (EventMap::const_iterator it = m_events.begin(); it != m_events.end(); ++it) {
 		CRoutingZone *zone = it->first;
 		if (updateUserFile) {
-			// The EstimateCount function is not made for really small networks, if we are in LAN mode, it is actually
-			// better to assume that all users of the network are in our routing table and use the real count function
+			// EstimateCount is not made for really small networks. In LAN mode it is
+			// better to assume every user of the network is in our routing table and
+			// use the real count function.
 			if (IsRunningInLANMode()) {
 				tempUsers = zone->GetNumContacts();
 			} else {
@@ -234,13 +242,13 @@ void CKademlia::Process()
 
 		if (m_bigTimer <= now) {
 			if (zone->m_nextBigTimer <= now) {
-				if(zone->OnBigTimer()) {
+				if (zone->OnBigTimer()) {
 					zone->m_nextBigTimer = HR2S(1) + now;
 					m_bigTimer = SEC(10) + now;
 				}
 			} else {
 				if (lastContact && (now - lastContact > KADEMLIADISCONNECTDELAY - MIN2S(5))) {
-					if(zone->OnBigTimer()) {
+					if (zone->OnBigTimer()) {
 						zone->m_nextBigTimer = HR2S(1) + now;
 						m_bigTimer = SEC(10) + now;
 					}
@@ -260,7 +268,13 @@ void CKademlia::Process()
 		m_nextSearchJumpStart = SEARCH_JUMPSTART + now;
 	}
 
-	// Try to consolidate any zones that are close to empty.
+#ifdef ENABLE_KAD_NODE_PROTECTION
+	// Published as a gauge rather than counted at the ban: these bans lapse inside an aged map,
+	// and entries are also evicted when it is full, so there is no event to hang a decrement
+	// on.
+	theStats::SetKadBannedAddresses((uint32)safeKad.GetBannedAddressCount());
+#endif
+
 	if (m_consolidate <= now) {
 		uint32_t mergedCount = instance->m_routingZone->Consolidate();
 		if (mergedCount) {
@@ -269,7 +283,6 @@ void CKademlia::Process()
 		m_consolidate = MIN2S(45) + now;
 	}
 
-	// Update user count only if changed.
 	if (updateUserFile) {
 		if (maxUsers != instance->m_prefs->GetKademliaUsers()) {
 			instance->m_prefs->SetKademliaUsers(maxUsers);
@@ -278,30 +291,48 @@ void CKademlia::Process()
 		}
 	}
 
-	if (!IsConnected() && !s_bootstrapList.empty() && (now - m_bootstrap > 15 || (GetRoutingZone()->GetNumContacts() == 0 && now - m_bootstrap >= 2))) {
+	if (!IsConnected() && !s_bootstrapList.empty() &&
+		(now - m_bootstrap > 15 ||
+			(GetRoutingZone()->GetNumContacts() == 0 && now - m_bootstrap >= 2))) {
 		CContact *contact = s_bootstrapList.front();
 		s_bootstrapList.pop_front();
 		m_bootstrap = now;
-		AddDebugLogLineN(logKadMain, CFormat("Trying to bootstrap Kad from %s, Distance: %s Version: %u, %u contacts left")
-			% KadIPToString(contact->GetIPAddress()) % contact->GetDistance().ToHexString() % contact->GetVersion() % s_bootstrapList.size());
-		instance->m_udpListener->Bootstrap(contact->GetIPAddress(), contact->GetUDPPort(), contact->GetVersion(), &contact->GetClientID());
+		AddDebugLogLineN(logKadMain,
+			CFormat("Trying to bootstrap Kad from %s, Distance: %s Version: %u, %u contacts "
+				"left") %
+				KadIPToString(contact->GetIPAddress()) %
+				contact->GetDistance().ToHexString() % contact->GetVersion() %
+				s_bootstrapList.size());
+		instance->m_udpListener->Bootstrap(contact->GetIPAddress(),
+			contact->GetUDPPort(),
+			contact->GetVersion(),
+			&contact->GetClientID());
 		delete contact;
 	}
 
 	if (GetUDPListener() != NULL) {
-		GetUDPListener()->ExpireClientSearch();	// function does only one compare in most cases, so no real need for a timer
+		GetUDPListener()->ExpireClientSearch(); // function does only one compare in most cases, so no
+							// real need for a timer
 	}
 }
 
-void CKademlia::ProcessPacket(const uint8_t *data, uint32_t lenData, uint32_t ip, uint16_t port, bool validReceiverKey, const CKadUDPKey& senderKey)
+void CKademlia::ProcessPacket(const uint8_t *data,
+	uint32_t lenData,
+	uint32_t ip,
+	uint16_t port,
+	bool validReceiverKey,
+	const CKadUDPKey &senderKey)
 {
 	try {
-		if( instance && instance->m_udpListener ) {
-			instance->m_udpListener->ProcessPacket(data, lenData, ip, port, validReceiverKey, senderKey);
+		if (instance && instance->m_udpListener) {
+			instance->m_udpListener->ProcessPacket(
+				data, lenData, ip, port, validReceiverKey, senderKey);
 		}
-	} catch (const wxString& DEBUG_ONLY(error)) {
-		AddDebugLogLineN(logKadMain, CFormat("Exception on Kad ProcessPacket while processing packet (length = %u) from %s:")
-			% lenData % KadIPPortToString(ip, port));
+	} catch (const wxString &error) {
+		AddDebugLogLineN(logKadMain,
+			CFormat("Exception on Kad ProcessPacket while processing packet (length = %u) from "
+				"%s:") %
+				lenData % KadIPPortToString(ip, port));
 		AddDebugLogLineN(logKadMain, error);
 		throw;
 	} catch (...) {
@@ -313,26 +344,26 @@ void CKademlia::ProcessPacket(const uint8_t *data, uint32_t lenData, uint32_t ip
 void CKademlia::RecheckFirewalled()
 {
 	if (instance && instance->m_prefs && !IsRunningInLANMode()) {
-		// Something is forcing a new firewall check
-		// Stop any new buddy requests, and tell the client
-		// to recheck it's IP which in turns rechecks firewall.
+		// Something is forcing a new firewall check. Stop new buddy requests and tell the
+		// client to recheck its IP, which in turn rechecks the firewall.
 		instance->m_prefs->SetFindBuddy(false);
 		instance->m_prefs->SetRecheckIP();
 		// also UDP check
 		CUDPFirewallTester::ReCheckFirewallUDP(false);
 		time_t now = time(NULL);
-		// Delay the next buddy search to at least 5 minutes after our firewallcheck so we are sure to be still firewalled
+		// Delay the next buddy search to at least 5 minutes after our firewallcheck so we are sure to
+		// be still firewalled
 		m_nextFindBuddy = (m_nextFindBuddy < MIN2S(5) + now) ? MIN2S(5) + now : m_nextFindBuddy;
-		m_nextFirewallCheck = HR2S(1) + now;
+		m_nextFirewallCheck =
+			now + static_cast<time_t>(CUDPVerificationExpiry::kRecheckIntervalMs / 1000);
 	}
 }
 
-#if 0	// currently unused function
+#if 0 // currently unused function
 bool CKademlia::FindNodeIDByIP(CKadClientSearcher& requester, uint32_t ip, uint16_t tcpPort, uint16_t udpPort)
 {
 	wxCHECK(IsRunning() && instance && GetUDPListener() && GetRoutingZone(), false);
 
-	// first search our known contacts if we can deliver a result without asking, otherwise forward the request
 	CContact* contact;
 	if ((contact = GetRoutingZone()->GetContact(wxUINT32_SWAP_ALWAYS(ip), tcpPort, true)) != NULL) {
 		uint8_t nodeID[16];
@@ -345,23 +376,26 @@ bool CKademlia::FindNodeIDByIP(CKadClientSearcher& requester, uint32_t ip, uint1
 }
 #endif
 
-bool CKademlia::FindIPByNodeID(CKadClientSearcher& requester, const uint8_t* nodeID)
+bool CKademlia::FindIPByNodeID(CKadClientSearcher &requester, const uint8_t *nodeID)
 {
 	wxCHECK(IsRunning() && instance && GetUDPListener(), false);
 
-	// first search our known contacts if we can deliver a result without asking, otherwise forward the request
-	CContact* contact;
+	// first search our known contacts if we can deliver a result without asking, otherwise forward the
+	// request
+	CContact *contact;
 	if ((contact = GetRoutingZone()->GetContact(CUInt128(nodeID))) != NULL) {
 		// make sure that this entry is not too old, otherwise just do a search to be sure
 		if (contact->GetLastSeen() != 0 && time(NULL) - contact->GetLastSeen() < 1800) {
-			requester.KadSearchIPByNodeIDResult(KCSR_SUCCEEDED, wxUINT32_SWAP_ALWAYS(contact->GetIPAddress()), contact->GetTCPPort());
+			requester.KadSearchIPByNodeIDResult(KCSR_SUCCEEDED,
+				wxUINT32_SWAP_ALWAYS(contact->GetIPAddress()),
+				contact->GetTCPPort());
 			return true;
 		}
 	}
 	return CSearchManager::FindNodeSpecial(CUInt128(nodeID), &requester);
 }
 
-void CKademlia::CancelClientSearch(CKadClientSearcher& fromRequester)
+void CKademlia::CancelClientSearch(CKadClientSearcher &fromRequester)
 {
 	wxCHECK_RET(instance && GetUDPListener(), "Something is really bad");
 
@@ -369,7 +403,7 @@ void CKademlia::CancelClientSearch(CKadClientSearcher& fromRequester)
 	CSearchManager::CancelNodeSpecial(&fromRequester);
 }
 
-void CKademlia::StatsAddClosestDistance(const CUInt128& distance)
+void CKademlia::StatsAddClosestDistance(const CUInt128 &distance)
 {
 	if (distance.Get32BitChunk(0) > 0) {
 		uint32_t toAdd = (0xFFFFFFFF / distance.Get32BitChunk(0)) / 2;
@@ -390,16 +424,16 @@ void CKademlia::StatsAddClosestDistance(const CUInt128& distance)
 
 uint32_t CKademlia::CalculateKadUsersNew()
 {
-	// the idea of calculating the user count with this method is simple:
-	// whenever we do a search for any NodeID (except in certain cases where the result is not usable),
-	// we remember the distance of the closest node we found. Because we assume all NodeIDs are distributed
-	// equally, we can calculate based on this distance how "filled" the possible NodesID room is and by this
-	// calculate how many users there are. Of course this only works if we have enough samples, because
-	// each single sample will be wrong, but the average of them should produce a usable number. To avoid
-	// drifts caused by a a single (or more) really close or really far away hits, we do use median-average instead through
+	// Estimating the user count: on every search for a NodeID (except where the result is
+	// unusable) we remember the distance of the closest node found. NodeIDs are assumed to be
+	// distributed equally, so that distance says how "filled" the NodeID room is, and from that
+	// how many users there are. Each single sample is wrong, but their average is usable.
+	// Median-average rather than mean, so a few really close or really far hits cannot drift
+	// the result.
 
-	// doesn't work well if we have no files to index and nothing to download and the numbers seems to be a bit too low
-	// compared to our other method. So let's stay with the old one for now, but keep this here as an alternative
+	// Does not work well with no files to index and nothing to download, and the numbers look a
+	// bit low against our other method. Stay with the old one for now, but keep this as an
+	// alternative.
 
 	if (m_statsEstUsersProbes.size() < 10) {
 		return 0;
@@ -407,7 +441,9 @@ uint32_t CKademlia::CalculateKadUsersNew()
 	uint32_t median = 0;
 
 	std::list<uint32_t> medianList;
-	for (std::list<uint32_t>::iterator it1 = m_statsEstUsersProbes.begin(); it1 != m_statsEstUsersProbes.end(); ++it1) {
+	for (std::list<uint32_t>::iterator it1 = m_statsEstUsersProbes.begin();
+		it1 != m_statsEstUsersProbes.end();
+		++it1) {
 		uint32_t probe = *it1;
 		bool inserted = false;
 		for (std::list<uint32_t>::iterator it2 = medianList.begin(); it2 != medianList.end(); ++it2) {
@@ -421,7 +457,8 @@ uint32_t CKademlia::CalculateKadUsersNew()
 			medianList.push_back(probe);
 		}
 	}
-	// cut away 1/3 of the values - 1/6 of the top and 1/6 of the bottom  to avoid spikes having too much influence, build the average of the rest
+	// cut away 1/3 of the values - 1/6 of the top and 1/6 of the bottom  to avoid spikes having too much
+	// influence, build the average of the rest
 	std::list<uint32_t>::size_type cut = medianList.size() / 6;
 	for (std::list<uint32_t>::size_type i = 0; i != cut; ++i) {
 		medianList.pop_front();
@@ -433,22 +470,26 @@ uint32_t CKademlia::CalculateKadUsersNew()
 	}
 	median = (uint32_t)(average / medianList.size());
 
-	// LowIDModififier
-	// Modify count by assuming 20% of the users are firewalled and can't be a contact for < 0.49b nodes
-	// Modify count by actual statistics of Firewalled ratio for >= 0.49b if we are not firewalled ourself
-	// Modify count by 40% for >= 0.49b if we are firewalled ourself (the actual Firewalled count at this date on kad is 35-55%)
+	// LowIDModififier. Assume 20% of users are firewalled and cannot be a contact, for < 0.49b
+	// nodes. For >= 0.49b use the actual firewalled ratio if we are not firewalled ourselves,
+	// or 40% if we are (the real Kad figure at this date is 35-55%).
 	const float firewalledModifyOld = 1.20f;
 	float firewalledModifyNew = 0.0;
 	if (CUDPFirewallTester::IsFirewalledUDP(true)) {
-		firewalledModifyNew = 1.40f; // we are firewalled and can't get the real statistics, assume 40% firewalled >=0.49b nodes
+		firewalledModifyNew = 1.40f; // we are firewalled and can't get the real statistics, assume
+					     // 40% firewalled >=0.49b nodes
 	} else if (GetPrefs()->StatsGetFirewalledRatio(true) > 0) {
-		firewalledModifyNew = 1.0 + (CKademlia::GetPrefs()->StatsGetFirewalledRatio(true)); // apply the firewalled ratio to the modify
+		firewalledModifyNew = 1.0 + (CKademlia::GetPrefs()->StatsGetFirewalledRatio(
+						    true)); // apply the firewalled ratio to the modify
 		wxASSERT(firewalledModifyNew > 1.0 && firewalledModifyNew < 1.90);
 	}
 	float newRatio = CKademlia::GetPrefs()->StatsGetKadV8Ratio();
 	float firewalledModifyTotal = 0.0;
-	if (newRatio > 0 && firewalledModifyNew > 0) { // weigh the old and the new modifier based on how many new contacts we have
-		firewalledModifyTotal = (newRatio * firewalledModifyNew) + ((1 - newRatio) * firewalledModifyOld);
+	if (newRatio > 0 &&
+		firewalledModifyNew >
+			0) { // weigh the old and the new modifier based on how many new contacts we have
+		firewalledModifyTotal =
+			(newRatio * firewalledModifyNew) + ((1 - newRatio) * firewalledModifyOld);
 	} else {
 		firewalledModifyTotal = firewalledModifyOld;
 	}
@@ -467,8 +508,9 @@ bool CKademlia::IsRunningInLANMode()
 	if (m_lanModeCheck + 10 <= now) {
 		m_lanModeCheck = now;
 		uint32_t count = GetRoutingZone()->GetNumContacts();
-		// Limit to 256 nodes, if we have more we don't want to use the LAN mode which is assuming we use a small home LAN
-		// (otherwise we might need to do firewallcheck, external port requests etc after all)
+		// Cap at 256 nodes: above that this is not the small home LAN that LAN mode
+		// assumes, and we would still need a firewall check, external port requests and so
+		// on.
 		if (count == 0 || count > 256) {
 			m_lanMode = false;
 		} else {
@@ -490,22 +532,21 @@ bool CKademlia::IsRunningInLANMode()
 	return m_lanMode;
 }
 
-
 // Global function.
 
 #include "../../CryptoPP_Inc.h"
-void KadGetKeywordHash(const wxString& rstrKeyword, Kademlia::CUInt128* pKadID)
+void KadGetKeywordHash(const wxString &rstrKeyword, Kademlia::CUInt128 *pKadID)
 {
 	uint8_t Output[16];
 
 	CryptoPP::Weak::MD4 md4_hasher;
 
 	// This should be safe - we assume rstrKeyword is ANSI anyway.
-	char* ansi_buffer = strdup(unicode2UTF8(rstrKeyword));
+	char *ansi_buffer = strdup(unicode2UTF8(rstrKeyword));
 
-	//printf("Kad keyword hash: UTF8 %s\n",ansi_buffer);
-	md4_hasher.CalculateDigest(Output,(const unsigned char*)ansi_buffer,strlen(ansi_buffer));
-	//DumpMem(Output,16);
+	// printf("Kad keyword hash: UTF8 %s\n",ansi_buffer);
+	md4_hasher.CalculateDigest(Output, (const unsigned char *)ansi_buffer, strlen(ansi_buffer));
+	// DumpMem(Output,16);
 	free(ansi_buffer);
 
 	pKadID->SetValueBE(Output);

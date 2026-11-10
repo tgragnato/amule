@@ -23,11 +23,19 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#ifndef __PrefsUnifiedDlg_H__
-#define __PrefsUnifiedDlg_H__
+#ifndef PREFSUNIFIEDDLG_H
+#define PREFSUNIFIEDDLG_H
 
-#include <wx/dialog.h>		// Needed for wxDialog
+#include "NetworkPreferences.h"
 
+#include <wx/bmpbndl.h> // Needed for wxBitmapBundle (m_pageIcons)
+#include <wx/dialog.h>  // Needed for wxDialog
+
+#include <common/Path.h> // Needed for CPath (value members of m_sharedDirRowPaths)
+
+#include <vector>
+
+#include "ProtocolHandlerManager.h" // Needed for HandlerTarget enum
 
 class Cfg_Base;
 class CDirectoryTreeCtrl;
@@ -36,7 +44,10 @@ class wxWindow;
 class wxChoice;
 class wxButton;
 class wxPanel;
-class wxListCtrl;
+class wxDataViewListCtrl;
+class wxDataViewColumn;
+class wxDataViewEvent;
+class wxShowEvent;
 
 class wxCommandEvent;
 class wxListEvent;
@@ -44,117 +55,252 @@ class wxSpinEvent;
 class wxScrollEvent;
 class wxInitDialogEvent;
 
-
-/**
- * This class represents a dialog used to display preferences.
- */
+/// The preferences dialog.
 class PrefsUnifiedDlg : public wxDialog
 {
 public:
 	/**
-	 * Constructor.
-	 *
-	 * @param parent The parent window.
-	 *
-	 * This constructor is a much more simple version of the wxDialog one,
-	 * which only needs to know the parent of the dialog. Please note that
-	 * it is private so that we can ensure that only one dialog has been
-	 * created at one time.
+	 * Constructs the dialog under @a parent. Private, so only one dialog can exist at a time.
 	 */
-	PrefsUnifiedDlg(wxWindow* parent);
+	PrefsUnifiedDlg(wxWindow *parent);
 
-	/**
-	 * Updates the widgets with the values of the preference-variables.
-	 */
+	/// Updates the widgets from the preference variables.
 	bool TransferFromWindow();
-	/**
-	 * Updates the prefernce-variables with the values of the widgets.
-	 */
+	/// Updates the preference variables from the widgets.
 	bool TransferToWindow();
-
+	void UpdateNetworkPreferences();
 
 protected:
-	/**
-	 * Helper functions which checks if a Cfg has has changed.
-	 */
-	bool			CfgChanged(int id);
+	CNetworkPreferenceEdit m_ed2kEdit;
+	CNetworkPreferenceEdit m_kadEdit;
 
-	/**
-	 * Helper functions which returns the Cfg associated with the specified id.
-	 */
-	Cfg_Base*		GetCfg(int id);
+	/// True if the Cfg with this id has changed.
+	bool CfgChanged(int id);
 
+	/// The Cfg associated with the specified id.
+	Cfg_Base *GetCfg(int id);
 
-	//! Pointer to the shared-files list
-	CDirectoryTreeCtrl*	m_ShareSelector;
+	//! Pointer to the shared-files list. NULL under CLIENT_GUI: the remote GUI has no business
+	//! browsing *this* machine's filesystem, so the Directories tab builds a path list editor
+	//! instead of the tree.
+	CDirectoryTreeCtrl *m_ShareSelector;
 
+#ifdef CLIENT_GUI
+	//! Set once the user adds or removes a row, cleared when the session ends. Guards the
+	//! editor against being repainted out from under uncommitted edits, either by a session
+	//! refresh or by a late GET_SHARED_DIRS reply.
+	bool m_sharedDirsDirty;
+
+	//! Whether this session's GET_SHARED_DIRS reply has arrived, i.e. whether the editor shows
+	//! the daemon's list rather than whatever glob_prefs held at open time. The edit controls
+	//! stay disabled until it is true: an edit made before the reply lands sets
+	//! m_sharedDirsDirty, which makes RefreshSharedDirsIfOpen() discard that very reply, so OK
+	//! would replace the daemon's shares with a list built without ever having seen them.
+	bool m_sharedDirsLoaded;
+
+	//! The shared-folder rows' actual paths, indexed by the row's item data. A list cell holds
+	//! display text, and CPath's display form is not the path -- see SetListRowPath() in the
+	//! .cpp for why one cannot be rebuilt from the other.
+	std::vector<CPath> m_sharedDirRowPaths;
+
+	//! Fill the shared-folders list widget from glob_prefs' roots.
+	void PopulateSharedDirsList();
+	//! Copy the list widget's rows back into glob_prefs' roots.
+	void HarvestSharedDirsList();
+	void OnSharedDirAdd(wxCommandEvent &evt);
+	void OnSharedDirRemove(wxCommandEvent &evt);
+
+	//! The path-mapping rows' actual local prefixes, indexed by the row's item data. Same
+	//! rationale as m_sharedDirRowPaths: a list cell holds display text, not a round-trippable
+	//! CPath.
+	std::vector<CPath> m_pathMappingRowPaths;
+
+	//! Fill the path-mapping list widget from glob_prefs' mappings (#843). Purely local --
+	//! unlike PopulateSharedDirsList, there is no EC reply to wait for, so this is the whole
+	//! refresh.
+	void PopulatePathMappingList();
+	//! Copy the list widget's rows back into glob_prefs' mappings.
+	void HarvestPathMappingList();
+	void OnPathMappingAdd(wxCommandEvent &evt);
+	void OnPathMappingRemove(wxCommandEvent &evt);
+	//! wxDirDialog for the local-prefix field: typing a remote prefix makes sense (it is the
+	//! daemon's path, nothing here to browse to), but the local side is a real folder on this
+	//! machine.
+	void OnPathMappingBrowse(wxCommandEvent &evt);
+
+public:
+	//! Repaint the editor when a GET_SHARED_DIRS reply lands while the dialog is open. A no-op
+	//! when it is not, so the reply handler never needs to know whether the dialog still
+	//! exists.
+	static void RefreshSharedDirsIfOpen();
+
+private:
+#endif
+
+private:
+	//! Fill the allowed-remote-roots list widget from glob_prefs. Read-only on the remote GUI
+	//! (the daemon's reported roots, for display); the editable source on monolithic amule. The
+	//! list widget exists in only one of the two builds, so this no-ops when it is absent.
+	void PopulateAllowedRootsList();
+#ifndef CLIENT_GUI
+	//! Copy the list widget's rows back into glob_prefs' allowed roots (monolithic only).
+	void HarvestAllowedRootsList();
+	void OnAllowedRootAdd(wxCommandEvent &evt);
+	void OnAllowedRootRemove(wxCommandEvent &evt);
+	void OnAllowedRootBrowse(wxCommandEvent &evt);
+#endif
+
+public:
+	//! Re-seed the shared-folders editor at the start of an editing session. The dialog is
+	//! constructed once and reused, so without this it keeps whatever it captured the first
+	//! time Preferences was opened -- stale the moment anything else changes the roots. Called
+	//! on show rather than on page change so it cannot discard edits in progress, and skipped
+	//! while edits are pending.
+	void PrepareSharedDirsForSession();
+
+	//! Mark the end of an editing session: the pending-edit flags stop a refresh clobbering
+	//! work in progress, so they have to be cleared when that work is applied or discarded.
+	//! Otherwise they latch on the first edit and suppress every later refresh for the dialog's
+	//! lifetime -- and it is never destroyed.
+	void EndSharedDirsSession();
+
+private:
 	//! Pointer to the color-selector
-	wxChoice*		m_choiceColor;
+	wxChoice *m_choiceColor;
 
 	//! Pointer to the color-selection button
-	wxButton*		m_buttonColor;
+	wxButton *m_buttonColor;
 
 	//! Pointer to the currently shown preference-page
-	wxPanel*		m_CurrentPanel;
+	wxPanel *m_CurrentPanel;
 
 	//! hide/show server tab
-	int				m_IndexServerTab;
-	bool			m_ServerTabVisible;
-	wxPanel*		m_ServerWidget;
-	wxListCtrl*		m_PrefsIcons;
+	int m_IndexServerTab;
+	bool m_ServerTabVisible;
+	wxPanel *m_ServerWidget;
+	//! The Advanced (aMule tweaks) page widget. Kept so OnPrefsPageChange can identify the
+	//! current page by widget rather than list index, which shifts when a tab (server /
+	//! IP2Country) is hidden.
+	wxPanel *m_aMuleTweaksWidget = nullptr;
+	wxDataViewListCtrl *m_PrefsIcons;
+	//! `pages[]` index for every page widget, by that same stable position (only which pages
+	//! are VISIBLE in m_PrefsIcons changes). Each visible row's item data is one of these, so
+	//! OnPrefsPageChange identifies a page by the stable index rather than by the row's live
+	//! position, which shifts whenever the server / IP2Country row is hidden or re-shown.
+	std::vector<wxPanel *> m_pageWidgets;
+	//! Page icons, in `pages[]` order -- kept so EnableServerTab can
+	//! re-insert the server row's icon when the tab is re-shown.
+	std::vector<wxBitmapBundle> m_pageIcons;
+	//! The sidebar's single icon+text column, kept so its width can be
+	//! replaced with the control's own measurement on first show.
+	wxDataViewColumn *m_sidebarColumn = nullptr;
+#ifdef __WXMAC__
+	//! Widest label as the control's own font measures it. A reported width
+	//! narrower than this cannot be a measurement of icon-plus-text.
+	int m_sidebarTextWidth = 0;
+	//! The measurement is a one-off; the dialog is shown more than once.
+	bool m_sidebarMeasured = false;
+#endif
 	void EnableServerTab(bool enable);
+	//! pages[] index of each sidebar row, in row order.
+	std::vector<unsigned> ShownPages() const;
+#ifdef __WXMAC__
+	void OnShowMeasureSidebar(wxShowEvent &event);
+#endif
+	//! Applies a column width, and the control width that fits it.
+	void SetSidebarWidth(int columnWidth);
 
 	void OnOk(wxCommandEvent &event);
 	void OnCancel(wxCommandEvent &event);
 	void OnClose(wxCloseEvent &event);
 
 	void OnButtonBrowseApplication(wxCommandEvent &event);
-	void OnButtonDir(wxCommandEvent& event);
-	void OnButtonEditAddr(wxCommandEvent& event);
+	void OnButtonDir(wxCommandEvent &event);
+#ifndef CLIENT_GUI
+	// Live preview of the shared-file exclusion filter. Core-only: it reads
+	// the in-memory shared list, absent in the remote GUI.
+	void OnButtonExcludePreview(wxCommandEvent &event);
+#endif
+	void OnButtonEditAddr(wxCommandEvent &event);
+	void OnButtonTweaksReset(wxCommandEvent &event);
 	void OnButtonColorChange(wxCommandEvent &event);
 	void OnButtonIPFilterReload(wxCommandEvent &event);
 	void OnButtonIPFilterUpdate(wxCommandEvent &event);
+#ifdef ENABLE_IPV6
+	void OnAddressFamiliesChange(wxCommandEvent &event);
+#endif
+#if defined(CLIENT_GUI)
+private:
+	// Set in the ctor / cleared in dtor so the IP2Country download
+	// callback can find an open dialog without a global pointer chain.
+	static PrefsUnifiedDlg *s_activeInstance;
+
+public:
+#endif
 	void OnColorCategorySelected(wxCommandEvent &event);
 	void OnCheckBoxChange(wxCommandEvent &event);
 	void OnAutostartToggle(wxCommandEvent &event);
-	void OnPrefsPageChange(wxListEvent& event);
-	void OnToolTipDelayChange(wxSpinEvent& event);
-	void OnScrollBarChange( wxScrollEvent& event );
-	void OnRateLimitChanged( wxSpinEvent& event );
-	void OnTCPClientPortChange(wxSpinEvent& event);
-	void OnUserEventSelected(wxListEvent& event);
-	void OnLanguageChoice(wxCommandEvent &event);
-	void CreateEventPanels(const int idx, const wxString& vars, wxWindow* parent);
+	void OnProtocolEd2kToggle(wxCommandEvent &event);
+	void OnProtocolMagnetToggle(wxCommandEvent &event);
+	void OnAssocCollectionToggle(wxCommandEvent &event);
+	// Shared implementation for the two OnProtocol*Toggle handlers: same live-OS-state write
+	// model as autostart, gated by a confirm dialog when a non-aMule handler is currently in
+	// place.
+	void HandleProtocolToggle(HandlerTarget scheme, int checkboxId, bool wanted);
+	void OnPrefsPageChange(wxDataViewEvent &event);
+	void OnScrollBarChange(wxScrollEvent &event);
+	void OnBandwidthCalculator(wxCommandEvent &event);
+	void OnRateLimitChanged(wxSpinEvent &event);
+	void OnTCPClientPortChange(wxSpinEvent &event);
+	void OnUserEventSelected(wxListEvent &event);
+	void CreateEventPanels(const int idx, const wxString &vars, wxWindow *parent);
 
-	void OnInitDialog( wxInitDialogEvent& evt );
+	void OnInitDialog(wxInitDialogEvent &evt);
 
-	// Tri-state outcome of an attempt to commit the pending share
-	// selection. Used by OnOk to decide between three flows:
-	//   * Committed       → continue to Save() + Reload + Show(false)
-	//   * NothingToCommit → continue to Save() + Show(false), skip Reload
-	//   * CancelledByUser → return early from OnOk: keep the prefs
-	//                       dialog open so the user can adjust their
-	//                       selection without losing the rest of
-	//                       their pending pref changes
-	enum class SharedDirsCommitResult {
+	// Tri-state outcome of an attempt to commit the pending share selection:
+	//   * Committed       -> Save() + Reload + Show(false)
+	//   * NothingToCommit -> Save() + Show(false), skipping Reload
+	//   * CancelledByUser -> return early from OnOk, keeping the dialog open so the rest of the
+	//                        pending pref changes are not lost
+	enum class SharedDirsCommitResult
+	{
 		NothingToCommit,
 		Committed,
 		CancelledByUser,
 	};
 
-	// Commits the pending share selection from the directory tree
-	// into theApp->glob_prefs->shareddir_list. Confirms before
-	// committing recursive-share roots that look like sensitive
-	// system locations (e.g. home, /etc), then runs the recursive
-	// directory enumeration on a worker thread with a cancellable
-	// progress dialog so the UI never freezes on large roots.
+	// Commits the pending share selection from the directory tree into
+	// theApp->glob_prefs->shareddir_list. Confirms before committing recursive-share roots that
+	// look like sensitive system locations, then runs the recursive enumeration on a worker
+	// thread with a cancellable progress dialog.
 	SharedDirsCommitResult CommitSharedDirsWithProgress();
+
+	// Fills one of the amuleapi credential-state labels. A stored password is salted and
+	// stretched and can never be shown, so this label is the only thing telling the user
+	// whether one exists.
+	void SetCredentialStateLabel(int id, bool isSet);
+
+	// Enables the message-filter options from the checkboxes above them: the master switch gates
+	// all of them, and "Filter all messages" makes the rest moot.
+	void UpdateMessageFilterControls();
+	void UpdateFilterSummary();
+	void OnFilterSummaryChange(wxCommandEvent &event);
+
+#ifdef ENABLE_IPV6
+	// Enables the IPv6 advertising choice only while dual stack is selected.
+	void UpdateAddressFamiliesControls();
+#endif
 
 	wxDECLARE_EVENT_TABLE();
 
 private:
-	bool	m_verticalToolbar;
-	bool	m_toolbarOrientationChanged;
+	bool m_verticalToolbar;
+	bool m_toolbarOrientationChanged;
+
+	// Whether a guest password was stored when this dialog opened. TransferFromWindow
+	// overwrites the live preference with the checkbox's value, so OnOk cannot ask the
+	// preference itself.
+	bool m_amuleApiGuestWasSet = false;
 };
 
 #endif

@@ -10,6 +10,12 @@
 /* Define this to the include prefix of crypto++ */
 #cmakedefine CRYPTOPP_INCLUDE_PREFIX ${CRYPTOPP_INCLUDE_PREFIX}
 
+/* Master switch for the in-app new-version check (startup notification, the
+   "check at startup" preference, and the About "Check for updates" button).
+   When undefined the whole feature is compiled out. Controlled at configure
+   time by -DENABLE_VERSION_CHECK (ON by default; OFF for OS-package builds). */
+#cmakedefine ENABLE_VERSION_CHECK
+
 /* Define to 1  if translation of program messages to the user's
    native language is requested. */
 #cmakedefine ENABLE_NLS 1
@@ -68,6 +74,15 @@
 
 /* Define if you have the `munmap' function. */
 #cmakedefine HAVE_MUNMAP
+
+/* Define if you have the `sigaction' function (needed for the mmap
+   SIGSEGV/SIGBUS recovery handler). */
+#cmakedefine HAVE_SIGACTION
+
+/* Define if the mmap file-I/O path can be compiled in on this platform.
+   Gates the CFileArea code path, the preferences checkbox and the EC tag.
+   Actual use is the runtime MMapEnabled preference (default OFF). */
+#cmakedefine MMAP_SUPPORTED
 
 /* Define if you have the <nl_types.h> header file. */
 #cmakedefine HAVE_NL_TYPES_H
@@ -181,6 +196,16 @@
 
 /* Where the webserver finds it's themes */
 #cmakedefine WEBSERVERDIR "${WEBSERVERDIR}"
+
+/* Compile-time install path of amuleapi's bundled static frontend.
+   amuleapi falls back to this when [Server]/StaticRoot is empty. */
+#cmakedefine AMULEAPI_STATIC_DIR "${AMULEAPI_STATIC_DIR}"
+
+/* Define if the media metadata helper is built. */
+#cmakedefine AMULE_MEDIA_PROBE
+
+/* Installed helper, relative to the folder of the core's own executable. */
+#cmakedefine AMULE_MEDIA_PROBE_RELPATH "${AMULE_MEDIA_PROBE_RELPATH}"
 
 /* Define if libpng is present is set. */
 #cmakedefine WITH_LIBPNG

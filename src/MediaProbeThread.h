@@ -1,0 +1,103 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
+//
+
+#ifndef MEDIAPROBETHREAD_H
+#define MEDIAPROBETHREAD_H
+
+#include <list>
+#include <atomic>
+#include <wx/thread.h>
+#include <wx/string.h>
+
+#include "MD4Hash.h"     // Needed for CMD4Hash
+#include <common/Path.h> // Needed for CPath (value member of MediaProbeJob)
+
+// One queued media-helper job. Everything is snapshotted by value at enqueue
+// time so the worker never touches shared CKnownFile / thePrefs state.
+struct MediaProbeJob
+{
+	CMD4Hash hash; // resolved back to the CKnownFile on the main thread
+	CPath path;    // file to probe
+	// Part of a mass operation (a share scan, a whole-share refresh) rather than a single user-
+	// visible file. Set by the scheduler, NOT inferred from how many jobs happen to be queued:
+	// the worker swaps the entire pending list out on each wake, so a batch size says only when
+	// the worker last woke. Deciding it that way meant one arbitrary file per scan printed a
+	// per-file line while the rest were summarised, which reads as if that file were special
+	// (issue #1116).
+	bool bulk = false;
+};
+
+// Dedicated worker for media-metadata extraction (#280).
+//
+// Why its own thread: media probing waits for a bounded helper process and must never stall the core.
+// CMediaProbeTask used to run on the shared CThreadScheduler alongside CHashingTask / CCompletionTask, so a
+// single hung probe wedged every download completion. On a dedicated, isolated worker a slow or hung probe
+// can only delay other probes. A wall-clock timeout in MediaProbe::Probe bounds each probe so even this
+// thread cannot wedge.
+//
+// Mirrors CPartFileHashThread: a single joinable worker draining a job queue and posting a
+// CMediaProbeEvent back to the main thread.
+class CMediaProbeThread : public wxThread
+{
+public:
+	CMediaProbeThread();
+	// EndThread() (which joins the worker) must be called before the
+	// object is destroyed; the destructor itself has nothing to do.
+	~CMediaProbeThread() = default;
+
+	// Signal the worker to stop and join it. Queued, not-yet-started probes are dropped --
+	// metadata is best-effort. An in-flight probe's helper child is killed promptly (Probe
+	// polls the run flag), so the join returns without waiting on a slow or hung helper.
+	void EndThread();
+
+	// Enqueue a probe if the worker started and is still running. Thread-safe;
+	// returns false rather than accepting work that can never be processed.
+	bool QueueProbe(const CMD4Hash &hash, const CPath &fullPath, bool bulk = false);
+
+	bool IsRunning() const { return m_bRun; }
+
+	// How many probes are still queued. The worker reports only at the end of a drain, so this
+	// is what a caller polls to say "refreshing, N left" -- and what the refresh entry points
+	// use to tell a scheduled file from one the gates dropped, since MaybeScheduleMediaProbe
+	// returns nothing.
+	size_t PendingCount() const
+	{
+		wxMutexLocker lock(const_cast<wxMutex &>(m_mutex));
+		return m_jobList.size();
+	}
+
+private:
+	void *Entry() override;
+
+	std::atomic<bool> m_bRun{ false };
+	bool m_started = false; // Set by the constructor; EndThread is called after construction.
+	bool m_bWorkPending;    // sticky wake flag, protected by m_mutex
+
+	wxMutex m_mutex;
+	wxCondition m_condition;
+
+	std::list<MediaProbeJob> m_jobList; // protected by m_mutex
+};
+
+#endif // MEDIAPROBETHREAD_H

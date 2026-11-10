@@ -1,0 +1,120 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
+//
+
+#ifndef SPLASHSCREEN_H
+#define SPLASHSCREEN_H
+
+#include <wx/bitmap.h> // Needed for the pre-rendered backdrop member
+#include <wx/frame.h>
+#include <wx/timer.h>
+
+// Shared startup and shutdown splash for the GUI.
+//
+// Exists because startup is slow and silent: the main window is created before the shared-file scan
+// runs, but the scan holds the main thread, so nothing paints until it finishes. On a large share
+// -- worse on network storage, where every file costs a round trip -- that is a long stretch with
+// no sign the application is alive, and under Flatpak long enough for xdg-desktop-portal's
+// background monitor to conclude the app has no window and kill it.
+//
+// Everything is drawn by hand rather than assembled from child controls: the background is a dark
+// gradient, and native widgets on top of it would follow the desktop theme instead, giving a light-
+// on-dark gauge on most systems.
+class CSplashScreen : public wxFrame
+{
+public:
+	enum class Phase
+	{
+		Startup,
+		Shutdown
+	};
+	// Startup creates it before the main window exists, so without a parent. Deliberately not
+	// wxSTAY_ON_TOP: a parentless stay-on-top frame sits at a desktop-global level, covering every
+	// other application with no taskbar button to raise over it or dismiss it with.
+	explicit CSplashScreen(wxWindow *parent, Phase phase = Phase::Startup);
+
+	// Run the event loop until the splash has been painted once, for at most about a second.
+	// Whatever follows blocks the main thread, and under Wayland one yield is not enough: the
+	// compositor answers a few round-trips before a new window is drawn at all.
+	void AwaitFirstPaint();
+
+	// Update the phase text and the bar. Cheap to call often: repainting is rate-limited
+	// internally, so callers can report every file scanned.
+	// Shutdown uses the same backdrop with phase text only; its owner pumps a
+	// restricted repaint loop after this call instead of using startup's yield.
+	//
+	// Set @a immediate when the update marks a change of phase rather than progress within one,
+	// to paint it without waiting out the rate limit. It cannot be inferred from the text
+	// changing, since the per-item updates carry a running count and so change their text every
+	// time.
+	void SetProgress(const wxString &status, int percent, bool immediate = false);
+
+	// Close, honouring the minimum on-screen time: a fast startup would otherwise flash the
+	// splash for a few frames, which reads as a glitch.
+	//
+	// Never blocks -- when the floor has not been reached it schedules the close and returns.
+	// Sleeping here would freeze the main thread, the very symptom the splash exists to
+	// explain.
+	void Finish();
+
+	// Stamps the clock the minimum-display floor is measured from, so that floor covers the
+	// time actually spent visible rather than the time since the object was built.
+	bool Show(bool show = true) override;
+
+private:
+	void OnPaint(wxPaintEvent &evt);
+	void OnCloseTimer(wxTimerEvent &evt);
+	// Hides rather than destroys. Startup owns the window: it keeps reporting progress through
+	// it and destroys it in Finish().
+	void OnClose(wxCloseEvent &evt);
+
+	// Runs down the remainder of the minimum display time when Finish() is
+	// called early, so that wait costs the main thread nothing.
+	wxTimer m_closeTimer;
+
+	// Gradient, logo and the two fixed captions, rendered once. Only the bar and the phase text
+	// change afterwards, so the expensive part is paid at construction rather than on every
+	// update.
+	void RenderBackdrop();
+
+	wxBitmap m_backdrop;
+	const Phase m_phase;
+	wxString m_status;
+	int m_percent;
+
+	// Wall-clock of Show(), for the minimum-display-time floor.
+	wxLongLong m_shownAt;
+	// Wall-clock of the last repaint, for the rate limit.
+	wxLongLong m_lastPaint;
+	// Cost accounting, reported once at Finish() so what the splash takes from the work it
+	// reports on is measurable rather than assumed. Two figures because they answer different
+	// questions: how much was drawn, and how much time the startup path gave up in total
+	// (drawing plus the event-loop pumping that gets it on screen).
+	unsigned m_paintCount;
+	wxLongLong m_paintMicros;
+	wxLongLong m_updateMicros;
+
+	wxDECLARE_EVENT_TABLE();
+};
+
+#endif // SPLASHSCREEN_H

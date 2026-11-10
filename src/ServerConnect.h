@@ -23,113 +23,248 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-//
 // Client to Server communication
-//
 
 #ifndef SERVERCONNECT_H
 #define SERVERCONNECT_H
 
+// AMULE_UTP_TRANSPORT and AMULE_QUIC_TRANSPORT change this header and are defined only for
+// amule and amuled. A shared library unit would see another layout than the binary it links into.
+#ifdef AMULE_LIBRARY_UNIT
+#error "ServerConnect.h depends on the amule/amuled transport defines; compile this unit in those targets"
+#endif
 
-#include "amuleIPV4Address.h"	// Needed for amuleIPV4Address
-#include "Timer.h"		// Needed for CTimer
+#include "amuleIPV4Address.h" // Needed for amuleIPV4Address
+#include "Timer.h"            // Needed for CTimer
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+#include "NatServerHolePunch.h"   // Needed for the 0x61 policy state
+#include "LugdunumNatTraversal.h" // Needed for ForwardedCallback in the extension's wakes
+#endif
 
-#include <map>			// Needed for std::map
+#include <map> // Needed for std::map
+#if defined(ENABLE_IPV6) || defined(ENABLE_NATT_SERVER_COORDINATION)
+#include <optional> // Needed for std::optional
+#endif
 
 class CServerList;
 class CServerSocket;
 class CServer;
 class CPacket;
 class CServerUDPSocket;
+#ifdef ENABLE_IPV6
+class CNetworkAddress;
+#endif
 
-#define CS_FATALERROR	-5
-#define CS_DISCONNECTED	-4
-#define CS_SERVERDEAD	-3
-#define	CS_ERROR	-2
-#define CS_SERVERFULL	-1
-#define	CS_NOTCONNECTED	0
-#define	CS_CONNECTING	1
-#define	CS_CONNECTED	2
-#define	CS_WAITFORLOGIN	3
-#define CS_RETRYCONNECTTIME  30 // seconds
+#define CS_FATALERROR -5
+#define CS_DISCONNECTED -4
+#define CS_SERVERDEAD -3
+#define CS_ERROR -2
+#define CS_SERVERFULL -1
+#define CS_NOTCONNECTED 0
+#define CS_CONNECTING 1
+#define CS_CONNECTED 2
+#define CS_WAITFORLOGIN 3
+#define CS_RETRYCONNECTTIME 30 // seconds
 
-typedef std::map<uint64, CServerSocket*> ServerSocketMap;
+typedef std::map<uint64, CServerSocket *> ServerSocketMap;
 
-class CServerConnect {
+class CServerConnect
+{
 public:
-	CServerConnect(CServerList* in_serverlist, amuleIPV4Address &address);
+	CServerConnect(CServerList *in_serverlist, amuleIPV4Address &address);
 	~CServerConnect();
 
-	void	ConnectionFailed(CServerSocket* sender);
-	void	ConnectionEstablished(CServerSocket* sender);
+	void ConnectionFailed(CServerSocket *sender);
+	void ConnectionEstablished(CServerSocket *sender);
 
-	void	ConnectToAnyServer(bool prioSort = true, bool bNoCrypt = false);
-	void	ConnectToServer(CServer* toconnect, bool multiconnect = false, bool bNoCrypt = false);
-	void	StopConnectionTry();
-	void	CheckForTimeout();
+	void ConnectToAnyServer(bool prioSort = true, bool bNoCrypt = false);
+	void ConnectToServer(CServer *toconnect, bool multiconnect = false, bool bNoCrypt = false);
+	void StopConnectionTry();
+	void CheckForTimeout();
+	bool RebindServerUDPSocket(const amuleIPV4Address &address);
+	void InitServerUDPSocket(amuleIPV4Address &address);
 
 	// safe socket closure and destruction
-	void	DestroySocket(CServerSocket* pSck);
-	bool	SendPacket(CPacket* packet,bool delpacket = true, CServerSocket* to = 0);
+	void DestroySocket(CServerSocket *pSck);
+	bool SendPacket(CPacket *packet, bool delpacket = true, CServerSocket *to = 0);
 
 	// Creteil Begin
-	bool	IsUDPSocketAvailable() const { return serverudpsocket != NULL; }
+	bool IsUDPSocketAvailable() const { return serverudpsocket != NULL; }
 	// Creteil End
 
-	bool	SendUDPPacket(CPacket* packet,CServer* host, bool delpacket, bool rawpacket = false, uint16 port_offset = 4);
-	bool	Disconnect();
-	bool	IsConnecting()	{ return connecting; }
-	bool	IsConnected()	{ return connected; }
-	uint32	GetClientID()	{ return clientid; }
-	CServer*GetCurrentServer();
-	uint32	clientid;
-	bool	IsLowID()	{ return ::IsLowID(clientid); }
-	void	SetClientID(uint32 newid);
-	bool	IsLocalServer(uint32 dwIP, uint16 nPort);
+	bool SendUDPPacket(CPacket *packet,
+		CServer *host,
+		bool delpacket,
+		bool rawpacket = false,
+		uint16 port_offset = 4);
+	bool Disconnect();
+	bool IsConnecting() { return connecting; }
+	bool IsConnected() { return connected; }
+	uint32 GetClientID() { return clientid; }
+	CServer *GetCurrentServer();
+	// Whether server, a server-list entry, is the one we are connected to.
+	bool IsCurrentServer(const CServer *server);
+	// The server being connected to while exactly one attempt is running, else nullptr: a
+	// multi-server connect tries several at once.
+	CServer *GetConnectingServer() const;
+	uint32 clientid;
+	bool IsLowID() { return ::IsLowID(clientid); }
+	void SetClientID(uint32 newid);
+	bool IsLocalServer(uint32 dwIP, uint16 nPort);
 
-	/// True if `ip` matches the IP of the currently-connected ed2k server
-	/// or any in-flight CServerSocket whose login attempt is still
-	/// outstanding.  Used by CClientTCPSocket to short-circuit the
-	/// global download-bandwidth throttler for inbound peer connections
-	/// that are actually the server's HighID-callback probe (#778).
-	/// Without that bypass, a saturated peer-side download budget delays
-	/// the probe past the server's verification timer and we end up with
-	/// a permanent LowID under sustained load.
-	bool	IsServerIP(uint32 ip) const;
-	void	TryAnotherConnectionrequest();
-	bool	IsSingleConnect()	{ return singleconnecting; }
-	void	KeepConnectionAlive();
+	void TryAnotherConnectionrequest();
+	bool IsSingleConnect() { return singleconnecting; }
+	CServerSocket *GetConnectedSocket() const { return connected ? connectedsocket : nullptr; }
+	void KeepConnectionAlive();
 
 	bool AwaitingTestFromIP(uint32 ip);
 	bool IsConnectedObfuscated() const;
 
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+	//! Sends OP_SERVER_NATT_KEEPALIVE from the client UDP socket when connected to a server that
+	//! announced SRV_TCPFLG_LOWID_HOLEPUNCH and the runtime setting is on. Called every ~60 s
+	//! from CamuleApp::OnCoreTimer -- no new thread.
+	void TrySendLowIdHolePunchKeepalive();
+
+	//! Target IDs are scoped to a server session, so a reconnect resets this state.
+	NatServerHolePunch::PendingRequestSet &LowIdHolePunchPendingRequests()
+	{
+		return m_lowIdHolePunchPendingRequests;
+	}
+	NatServerHolePunch::DialBackSchedule &LowIdHolePunchDialBacks() { return m_lowIdHolePunchDialBacks; }
+	NatServerHolePunch::DuplicateInfoSuppressor &LowIdHolePunchDuplicates()
+	{
+		return m_lowIdHolePunchDuplicates;
+	}
+	NatServerHolePunch::ActionRateLimiter &LowIdHolePunchActionLimiter()
+	{
+		return m_lowIdHolePunchActionLimiter;
+	}
+	NatServerHolePunch::ExpectedEndpointRegistry &LowIdHolePunchExpectedEndpoints()
+	{
+		return m_lowIdHolePunchExpectedEndpoints;
+	}
+	//! Clears the pending requests, expected endpoints and waiting dial backs: called on a new
+	//! login, since a previous connection's target IDs mean nothing on a different server.
+	void ResetLowIdHolePunchState();
+	//! The listed server at that TCP address, when it is not ours and takes a cross-server NAT
+	//! callback request from us (NatServerHolePunch::ServerTakesForeignCallback()). A server that
+	//! lacks only its UDP key is not returned, but its key is recovered for a later request. The
+	//! LowID source check calls it too, so a source from such a server, dropped until the key
+	//! exists, also brings that server's status ping forward.
+	CServer *ForeignCallbackServer(uint32 serverIp, uint16 serverPort);
+	//! Paces the Lugdunum requests that waited for the server's UDP key, which all become
+	//! sendable when it arrives.
+	bool TakeLugdunumCallbackRetrySlot(uint64 now) { return m_lugdunumCallbackRetryPacer.TryTake(now); }
+	//! We announced the hole-punch extension at login and this server runs it, having also
+	//! answered our Lugdunum opt-in, whose 0x37 it wakes a target with.
+	bool IsHolePunchExtensionActive();
+	//! 0x37 wakes on an extension server, each waiting for the 0x61 that names its requester.
+	NatServerHolePunch::PendingWakeSet<LugdunumNatTraversal::ForwardedCallback> &HolePunchExtensionWakes()
+	{
+		return m_holePunchExtensionWakes;
+	}
+	//! A woken target sends 0x9F at 0, 0.5 and 1 s so the server learns its current UDP port.
+	void StartHolePunchExtensionKeepalives();
+#ifdef AMULE_UTP_TRANSPORT
+	//! Dials back each punched peer whose delay ran out without a stream from it. Called about
+	//! once a second from CamuleApp::OnCoreTimer.
+	void ProcessLowIdHolePunchDialBacks();
+	//! Sends the due wake keepalives, and dials the Lugdunum way for each wake no 0x61 answered.
+	//! Called from every CamuleApp::OnCoreTimer tick, which the 0.5 s burst needs.
+	void ProcessHolePunchExtension();
+	//! Starts the punch schedule for one peer and sends what is already due: the punch to the
+	//! endpoint a 0x61, a cross-server 0xA7 answer or an extension wake named, then its repeats at
+	//! 0.5, 1 and 2 s, with the port sweep at 0.5 s. @a peerHash, when the rendezvous vouched for
+	//! one, lets the peer's hello end the schedule.
+	void StartLowIdHolePunchSchedule(const NatServerHolePunch::IPv4 &peerIP,
+		uint16 udpPort,
+		uint64 now,
+		const std::optional<NatServerHolePunch::Hash> &peerHash);
+	//! Sends the punches and sweeps that have come due. Called from every OnCoreTimer tick.
+	void SendDueLowIdHolePunches(uint64 now);
+	//! The punches owed to each peer address, cancelled by a punch from it or by our dial
+	//! connecting.
+	NatServerHolePunch::PunchScheduleSet &LowIdHolePunchSchedules() { return m_lowIdHolePunchSchedules; }
+#endif
+#endif
+
+	//! Records that a server's hostname resolved during the current sweep.
+	void NoteHostnameResolved() { m_hostnameResolvedThisSweep = true; }
+
+	/**
+	 * Whether a resolver has answered since the current sweep began.
+	 *
+	 * A server whose hostname does not resolve is the commonest way an eD2k server dies, and
+	 * pruning it is the point of "remove dead servers" -- but with the link down nothing
+	 * resolves, and blaming the whole list for that is what emptied it (issue #887). One server
+	 * failing to resolve while others answered is the case that says something about that
+	 * server, and this is what separates the two.
+	 *
+	 * Only a lookup that actually ran counts: most of server.met carries an address already,
+	 * and going straight to connect proves nothing about the resolver. Cleared by
+	 * StopConnectionTry(), which every sweep ends at, so a connect made outside one is never
+	 * judged on an earlier sweep's link.
+	 */
+	bool HostnameResolvedThisSweep() const { return m_hostnameResolvedThisSweep; }
+
 	/**
 	 * Called when a socket has been DNS resolved.
 	 *
-	 * @param socket The socket object requesting DNS resolution.
+	 * @param socket The socket object requesting DNS resolution. May or may not refer to a
+	 * valid
+	 *               object, so check before use.
 	 * @param ip The found IP, or zero on error.
-	 *
-	 * Note that 'socket' may or may not refer to an valid object,
-	 * and should be checked before being used.
 	 */
-	void OnServerHostnameResolved(void* socket, uint32 ip);
+	void OnServerHostnameResolved(void *socket, uint32 ip);
+
+#ifdef ENABLE_IPV6
+	//! Sends OP_IPV6_UPDATE on the current server connection when DecideServerIPv6Update() says
+	//! to, and keeps CServerSocket::GetLoginIPv6() in step with what was actually sent.
+	void UpdateAdvertisedIPv6(const std::optional<CNetworkAddress> &advertised);
+#endif
+
 private:
-	bool	connecting;
-	bool	singleconnecting;
-	bool	connected;
-	int8	max_simcons;
-	bool	m_bTryObfuscated;
-	bool	m_recurseTryAnotherConnectionrequest;
-	CServerSocket*	connectedsocket;
-	CServerList*	used_list;
-	CServerUDPSocket*	serverudpsocket;
+	bool connecting;
+	bool singleconnecting;
+	bool connected;
+	int8 max_simcons;
+	bool m_bTryObfuscated;
+	bool m_recurseTryAnotherConnectionrequest;
+	//! See HostnameResolvedThisSweep(); reset as each sweep starts.
+	bool m_hostnameResolvedThisSweep;
+	CServerSocket *connectedsocket;
+	CServerList *used_list;
+	CServerUDPSocket *serverudpsocket;
 
 	// list of currently opened sockets
-	typedef	std::list<CServerSocket*>	SocketsList;
-	SocketsList	m_lstOpenSockets;
-	CTimer	m_idRetryTimer;
+	typedef std::list<CServerSocket *> SocketsList;
+	SocketsList m_lstOpenSockets;
+	CTimer m_idRetryTimer;
 
 	ServerSocketMap connectionattemps;
+
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+	NatServerHolePunch::PendingRequestSet m_lowIdHolePunchPendingRequests;
+	NatServerHolePunch::DialBackSchedule m_lowIdHolePunchDialBacks;
+	NatServerHolePunch::DuplicateInfoSuppressor m_lowIdHolePunchDuplicates;
+	NatServerHolePunch::ActionRateLimiter m_lowIdHolePunchActionLimiter;
+	NatServerHolePunch::ExpectedEndpointRegistry m_lowIdHolePunchExpectedEndpoints;
+	NatServerHolePunch::PendingWakeSet<LugdunumNatTraversal::ForwardedCallback> m_holePunchExtensionWakes;
+	NatServerHolePunch::KeepaliveBurst m_holePunchKeepaliveBurst;
+	NatServerHolePunch::ServerRequestPacer m_lugdunumCallbackRetryPacer;
+#ifdef AMULE_UTP_TRANSPORT
+	NatServerHolePunch::PunchScheduleSet m_lowIdHolePunchSchedules;
+	// Not reset with the session: a server must not be able to buy more sweeps by dropping us.
+	NatServerHolePunch::SweepBudget m_lowIdHolePunchSweeps;
+#endif
+	bool m_holePunchKeepaliveAwaitsServerKey = false;
+	uint64 m_nextAwaitedServerKeyCheck = 0;
+	//! Sends the keepalive again, obfuscated, once the server's missing UDP key arrives.
+	void RetryKeepaliveAwaitingServerKey();
+	// Fixed at login, so a setting changed mid-session cannot claim what the server was not told.
+	bool m_announcedHolePunchExtension = false;
+#endif
 };
 
 #endif // SERVERCONNECT_H

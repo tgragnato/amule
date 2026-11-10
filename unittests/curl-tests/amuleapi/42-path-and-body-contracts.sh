@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+#
+# amuleapi 42-path-and-body-contracts — the two contracts that are stated
+# once and have to hold everywhere.
+#
+# 1. A `{hash}` that is not 32 hex characters is a MALFORMED REQUEST, so it
+#    answers `400 bad_request`, on every route that takes one. The
+#    every route runs the format check rather than falling through to its
+#    own `404`, so a client can tell "not a hash" from "valid hash, no such
+#    file", and a single route answers the same on both verbs:
+#    `GET /search/results/{hash}/comments` and its `POST` both answer `400`
+#    on a malformed hash. `{ecid}` has always drawn this line
+#    (`RequireEcidPath`); these are its hash twin.
+#
+# 2. A body field documented as an integer rejects a fractional value
+#    instead of truncating it. JSON has one number type, so `2.9` reaches
+#    the handler as a double and a bare cast turns a filter the client
+#    thinks it set into a different one.
+#
+# The `404` half of contract 1 is asserted too: a well-formed hash that
+# names nothing must still be `404`, or the guard would have turned every
+# missing file into a bad request.
+set -u
+set -o pipefail
+
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+
+# Well-formed, and nothing on this surface can hold it: 32 hex characters.
+ABSENT_HASH=00000000000000000000000000000000
+# Malformed three ways: too short, non-hex characters, right length but
+# with a non-hex character in it.
+SHORT_HASH=deadbeef
+NONHEX_HASH=zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+ALMOST_HASH=0000000000000000000000000000000g
+
+# A bare 400 does not prove the validator rejected the body: a daemon with
+# its networks disabled answers `400 amuled_rejected` to a perfectly
+# well-formed search or bootstrap. Every body-contract check below asserts
+# the error CODE too, so it means the same thing on a connected daemon and
+# on an idle one.
+_assert_bad_request() {
+	local label=$1
+	_assert_status 400 "$label"
+	_assert_json_eq '.error.code' bad_request "$label names bad_request"
+}
+
+_preflight
+
+echo "amuleapi 42-path-and-body-contracts smoke @ $HOST"
+
+ADMIN_TOKEN=$(_login "$ADMIN_PASS")
+[ -n "$ADMIN_TOKEN" ] || _die "admin login failed"
+AUTH="Authorization: Bearer $ADMIN_TOKEN"
+
+# --- 1. Malformed {hash} → 400 on every route that takes one. -----
+#
+# GET routes first, then the mutations. A mutation with a malformed hash
+# cannot have a side effect: the guard runs before any lookup, which is
+# also why it is safe to fire DELETE here.
+echo
+echo "  -- malformed {hash} → 400 --"
+
+for h in "$SHORT_HASH" "$NONHEX_HASH" "$ALMOST_HASH"; do
+	_curl -H "$AUTH" "$API/downloads/$h"
+	_assert_status 400 "GET /downloads/$h"
+	_assert_json_eq '.error.code' bad_request "GET /downloads/$h names bad_request"
+done
+
+_curl -H "$AUTH" "$API/downloads/$NONHEX_HASH/comments"
+_assert_status 400 "GET /downloads/{bad}/comments"
+
+_curl -H "$AUTH" "$API/shared/$NONHEX_HASH"
+_assert_status 400 "GET /shared/{bad}"
+
+_curl -X PATCH -H "$AUTH" -H "Content-Type: application/json" \
+	-d '{"priority":"high"}' "$API/downloads/$NONHEX_HASH"
+_assert_status 400 "PATCH /downloads/{bad}"
+
+_curl -X PATCH -H "$AUTH" -H "Content-Type: application/json" \
+	-d '{"priority":"high"}' "$API/shared/$NONHEX_HASH"
+_assert_status 400 "PATCH /shared/{bad}"
+
+_curl -X DELETE -H "$AUTH" "$API/downloads/$NONHEX_HASH"
+_assert_status 400 "DELETE /downloads/{bad}"
+
+# The route the split ran through: both methods on one path now agree.
+_curl -H "$AUTH" "$API/search/results/$NONHEX_HASH/comments"
+_assert_status 400 "GET /search/results/{bad}/comments"
+_curl -X POST -H "$AUTH" "$API/search/results/$NONHEX_HASH/comments"
+_assert_status 400 "POST /search/results/{bad}/comments (was already 400)"
+
+# The find-based routes: these fell through to their own lookup and answered
+# 404, so a client could not tell "not a hash" from "valid hash, no such file".
+# GET /downloads/{hash}/comments answered 400 while its own POST answered 404,
+# which is the within-route split this contract exists to prevent.
+_curl -H "$AUTH" "$API/downloads/$NONHEX_HASH/clients"
+_assert_status 400 "GET /downloads/{bad}/clients"
+_curl -H "$AUTH" "$API/shared/$NONHEX_HASH/clients"
+_assert_status 400 "GET /shared/{bad}/clients"
+_curl -X POST -H "$AUTH" "$API/downloads/$NONHEX_HASH/comments"
+_assert_status 400 "POST /downloads/{bad}/comments (matches its own GET)"
+_curl -H "$AUTH" "$API/downloads/$NONHEX_HASH/filenames"
+_assert_status 400 "GET /downloads/{bad}/filenames"
+_curl -X POST -H "$AUTH" -H "Content-Type: application/json" \
+	-d '{"action":"swap"}' "$API/downloads/$NONHEX_HASH/a4af"
+_assert_status 400 "POST /downloads/{bad}/a4af"
+_curl -H "$AUTH" "$API/shared/$NONHEX_HASH/content"
+_assert_status 400 "GET /shared/{bad}/content"
+_curl -X POST -H "$AUTH" "$API/shared/$NONHEX_HASH/media/refresh"
+_assert_status 400 "POST /shared/{bad}/media/refresh"
+_curl -X POST -H "$AUTH" "$API/shared/$NONHEX_HASH/verify"
+_assert_status 400 "POST /shared/{bad}/verify"
+
+# One message, not three. The two search routes carried their own wording
+# ("must be a 32-char hex MD4"), so a client matching on the message saw the
+# same condition described two ways depending on which route it hit.
+for URL in \
+	"downloads/$NONHEX_HASH" \
+	"downloads/$NONHEX_HASH/clients" \
+	"search/results/$NONHEX_HASH/comments" \
+	; do
+	_curl -H "$AUTH" "$API/$URL"
+	_assert_json_eq '.error.message' "path \`{hash}\` must be 32 hex characters" \
+		"/$URL states the shared {hash} message"
+done
+
+# --- 2. A well-formed hash that names nothing is still 404. -------
+#
+# The guard must reject the shape, not the lookup. If this ever turns into
+# a 400, "no such file" has been collapsed into "bad request" and the
+# distinction the section above exists for is gone in the other direction.
+echo
+echo "  -- well-formed but absent {hash} → 404 --"
+
+_curl -H "$AUTH" "$API/downloads/$ABSENT_HASH"
+_assert_status 404 "GET /downloads/{absent}"
+_curl -H "$AUTH" "$API/shared/$ABSENT_HASH"
+_assert_status 404 "GET /shared/{absent}"
+_curl -H "$AUTH" "$API/downloads/$ABSENT_HASH/comments"
+_assert_status 404 "GET /downloads/{absent}/comments"
+
+# --- 3. Integer body fields reject a fractional value. ------------
+echo
+echo "  -- fractional value where an integer is documented → 400 --"
+
+_curl -X POST -H "$AUTH" -H "Content-Type: application/json" \
+	-d '{"query":"contract-probe","min_size_bytes":2.9}' "$API/search"
+_assert_bad_request "POST /search (min_size_bytes 2.9)"
+_assert_json_eq '.error.message | test("integer")' true \
+	'the min_size_bytes 400 says an integer is wanted'
+
+_curl -X POST -H "$AUTH" -H "Content-Type: application/json" \
+	-d '{"query":"contract-probe","max_size_bytes":9.5}' "$API/search"
+_assert_bad_request "POST /search (max_size_bytes 9.5)"
+
+_curl -X POST -H "$AUTH" -H "Content-Type: application/json" \
+	-d '{"query":"contract-probe","min_source_count":1.5}' "$API/search"
+_assert_bad_request "POST /search (min_source_count 1.5)"
+
+_curl -X POST -H "$AUTH" -H "Content-Type: application/json" \
+	-d '{"ip":"127.0.0.1","port":4672.5}' "$API/kad/bootstrap"
+_assert_bad_request "POST /kad/bootstrap (fractional port)"
+
+_curl -X POST -H "$AUTH" -H "Content-Type: application/json" \
+	-d '{"ip":"203.0.113.42","port":4662.5}' "$API/friends"
+_assert_bad_request "POST /friends (fractional port)"
+
+# --- 4. One port contract on both routes that take one. -----------
+#
+# Port 0 is a 400 on both /kad/bootstrap and /friends. No Kad contact is
+# reachable on port 0, so accepting it would send a probe that goes nowhere.
+echo
+echo "  -- port 0 → 400 on both routes --"
+
+_curl -X POST -H "$AUTH" -H "Content-Type: application/json" \
+	-d '{"ip":"127.0.0.1","port":0}' "$API/kad/bootstrap"
+_assert_bad_request "POST /kad/bootstrap (port 0)"
+_assert_json_eq '.error.message | test("1\\.\\.65535")' true \
+	'the kad/bootstrap 400 quotes the shared 1..65535 range'
+
+_curl -X POST -H "$AUTH" -H "Content-Type: application/json" \
+	-d '{"ip":"203.0.113.42","port":0}' "$API/friends"
+_assert_bad_request "POST /friends (port 0)"
+_assert_json_eq '.error.message | test("1\\.\\.65535")' true \
+	'the friends 400 quotes the same range'
+
+# --- 5. Absence is spelled null, not a zero or an empty string. ---
+#
+# State-dependent, so each check skips when the daemon is not in the shape
+# that exercises it rather than asserting something it cannot know.
+echo
+echo "  -- absence reads as null --"
+
+_curl -H "$AUTH" "$API/kad"
+KAD_STATE=$(printf '%s' "$CURL_BODY" | jq -r '.state')
+if [ "$KAD_STATE" = "disabled" ]; then
+	_assert_json_eq '.node_id' null 'GET /kad node_id is null while Kad is stopped'
+else
+	_skip "GET /kad node_id null check: Kad state is \"$KAD_STATE\", not disabled"
+fi
+
+_curl -H "$AUTH" "$API/clients?limit=50"
+NOADDR_ECID=$(printf '%s' "$CURL_BODY" | jq -r 'first(.clients[]? | select(.ip == null) | .ecid) // empty')
+if [ -n "$NOADDR_ECID" ]; then
+	_curl -H "$AUTH" "$API/clients/$NOADDR_ECID"
+	_assert_json_eq '.kad_port' null 'client detail nulls kad_port with ip/port'
+else
+	_skip 'client detail kad_port check: every connected client has an address'
+fi
+
+# `last_received_at` is the partfile's last-changed stamp, which amuled sets
+# even for a download that has transferred nothing -- so "0 bytes received"
+# is NOT the never-case and cannot be used to find one. What the contract
+# forbids is the raw 0 itself: the serializer maps it to null, because a
+# unix 0 reads as 1970 rather than as "never". Assert that no row carries
+# one, which holds on any daemon state and fails the moment the mapping is
+# dropped.
+_curl -H "$AUTH" "$API/downloads?limit=200"
+_assert_json_eq '[.downloads[]? | select(.last_received_at == 0)] | length' 0 \
+	'no download reports last_received_at as a raw 0 (the never-case is null)'
+
+# --- Summary. -----------------------------------------------------
+_summary

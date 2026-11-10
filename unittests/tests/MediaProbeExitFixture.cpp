@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Native process fixture: exercise the runner's actual exit-status handling.
+#include <cstdio>
+#include <chrono>
+#include <thread>
+#include "mediaprobe/sandbox.h"
+#include <csignal>
+#include <sys/resource.h>
+
+int main()
+{
+	rlimit noCore{ 0, 0 };
+	setrlimit(RLIMIT_CORE, &noCore);
+	const int mode = std::getchar();
+	if (mode == 'r') {
+		std::fputs("media-probe sandbox: seccomp installation denied (fixture)\n", stderr);
+		return probe::sandbox::kSetupFailed;
+	}
+	if (mode == 'f') {
+		std::fputs("media-probe sandbox: setup failed (fixture)\n", stderr);
+		return 12;
+	}
+	if (mode == 't') {
+		std::this_thread::sleep_for(std::chrono::seconds(30));
+		return 12;
+	}
+	if (mode == 'd') {
+		const char oversized[10000] = {};
+		std::fwrite(oversized, 1, sizeof(oversized), stderr);
+		return 11;
+	}
+	if (mode != 's') {
+		std::fputs("AMMP 1\n", stdout);
+		if (mode == 'o') {
+			const char oversized[70000] = {};
+			std::fwrite(oversized, 1, sizeof(oversized), stdout);
+		}
+		std::fflush(stdout);
+	}
+	if (mode == 'p') {
+		std::fputs("format.duration=123\nformat.bit_rate=1000\n", stdout);
+		return 12;
+	}
+	if (mode == 'e')
+		return 1;
+	if (mode == 'o')
+		return 11;
+	std::raise(SIGSEGV);
+	return 12;
+}

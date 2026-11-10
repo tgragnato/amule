@@ -23,54 +23,52 @@
 //
 
 #include "ExternalConnector.h"
-#include "config.h"		// Needed for VERSION and readline detection
-#include <clocale>		// For setlocale()
-#include <common/Format.h>	// Needed for CFormat
-#include <wx/tokenzr.h>		// For wxStringTokenizer
+
+#include <common/MuleDebug.h> // Needed for InstallFatalAbortHandler
+
+#include <common/FileFunctions.h> // RestrictToOwner
+#include "config.h"               // Needed for VERSION and readline detection
+#include <common/Format.h>        // Needed for CFormat
+#include <common/LocaleInit.h>    // Needed for aMuleInitLocale()
+#include <wx/tokenzr.h>           // For wxStringTokenizer
 
 // For readline
 #ifdef HAVE_LIBREADLINE
-	#if defined(HAVE_READLINE_READLINE_H)
-		#include <readline/readline.h>  // Do_not_auto_remove
-	#elif defined(HAVE_READLINE_H)
-		#include <readline.h> // Do_not_auto_remove
-	#endif /* !defined(HAVE_READLINE_H) */
-#endif /* HAVE_LIBREADLINE */
+#if defined(HAVE_READLINE_READLINE_H)
+#include <readline/readline.h> // Do_not_auto_remove
+#elif defined(HAVE_READLINE_H)
+#include <readline.h> // Do_not_auto_remove
+#endif                /* !defined(HAVE_READLINE_H) */
+#endif                /* HAVE_LIBREADLINE */
 
 // For history
 #ifdef HAVE_READLINE_HISTORY
-	#if defined(HAVE_READLINE_HISTORY_H)
-		#include <readline/history.h> // Do_not_auto_remove
-	#elif defined(HAVE_HISTORY_H)
-		#include <history.h> // Do_not_auto_remove
-	#endif /* defined(HAVE_READLINE_HISTORY_H) */
-#endif /* HAVE_READLINE_HISTORY */
+#if defined(HAVE_READLINE_HISTORY_H)
+#include <readline/history.h> // Do_not_auto_remove
+#elif defined(HAVE_HISTORY_H)
+#include <history.h> // Do_not_auto_remove
+#endif               /* defined(HAVE_READLINE_HISTORY_H) */
+#endif               /* HAVE_READLINE_HISTORY */
 
-
-#include <ec/cpp/ECFileConfig.h>	// Needed for CECFileConfig
+#include <ec/cpp/ECFileConfig.h> // Needed for CECFileConfig
 #include <common/MD5Sum.h>
-#include "Logger.h"				// for theLogger.SetVerbose
-#include "OtherFunctions.h"		// Needed for GetPassword()
-#include "MuleVersion.h"		// Needed for GetMuleVersion()
-
-#ifdef _MSC_VER  // silly warnings about deprecated functions
-#pragma warning(disable:4996)
-#endif
+#include "Logger.h"         // for theLogger.SetVerbose
+#include "OtherFunctions.h" // Needed for GetPassword()
+#include "MuleVersion.h"    // Needed for GetMuleVersion()
 
 //-------------------------------------------------------------------
 
-CaMuleExternalConnector* CCommandTree::m_app;
+CaMuleExternalConnector *CCommandTree::m_app;
 
 CCommandTree::~CCommandTree()
 {
 	DeleteContents(m_subcommands);
 }
 
-
-CCommandTree* CCommandTree::AddCommand(CCommandTree* command)
+CCommandTree *CCommandTree::AddCommand(CCommandTree *command)
 {
 	command->m_parent = this;
-	const wxString& cmd = command->m_command;
+	const wxString &cmd = command->m_command;
 	CmdPos_t it;
 	for (it = m_subcommands.begin(); it != m_subcommands.end(); ++it) {
 		if ((*it)->m_command > cmd) {
@@ -81,8 +79,7 @@ CCommandTree* CCommandTree::AddCommand(CCommandTree* command)
 	return command;
 }
 
-
-int CCommandTree::FindCommandId(const wxString& command, wxString& args, wxString& cmdstr) const
+int CCommandTree::FindCommandId(const wxString &command, wxString &args, wxString &cmdstr) const
 {
 	wxString cmd = command.BeforeFirst(' ').Lower();
 	for (CmdPosConst_t it = m_subcommands.begin(); it != m_subcommands.end(); ++it) {
@@ -106,7 +103,6 @@ int CCommandTree::FindCommandId(const wxString& command, wxString& args, wxStrin
 	}
 }
 
-
 wxString CCommandTree::GetFullCommand() const
 {
 	wxString cmd = m_command;
@@ -120,8 +116,7 @@ wxString CCommandTree::GetFullCommand() const
 	return cmd;
 }
 
-
-void CCommandTree::PrintHelpFor(const wxString& command) const
+void CCommandTree::PrintHelpFor(const wxString &command) const
 {
 	wxString cmd = command.BeforeFirst(' ').Lower();
 	if (!cmd.IsEmpty()) {
@@ -132,7 +127,8 @@ void CCommandTree::PrintHelpFor(const wxString& command) const
 			}
 		}
 		if (m_parent) {
-			m_app->Show(CFormat(_("Unknown extension '%s' for the '%s' command.\n")) % command % GetFullCommand());
+			m_app->Show(CFormat(_("Unknown extension '%s' for the '%s' command.\n")) % command %
+				    GetFullCommand());
 		} else {
 			m_app->Show(CFormat(_("Unknown command '%s'.\n")) % command);
 		}
@@ -151,7 +147,8 @@ void CCommandTree::PrintHelpFor(const wxString& command) const
 			m_app->Show(_("\nThis command must have an argument.\n"));
 		}
 		if (m_cmd_id == CMD_ERR_INCOMPLETE) {
-			m_app->Show(_("\nThis command is incomplete, you must use one of the extensions below.\n"));
+			m_app->Show(_(
+				"\nThis command is incomplete, you must use one of the extensions below.\n"));
 		}
 		if (!m_subcommands.empty()) {
 			CmdPosConst_t it;
@@ -172,11 +169,15 @@ void CCommandTree::PrintHelpFor(const wxString& command) const
 			maxlen += 4;
 			for (it = m_subcommands.begin(); it != m_subcommands.end(); ++it) {
 				if (!((*it)->m_cmd_id >= 0 && (*it)->m_cmd_id & CMD_DEPRECATED) || m_parent) {
-					m_app->Show((*it)->m_command + wxString(' ', maxlen - (*it)->m_command.Length()) + wxGetTranslation((*it)->m_short) + "\n");
+					m_app->Show((*it)->m_command +
+						    wxString(' ', maxlen - (*it)->m_command.Length()) +
+						    wxGetTranslation((*it)->m_short) + "\n");
 				}
 			}
 			if (!m_parent) {
-				m_app->Show(CFormat(_("\nAll commands are case insensitive.\nType '%s <command>' to get detailed info on <command>.\n")) % "help");
+				m_app->Show(CFormat(_("\nAll commands are case insensitive.\nType '%s "
+						      "<command>' to get detailed info on <command>.\n")) %
+					    "help");
 			}
 		}
 	}
@@ -187,7 +188,7 @@ void CCommandTree::PrintHelpFor(const wxString& command) const
 
 #ifdef HAVE_LIBREADLINE
 
-const CmdList_t* CCommandTree::GetSubCommandsFor(const wxString& command, bool mayRestart) const
+const CmdList_t *CCommandTree::GetSubCommandsFor(const wxString &command, bool mayRestart) const
 {
 	if (command.IsEmpty()) {
 		return &m_subcommands;
@@ -208,20 +209,17 @@ const CmdList_t* CCommandTree::GetSubCommandsFor(const wxString& command, bool m
 	return NULL;
 }
 
-
 // Forward-declare the completion function to make sure it's declaration
 // matches the library requirements.
 rl_compentry_func_t command_completion;
 
-
 // File-scope pointer to the application's command set.
-static CCommandTree * theCommands;
-
+static CCommandTree *theCommands;
 
 char *command_completion(const char *text, int state)
 {
-	static const CmdList_t*	curCommands;
-	static CmdPosConst_t	nextCommand;
+	static const CmdList_t *curCommands;
+	static CmdPosConst_t nextCommand;
 
 	if (state == 0) {
 		wxString lineBuffer(rl_line_buffer, wxConvLibc);
@@ -247,40 +245,40 @@ char *command_completion(const char *text, int state)
 	return NULL;
 }
 
-
 #endif /* HAVE_LIBREADLINE */
 
 //-------------------------------------------------------------------
 
 CaMuleExternalConnector::CaMuleExternalConnector()
-	: m_configFile(NULL),
-	  m_port(-1),
-	  m_ZLIB(false),
-	  m_forceZLIB(false),
-	  m_KeepQuiet(false),
-	  m_Verbose(false),
-	  m_interactive(false),
-	  m_commands(*this),
-	  m_appname(NULL),
-	  m_ECClient(NULL),
-	  m_InputLine(NULL),
-	  m_NeedsConfigSave(false),
-	  m_locale(NULL),
-	  m_strFullVersion(NULL),
-	  m_strOSDescription(NULL)
+: m_configFile(NULL)
+, m_port(-1)
+, m_ZLIB(false)
+, m_forceZLIB(false)
+, m_canMultiSearch(false)
+, m_canSearchProgressUnion(true)
+, m_canChat(false)
+, m_KeepQuiet(false)
+, m_Verbose(false)
+, m_interactive(false)
+, m_commands(*this)
+, m_appname(NULL)
+, m_ECClient(NULL)
+, m_InputLine(NULL)
+, m_NeedsConfigSave(false)
+, m_locale(NULL)
+, m_strFullVersion(NULL)
+, m_strOSDescription(NULL)
 {
-	SetAppName("aMule");	// Do not change!
+	SetAppName("aMule"); // Do not change!
 }
 
 CaMuleExternalConnector::~CaMuleExternalConnector()
 {
 	delete m_configFile;
 	delete m_locale;
-	// new'd in ConnectAndRun, DestroySocket'd at the end of that
-	// method but never delete'd -- process-exit reclaimed it, LSan
-	// flags the ~3 KB one-shot leak (CRemoteConnect + CECSocket /
-	// CQueuedData buffers). Ctor sets this to NULL so the delete is
-	// a no-op when ConnectAndRun was never entered. #704.
+	// new'd in ConnectAndRun and DestroySocket'd at the end of it, but never delete'd --
+	// process exit reclaimed it and LSan flagged the ~3 KB one-shot leak (#704). The ctor sets
+	// this to NULL, so the delete is a no-op when ConnectAndRun was never entered.
 	delete m_ECClient;
 	free(m_strFullVersion);
 	free(m_strOSDescription);
@@ -290,19 +288,23 @@ void CaMuleExternalConnector::OnInitCommandSet()
 {
 	m_commands.AddCommand("Quit", CMD_ID_QUIT, wxTRANSLATE("Exits from the application."), "");
 	m_commands.AddCommand("Exit", CMD_ID_QUIT, wxTRANSLATE("Exits from the application."), "");
-	m_commands.AddCommand("Help", CMD_ID_HELP, wxTRANSLATE("Show help."),
-			      /* TRANSLATORS:
-				 Do not translate the word 'help', it is a command to the program! */
-			      wxTRANSLATE("To get help on a command, type 'help <command>'.\nTo get the full command list type 'help'.\n"));
+	m_commands.AddCommand("Help",
+		CMD_ID_HELP,
+		wxTRANSLATE("Show help."),
+		/* TRANSLATORS:
+		   Do not translate the word 'help', it is a command to the program! */
+		wxTRANSLATE("To get help on a command, type 'help <command>'.\nTo get the full command list "
+			    "type 'help'.\n"));
 }
 
 void CaMuleExternalConnector::Show(const wxString &s)
 {
-	if( !m_KeepQuiet ) {
-		printf("%s", (const char *)unicode2char(s));
-#ifdef __WINDOWS__
-		fflush(stdout);
-#endif
+	if (!m_KeepQuiet) {
+		// `utf8_str()` instead of `unicode2char()`, so non-ASCII output does not collapse
+		// to `?` in a `C` locale (#40). Connectors do call setlocale(LC_ALL, "") below, but
+		// in minimal containers without LANG or LC_ALL the C locale still falls back to
+		// `C`.
+		printf("%s", (const char *)s.utf8_str());
 	}
 }
 
@@ -317,15 +319,15 @@ void CaMuleExternalConnector::ShowGreet()
 	Show(CFormat(_("\nUse '%s' for command list\n\n")) % "Help");
 }
 
-void CaMuleExternalConnector::Process_Answer(const wxString& answer)
+void CaMuleExternalConnector::Process_Answer(const wxString &answer)
 {
 	wxStringTokenizer tokens(answer, "\n");
-	while ( tokens.HasMoreTokens() ) {
+	while (tokens.HasMoreTokens()) {
 		Show(" > " + tokens.GetNextToken() + "\n");
 	}
 }
 
-bool CaMuleExternalConnector::Parse_Command(const wxString& buffer)
+bool CaMuleExternalConnector::Parse_Command(const wxString &buffer)
 {
 	wxString cmd;
 	wxStringTokenizer tokens(buffer);
@@ -338,32 +340,32 @@ bool CaMuleExternalConnector::Parse_Command(const wxString& buffer)
 		return false;
 	}
 	int cmd_ID = GetIDFromString(cmd);
-	if ( cmd_ID >= 0 ) {
+	if (cmd_ID >= 0) {
 		cmd_ID = ProcessCommand(cmd_ID);
 	}
 	wxString error;
 	switch (cmd_ID) {
-		case CMD_ID_HELP:
-			m_commands.PrintHelpFor(GetCmdArgs());
-			break;
-		case CMD_ERR_SYNTAX:
-			error = _("Syntax error!");
-			break;
-		case CMD_ERR_PROCESS_CMD:
-			Show(_("Error processing command - should never happen! Report bug, please\n"));
-			break;
-		case CMD_ERR_NO_PARAM:
-			error = _("This command should not have any parameters.");
-			break;
-		case CMD_ERR_MUST_HAVE_PARAM:
-			error = _("This command must have a parameter.");
-			break;
-		case CMD_ERR_INVALID_ARG:
-			error = _("Invalid argument.");
-			break;
-		case CMD_ERR_INCOMPLETE:
-			error = _("This is an incomplete command.");
-			break;
+	case CMD_ID_HELP:
+		m_commands.PrintHelpFor(GetCmdArgs());
+		break;
+	case CMD_ERR_SYNTAX:
+		error = _("Syntax error!");
+		break;
+	case CMD_ERR_PROCESS_CMD:
+		Show(_("Error processing command - should never happen! Report bug, please\n"));
+		break;
+	case CMD_ERR_NO_PARAM:
+		error = _("This command should not have any parameters.");
+		break;
+	case CMD_ERR_MUST_HAVE_PARAM:
+		error = _("This command must have a parameter.");
+		break;
+	case CMD_ERR_INVALID_ARG:
+		error = _("Invalid argument.");
+		break;
+	case CMD_ERR_INCOMPLETE:
+		error = _("This is an incomplete command.");
+		break;
 	}
 	if (!error.IsEmpty()) {
 		Show(error + '\n');
@@ -376,33 +378,32 @@ bool CaMuleExternalConnector::Parse_Command(const wxString& buffer)
 	return cmd_ID == CMD_ID_QUIT;
 }
 
-void CaMuleExternalConnector::GetCommand(const wxString &prompt, char* buffer, size_t buffer_size)
+void CaMuleExternalConnector::GetCommand(const wxString &prompt, char *buffer, size_t buffer_size)
 {
 #ifdef HAVE_LIBREADLINE
-		char *text = readline(unicode2char(prompt + "$ "));
-		if (text && *text &&
-		    (m_InputLine == 0 || strcmp(text,m_InputLine) != 0)) {
-		  add_history (text);
-		}
-		if (m_InputLine)
-		  free(m_InputLine);
-		m_InputLine = text;
+	char *text = readline(unicode2char(prompt + "$ "));
+	if (text && *text && (m_InputLine == 0 || strcmp(text, m_InputLine) != 0)) {
+		add_history(text);
+	}
+	if (m_InputLine)
+		free(m_InputLine);
+	m_InputLine = text;
 #else
-		Show(prompt + "$ ");
-		const char *text = fgets(buffer, buffer_size, stdin);	// == buffer if ok, NULL if eof
+	Show(prompt + "$ ");
+	const char *text = fgets(buffer, buffer_size, stdin); // == buffer if ok, NULL if eof
 #endif /* HAVE_LIBREADLINE */
-		if ( text ) {
-			size_t len = strlen(text);
-			if (len > buffer_size - 1) {
-				len = buffer_size - 1;
-			}
-			if (buffer != text) {
-				strncpy(buffer, text, len);
-			}
-			buffer[len] = 0;
-		} else {
-			strncpy(buffer, "quit", buffer_size);
+	if (text) {
+		size_t len = strlen(text);
+		if (len > buffer_size - 1) {
+			len = buffer_size - 1;
 		}
+		if (buffer != text) {
+			strncpy(buffer, text, len);
+		}
+		buffer[len] = 0;
+	} else {
+		strncpy(buffer, "quit", buffer_size);
+	}
 }
 
 void CaMuleExternalConnector::TextShell(const wxString &prompt)
@@ -418,21 +419,23 @@ void CaMuleExternalConnector::TextShell(const wxString &prompt)
 	} while ((!The_End) && (m_ECClient->IsSocketConnected()));
 }
 
-void CaMuleExternalConnector::ConnectAndRun(const wxString &ProgName, const wxString& ProgVersion)
+void CaMuleExternalConnector::ConnectAndRun(const wxString &ProgName, const wxString &ProgVersion)
 {
 	if (m_NeedsConfigSave) {
 		SaveConfigFile();
+		if (!FlushConfigFile()) {
+			exit(1);
+		}
 		return;
 	}
 
-	#ifdef GITDATE
-		Show(CFormat(_("This is %s %s %s\n")) % wxString::FromAscii(m_appname) % VERSION % GITDATE);
-	#else
-		Show(CFormat(_("This is %s %s\n")) % wxString::FromAscii(m_appname) % VERSION);
-	#endif
+#ifdef GITDATE
+	Show(CFormat(_("This is %s %s %s\n")) % wxString::FromAscii(m_appname) % VERSION % GITDATE);
+#else
+	Show(CFormat(_("This is %s %s\n")) % wxString::FromAscii(m_appname) % VERSION);
+#endif
 
-	// HostName, Port and Password
-	if ( m_password.IsEmpty() ) {
+	if (m_password.IsEmpty()) {
 		m_password = GetPassword(true);
 		// MD5 hash for an empty string, according to rfc1321.
 		if (m_password.Encode() == "D41D8CD98F00B204E9800998ECF8427E") {
@@ -442,24 +445,32 @@ void CaMuleExternalConnector::ConnectAndRun(const wxString &ProgName, const wxSt
 
 	if (!m_password.IsEmpty()) {
 
-		// Create the socket
 		Show(_("\nCreating client...\n"));
 		m_ECClient = new CRemoteConnect(NULL);
-		m_ECClient->SetCapabilities(m_ZLIB, true, false);	// ZLIB, UTF8 numbers, notification
+		m_ECClient->SetCapabilities(m_ZLIB, true, false); // ZLIB, UTF8 numbers, notification
 		m_ECClient->SetForceZlib(m_forceZLIB);
+		m_ECClient->SetTokenCredential(m_ECTokenCredential);
+		m_ECClient->SetCanMultiSearch(m_canMultiSearch);
+		m_ECClient->SetCanSearchProgressUnion(m_canSearchProgressUnion);
+		m_ECClient->SetCanChatSessions(m_canChat);
+		m_ECClient->SetCanChatPeerHash(m_canChat);
+		// Bound the blocking EC connect so a wrong or unreachable host fails fast instead
+		// of hanging out the OS TCP connect timeout, which can be minutes. The GUI clients
+		// have their own async watchdog; 15 s matches its budget.
+		m_ECClient->SetConnectTimeout(15000);
 
-		// ConnectToCore is blocking since m_ECClient was initialized with NULL
-		if (!m_ECClient->ConnectToCore(m_host, m_port, "foobar", m_password.Encode(), ProgName, ProgVersion)) {
+		// ConnectToCore is blocking, m_ECClient having been initialized with NULL. m_port
+		// is a long (the option parser's type) and the EC client takes an int; the value is
+		// range-checked when read, so the cast is deliberate.
+		if (!m_ECClient->ConnectToCore(
+			    m_host, static_cast<int>(m_port), m_password.Encode(), ProgName, ProgVersion)) {
 			// no connection => close gracefully
 			if (!m_ECClient->GetServerReply().IsEmpty()) {
-					Show(CFormat("%s\n") % m_ECClient->GetServerReply());
+				Show(CFormat("%s\n") % m_ECClient->GetServerReply());
 			}
 			Show(CFormat(_("Connection Failed. Unable to connect to %s:%d\n")) % m_host % m_port);
 		} else {
-			// Authenticate ourselves
-			// ConnectToCore() already authenticated for us.
-			//m_ECClient->ConnectionEstablished();
-			Show(m_ECClient->GetServerReply()+"\n");
+			Show(m_ECClient->GetServerReply() + "\n");
 			if (m_ECClient->IsSocketConnected()) {
 				if (m_interactive) {
 					ShowGreet();
@@ -474,83 +485,144 @@ void CaMuleExternalConnector::ConnectAndRun(const wxString &ProgName, const wxSt
 		}
 		m_ECClient->DestroySocket();
 	} else {
-		Show(_("Cannot connect with an empty password.\nYou must specify a password either in config file\nor on command-line, or enter one when asked.\n\nExiting...\n"));
+		Show(_("Cannot connect with an empty password.\nYou must specify a password either in config "
+		       "file\nor on command-line, or enter one when asked.\n\nExiting...\n"));
 	}
 }
 
-void CaMuleExternalConnector::OnInitCmdLine(wxCmdLineParser& parser, const char* appname)
+void CaMuleExternalConnector::OnInitCmdLine(wxCmdLineParser &parser, const char *appname)
 {
 	m_appname = appname;
+	theLogger.SetProgramName(wxString::FromAscii(appname));
 
-	parser.AddSwitch("", "help",
-		_("Show this help text."),
-		wxCMD_LINE_PARAM_OPTIONAL);
-	parser.AddOption("h", "host",
+	parser.AddSwitch("", "help", _("Show this help text."), wxCMD_LINE_PARAM_OPTIONAL);
+	parser.AddOption("h",
+		"host",
 		_("Host where aMule is running. (default: 127.0.0.1)"),
-		wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL);
-	parser.AddOption("p", "port",
+		wxCMD_LINE_VAL_STRING,
+		wxCMD_LINE_PARAM_OPTIONAL);
+	parser.AddOption("p",
+		"port",
 		_("aMule's port for External Connection. (default: 4712)"),
-		wxCMD_LINE_VAL_NUMBER, wxCMD_LINE_PARAM_OPTIONAL);
-	parser.AddOption("P", "password",
-		_("External Connection password."),
-		wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL);
-	parser.AddOption("f", "config-file",
-		_("Read configuration from file."),
-		wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL);
-	parser.AddSwitch("q", "quiet",
-		_("Do not print any output to stdout."),
+		wxCMD_LINE_VAL_NUMBER,
 		wxCMD_LINE_PARAM_OPTIONAL);
-	parser.AddSwitch("v", "verbose",
-		_("Be verbose - show also debug messages."),
-		wxCMD_LINE_PARAM_OPTIONAL);
-	parser.AddOption("l", "locale",
+	if (UsesEcPasswordOption()) {
+		parser.AddOption("P",
+			"password",
+			_("External Connection password."),
+			wxCMD_LINE_VAL_STRING,
+			wxCMD_LINE_PARAM_OPTIONAL);
+	}
+	if (UsesConnectorConfigFile()) {
+		parser.AddOption("f",
+			"config-file",
+			_("Read configuration from file."),
+			wxCMD_LINE_VAL_STRING,
+			wxCMD_LINE_PARAM_OPTIONAL);
+	}
+	parser.AddSwitch("q", "quiet", _("Do not print any output to stdout."), wxCMD_LINE_PARAM_OPTIONAL);
+	parser.AddSwitch(
+		"v", "verbose", _("Be verbose - show also debug messages."), wxCMD_LINE_PARAM_OPTIONAL);
+	parser.AddOption("l",
+		"locale",
 		_("Sets program locale (language)."),
-		wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL);
-	parser.AddSwitch("w", "write-config",
-		_("Write command line options to config file."),
+		wxCMD_LINE_VAL_STRING,
 		wxCMD_LINE_PARAM_OPTIONAL);
-	parser.AddOption("", "create-config-from",
-		_("Creates config file based on aMule's config file."),
-		wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL);
-	parser.AddSwitch("", "version",
-		_("Print program version."),
-		wxCMD_LINE_PARAM_OPTIONAL);
-	parser.AddSwitch("", "force-zlib",
-		_("Force ZLIB compression regardless of dialed-IP locality (useful when the server is reachable over a VPN tunnel that resolves to a LAN IP)."),
+	if (UsesConnectorConfigFile()) {
+		parser.AddSwitch("w",
+			"write-config",
+			_("Write command line options to config file."),
+			wxCMD_LINE_PARAM_OPTIONAL);
+		parser.AddOption("",
+			"create-config-from",
+			_("Creates config file based on aMule's config file."),
+			wxCMD_LINE_VAL_STRING,
+			wxCMD_LINE_PARAM_OPTIONAL);
+	}
+	parser.AddSwitch("", "version", _("Print program version."), wxCMD_LINE_PARAM_OPTIONAL);
+	parser.AddSwitch("",
+		"force-zlib",
+		_("Force ZLIB compression regardless of dialed-IP locality (useful when the server is "
+		  "reachable over a VPN tunnel that resolves to a LAN IP)."),
 		wxCMD_LINE_PARAM_OPTIONAL);
 }
 
-bool CaMuleExternalConnector::OnCmdLineParsed(wxCmdLineParser& parser)
+// Defined here rather than in amuleapi: src/webapi is not in po/POTFILES.in, so these strings
+// would lose their translations there.
+void CaMuleExternalConnector::AddLogFileOptions(wxCmdLineParser &parser)
+{
+	parser.AddOption("",
+		"log-file",
+		_("Append a copy of all console output to this log file "
+		  "(default: <config-dir>/amuleapi.log)."),
+		wxCMD_LINE_VAL_STRING,
+		wxCMD_LINE_PARAM_OPTIONAL);
+	parser.AddSwitch("",
+		"no-log-file",
+		_("Do not write a log file; print to the console only."),
+		wxCMD_LINE_PARAM_OPTIONAL);
+}
+
+bool CaMuleExternalConnector::OnCmdLineParsed(wxCmdLineParser &parser)
 {
 	if (parser.Found("version")) {
-		printf("%s %s\n", m_appname, (const char *)unicode2char(GetMuleVersion()));
+		printf("%s %s\n", m_appname, (const char *)GetMuleVersion().utf8_str());
 		return false;
 	}
 
-	if (!parser.Found("config-file", &m_configFileName)) {
+	// The config *directory* is resolved either way -- subclasses without a
+	// connector config file still need somewhere to put their own.
+	if (!UsesConnectorConfigFile() || !parser.Found("config-file", &m_configFileName)) {
 		m_configFileName = "remote.conf";
 	}
-	m_configDir = GetConfigDir(m_configFileName);
-	m_configFileName = m_configDir + m_configFileName;
+	// Portable detection is "does <cwd>/config/<probe> exist", so each connector probes for the
+	// file it actually owns rather than for remote.conf regardless.
+	m_configDir = GetConfigDir(PortableProbeFile());
+	m_configFileName = FinalizeFilename(m_configFileName, m_configDir);
 
 	wxString aMuleConfigFile;
-	if (parser.Found("create-config-from", &aMuleConfigFile)) {
+	const bool createConfig =
+		UsesConnectorConfigFile() && parser.Found("create-config-from", &aMuleConfigFile);
+	if (createConfig) {
 		aMuleConfigFile = FinalizeFilename(aMuleConfigFile);
 		if (!::wxFileExists(aMuleConfigFile)) {
-			fprintf(stderr, "%s\n", (const char *)unicode2char("FATAL ERROR: File does not exist: " + aMuleConfigFile));
+			fprintf(stderr,
+				"%s\n",
+				(const char *)(wxString("FATAL ERROR: File does not exist: ") +
+					       aMuleConfigFile)
+					.utf8_str());
 			exit(1);
 		}
+		// Preserve saved connector-only settings and the client credential when
+		// the daemon now stores only a verifier. Explicit -P below still wins.
+		LoadConfigFile();
 		CECFileConfig aMuleConfig(aMuleConfigFile);
 		LoadAmuleConfig(aMuleConfig);
-		SaveConfigFile();
-		m_configFile->Flush();
-		exit(0);
+	} else if (UsesConnectorConfigFile()) {
+		LoadConfigFile();
 	}
 
-	LoadConfigFile();
+	if (UsesEcPasswordOption()) {
+		wxString pass_plain;
+		if (parser.Found("password", &pass_plain)) {
+			if (!pass_plain.IsEmpty()) {
+				m_password.Decode(MD5Sum(pass_plain).GetHash());
+			} else {
+				m_password.Clear();
+			}
+		}
+	}
 
-	if ( !parser.Found("host", &m_host) ) {
-		if ( m_host.IsEmpty() ) {
+	if (createConfig) {
+		if (m_password.IsEmpty())
+			Show(_("The daemon verifier cannot supply a client password. Use -P or the password "
+			       "prompt.\n"));
+		SaveConfigFile();
+		exit(FlushConfigFile() ? 0 : 1);
+	}
+
+	if (!parser.Found("host", &m_host)) {
+		if (m_host.IsEmpty()) {
 			m_host = "127.0.0.1";
 		}
 	}
@@ -560,20 +632,11 @@ bool CaMuleExternalConnector::OnCmdLineParsed(wxCmdLineParser& parser)
 		m_port = port;
 	}
 
-	wxString pass_plain;
-	if (parser.Found("password", &pass_plain)) {
-		if (!pass_plain.IsEmpty()) {
-			m_password.Decode(MD5Sum(pass_plain).GetHash());
-		} else {
-			m_password.Clear();
-		}
-	}
-
 	if (parser.Found("force-zlib")) {
 		m_forceZLIB = true;
 	}
 
-	if (parser.Found("write-config")) {
+	if (UsesConnectorConfigFile() && parser.Found("write-config")) {
 		m_NeedsConfigSave = true;
 	}
 
@@ -587,11 +650,9 @@ bool CaMuleExternalConnector::OnCmdLineParsed(wxCmdLineParser& parser)
 	m_KeepQuiet = parser.Found("quiet");
 	m_Verbose = parser.Found("verbose");
 
-	// Wire --verbose to the console logger gate so AddDebugLogLine* output
-	// from this binary obeys the CLI flag the same way amuled obeys its
-	// VerboseDebug pref. LoadAmuleConfig may have already set the gate
-	// from /eMule/VerboseDebug above; --verbose acts as an explicit
-	// runtime override when present.
+	// Wire --verbose to the console logger gate, so AddDebugLogLine* output obeys the CLI flag
+	// the way amuled obeys its VerboseDebug pref. LoadAmuleConfig may already have set the
+	// gate; --verbose overrides it.
 	if (m_Verbose) {
 		theLogger.SetVerbose(true);
 	}
@@ -599,15 +660,16 @@ bool CaMuleExternalConnector::OnCmdLineParsed(wxCmdLineParser& parser)
 	return true;
 }
 
-void CaMuleExternalConnector::LoadAmuleConfig(CECFileConfig& cfg)
+void CaMuleExternalConnector::LoadAmuleConfig(CECFileConfig &cfg)
 {
 	m_host = "127.0.0.1";
 	m_port = cfg.Read("/ExternalConnect/ECPort", 4712l);
-	cfg.ReadHash("/ExternalConnect/ECPassword", &m_password);
+	if (!cfg.HasEntry("/ExternalConnect/ECPasswordVerifier")) {
+		cfg.ReadHash("/ExternalConnect/ECPassword", &m_password);
+	}
 	m_language = cfg.Read("/eMule/Language", "");
 	theLogger.SetVerbose(cfg.Read("/eMule/VerboseDebug", 0l) != 0);
 }
-
 
 void CaMuleExternalConnector::LoadConfigFile()
 {
@@ -615,16 +677,16 @@ void CaMuleExternalConnector::LoadConfigFile()
 		m_configFile = new CECFileConfig(m_configFileName);
 	}
 	if (m_configFile) {
+		// Same reasoning as the core's amule.conf: this file stores the EC
+		// password, and the stored value is what authenticates.
+		RestrictToOwner(CPath(m_configFileName));
 		m_language = m_configFile->Read("/Locale", "");
-		// Match the default across amulecmd / amuleweb / amulegui.
-		// Use the literal loopback address rather than "localhost":
-		// on Windows, "localhost" lookups can fail intermittently
-		// (IPv4 vs IPv6 stack ordering, Hosts file shape, ...),
-		// reported on #822 — `Connection Failed. Unable to connect
-		// to localhost:4712`. 127.0.0.1 is portable across every
-		// supported OS and unambiguous. The OnCmdLineParsed runtime
-		// fallback below keeps the "no config file at all" path
-		// covered as a safety net. (#821, #822)
+		// Match the default across amulecmd / amuleweb / amulegui. The literal loopback
+		// address rather than "localhost": on Windows those lookups can fail intermittently
+		// (IPv4 vs IPv6 stack ordering, Hosts file shape), showing up as `Connection
+		// Failed. Unable to connect to localhost:4712` (#822). 127.0.0.1 is portable and
+		// unambiguous, and the OnCmdLineParsed fallback covers the "no config file at all"
+		// path.
 		m_host = m_configFile->Read("/EC/Host", "127.0.0.1");
 		m_port = m_configFile->Read("/EC/Port", 4712l);
 		m_configFile->ReadHash("/EC/Password", &m_password);
@@ -635,9 +697,6 @@ void CaMuleExternalConnector::LoadConfigFile()
 
 void CaMuleExternalConnector::SaveConfigFile()
 {
-	if (!wxFileName::DirExists(m_configDir)) {
-		wxFileName::Mkdir(m_configDir);
-	}
 	if (!m_configFile) {
 		m_configFile = new CECFileConfig(m_configFileName);
 	}
@@ -646,57 +705,71 @@ void CaMuleExternalConnector::SaveConfigFile()
 		m_configFile->Write("/EC/Host", m_host);
 		m_configFile->Write("/EC/Port", m_port);
 		m_configFile->WriteHash("/EC/Password", m_password);
-		// ZLIB was previously read in LoadConfigFile but never written
-		// here — toggling --disable-zlib at the command line would not
-		// persist, and any value in the config file silently reset to
-		// the 1 (enabled) default on every save. Persist it so the
-		// field actually round-trips. (#817)
+		// ZLIB was read in LoadConfigFile but never written here, so toggling --disable-
+		// zlib did not persist and any value in the config file silently reset to the
+		// enabled default on every save (#817).
 		m_configFile->Write("/EC/ZLIB", m_ZLIB ? 1l : 0l);
 		m_configFile->Write("/EC/ForceZLIB", m_forceZLIB ? 1l : 0l);
+		m_configFile->DeleteEntry("/EC/Encryption");
 	}
+}
+
+bool CaMuleExternalConnector::FlushConfigFile()
+{
+	// Explicit --config-file paths can be outside m_configDir. Create their parent instead
+	// of an unrelated default directory, and flush after subclasses have written their keys.
+	const wxFileName configFile(m_configFileName);
+	if (!configFile.GetPath().IsEmpty() && !configFile.DirExists() &&
+		!configFile.Mkdir(wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL)) {
+		return false;
+	}
+	if (!m_configFile || !m_configFile->Flush()) {
+		return false;
+	}
+	// The umask covers a new file; an existing one keeps its mode across the rewrite.
+	RestrictToOwner(CPath(m_configFileName));
+	return true;
 }
 
 bool CaMuleExternalConnector::OnInit()
 {
-#ifndef __WINDOWS__
-	#if wxUSE_ON_FATAL_EXCEPTION
-		// catch fatal exceptions
-		wxHandleFatalExceptions(true);
-	#endif
-#endif
+	// Pull the libc locale from the environment before any wxString -> char* conversion runs
+	// via unicode2char(). Otherwise the process stays on the default "C" locale and wxConvLibc
+	// collapses every non-ASCII codepoint to '?'. readline does its own setlocale on first
+	// read, so paths through it appear to work; non-interactive paths do not. The helper also
+	// forces LC_NUMERIC back to "C" so libc printf/scanf decimal handling stays portable.
+	aMuleInitLocale();
 
-	// Pull the libc locale from the environment (LANG / LC_ALL / etc.)
-	// before any wxString -> char* conversion runs via unicode2char().
-	// Otherwise the process stays on the default "C" locale and
-	// wxConvLibc collapses every non-ASCII codepoint to '?' on output.
-	// readline does its own setlocale on first read, so paths that go
-	// through readline appear to work; non-interactive paths (e.g.
-	// amulecmd -c "...") don't and need the explicit init here.
-	setlocale(LC_ALL, "");
-
-	// If we didn't know that OnInit is called only once when creating the
-	// object, it could cause a memory leak. The two pointers below should
-	// be free()'d before assigning the new value.
+	// OnInit runs once per object; the two pointers below would otherwise need free()ing first.
 	// cppcheck-suppress publicAllocationError
 	m_strFullVersion = strdup((const char *)unicode2char(GetMuleVersion()));
 	m_strOSDescription = strdup((const char *)unicode2char(wxGetOsDescription()));
 
-	// Handle uncaught exceptions
 	InstallMuleExceptionHandler();
 
 	bool retval = wxApp::OnInit();
+
+	// Below wxApp::OnInit(), which is what runs OnInitCmdLine() and so sets m_appname: above it
+	// the name is still NULL and the banner would name no binary at all, which is the one thing
+	// it exists to say. amulecmd, amuleweb and amuleapi share a version string, so without the
+	// name a pasted report cannot be attributed. The handler is armed before this point and
+	// would report without a version line; that is strictly better than one that never has a
+	// name. Written from a signal handler, which cannot format, hence the fixed buffer.
+	// The casts matter: CFormat resolves char* to its pointer overload and would print the
+	// addresses, where const char* formats the string.
+	SetFatalAbortVersionLine((const char *)unicode2char(CFormat("%s %s on %s") % m_appname %
+							    (const char *)m_strFullVersion %
+							    (const char *)m_strOSDescription));
+
 	OnInitCommandSet();
 	InitCustomLanguages();
 	SetLocale(m_language);
 
 #ifdef HAVE_LIBREADLINE
-	// Allow conditional parsing of the ~/.inputrc file.
-	//
-	// OnInitCmdLine() is called from wxApp::OnInit() above,
-	// thus m_appname is already set.
-	// macOS libedit's rl_readline_name is char* (not const char*) and
-	// rl_completion_entry_function is Function* (not rl_compentry_func_t*).
-	// GNU readline on Linux has the correct const types.
+	// Allow conditional parsing of the ~/.inputrc file. OnInitCmdLine() is called from
+	// wxApp::OnInit() above, so m_appname is already set. macOS libedit's rl_readline_name is
+	// char* and rl_completion_entry_function is Function*, where GNU readline on Linux has the
+	// const types.
 #ifdef __WXMAC__
 	rl_readline_name = const_cast<char *>(m_appname);
 	theCommands = &m_commands;
@@ -711,13 +784,12 @@ bool CaMuleExternalConnector::OnInit()
 	return retval;
 }
 
-wxString CaMuleExternalConnector::SetLocale(const wxString& language)
+wxString CaMuleExternalConnector::SetLocale(const wxString &language)
 {
 	if (!language.IsEmpty()) {
 		m_language = language;
-		if (m_locale) {
-			delete m_locale;
-		}
+
+		delete m_locale;
 		m_locale = new wxLocale;
 		InitLocale(*m_locale, StrLang2wx(language));
 	}
@@ -725,13 +797,13 @@ wxString CaMuleExternalConnector::SetLocale(const wxString& language)
 	return m_locale == NULL ? wxString() : m_locale->GetCanonicalName();
 }
 
-
 #if wxUSE_ON_FATAL_EXCEPTION
 // Gracefully handle fatal exceptions and print backtrace if possible
 void CaMuleExternalConnector::OnFatalException()
 {
 	/* Print the backtrace */
-	fprintf(stderr, "\n--------------------------------------------------------------------------------\n");
+	fprintf(stderr,
+		"\n--------------------------------------------------------------------------------\n");
 	fprintf(stderr, "A fatal error has occurred and %s has crashed.\n", m_appname);
 	fprintf(stderr, "Please assist us in fixing this problem by reporting the backtrace below as a\n");
 	fprintf(stderr, "GitHub issue, including as much information as possible regarding the\n");
@@ -745,20 +817,27 @@ void CaMuleExternalConnector::OnFatalException()
 
 	print_backtrace(1); // 1 == skip this function.
 
-	fprintf(stderr, "\n--------------------------------------------------------------------------------\n");
+	fprintf(stderr,
+		"\n--------------------------------------------------------------------------------\n");
+
+	// wx's handler calls abort() as soon as this returns, so without this the SIGABRT handler
+	// adds a second, raw backtrace under a banner that blames the allocator. The symbolicated
+	// one above is the report; this keeps it the only one.
+	SuppressNextAbortBacktrace();
 }
 #endif
 
 #ifdef __WXDEBUG__
-void CaMuleExternalConnector::OnAssertFailure(const wxChar *file, int line, const wxChar *func, const wxChar *cond, const wxChar *msg)
+void CaMuleExternalConnector::OnAssertFailure(
+	const wxChar *file, int line, const wxChar *func, const wxChar *cond, const wxChar *msg)
 {
 #if !defined wxUSE_STACKWALKER || !wxUSE_STACKWALKER
-	// Wrap both ternary branches in wxString() so the conditional has a single
-	// pointer type — raw `msg ? msg : ""` is a const wxChar* / const char*
-	// mix that Alpine's GCC 14 (and stricter GCCs in general) rejects.
-	wxString errmsg = CFormat( "%s:%s:%d: Assertion '%s' failed. %s" ) % file % func % line % cond % ( msg ? wxString(msg) : wxString() );
+	// Wrap both ternary branches in wxString() so the conditional has a single pointer type --
+	// raw `msg ? msg : ""` is a const wxChar* / const char* mix that Alpine's GCC 14 rejects.
+	wxString errmsg = CFormat("%s:%s:%d: Assertion '%s' failed. %s") % file % func % line % cond %
+			  (msg ? wxString(msg) : wxString());
 
-	fprintf(stderr, "Assertion failed: %s\n", (const char*)unicode2char(errmsg));
+	fprintf(stderr, "Assertion failed: %s\n", (const char *)unicode2char(errmsg));
 
 	// Skip the function-calls directly related to the assert call.
 	fprintf(stderr, "\nBacktrace follows:\n");

@@ -26,74 +26,34 @@
 
 #include "GetTickCount.h" // Interface
 
-//seconds from app start-up, check GetTickCount.h
-uint32 TheTime = 0;
+// seconds from app start-up, check GetTickCount.h
+std::atomic<uint32> TheTime{ 0 };
 
-#ifdef __WINDOWS__
+#include <time.h> // Needed for clock_gettime
 
-void StartTickTimer(){};
-
-void StopTickTimer(){};
-
-/**
- * Returns the tickcount in milliseconds in 64bits.
- */
-uint64 GetTickCount_64()
+// In milliseconds, not seconds: avoids the 32-bit rollover error for differences above 50 days,
+// 2**32 milliseconds being roughly 50 days.
+uint64 GetTickCount64(void)
 {
-	// Use highres timer for all operations on Windows
-	// The Timer starts at system boot and runs (on a Intel Quad core)
-	// with 14 million ticks per second. So it won't overflow for
-	// 35000 years.
-
-	// Convert hires ticks to milliseconds
-	static double tickFactor;
-	_LARGE_INTEGER li;
-
-	static bool first = true;
-	if (first) {
-		// calculate the conversion factor for the highres timer
-		QueryPerformanceFrequency(&li);
-		tickFactor = 1000.0 / li.QuadPart;
-		first = false;
-	}
-
-	QueryPerformanceCounter(&li);
-	return li.QuadPart * tickFactor;
-}
-
-#else
-
-#include <time.h>		// Needed for clock_gettime
-
-// in milliseconds, not seconds
-// avoids 32bit rollover error for differences above 50days
-// since 2**32 milliseconds = 50 days aprox
-uint64 GetTickCount64(void) {
 	struct timespec ts;
 	uint64 msecs;
 
-	// Fetch time (Y2038-safe)
-	// CLOCK_MONOTONIC: tick count is for timeouts / deltas, must not
-	// jump when wall clock is adjusted. Callers that need a Unix
-	// timestamp (CClientCredits::SetLastSeen, partfile source-seeds
-	// serialization, wxCas defaults) should use time(NULL) instead.
+	// Fetch time (Y2038-safe). CLOCK_MONOTONIC: the tick count is for timeouts and deltas and
+	// must not jump when the wall clock is adjusted. Callers needing a Unix timestamp
+	// (CClientCredits::SetLastSeen, partfile source-seeds serialization, wxCas defaults) should
+	// use time(NULL) instead.
 	clock_gettime(CLOCK_MONOTONIC, &ts);
-	msecs = (uint64) ts.tv_sec * 1000;
+	msecs = (uint64)ts.tv_sec * 1000;
 	msecs += ts.tv_nsec / 1000000;
 	return msecs;
 }
 
 /**
  * Copyright (c) 2002-2011 Timo Kujala ( tiku@users.sourceforge.net )
- * gettimeofday() syscall based implementation. Upon request to GetTickCount(),
- * gettimeofday syscall is being used to retrieve system time and returned. This
- * means EACH GetTickCount() call will produce a new syscall, thus becoming
- * increasingly heavy on CPU as the program uptime increases and more things
- * need to be done.
+ *
+ * gettimeofday() syscall based implementation. Each GetTickCount() call produces a new syscall, so
+ * it grows increasingly heavy on CPU as uptime increases and more things need doing.
  */
-	void StartTickTimer() {}
+void StartTickTimer() {}
 
-	void StopTickTimer() {}
-
-#endif
-// File_checked_for_headers
+void StopTickTimer() {}

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <defs>
+    <linearGradient id="chev" x1="0" y1="0" x2="0.55" y2="1">
+      <stop offset="0" stop-color="#79d873"/>
+      <stop offset="0.5" stop-color="#3fb24a"/>
+      <stop offset="1" stop-color="#2c8636"/>
+    </linearGradient>
+  </defs>
+  <path d="M 0.5999999999999996 7.1 L 15.4 7.1 L 8 15.4 Z" fill="url(#chev)" stroke="#245b2b" stroke-width="0.55" stroke-linejoin="round"/>
+  <path d="M 1.6 11.25 L 4.3 13.08" fill="none" stroke="#d3f5cf" stroke-width="0.7" opacity="0.75" stroke-linecap="round"/>
+  <path d="M 2.4000000000000004 3.9 L 13.6 3.9 L 8 9.7 Z" fill="url(#chev)" stroke="#245b2b" stroke-width="0.55" stroke-linejoin="round"/>
+  <path d="M 3.4 6.8 L 5.2 8.08" fill="none" stroke="#d3f5cf" stroke-width="0.7" opacity="0.75" stroke-linecap="round"/>
+  <path d="M 3.8 0.7 L 12.2 0.7 L 8 5.7 Z" fill="url(#chev)" stroke="#245b2b" stroke-width="0.55" stroke-linejoin="round"/>
+  <path d="M 4.8 3.2 L 5.9 4.3" fill="none" stroke="#d3f5cf" stroke-width="0.7" opacity="0.75" stroke-linecap="round"/>
+</svg>

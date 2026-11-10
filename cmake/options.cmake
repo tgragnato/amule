@@ -20,7 +20,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 #
-# This file contains the options for en- or disabling parts of aMule, and
+# This file contains the options for enabling or disabling parts of aMule, and
 # sets the needed variables for them to compile
 #
 
@@ -33,7 +33,11 @@ option (BUILD_MONOLITHIC "enable building of the monolithic aMule app" ON)
 
 option (BUILD_REMOTEGUI "compile aMule remote GUI")
 option (BUILD_WEBSERVER "compile aMule WebServer")
-option (BUILD_TESTING "Run Tests after compile" ON)
+option (BUILD_AMULEAPI "compile aMule REST API daemon")
+option (BUILD_WXCAS "compile aMule GUI Statistics")
+option (BUILD_TESTING "Build unit tests" OFF)
+option (ENABLE_QUIC "compile QUIC transport support" OFF)
+option (USE_SYSTEM_PICOJSON "Use system-installed picojson instead of bundled copy" OFF)
 
 if (PREFIX)
 	set (CMAKE_INSTALL_PREFIX "${PREFIX}")
@@ -48,6 +52,8 @@ if (BUILD_EVERYTHING)
 	set (BUILD_DAEMON ON CACHE BOOL "compile aMule daemon version" FORCE)
 	set (BUILD_REMOTEGUI ON CACHE BOOL "compile aMule remote GUI" FORCE)
 	set (BUILD_WEBSERVER ON CACHE BOOL "compile aMule WebServer" FORCE)
+	set (BUILD_AMULEAPI ON CACHE BOOL "compile aMule REST API daemon" FORCE)
+	set (BUILD_WXCAS ON CACHE BOOL "compile aMule GUI Statistics" FORCE)
 endif()
 
 if (BUILD_AMULECMD)
@@ -56,6 +62,53 @@ if (BUILD_AMULECMD)
 	set (NEED_LIB_MULESOCKET TRUE)
 	set (wx_NEED_NET TRUE)
 	set (NEED_ZLIB TRUE)
+endif()
+
+if (BUILD_AMULEAPI)
+	# Mirrors amulecmd's needs: EC connection, mulecommon helpers (Format,
+	# MD5Sum), socket lib for CRemoteConnect. Boost.Beast is header-only
+	# so we don't add a Boost component requirement; the link-side Boost
+	# is already wired via the project-level `Boost_LIBRARIES` lookup.
+	#
+	# Hard-fail policy. `BUILD_AMULEAPI=YES` + missing dep must fail
+	# at configure time, never soft-disable the target. Today the
+	# guarantees come from upstream wiring:
+	#   * cryptopp — `NEED_LIB_EC` (set below) implies `NEED_LIB_CRYPTO`,
+	#     which includes cmake/cryptopp.cmake; that file FATAL_ERRORs
+	#     on a missing `cryptlib.h`.
+	#   * Boost   — `cmake/boost.cmake` runs unconditionally at the
+	#     project root and uses `find_package(Boost CONFIG REQUIRED)`,
+	#     which FATAL_ERRORs on miss.
+	# If a future refactor breaks either chain (e.g. moves Boost
+	# behind a conditional `if`), add an explicit `find_package(Boost
+	# CONFIG REQUIRED)` here so amuleapi keeps fail-loud.
+	set (NEED_LIB_EC TRUE)
+	set (NEED_LIB_MULECOMMON TRUE)
+	set (NEED_LIB_MULESOCKET TRUE)
+	set (wx_NEED_NET TRUE)
+	set (NEED_ZLIB TRUE)
+	# Compile-time install path the daemon falls back to when
+	# [Server]/StaticRoot is empty in the conf. Mirrors WEBSERVERDIR but
+	# uses the ABSOLUTE form so a binary running from /usr/local/bin
+	# (or wherever the operator put it) resolves to the matching
+	# /usr/local/share/amule/amuleapi-static without needing to be
+	# cwd'd at the install prefix.
+	set (AMULEAPI_STATIC_DIR
+		"${CMAKE_INSTALL_FULL_DATADIR}/${PACKAGE}/amuleapi-static/")
+endif()
+
+if (BUILD_CAS)
+	set (BUILD_UTIL TRUE)
+endif()
+
+if (BUILD_ALCC)
+	set (BUILD_UTIL TRUE)
+	set (wx_NEED_BASE TRUE)
+endif()
+
+if (BUILD_ALC)
+	set (BUILD_UTIL TRUE)
+	set (wx_NEED_GUI TRUE)
 endif()
 
 if (BUILD_DAEMON)
@@ -119,26 +172,55 @@ if (NEED_LIB_MULECOMMON)
 endif()
 
 if (NEED_LIB_MULEAPPCOMMON)
-	option (ENABLE_BOOST "compile with Boost.ASIO Sockets" ON)
-	option (ENABLE_MMAP "enable using mapped memory if supported")
+	# Compile the mmap file-I/O path where the platform supports it (libc
+	# capability, no external dependency). Actual use is a runtime preference
+	# (MMapEnabled, default OFF). Set OFF only to exclude the mmap code and its
+	# SIGSEGV/SIGBUS handler entirely (e.g. sanitizer builds).
+	option (ENABLE_MMAP "compile the mmap file-I/O path where supported" ON)
 	option (ENABLE_NLS "enable national language support" ON)
+	# wxWidgets' own catalogs ship beside aMule's where no system wx provides them: the macOS
+	# bundles, the Windows install and the AppImage. A distro's wx package owns them on Linux.
+	if (APPLE)
+		set (_amule_wx_catalogs_default ON)
+	else()
+		set (_amule_wx_catalogs_default OFF)
+	endif()
+	option (BUNDLE_WX_CATALOGS "ship wxWidgets' translations with aMule's" ${_amule_wx_catalogs_default})
+	unset (_amule_wx_catalogs_default)
+	# Backtrace symbol resolution: ON => use libbfd for in-process
+	# address→file:line resolution; OFF => fall back to
+	# backtrace_symbols() for function names + an external addr2line
+	# popen() for line info (MuleDebug.cpp). Off is intended for
+	# environments that ship libbfd in the SDK but not in the runtime
+	# (e.g. GNOME-Platform-based Flatpak builds, see #13).
+	option (ENABLE_BFD "use libbfd for in-process backtrace symbol resolution" ON)
 	set (NEED_LIB_MULEAPPCORE TRUE)
 	set (wx_NEED_BASE TRUE)
 else()
 	set (ENABLE_BOOST FALSE)
 	set (ENABLE_MMAP FALSE)
 	set (ENABLE_NLS FALSE)
+	set (BUNDLE_WX_CATALOGS FALSE)
+	set (ENABLE_BFD FALSE)
 endif()
 
 if (NEED_LIB_MULEAPPGUI)
 	set (wx_NEED_GUI TRUE)
+	# The log/server-info panes use wxStyledTextCtrl (Scintilla) for fast,
+	# full-history scrolling; only the GUI lib pulls it in.
+	set (wx_NEED_STC TRUE)
 endif()
 
 if (NEED_LIB_MULESOCKET)
 	set (wx_NEED_BASE TRUE)
 endif()
 
-if (ENABLE_BOOST AND NOT (BUILD_DAEMON OR BUILD_MONOLITHIC OR BUILD_REMOTEGUI))
+# boost::asio is mandatory; the remaining wxWidgets-sockets consumers are
+# the daemon/GUI EC paths, the wxcas helper, and amuleweb (which links
+# wxWidgets::NET directly in src/webserver/src/CMakeLists.txt for its
+# socket code). Keep wx_NEED_NET on only when those are actually being
+# built.
+if (NOT (BUILD_DAEMON OR BUILD_MONOLITHIC OR BUILD_REMOTEGUI OR BUILD_WEBSERVER OR BUILD_WXCAS OR BUILD_AMULECMD OR BUILD_AMULEAPI))
 	set (wx_NEED_NET FALSE)
 endif()
 
@@ -146,4 +228,140 @@ if (wx_NEED_BASE OR wx_NEED_GUI OR wx_NEED_NET)
 	set (wx_NEEDED TRUE)
 endif()
 
-ADD_COMPILE_DEFINITIONS ($<$<CONFIG:DEBUG>:__DEBUG__>)
+add_compile_definitions ($<$<CONFIG:DEBUG>:__DEBUG__>)
+
+# Refuse deprecated Boost.Asio APIs. Set for EVERY target on purpose, never in
+# a single source file: the macro does not only hide deprecated names, it
+# switches BOOST_ASIO_SYNC_OP_VOID between void and error_code, which changes
+# the return type of basic_socket::close() and its siblings. Those are weak
+# inline templates, so a translation unit that disagrees with the rest still
+# links -- against whichever definition the linker happened to keep -- and the
+# caller then sets up the wrong ABI for the call. Defined in one .cpp, it made
+# amuleapi write a returned error_code over a live socket object and abort with
+# bad_weak_ptr on shutdown (issue #1214).
+#
+# Safe only while Asio is header-only, which it is here: nothing links a
+# prebuilt Boost. If that ever changes, this has to match how that Boost was
+# built, or the same mismatch returns at the library boundary.
+add_compile_definitions (BOOST_ASIO_NO_DEPRECATED)
+
+# Experimental IPv4 uTP in amule/amuled only: datagram framing, inbound streams
+# and outbound dials, and the transport NAT traversal connects over.
+option (ENABLE_UTP "enable experimental uTP: datagram framing, inbound streams and outbound dialing" OFF)
+
+# IPv6 TCP admission is intentionally separate from listener activation and the
+# remaining IPv6 identity work. Keep it off until those consumers are migrated.
+option (ENABLE_IPV6 "enable experimental native IPv6 TCP admission (IPv6 identity migration remains incomplete)" OFF)
+
+# Server-coordinated NAT-T: the login flags, keepalives, punches and callbacks
+# that let two LowID peers connect over uTP. Each path also has a runtime
+# setting. Needs ENABLE_UTP.
+option (ENABLE_NATT_SERVER_COORDINATION "enable experimental server-coordinated NAT traversal (needs ENABLE_UTP)" OFF)
+
+# Master switch for the in-app "check for a new aMule version" feature: the
+# startup notification, the "Check for new version at startup" preference, and
+# the About dialog's "Check for updates" button. When OFF the whole feature
+# (including the CVersionCheck HTTP code) is compiled out, so nothing contacts
+# GitHub and no download links are shown. Packagers shipping aMule via an OS
+# package manager want OFF, so the distro's package manager owns updates.
+# Standalone / portable / AppImage builds and Windows/macOS want ON.
+option (ENABLE_VERSION_CHECK "compile in the in-app new-version check (startup notification + About 'Check for updates'); OFF for OS-package builds" ON)
+
+# Master switch for the local Kad node-protection heuristics: the adaptive
+# request-timeout estimate (CFastKad) and the Kad identity protections
+# (CSafeKad).
+#
+# Independent of the KadProtocol10 runtime preference, and deliberately not
+# named after a protocol version. Neither class defines a tag, an opcode or a
+# packet field: they consume what the Kad protocol already carries and decide only
+# what we do locally -- whether to admit a contact, whether to believe an
+# answer, how long to wait before treating a request as stalled. A peer cannot
+# observe whether we run them and has nothing to implement in response, so
+# gating them behind a protocol-version switch would imply a wire contract that
+# does not exist.
+#
+# OFF by default, and OFF means inert: every call site is compiled out and the
+# two classes are left out of the build entirely, so a default build is the
+# upstream one. Their unit tests compile the two sources directly and run
+# either way, so nothing is gated out of test coverage.
+#
+# A plain compile definition rather than a config.h entry, so it is visible in
+# the Kad headers that never see config.h.
+option (ENABLE_KAD_NODE_PROTECTION "enable the local Kad node-protection heuristics: adaptive request timeouts and Kad identity protections (no wire-protocol change)" OFF)
+
+# Every experimental switch, named once. A switch belongs here as well as in its
+# own option() above, and that is the only bookkeeping adding one costs: the
+# loop below defines it, and ENABLE_ALL_EXPERIMENTAL turns the whole set on, so
+# no CI job has to name individual switches. The clang-tidy jobs build their
+# compile database with ENABLE_ALL_EXPERIMENTAL, because a switch that is OFF is
+# removed by the preprocessor and never analysed at all.
+#
+# Deliberately a list rather than a naming convention or a grep over ENABLE_*:
+# the latter would sweep in ENABLE_UPNP, ENABLE_NLS and the rest, which are
+# ordinary build options rather than unfinished features.
+set (AMULE_EXPERIMENTAL_OPTIONS
+	ENABLE_NATT_SERVER_COORDINATION
+	ENABLE_IPV6
+	ENABLE_KAD_NODE_PROTECTION
+	ENABLE_UTP
+	ENABLE_QUIC
+)
+
+option (ENABLE_ALL_EXPERIMENTAL "turn on every switch in AMULE_EXPERIMENTAL_OPTIONS at once" OFF)
+
+# QUIC compiles only into amule and amuled. Checked here rather than next to its
+# option(), because BUILD_EVERYTHING turns BUILD_DAEMON on above.
+set (experimental_options_without_target)
+if (NOT (BUILD_MONOLITHIC OR BUILD_DAEMON))
+	if (ENABLE_QUIC)
+		message (FATAL_ERROR
+			"ENABLE_QUIC=YES needs BUILD_MONOLITHIC=YES or BUILD_DAEMON=YES, "
+			"because QUIC is compiled only into amule and amuled. Turn one of "
+			"them on, or set ENABLE_QUIC=NO.")
+	endif()
+	list (APPEND experimental_options_without_target ENABLE_QUIC)
+endif()
+
+foreach (experimental_option IN LISTS AMULE_EXPERIMENTAL_OPTIONS)
+	# ENABLE_ALL_EXPERIMENTAL wins over an individual switch: option() leaves
+	# an unset switch defined as OFF, so an explicit -DENABLE_X=NO is
+	# indistinguishable from not passing it and cannot be honoured as an
+	# opt-out. To build every switch but one, name the switches individually
+	# and leave ENABLE_ALL_EXPERIMENTAL off.
+	#
+	# Nothing here writes the cache, so enabling the set for one configure
+	# does not leave the individual switches ON for later ones.
+	if (ENABLE_ALL_EXPERIMENTAL AND experimental_option IN_LIST experimental_options_without_target)
+		# Not requested by name, and turning it on would only add a required
+		# dependency for code no target compiles. An explicit request for the
+		# switch already failed above.
+		message (STATUS "ENABLE_ALL_EXPERIMENTAL: ${experimental_option} stays OFF, no target in this build uses it")
+	elseif (${experimental_option} OR ENABLE_ALL_EXPERIMENTAL)
+		# The variable is set as well as the definition added, because a
+		# switch may gate more than preprocessor state: ENABLE_KAD_NODE_PROTECTION
+		# also selects source files in cmake/source-vars.cmake, and an if()
+		# there has to see it. Directory scope, so it reaches the
+		# subdirectories included after this and still never touches the cache.
+		set (${experimental_option} ON)
+		add_compile_definitions (${experimental_option})
+	endif()
+endforeach()
+
+# Every server-coordinated rendezvous ends in a uTP dial, so without uTP the
+# login would announce NAT traversal that no path can serve.
+if (ENABLE_NATT_SERVER_COORDINATION AND NOT ENABLE_UTP)
+	message (FATAL_ERROR
+		"ENABLE_NATT_SERVER_COORDINATION=YES needs ENABLE_UTP=YES, because every "
+		"NAT traversal path connects over uTP. Turn ENABLE_UTP on, or set "
+		"ENABLE_NATT_SERVER_COORDINATION=NO.")
+endif()
+
+option(ENABLE_MEDIA_PROBE "Build the bundled media metadata helper" ON)
+# The helper is internal, not a command: installs keep it out of PATH in libexec, and the core
+# finds it there relative to its own folder. Bundles put it next to the core instead.
+if (ENABLE_MEDIA_PROBE AND (BUILD_DAEMON OR BUILD_MONOLITHIC))
+	set (AMULE_MEDIA_PROBE ON)
+	set (AMULE_MEDIA_PROBE_INSTALL_DIR "${CMAKE_INSTALL_LIBEXECDIR}/amule")
+	file (RELATIVE_PATH AMULE_MEDIA_PROBE_RELPATH "${CMAKE_INSTALL_FULL_BINDIR}"
+		"${CMAKE_INSTALL_FULL_LIBEXECDIR}/amule/amule-media-probe")
+endif()

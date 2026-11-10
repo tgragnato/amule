@@ -23,26 +23,24 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
 #ifndef TERMINATIONPROCESSAMULEWEB_H
 #define TERMINATIONPROCESSAMULEWEB_H
 
-
-#include "TerminationProcess.h"	// for CTerminationProcess
-
+#include "TerminationProcess.h" // for CTerminationProcess
+#include <functional>
 
 // This is the handler for process termination events.
 // Used on some calls to wxExecute().
 class CTerminationProcessAmuleweb : public CTerminationProcess
 {
 private:
-	long *m_webserver_pid;
+	int *m_webserver_pid;
+	std::function<void()> m_onTerminated;
 
 public:
-	CTerminationProcessAmuleweb(const wxString &cmd, long *webserver_pid);
+	CTerminationProcessAmuleweb(
+		const wxString &cmd, int *webserver_pid, std::function<void()> onTerminated);
 	virtual void OnTerminate(int pid, int status);
 };
 
-
 #endif // TERMINATIONPROCESSAMULEWEB_H
-

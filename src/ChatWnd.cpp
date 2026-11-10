@@ -23,70 +23,141 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include <common/MenuIDs.h>  // IDs for the chat-popup menu
+#include <common/MenuIDs.h> // IDs for the chat-popup menu
 
 #include <wx/app.h>
 
-#include "ChatWnd.h"		// Interface declarations
+#include "ChatWnd.h" // Interface declarations
+#include "CaptchaDialog.h"
 
-#include "amule.h"		// Needed for theApp
-#include "amuleDlg.h"		// Needed for CamuleDlg
-#include "ClientRef.h"		// Needed for CClientRef
-#include "FriendListCtrl.h"	// Needed for CFriendListCtrl
-#include "FriendList.h"		// Needed for CFriendList
-#include "Friend.h"		// Needed for CFriend
-#include "ChatSelector.h"	// Needed for CChatSelector
-#include "muuli_wdr.h"		// Needed for messagePage
+#include "amule.h"          // Needed for theApp
+#include "amuleDlg.h"       // Needed for CamuleDlg
+#include "ClientRef.h"      // Needed for CClientRef
+#include "FriendListCtrl.h" // Needed for CFriendListCtrl
+#include "FriendList.h"     // Needed for CFriendList
+#include "Friend.h"         // Needed for CFriend
+#include "ChatSelector.h"   // Needed for CChatSelector
+#ifndef CLIENT_GUI
+#include "ChatSessionStore.h" // Needed for CChatSessionStore
+#include "ClientList.h"       // Needed for CClientList
+#include "updownclient.h"
+#endif
+#include "muuli_wdr.h" // Needed for messagePage
 #include "OtherFunctions.h"
+#include "ScopedPtr.h" // Needed for CScopedFlag
+#include "Constants.h" // Needed for MS_NONE
 
 wxBEGIN_EVENT_TABLE(CChatWnd, wxPanel)
 	EVT_RIGHT_DOWN(CChatWnd::OnNMRclickChatTab)
 
-	EVT_MENU(MP_CLOSE_TAB,			CChatWnd::OnPopupClose)
-	EVT_MENU(MP_CLOSE_ALL_TABS,		CChatWnd::OnPopupCloseAll)
-	EVT_MENU(MP_CLOSE_OTHER_TABS,	CChatWnd::OnPopupCloseOthers)
-	EVT_MENU(MP_ADDFRIEND,			CChatWnd::OnAddFriend )
+	EVT_MENU(MP_CLOSE_TAB, CChatWnd::OnPopupClose)
+	EVT_MENU(MP_CLOSE_ALL_TABS, CChatWnd::OnPopupCloseAll)
+	EVT_MENU(MP_CLOSE_OTHER_TABS, CChatWnd::OnPopupCloseOthers)
+	EVT_MENU(MP_ADDFRIEND, CChatWnd::OnAddFriend)
 
 	EVT_TEXT_ENTER(IDC_CMESSAGE, CChatWnd::OnBnClickedCsend)
 	EVT_BUTTON(IDC_CSEND, CChatWnd::OnBnClickedCsend)
 	EVT_BUTTON(IDC_CCLOSE, CChatWnd::OnBnClickedCclose)
+	EVT_MULENOTEBOOK_PAGE_CLOSING(IDC_CHATSELECTOR, CChatWnd::OnChatClosing)
 	EVT_MULENOTEBOOK_ALL_PAGES_CLOSED(IDC_CHATSELECTOR, CChatWnd::OnAllPagesClosed)
 wxEND_EVENT_TABLE()
 
-
-CChatWnd::CChatWnd(wxWindow* pParent)
+CChatWnd::CChatWnd(wxWindow *pParent)
 : wxPanel(pParent, -1)
 {
-	wxSizer* content = messagePage(this, true);
+	wxSizer *content = messagePage(this, true);
 	content->Show(this, true);
 
-	chatselector = CastChild( IDC_CHATSELECTOR, CChatSelector );
+	chatselector = CastChild(IDC_CHATSELECTOR, CChatSelector);
 	// We want to use our own popup menu
 	chatselector->SetPopupHandler(this);
 	m_menu = NULL;
 
-	friendlistctrl = CastChild( ID_FRIENDLIST, CFriendListCtrl );
+	friendlistctrl = CastChild(ID_FRIENDLIST, CFriendListCtrl);
 }
 
-void CChatWnd::StartSession(CFriend* friend_client, bool setfocus)
+namespace
 {
-
-	if ( !friend_client->GetName().IsEmpty() ) {
-		if (setfocus) {
-			theApp->amuledlg->SetActiveDialog(CamuleDlg::DT_CHAT_WND, this);
-		}
-		chatselector->StartSession(GUI_ID(friend_client->GetIP(), friend_client->GetPort()), friend_client->GetName(), true);
+// Not a friend yet, and something to identify it by: its hash, or an IPv4 address and port the
+// friend list can match on until the peer's next hello supplies the hash.
+bool CanAddAsFriend(const CChatTarget &peer)
+{
+	const uint32 ip = peer.Address().ToIPv4NetworkOrderOrZero();
+	if (peer.Hash().IsEmpty() && (ip == 0 || peer.Port() == 0)) {
+		return false;
 	}
+	return theApp->friendlist->LookupFriend(peer.Hash(), ip, peer.Port()) == nullptr;
+}
+
+CChatTarget FriendChatTarget(const CFriend *peer)
+{
+#ifdef CLIENT_GUI
+	// The persisted hash remains authoritative even when the route is stale or absent;
+	// BuildLocalChatTarget keeps the route alongside it, as a dial hint, and drops the
+	// hash itself when the daemon cannot address a session by it.
+	return BuildLocalChatTarget(peer->GetUserHash(), peer->GetIP(), peer->GetPort());
+#else
+	// The persisted hash remains authoritative even if the linked route client
+	// has not completed its handshake yet.
+	if (!peer->GetUserHash().IsEmpty()) {
+		return CChatPeer(peer->GetUserHash(),
+			CNetworkAddress::FromIPv4NetworkOrderOrAbsent(peer->GetIP()),
+			peer->GetPort());
+	}
+	if (peer->GetLinkedClient().IsLinked()) {
+		const auto target = peer->GetLinkedClient().GetClient()->GetChatPeer();
+		if (!target.IsEmpty()) {
+			return target;
+		}
+	}
+	return CChatPeer(
+		CMD4Hash(), CNetworkAddress::FromIPv4NetworkOrderOrAbsent(peer->GetIP()), peer->GetPort());
+#endif
+}
+} // namespace
+
+bool CChatWnd::StartSession(CFriend *friend_client, bool setfocus)
+{
+	CChatTarget target = FriendChatTarget(friend_client);
+	if (!ChatTargetValid(target) || friend_client->GetName().IsEmpty()) {
+		return false;
+	}
+#ifdef CLIENT_GUI
+	if (friend_client->GetUserHash().IsEmpty() &&
+		(!friend_client->GetIP() || !friend_client->GetPort())) {
+		return false;
+	}
+#else
+	if (!theApp->clientlist->FindChatClient(target)) {
+		if (!friend_client->GetIP() || !friend_client->GetPort()) {
+			return false;
+		}
+		const CClientRef client = theApp->clientlist->CreateForAddress(friend_client->GetUserHash(),
+			friend_client->GetIP(),
+			friend_client->GetPort(),
+			friend_client->GetName());
+		if (!client.IsLinked()) {
+			return false;
+		}
+		friend_client->LinkClient(client);
+		target = client.GetClient()->GetChatPeer();
+	}
+#endif
+
+	if (setfocus) {
+		theApp->amuledlg->SetActiveDialog(CamuleDlg::DT_CHAT_WND, this);
+	}
+	chatselector->StartSession(target, friend_client->GetName(), true);
 
 	// Check to enable the window controls if needed
 	CheckNewButtonsState();
+	return true;
 }
 
-
-void CChatWnd::OnNMRclickChatTab(wxMouseEvent& evt)
+void CChatWnd::OnNMRclickChatTab(wxMouseEvent &evt)
 {
 	// Only handle events from the chat-notebook
-	if (evt.GetEventObject() != (wxObject*)chatselector)
+	if (evt.GetEventObject() != (wxObject *)chatselector)
 		return;
 
 	if (chatselector->GetSelection() == -1) {
@@ -103,13 +174,11 @@ void CChatWnd::OnNMRclickChatTab(wxMouseEvent& evt)
 
 		m_menu->AppendSeparator();
 
-		wxMenuItem * addFriend = m_menu->Append(MP_ADDFRIEND, _("Add to Friends"));
+		wxMenuItem *addFriend = m_menu->Append(MP_ADDFRIEND, _("Add to Friends"));
 
-		// Disable this client if it is already a friend
-		CClientRef client;
-		if (chatselector->GetCurrentClient(client) && client.IsFriend()) {
-			addFriend->Enable(false);
-		}
+		CChatTarget peer;
+		wxString name;
+		addFriend->Enable(chatselector->GetCurrentPeer(peer, name) && CanAddAsFriend(peer));
 
 		PopupMenu(m_menu, evt.GetPosition());
 
@@ -118,86 +187,92 @@ void CChatWnd::OnNMRclickChatTab(wxMouseEvent& evt)
 	}
 }
 
-
-void CChatWnd::OnPopupClose(wxCommandEvent& WXUNUSED(evt))
+void CChatWnd::OnPopupClose(wxCommandEvent &WXUNUSED(evt))
 {
 	chatselector->DeletePage(chatselector->GetSelection());
 }
 
-
-void CChatWnd::OnPopupCloseAll(wxCommandEvent& WXUNUSED(evt))
+void CChatWnd::OnPopupCloseAll(wxCommandEvent &WXUNUSED(evt))
 {
 	chatselector->DeleteAllPages();
 }
 
-
-void CChatWnd::OnPopupCloseOthers(wxCommandEvent& WXUNUSED(evt))
+void CChatWnd::OnPopupCloseOthers(wxCommandEvent &WXUNUSED(evt))
 {
-	wxNotebookPage* current = chatselector->GetPage(chatselector->GetSelection());
+	wxNotebookPage *current = chatselector->GetPage(chatselector->GetSelection());
 
 	for (int i = chatselector->GetPageCount() - 1; i >= 0; i--) {
 		if (current != chatselector->GetPage(i))
-			chatselector->DeletePage( i );
+			chatselector->DeletePage(i);
 	}
 }
 
-
-void CChatWnd::OnAddFriend(wxCommandEvent& WXUNUSED(evt))
+void CChatWnd::OnAddFriend(wxCommandEvent &WXUNUSED(evt))
 {
-	// Get the client that the session is open to
-	CClientRef client;
-
-	// Add the client as friend unless it's already a friend
-	if (chatselector->GetCurrentClient(client) && !client.IsFriend()) {
-		theApp->friendlist->AddFriend(client);
+	CChatTarget peer;
+	wxString name;
+	if (!chatselector->GetCurrentPeer(peer, name) || !CanAddAsFriend(peer)) {
+		return;
 	}
+#ifndef CLIENT_GUI
+	// A live client is linked to its new friend at once; without one, the link waits for the
+	// peer's next hello, which also adopts the hash onto an entry added by address.
+	CClientRef client;
+	if (chatselector->GetCurrentClient(client)) {
+		theApp->friendlist->AddFriend(client);
+		return;
+	}
+#endif
+	theApp->friendlist->AddFriend(
+		peer.Hash(), peer.Address().ToIPv4NetworkOrderOrZero(), peer.Port(), name);
 }
 
-
-void CChatWnd::OnBnClickedCsend(wxCommandEvent& WXUNUSED(evt))
+void CChatWnd::OnBnClickedCsend(wxCommandEvent &WXUNUSED(evt))
 {
 	wxString message = CastChild(IDC_CMESSAGE, wxTextCtrl)->GetValue();
 
 	SendMessage(message);
 }
 
-
-void CChatWnd::OnBnClickedCclose(wxCommandEvent& WXUNUSED(evt))
+void CChatWnd::OnBnClickedCclose(wxCommandEvent &WXUNUSED(evt))
 {
 	chatselector->EndSession();
 }
 
-
-void CChatWnd::OnAllPagesClosed(wxNotebookEvent& WXUNUSED(evt))
+void CChatWnd::OnAllPagesClosed(wxNotebookEvent &WXUNUSED(evt))
 {
 	CastChild(IDC_CMESSAGE, wxTextCtrl)->Clear();
 	// Check to disable the window controls
 	CheckNewButtonsState();
 }
 
-
-void CChatWnd::UpdateFriend(CFriend* toupdate)
+void CChatWnd::UpdateFriend(CFriend *toupdate)
 {
-	if (toupdate->GetLinkedClient().IsLinked()) {
-		chatselector->RefreshFriend(GUI_ID(toupdate->GetIP(), toupdate->GetPort()), toupdate->GetName());
-	} else {
-		// drop Chat session
-		chatselector->EndSession(GUI_ID(toupdate->GetIP(), toupdate->GetPort()));
+	const auto target = FriendChatTarget(toupdate);
+	if (ChatTargetValid(target)) {
+		// A disconnect or client replacement does not end a hash-keyed conversation.
+		chatselector->RefreshFriend(target, toupdate->GetName());
 	}
 	friendlistctrl->UpdateFriend(toupdate);
 }
 
-
-void CChatWnd::RemoveFriend(CFriend* todel)
+void CChatWnd::RemoveFriend(CFriend *todel)
 {
-	chatselector->EndSession(GUI_ID(todel->GetIP(), todel->GetPort()));
+	const auto target = FriendChatTarget(todel);
+	if (ChatTargetValid(target)) {
+		chatselector->EndSession(target);
+	}
 	friendlistctrl->RemoveFriend(todel);
 }
 
-
-void CChatWnd::ProcessMessage(uint64 sender, const wxString& message)
+void CChatWnd::RekeySession(const CChatTarget &old_id, const CChatTarget &new_id)
 {
-	if ( !theApp->amuledlg->IsDialogVisible(CamuleDlg::DT_CHAT_WND) ) {
+	chatselector->RekeySession(old_id, new_id);
+}
+
+void CChatWnd::ProcessMessage(const CChatTarget &sender, const wxString &message)
+{
+	if (!theApp->amuledlg->IsDialogVisible(CamuleDlg::DT_CHAT_WND)) {
 		theApp->amuledlg->SetMessageBlink(true);
 	}
 	if (chatselector->ProcessMessage(sender, message)) {
@@ -206,17 +281,19 @@ void CChatWnd::ProcessMessage(uint64 sender, const wxString& message)
 	}
 }
 
-
-void CChatWnd::ConnectionResult(bool success, const wxString& message, uint64 id)
+void CChatWnd::ConnectionResult(bool success, const wxString &message, const CChatTarget &id)
 {
+	if (!success) {
+		CCaptchaDialog::CloseForPeer(theApp->amuledlg, id);
+	}
 	chatselector->ConnectionResult(success, message, id);
 }
 
-
-void CChatWnd::SendMessage(const wxString& message, const wxString& client_name, uint64 to_id)
+void CChatWnd::SendMessage(
+	const wxString &message, const wxString &client_name, const CChatTarget &to_id, uint32 challengeId)
 {
 
-	if (chatselector->SendMessage( message, client_name, to_id )) {
+	if (chatselector->SendMessage(message, client_name, to_id, challengeId)) {
 		CastChild(IDC_CMESSAGE, wxTextCtrl)->Clear();
 	}
 
@@ -225,44 +302,107 @@ void CChatWnd::SendMessage(const wxString& message, const wxString& client_name,
 	CastChild(IDC_CMESSAGE, wxTextCtrl)->SetFocus();
 }
 
-
 void CChatWnd::CheckNewButtonsState()
 {
+	// Both builds take this path now: amulegui sends over EC_OP_CHAT_SEND,
+	// so the compose box and Send button are no longer disabled for it.
 	switch (chatselector->GetPageCount()) {
-			case 0:
-				GetParent()->FindWindow(IDC_CSEND)->Enable(false);
-				GetParent()->FindWindow(IDC_CCLOSE)->Enable(false);
-				GetParent()->FindWindow(IDC_CMESSAGE)->Enable(false);
-				break;
-			case 1:
-				GetParent()->FindWindow(IDC_CSEND)->Enable(true);
-				GetParent()->FindWindow(IDC_CCLOSE)->Enable(true);
-				GetParent()->FindWindow(IDC_CMESSAGE)->Enable(true);
-				break;
-			default:
-				// Nothing to be done here. Keep current state, which should be enabled.
-				wxASSERT(GetParent()->FindWindow(IDC_CSEND)->IsEnabled());
-				wxASSERT(GetParent()->FindWindow(IDC_CCLOSE)->IsEnabled());
-				wxASSERT(GetParent()->FindWindow(IDC_CMESSAGE)->IsEnabled());
-				break;
+	case 0:
+		GetParent()->FindWindow(IDC_CSEND)->Enable(false);
+		GetParent()->FindWindow(IDC_CCLOSE)->Enable(false);
+		GetParent()->FindWindow(IDC_CMESSAGE)->Enable(false);
+		break;
+	case 1:
+		GetParent()->FindWindow(IDC_CSEND)->Enable(true);
+		GetParent()->FindWindow(IDC_CCLOSE)->Enable(true);
+		GetParent()->FindWindow(IDC_CMESSAGE)->Enable(true);
+		break;
+	default:
+		// Nothing to be done here. Keep current state, which should be enabled.
+		wxASSERT(GetParent()->FindWindow(IDC_CSEND)->IsEnabled());
+		wxASSERT(GetParent()->FindWindow(IDC_CCLOSE)->IsEnabled());
+		wxASSERT(GetParent()->FindWindow(IDC_CMESSAGE)->IsEnabled());
+		break;
 	}
 }
 
-
-bool CChatWnd::IsIdValid(uint64 id)
+bool CChatWnd::IsIdValid(const CChatTarget &id)
 {
 	return chatselector->GetTabByClientID(id) >= 0;
 }
 
-
-void CChatWnd::ShowCaptchaResult(uint64 id, bool ok)
+void CChatWnd::ShowCaptchaResult(const CChatTarget &id, bool ok)
 {
+	CCaptchaDialog::CloseForPeer(theApp->amuledlg, id);
 	chatselector->ShowCaptchaResult(id, ok);
 }
 
-void CChatWnd::EndSession(uint64 id)
+void CChatWnd::EndSession(const CChatTarget &id)
 {
-	chatselector->EndSession(id);
+	if (ChatTargetValid(id)) {
+		chatselector->EndSession(id);
+	}
+}
+
+void CChatWnd::StartSessionByID(const CChatTarget &gui_id, const wxString &name)
+{
+	// show=false: a session can appear on its own, opened by another client or by a peer
+	// messaging us, and must not pull the selection away from whatever the local user is doing.
+	chatselector->StartSession(gui_id, name, false);
+	CheckNewButtonsState();
+}
+
+void CChatWnd::AppendStoredMessage(
+	const CChatTarget &gui_id, const wxString &name, const wxString &text, bool outgoing, bool blink)
+{
+	chatselector->AppendStoredMessage(gui_id, name, text, outgoing);
+	// `blink` is false while replaying history on connect: a reconnect must not light the
+	// Messages button up for messages the user already read on another client. Only arrivals
+	// past the connect-time cursor blink.
+	if (blink && !theApp->amuledlg->IsDialogVisible(CamuleDlg::DT_CHAT_WND)) {
+		theApp->amuledlg->SetMessageBlink(true);
+	}
+	CheckNewButtonsState();
+}
+
+void CChatWnd::EndSessionFromCore(const CChatTarget &gui_id)
+{
+	CCaptchaDialog::CloseForPeer(theApp->amuledlg, gui_id);
+	// The core has already forgotten this session, so the tab must go without originating a
+	// close of its own. The guard keeps OnChatClosing from sending one when this DeletePage
+	// fires the page-closing event.
+	CScopedFlag closingGuard(m_inChatClosing);
+	chatselector->EndSession(gui_id);
+	CheckNewButtonsState();
+}
+
+void CChatWnd::OnChatClosing(wxBookCtrlEvent &evt)
+{
+	if (m_inChatClosing) {
+		// Re-entry from EndSessionFromCore (or from the notify that a close
+		// we just performed fired): the core already knows.
+		evt.Skip();
+		return;
+	}
+	CChatSession *session = static_cast<CChatSession *>(chatselector->GetPage(evt.GetSelection()));
+	if (!session || !ChatTargetValid(session->m_client_id)) {
+		evt.Skip();
+		return;
+	}
+	const CChatTarget gui_id = session->m_client_id;
+	CCaptchaDialog::CloseForPeer(theApp->amuledlg, gui_id);
+	CScopedFlag closingGuard(m_inChatClosing);
+#ifdef CLIENT_GUI
+	if (theApp->m_connect && theApp->m_connect->ServerSupportsChatSessions()) {
+		CECPacket req(EC_OP_CHAT_CLOSE_SESSION);
+		AddChatTargetTags(req, gui_id);
+		theApp->m_connect->SendPacket(&req);
+	}
+#else
+	theApp->chatsessions->CloseSession(gui_id);
+	theApp->clientlist->SetChatState(gui_id, MS_NONE);
+#endif
+	evt.Skip();
 }
 
 // File_checked_for_headers

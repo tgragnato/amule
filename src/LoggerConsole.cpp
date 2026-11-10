@@ -23,89 +23,88 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
 #include <sstream>
-#include <common/StringFunctions.h>	// for char2unicode()
+#include <mutex>
+#include <common/StringFunctions.h> // for char2unicode()
 
-#include "Logger.h"				// for Add(Debug)LogLineM()
+#include "Logger.h" // for Add(Debug)LogLineM()
 
 wxDEFINE_EVENT(MULE_EVT_LOGLINE, wxEvent);
 
 #ifdef __DEBUG__
 
-// Console-binary verbose-debug gate. Driven by /eMule/VerboseDebug from
-// amule.conf (read by CaMuleExternalConnector::LoadAmuleConfig) and the
-// --verbose CLI flag, both of which call CLogger::SetVerbose below.
-// Default off, matching amuled's behaviour when VerboseDebug is unset.
-static bool s_consoleVerbose = false;
-
-bool CLogger::IsEnabled(DebugType /*type*/) const
-{
-	return s_consoleVerbose;
-}
-
 // Dummy functions for EC logging
 #include "ec/cpp/ECLog.h"
 
-bool ECLogIsEnabled() { return false; }
+bool ECLogIsEnabled()
+{
+	return false;
+}
 void DoECLogLine(const wxString &) {}
 
 #endif /* __DEBUG__ */
 
-
 void CLogger::SetVerbose(bool verbose)
 {
-#ifdef __DEBUG__
-	s_consoleVerbose = verbose;
-#else
-	(void)verbose;
-#endif
+	for (auto &enabled : m_debugEnabled) {
+		enabled.store(verbose, std::memory_order_relaxed);
+	}
 }
 
-
-void CLogger::AddLogLine(
-	const wxString &file,
-	int line,
-	bool critical,
-	const std::ostringstream &msg)
+void CLogger::AddLogLine(const wxString &file, int line, bool critical, const std::ostringstream &msg)
 {
-	AddLogLine(file, line, critical, static_cast<DebugType>(0), msg);
+	AddLogLine(file, line, critical, logStandard, msg);
 }
 
-
-void CLogger::AddLogLine(
-	const wxString &file,
+void CLogger::AddLogLine(const wxString &file,
 	int line,
 	bool critical,
-	DebugType /* type */,
+	DebugType type,
 	const wxString &str,
-	bool /*  toStdout */,
-	bool /* toGUI */)
+	bool toStdout,
+	bool toGUI)
 {
-	std::string s;
-	if (critical) {
-		s = "Critical message: ";
-	}
-	printf("%s(%d): %s%s\n",
-		(const char *)unicode2char(file),
-		line, s.c_str(), (const char *)unicode2char(str));
+#ifdef __DEBUG__
+	wxString message(str);
+	message = file + wxString::Format("(%d): ", line) + message;
+#else
+	const wxString &message = str;
+	(void)file;
+	(void)line;
+#endif
+	Log(type != logStandard && !critical ? LogLevel::Debug : LogLevel::Info,
+		m_programName,
+		message,
+		critical,
+		toStdout,
+		toGUI);
 }
 
+void CLogger::Log(LogLevel level,
+	const wxString &category,
+	const wxString &message,
+	bool toStatusBar,
+	bool toStdout,
+	bool toGUI)
+{
+	Log(CLogRecord(level, category, message), toStatusBar, toStdout, toGUI);
+}
+
+void CLogger::Log(const CLogRecord &record, bool, bool, bool)
+{
+	const wxString rendered = FormatLogLines(record);
+	const wxScopedCharBuffer text = rendered.utf8_str();
+	// Write each complete record under one lock, including multiline messages.
+	static std::mutex mutex;
+	const std::lock_guard<std::mutex> lock(mutex);
+	std::fwrite(text.data(), 1, text.length(), stdout);
+	std::fflush(stdout);
+}
 
 void CLogger::AddLogLine(
-	const wxString &file,
-	int line,
-	bool critical,
-	DebugType /*type*/,
-	const std::ostringstream &msg)
+	const wxString &file, int line, bool critical, DebugType type, const std::ostringstream &msg)
 {
-	std::string s;
-	if (critical) {
-		s = "Critical message: ";
-	}
-	printf("%s(%d): %s%s\n",
-		(const char *)unicode2char(file),
-		line, s.c_str(), msg.str().c_str());
+	AddLogLine(file, line, critical, type, wxString(char2unicode(msg.str().c_str())));
 }
 
 CLogger theLogger;

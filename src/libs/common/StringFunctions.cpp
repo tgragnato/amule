@@ -25,82 +25,184 @@
 
 #include "StringFunctions.h"
 
-#include <wx/filename.h>	// Needed for wxFileName
-#include <wx/uri.h>		// Needed for wxURI
+#include <wx/filename.h> // Needed for wxFileName
+#include <wx/tokenzr.h>  // Needed for wxStringTokenizer
+#include <wx/uri.h>      // Needed for wxURI
 
-#include <cstring>		// Needed for std::strlen()
+#include <cstring> // Needed for std::strlen()
+#include <string>
 
 // Implementation of the non-inlines
 
-//
-// Conversion of wxString so it can be used by printf() in a console
-// On some platforms (Windows) the console allows only "plain" characters,
-// so try to convert as much as possible and replace the others with '?'.
-// On other platforms (some Linux) wxConvLibc silently converts to UTF8
-// so the console can show even Chinese chars.
-//
-Unicode2CharBuf unicode2char(const wxChar* s)
+namespace
 {
-	// First try the straight way.
-	Unicode2CharBuf buf1(wxConvLibc.cWX2MB(s));
-	if ((const char *) buf1) {
-		return buf1;
+// Return only a potentially valid UTF-8 sequence cut short at the end. Invalid
+// leads, continuations, overlong prefixes and invalid Unicode ranges are not cuts.
+size_t IncompleteUTF8TailLength(const std::string &bytes)
+{
+	if (bytes.empty()) {
+		return 0;
 	}
-	// Failed. Try to convert as much as possible.
-	size_t len = wxStrlen(s);
-	size_t maxlen = len * 4;		// Allow for an encoding of up to 4 byte per char.
-	wxCharBuffer buf(maxlen + 1);	// This is wasteful, but the string is used temporary anyway.
-	char * data = buf.data();
-	for (size_t i = 0, pos = 0; i < len; i++) {
-		size_t len_char = wxConvLibc.FromWChar(data + pos, maxlen - pos, s + i, 1);
-		if (len_char != wxCONV_FAILED) {
-			pos += len_char - 1;
-		} else if (pos < maxlen) {
-			data[pos++] = '?';
-			data[pos] = 0;
+	size_t start = bytes.size() - 1;
+	while (start > 0 && bytes.size() - start < 4 &&
+		(static_cast<unsigned char>(bytes[start]) & 0xC0) == 0x80) {
+		--start;
+	}
+	const unsigned lead = static_cast<unsigned char>(bytes[start]);
+	const size_t needed = lead >= 0xC2 && lead <= 0xDF   ? 2
+			      : lead >= 0xE0 && lead <= 0xEF ? 3
+			      : lead >= 0xF0 && lead <= 0xF4 ? 4
+							     : 0;
+	const size_t available = bytes.size() - start;
+	if (available >= needed) {
+		return 0;
+	}
+	if (available > 1) {
+		const unsigned second = static_cast<unsigned char>(bytes[start + 1]);
+		if ((lead == 0xE0 && second < 0xA0) || (lead == 0xED && second >= 0xA0) ||
+			(lead == 0xF0 && second < 0x90) || (lead == 0xF4 && second >= 0x90)) {
+			return 0;
 		}
 	}
-	return buf;
+	return available;
+}
+} // namespace
+
+wxString RepairDoubleEncodedUTF8(const wxString &name, bool allowTruncatedTail)
+{
+	wxString current = name;
+	for (unsigned pass = 0; pass < 4; ++pass) {
+		std::string bytes;
+		bytes.reserve(current.Length());
+		bool hasUTF8Sequence = false;
+		unsigned previous = 0;
+		for (size_t i = 0; i < current.Length(); ++i) {
+			const unsigned ch = current.GetChar(i).GetValue();
+			if (ch > 0xFF) {
+				return current;
+			}
+			// wxConvUTF8 can accept surrogate code points and values above U+10FFFF.
+			// Reject their byte patterns explicitly, including obsolete UTF-8 leads.
+			if (ch >= 0xF5 || (previous == 0xED && ch >= 0xA0 && ch <= 0xBF) ||
+				(previous == 0xF4 && ch >= 0x90 && ch <= 0xBF)) {
+				return current;
+			}
+			if (previous >= 0xC2 && previous <= 0xF4 && ch >= 0x80 && ch <= 0xBF) {
+				hasUTF8Sequence = true;
+			}
+			bytes.push_back(static_cast<char>(ch));
+			previous = ch;
+		}
+		if (!hasUTF8Sequence) {
+			break;
+		}
+		const size_t tail = allowTruncatedTail ? IncompleteUTF8TailLength(bytes) : 0;
+		const size_t length = bytes.size() - tail;
+		const wxString decoded(bytes.data(), wxConvUTF8, length);
+		if (decoded.IsEmpty()) {
+			break;
+		}
+		// An ASCII prefix alone is not evidence of damaged UTF-8: ordinary
+		// Latin-1 names such as "caf\xE9" also end in a potential UTF-8 lead.
+		if (tail != 0 && decoded.Length() == length) {
+			break;
+		}
+		// Some wxWidgets builds also accept overlong encodings. Require the
+		// decoded text to encode back to exactly the same UTF-8 bytes.
+		const wxCharBuffer canonical = decoded.utf8_str();
+		if (canonical.length() != length ||
+			std::memcmp(canonical.data(), bytes.data(), length) != 0) {
+			break;
+		}
+		current = decoded;
+	}
+	return current;
 }
 
+wxString RepairSearchResultFilename(const wxString &name)
+{
+	return RepairDoubleEncodedUTF8(name, true);
+}
+
+// Conversion of a wxString so it can be used by printf() on a console.
+//
+// On non-Windows we emit UTF-8 directly. *nix terminals and log files are effectively always UTF-8
+// nowadays, whereas routing through the C-library locale charset (wxConvLibc) mangles non-ASCII
+// text under a C/POSIX locale -- common in minimal Docker images -- and does so inconsistently
+// across libc implementations (glibc fails the conversion outright, macOS libc succeeds with lossy
+// bytes). ASCII is unaffected, being identical in both encodings.
+//
+// On Windows the console is limited to the active code page, so we try the locale charset first and
+// then fall back to a best-effort per-character conversion, replacing each non-representable
+// character with '?'.
+Unicode2CharBuf unicode2char(const wxChar *s)
+{
+#ifndef __WXMSW__
+	return wxConvUTF8.cWX2MB(s);
+#else
+	// First try the locale charset (the active code page).
+	Unicode2CharBuf buf1(wxConvLibc.cWX2MB(s));
+	if ((const char *)buf1) {
+		return buf1;
+	}
+	// Failed. Convert character by character, replacing what we can't.
+	size_t len = wxStrlen(s);
+	size_t maxlen = len * 4;      // Allow for an encoding of up to 4 byte per char.
+	wxCharBuffer buf(maxlen + 1); // This is wasteful, but the string is used temporary anyway.
+	char *data = buf.data();
+	size_t pos = 0;
+	for (size_t i = 0; i < len; i++) {
+		// FromWChar() writes the raw bytes for one character and returns how many it wrote
+		// (no NUL, since we pass an explicit length), so advance by exactly that -- the
+		// previous `- 1` left pos on the last byte and made every ASCII char overwrite its
+		// predecessor.
+		size_t len_char = wxConvLibc.FromWChar(data + pos, maxlen - pos, s + i, 1);
+		if (len_char != wxCONV_FAILED && len_char > 0) {
+			pos += len_char;
+		} else if (pos < maxlen) {
+			data[pos++] = '?';
+		}
+	}
+	data[pos] = 0;
+	return buf;
+#endif
+}
 
 static uint8_t base16Chars[17] = "0123456789ABCDEF";
 
-wxString URLEncode(const wxString& sIn)
+wxString URLEncode(const wxString &sIn)
 {
 	wxString sOut;
 
-	for ( unsigned int i = 0; i < sIn.Length(); ++i ) {
-		unsigned char curChar = sIn.GetChar( i );
+	for (unsigned int i = 0; i < sIn.Length(); ++i) {
+		unsigned char curChar = sIn.GetChar(i);
 
-		if ( isalnum( curChar ) ) {
-	        sOut += curChar;
-	    } else if( isspace ( curChar ) ) {
-		    sOut += "+";
+		if (isalnum(curChar)) {
+			sOut += curChar;
+		} else if (isspace(curChar)) {
+			sOut += "+";
 		} else {
 			sOut += "%";
-			sOut += base16Chars[ curChar >> 4];
-			sOut += base16Chars[ curChar & 0xf];
+			sOut += base16Chars[curChar >> 4];
+			sOut += base16Chars[curChar & 0xf];
 		}
-
 	}
 
 	return sOut;
 }
 
-
-wxChar HexToDec( const wxString& hex )
+wxChar HexToDec(const wxString &hex)
 {
 	wxChar result = 0;
 	wxString str = hex.Upper();
 
-	for ( size_t i = 0; i < str.Len(); ++i ) {
+	for (size_t i = 0; i < str.Len(); ++i) {
 		result *= 16;
 		wxChar cur = str.GetChar(i);
 
-		if ( isdigit( cur ) ) {
+		if (isdigit(cur)) {
 			result += cur - '0';
-		} else if ( cur >= 'A' && cur <= 'F' ) {
+		} else if (cur >= 'A' && cur <= 'F') {
 			result += cur - 'A' + 10;
 		} else {
 			return '\0';
@@ -110,8 +212,7 @@ wxChar HexToDec( const wxString& hex )
 	return result;
 }
 
-
-wxString UnescapeHTML(const wxString& str)
+wxString UnescapeHTML(const wxString &str)
 {
 	wxWritableCharBuffer buf = str.char_str(wxConvUTF8);
 
@@ -122,7 +223,14 @@ wxString UnescapeHTML(const wxString& str)
 	size_t j = 0;
 	for (size_t i = 0; i < len; ++i, ++j) {
 		if (buffer[i] == '%' && (len > i + 2)) {
-			wxChar unesc = HexToDec(str.Mid(i + 1, 2));
+			// Read the two hex digits out of the same buffer we are walking. They used
+			// to be taken from str, whose index is in characters while i counts bytes:
+			// one multi-byte character anywhere earlier desynchronised the two, and
+			// every escape after it decoded from the wrong offset, silently corrupting
+			// the rest of the string, newlines and all. From8BitData, not FromAscii:
+			// the two bytes behind a '%' need not be hex digits at all, and FromAscii
+			// asserts on anything past 0x7F. HexToDec rejects them either way.
+			wxChar unesc = HexToDec(wxString::From8BitData(buffer + i + 1, 2));
 			if (unesc) {
 				i += 2;
 				buffer[j] = (char)unesc;
@@ -147,25 +255,32 @@ wxString UnescapeHTML(const wxString& str)
 	return result;
 }
 
+wxString RestoreEncodedPipes(const wxString &link)
+{
+	wxString restored(link);
+	restored.Replace("%7C", "|");
+	restored.Replace("%7c", "|");
+	return restored;
+}
 
-wxString validateURI(const wxString& url)
+wxString validateURI(const wxString &url)
 {
 	wxURI uri(url);
 
 	return uri.BuildURI();
 }
 
-
-enum ECharType {
+enum ECharType
+{
 	ECTInteger,
 	ECTText,
 	ECTNone
 };
 
-inline wxString GetNextField(const wxString& str, size_t& cookie)
+inline wxString GetNextField(const wxString &str, size_t &cookie)
 {
 	// These are taken to separate "fields"
-	static const wxChar* s_delims = L"\t\n\x0b\x0c\r !\"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~";
+	static const wxChar *s_delims = L"\t\n\x0b\x0c\r !\"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~";
 
 	wxString field;
 	ECharType curType = ECTNone;
@@ -198,8 +313,7 @@ inline wxString GetNextField(const wxString& str, size_t& cookie)
 	return field;
 }
 
-
-int FuzzyStrCmp(const wxString& a, const wxString& b)
+int FuzzyStrCmp(const wxString &a, const wxString &b)
 {
 	size_t aCookie = 0, bCookie = 0;
 	wxString aField, bField;
@@ -215,39 +329,60 @@ int FuzzyStrCmp(const wxString& a, const wxString& b)
 			if (aInteger < bInteger) {
 				return -1;
 			} else if (aInteger > bInteger) {
-				return  1;
+				return 1;
 			}
 		} else if (aField < bField) {
 			return -1;
 		} else if (aField > bField) {
-			return  1;
+			return 1;
 		}
 	} while (!aField.IsEmpty() && !bField.IsEmpty());
 
 	return 0;
 }
 
-
-int FuzzyStrCaseCmp(const wxString& a, const wxString& b)
+int FuzzyStrCaseCmp(const wxString &a, const wxString &b)
 {
 	return FuzzyStrCmp(a.Lower(), b.Lower());
 }
 
+wxArrayString SplitKeywords(const wxString &keywords)
+{
+	wxArrayString terms;
+	wxStringTokenizer tokenizer(keywords, ",");
+	while (tokenizer.HasMoreTokens()) {
+		wxString term = tokenizer.GetNextToken();
+		term.Trim(false).Trim(true);
+		if (!term.empty()) {
+			terms.Add(term);
+		}
+	}
+	return terms;
+}
 
+bool ContainsAnyKeyword(const wxString &text, const wxString &keywords)
+{
+	const wxString haystack = text.Lower();
+	for (const auto &keyword : SplitKeywords(keywords)) {
+		if (haystack.Contains(keyword.Lower())) {
+			return true;
+		}
+	}
+	return false;
+}
 
-CSimpleTokenizer::CSimpleTokenizer(const wxString& str, wxChar token)
-	: m_string(str),
-	  m_delim(token),
-	  m_ptr(m_string.c_str()),
-	  m_count(0)
+CSimpleTokenizer::CSimpleTokenizer(const wxString &str, wxChar token)
+: m_string(str)
+, m_delim(token)
+, m_ptr(m_string.c_str())
+, m_count(0)
 {
 }
 
-
 wxString CSimpleTokenizer::next()
 {
-	const wxChar* start = m_ptr;
-	const wxChar* end   = m_string.c_str() + m_string.Len() + 1;
+	const wxChar *start = m_ptr;
+	const wxChar *end = m_string.c_str() + m_string.Len() + 1;
 
 	for (; m_ptr < end; ++m_ptr) {
 		if (*m_ptr == m_delim) {
@@ -260,12 +395,10 @@ wxString CSimpleTokenizer::next()
 	return m_string.Mid(start - m_string.c_str(), m_ptr++ - start);
 }
 
-
 wxString CSimpleTokenizer::remaining() const
 {
 	return m_string.Mid(m_ptr - m_string.c_str());
 }
-
 
 size_t CSimpleTokenizer::tokenCount() const
 {

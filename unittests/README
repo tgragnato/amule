@@ -86,61 +86,265 @@ How to use:
 
   3) Building the test
     Assuming that the testcase described above has been placed in
-    tests/StackTest.cpp, the follow entry needs to be added to the
-    Makefile.am file in tests/:
+    tests/StackTest.cpp, add a target for it to tests/CMakeLists.txt:
 
-      StackTest_SOURCES = StackTest.cpp
-      StackTest_CXXFLAGS = $(CXXFLAGS)
-      StackTest_LDADD = $(LDADD)
+      add_executable (StackTest StackTest.cpp)
+      add_test (NAME StackTest COMMAND StackTest)
+      target_include_directories (StackTest PRIVATE
+      	${CMAKE_BINARY_DIR}
+      	${CMAKE_SOURCE_DIR}/src
+      	${CMAKE_SOURCE_DIR}/src/include
+      )
+      target_link_libraries (StackTest muleunit mulecommon)
 
-    And the TESTS variable must be updated to contain an entry for
-    the stack testcase: "StackTest"
+    Link mulecommon even when the test seems not to need it: some
+    linkers (GNU ld, MinGW) need it to resolve muleunit. Add the source
+    files of the code under test to add_executable when they are not
+    part of a library.
 
-    At the moment, in order for the makefile to be updated with the
-    next test-case you need to execute the following from the
-    amule-dev/ dir:
+    The tests are built only when BUILD_TESTING is on:
 
-      $ automake unittests/tests/Makefile
-      $ ./configure <your options>
-
-    This only need to be done when the Makefile.am file has been
-    changed, not when test test-cases themselves are changed.
+      $ cmake -B build -DBUILD_TESTING=YES <your options>
+      $ cmake --build build
 
 
   4) Running the test
-    Simply executing the make target check will execute all unittests
-    registered in the Makefile ("-s" is used for silent operation):
+    Run ctest from the build directory:
 
-      $ make -s check
+      $ cd build
+      $ ctest --output-on-failure
 
-      Making check in tests
-      Test case "StackTest" SUCCEEDED with 0 failure(s) and 1 success(es):
-        Test "AStackTest" SUCCEEDED!
+    To run one test-case, name it with -R, or run its binary, which
+    prints the result of each test:
 
-      PASS: StackTest
+      $ ctest -R StackTest
+      $ ./unittests/tests/StackTest
 
-      ==================
-      All 1 tests passed
-      ==================
+      Running test-collection "StackTest" with 1 test-cases:
+      	Test "AStackTest"
 
+    Should a test fail, the binary prints where, and exits with a
+    non-zero status:
 
-	Should a test fail, the output will be like the following:
+      	Test "Foo"
+      		Failure running:
+      		 StackTest.cpp:11 -- Test failed.
 
-      $ make -s check
-
-      Making check in tests
-      Test case "StackTest" FAILED with 1 failure(s) and 0 success(es):
-        Test "Foo" FAILED :
-          Failure: "Test failed." line 11 in StackTest.cpp
-
-
-      FAIL: StackTest
-      ================================
-      1 of 1 tests failed
-      Please report to admin@amule.org
-      ================================
 
   5) More
     More information about available test-macros can be found in the
     muleunit/test.h header-file.
 
+
+  6) The curl suites
+    curl-tests/ holds shell tests for the HTTP interfaces. They are not
+    part of ctest, because they need a running daemon.
+
+    curl-tests/amuleapi/run-all.sh tests amuleapi. It needs an amuled
+    with External Connections on, and it starts a fresh amuleapi for
+    each script. By default it connects to EC on 127.0.0.1:4712 with
+    the password "amule" (set EC_HOST, EC_PORT and EC_PASSWORD to
+    change this), and uses the newest build*/src/webapi/amuleapi:
+
+      $ cd unittests/curl-tests/amuleapi
+      $ ./run-all.sh                          # every script
+      $ ./run-all.sh 12-downloads-add-patch.sh  # some scripts only
+
+    Some scripts need a live ed2k or Kad connection. The CI job in
+    .github/workflows/ccpp.yml shows how to start an isolated amuled,
+    and which scripts it skips and why.
+
+    The scripts share one harness, curl-tests/amuleapi/lib/common.sh:
+    counters, _curl, the _assert_* helpers, _login and _summary. A new
+    script sources it, calls _preflight and ends with _summary. Keep
+    the lib/ directory next to a script that is copied elsewhere.
+
+    curl-tests/amuleweb-smoke/phase0.sh checks the landing pages of a
+    running amuleweb. See the header of the script for its settings.
+
+AllSearch integration coverage (Linux, Python 3, BUILD_DAEMON=ON):
+
+  ctest --test-dir build -R 'AllSearch|SearchSourceCount|SearchRequest|SearchProgressReport|SearchHistory' --output-on-failure
+
+AllSearchIntegrationTest starts an isolated daemon with temporary HOME/config
+and a loopback eD2k server. Bootstrap downloads are disabled and Kad has no
+public contacts. It checks unavailable-network fallback, query encoding,
+both component completion orders, duplicate keywords, stop/close, and restored
+search types after restart. Rejected replacements and independent Kad starts must
+preserve a pending eD2k search. It also exercises duplicate/grouped results,
+source-count aggregation and persistence, repeated close/restart, late server
+replies after close, bulk Kad stop, and shutdown with active searches.
+Truncated saved-search fixtures exercise cleanup after a complete
+root result and after a complete child result. Every daemon shutdown must exit
+successfully, so sanitizer failures fail the test. It does not use an existing
+daemon or user profile.
+
+With BUILD_AMULEAPI=ON and BUILD_AMULECMD=ON, AllSearchClientCapabilityTest
+also checks a loopback EC peer omitting EC_TAG_CAN_SEARCH_ALL: the API returns
+503 ec_unsupported and amulecmd reports a clear error; neither sends SEARCH_START.
+The offline 45-all-search.sh curl phase covers REST/SSE discovery, API starts,
+Kad-only fallback, component activity, More, stop and close. When amulecmd is
+built alongside amuled, it also starts an All search with command-line filters.
+
+For a sanitizer-instrumented daemon, run this script directly with
+ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 and
+UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:
+
+  python3 unittests/tests/AllSearchIntegrationTest.py <path-to-amuled>
+
+The existing wxGetApp downcast during CamuleApp construction triggers the UBSan
+vptr check before startup. If encountered, a temporary suppression file containing
+"vptr:wxGetApp" can be passed via UBSAN_OPTIONS=suppressions=<file> alongside the
+options above; keep address and leak checking enabled.
+
+Runtime network preference coverage (Linux, BUILD_DAEMON=ON, BUILD_AMULEAPI=ON,
+ENABLE_INTEGRATION_TESTS=ON):
+
+  ctest --test-dir build -R NetworkPreferencesIntegrationTest --output-on-failure
+
+NetworkPreferencesIntegrationTest starts an isolated offline daemon with both
+networks disabled and seeded server.met/staticservers.dat files. A REST PATCH
+must enable ED2K without restarting, load both lists, create the server UDP
+socket and attempt the configured auto-update once. Repeated network toggles
+must preserve the live list. A second EC client checks all enabled-network
+bitmasks through the connection-state poll, including partial preference writes
+and both networks disabled. It also stops a running, unconnected Kad and a
+loopback ED2K connection and a pending server login (including TCP socket closure),
+and checks that a disabled shutdown saves an initialized server list while a
+disabled restart preserves an uninitialized list. The
+headless ECPrefsDiffTest covers reverse toggles after a remote poll, preserving
+unrelated edits, and merging open-dialog checkboxes without losing staged edits.
+The auto-update has an empty URL list; no public
+network connection is required.
+
+GUI follow-up: with amulegui connected (or EC enabled on the monolithic GUI),
+toggle ED2K and Kad from the Web UI. Check that the Networks page, conditional
+log tabs and toolbar label follow each change within one poll. In amulegui,
+then change each network back in Preferences and verify that the daemon accepts
+it. Reopen Preferences/reconnect to check the full preference refresh path.
+
+With Preferences open on Connection, stage an ED2K checkbox change and change
+Kad through another client. The staged ED2K choice must remain, while the
+unedited Kad checkbox follows the external change. Save and verify both flags.
+While a network edit is staged, change the same flag to the staged value and back
+from another client. The staged checkbox must survive both changes. Cancel and
+reopen Preferences to verify it follows the current core value again.
+Repeat without a staged edit: both checkboxes, the Servers sidebar entry and
+the server UDP label must follow external changes. Finally stage a network
+change and enable API guest access without a password: the rejected save must
+leave the core network flags unchanged. Supply valid settings and retry; the
+staged network change must then apply. Run these checks in both desktop clients.
+
+Upload storage-delay regression (Linux)
+--------------------------------------
+With BUILD_DAEMON=ON, BUILD_TESTING=ON and ENABLE_INTEGRATION_TESTS=ON:
+
+  cmake --build build --target amuled UploadReadDelay
+  ctest --test-dir build -R '^UploadRefillIntegrationTest$' --output-on-failure
+
+UploadRefillIntegrationTest also runs the controlled storage-delay cases, using
+the existing CI integration-test budget. The delay cases can be run separately:
+
+  python3 unittests/tests/UploadStorageDelayIntegrationTest.py \
+    build/src/amuled build/unittests/tests/libUploadReadDelay.so
+
+The delay test uses isolated offline daemon profiles and two loopback peers. A
+test-only LD_PRELOAD library gates actual reads of one synthetic shared file with pipes.
+While a later read is held, the preceding block must already reach its peer.
+Each client keeps at most one read outstanding: the other peer must be served
+before the busy peer's twelfth read, for small, full, three-block and mixed
+request sizes.
+Payload contents and packet continuity are checked throughout. No production
+hooks, public peers, storage hardware or timed sleeps simulate the delay.
+These cases test delivery and sweep fairness. Progress on other storage while
+an individual read is blocked is covered by the pool cases below.
+
+Upload storage-worker isolation (Linux)
+--------------------------------------
+UploadRefillIntegrationTest also runs UploadStoragePoolIntegrationTest.py using
+that same preload fixture and CI integration budget. To run just the pool cases:
+
+  python3 unittests/tests/UploadStoragePoolIntegrationTest.py \
+    build/src/amuled build/unittests/tests/libUploadReadDelay.so
+
+The fixture substitutes only the process's mount-table input, then holds actual
+reads or opens behind pipe gates. Four clients request files from one storage
+ID through two directory aliases; another storage ID must continue uploading
+before any gate is released. The test checks the per-storage limit, recovery,
+a disconnect while blocked, same-client/same-block upload-session reuse, and
+shutdown while a worker still owns a read. A compression gate also reuses a
+client/socket while its old session builds packets outside the upload-list lock;
+only the new session may receive data. Additional cases verify that heap reads
+reuse their original buffer and that mapped reads copy successfully or reject a
+SIGBUS caused by truncating the file after prefaulting, without ending the daemon. It also checks that two slow-volume
+peers alternate while a fast-volume peer completes a read between every release,
+and that uploads continue while storage discovery is blocked. No system mounts
+are changed.
+StorageReadPoolTest covers admission, retained completion budgets and worker
+exceptions without a daemon. UploadStorageMapTest checks prefix boundaries,
+lexical path normalization, mount escapes, macOS firmlink spellings and Windows
+mapped-drive/UNC aliases. A pool unit test checks that a refreshed storage key
+continues to reserve the permit for an already outstanding read.
+
+The pool has four outstanding ownership slots, at most one per filesystem/volume
+identity, including completed results not yet delivered. File open/read/close
+operations stay on workers; packet delivery uses copied buffers. Complete-file
+handles remain cached (32 entries); uncached and idle-handle closes use workers
+and the same storage limits. One pending read per client and admission in order
+of oldest successful dispatch keep peers on the same volume fair, independently
+of how frequently other volumes complete reads.
+
+The coordinator queues all currently ready completions before waking the upload
+throttler once for that batch. An empty batch, discarded session or close-only
+completion does not trigger a wake. Draining never waits for outstanding reads,
+so a stalled volume cannot hold back packets from a completed read.
+
+Linux identifies groups from mountinfo device IDs, macOS/FreeBSD from cached
+mount IDs, and Windows from volume GUIDs (UNC paths use the server/share).
+On macOS, the root fallback shares the Data volume's key when that mount exists,
+so firmlink and explicit Data spellings cannot bypass the volume limit. Windows
+mapped drives use WNetGetConnectionW to share their UNC server/share key.
+Discovery runs on one bounded pool slot; lookups use the last successful snapshot
+while a provider is blocked. Windows publishes a local-only snapshot before
+consulting network providers at startup. Refreshing reclassifies outstanding
+permits and cached handles before admitting new reads. Unmapped paths, including
+reads before the first successful snapshot, share one conservative group.
+These are filesystem/volume limits,
+not physical-controller topology: different volumes on the same hardware can
+consume separate slots. Paths crossing volumes through symlinks may also be
+grouped conservatively by their spelled mount path. Four distinct stalled groups
+can occupy all four workers. Shutdown joins accepted reads; it cannot interrupt
+an indefinitely blocked kernel call or safely detach a worker using core data.
+
+Native storage-worker acceptance (Windows, macOS and FreeBSD)
+-----------------------------------------------------------
+The Linux fixture and cross-platform builds do not validate native discovery.
+Use an isolated offline profile and disposable shared files, with loopback peers
+on two existing volumes. Record the source revision, OS version, build type,
+toolchain, filesystem types and whether the paths are local or network shares.
+
+First verify byte-correct transfers from both volumes. Then delay reads on one
+volume with a platform-native test fixture and verify that peers on the other
+volume keep receiving data before the delay is released. Request from several
+paths on the delayed volume, including a second mount path/drive letter for that
+same volume where available: they must share one outstanding job. On Windows,
+also check that two directories on one UNC server/share are grouped together
+with mapped-drive spellings and that a separate share can progress. On macOS,
+compare /private/tmp paths with /System/Volumes/Data/private/tmp spellings.
+Queue two peers on the slow volume alongside a fast-volume peer; both slow peers
+must make progress. Do not create aliases or change system mounts merely to run
+this check.
+
+Release the delay and verify recovery and payload integrity. Repeat with a
+disconnect and upload-slot reuse while the read is held; an old completion must
+not reach the new session. Finally request shutdown while a read is held: the
+application must wait for that read, then exit cleanly when it is released.
+Keep opens, reads and closes off the coordinator in each native run. Record
+unavailable alias/UNC/fault-injection cases as untested, rather than treating a
+successful build or ordinary two-volume transfer as an isolation test.
+
+EC integration-test requirements
+--------------------------------
+Tests that authenticate through ECWire require Python 3 with the cryptography
+module (python3-cryptography on Debian/Ubuntu). These tests return skip code 77
+when the module is unavailable, including fixtures importing the EC helper.

@@ -25,43 +25,33 @@
 #ifndef SHAREDFILEPEERSLISTCTRL_H
 #define SHAREDFILEPEERSLISTCTRL_H
 
-#include "GenericClientListCtrl.h"	// Needed for CGenericClientListCtrl
+#include "GenericClientListCtrl.h" // Needed for CGenericClientListCtrl
 
 /**
- * This class is responsible for representing the peers for a shared file.
+ * Represents the peers for a shared file.
  */
 class CSharedFilePeersListCtrl : public CGenericClientListCtrl
 {
 public:
 	/**
-	 * Constructor.
-	 *
-	 * @see CGenericClientListCtrl::CGenericClientListCtrl for documentation of parameters.
+	 * Constructor. @see CGenericClientListCtrl::CGenericClientListCtrl for the parameters.
 	 */
-	 CSharedFilePeersListCtrl(
-	            wxWindow *parent,
-                wxWindowID winid = -1,
-                const wxPoint &pos = wxDefaultPosition,
-                const wxSize &size = wxDefaultSize,
-                long style = wxLC_ICON,
-                const wxValidator& validator = wxDefaultValidator,
-                const wxString &name = "peerslistctrl" );
+	CSharedFilePeersListCtrl(wxWindow *parent,
+		wxWindowID winid = wxID_ANY,
+		const wxPoint &pos = wxDefaultPosition,
+		const wxSize &size = wxDefaultSize,
+		long style = 0,
+		const wxString &name = "peerslistctrl");
 
-	/**
-	 * Destructor.
-	 */
-	virtual	~CSharedFilePeersListCtrl();
+	virtual ~CSharedFilePeersListCtrl();
 
 private:
-	virtual CamuleDlg::DialogType GetParentDialog() { return CamuleDlg::DT_SHARED_WND; }
+	CamuleDlg::DialogType GetParentDialog() override { return CamuleDlg::DT_SHARED_WND; }
 
-	virtual void SetShowSources(CKnownFile * f, bool b) const;
+	void SetShowSources(CKnownFile *f, bool b) const override;
 
-	static int wxCALLBACK SourceSortProc(wxUIntPtr item1, wxUIntPtr item2, wxIntPtr sortData);
-
-	bool IsShowingDownloadSources() const { return false; }
-
-	wxDECLARE_EVENT_TABLE();
+	bool IsShowingDownloadSources() const override { return false; }
 };
 
 #endif
+// File_checked_for_headers

@@ -26,56 +26,81 @@
 #ifndef COMMENTDIALOGLST_H
 #define COMMENTDIALOGLST_H
 
-#include <wx/dialog.h>		// Needed for wxDialog	// Do_not_auto_remove
+#include <wx/dialog.h>   // Needed for wxDialog	// Do_not_auto_remove
+#include <wx/listctrl.h> // Needed for wxListEvent
 #include <wx/sizer.h>
+#include <wx/timer.h> // Needed for wxTimer
 
-class CMuleListCtrl;
+class wxListCtrl;
 class wxCommandEvent;
-class CPartFile;
-class CKnownFile;
+class CAbstractFile;
 
 /**
- * This dialog is used to display file-comments received from other clients.
+ * Displays file comments received from other clients, or community ratings/comments fetched from
+ * Kad, for a download, a shared file or a search result.
  */
 class CCommentDialogLst : public wxDialog
 {
 public:
-	CCommentDialogLst(wxWindow* pParent, CPartFile* file);
+	CCommentDialogLst(wxWindow *pParent, CAbstractFile *file);
 	~CCommentDialogLst();
 
 	/**
-	 * Sorter function for the CMuleListCtrl used to contain the lists.
+	 * Sorter for the wxListCtrl holding the lists. sortData packs the 0-based column in its
+	 * magnitude and the direction in its sign (see OnColumnClick) -- plain wxListCtrl has no
+	 * built-in notion of "current sort column/direction" the way CMuleListCtrl did.
 	 */
-	static int wxCALLBACK SortProc(wxUIntPtr item1, wxUIntPtr item2, wxIntPtr sortData);
+	static int wxCALLBACK SortProc(wxIntPtr item1, wxIntPtr item2, wxIntPtr sortData);
 
 	/**
-	 * Drop every reference to `file` from any open instance of this
-	 * dialog before the CKnownFile / CPartFile is destroyed.
-	 * Pointer-value comparison only — `file` may already be freed.
-	 * Wired via MuleNotify::KnownFileBeingDestroyed (GuiEvents.cpp).
+	 * Drop every reference to `file` from any open instance of this dialog before it is
+	 * destroyed. Pointer-value comparison only -- `file` may already be freed. Wired via
+	 * MuleNotify::KnownFileBeingDestroyed (downloads and shared files) and
+	 * MuleNotify::SearchFileBeingDestroyed (search results) in GuiEvents.cpp.
 	 */
-	static void DropReferencesTo(const CKnownFile* file);
+	static void DropReferencesTo(const CAbstractFile *file);
 
 private:
-	void OnBnClickedApply(wxCommandEvent& evt);
-	void OnBnClickedRefresh(wxCommandEvent& evt);
+	void OnBnClickedApply(wxCommandEvent &evt);
+	void OnBnClickedRefresh(wxCommandEvent &evt);
+	void OnBnClickedSearchKad(wxCommandEvent &evt);
+
+	//! While a Kad notes lookup runs, periodically refresh the list and stop
+	//! once the daemon reports the search finished.
+	void OnKadRefreshTimer(wxTimerEvent &evt);
+
+	//! Click-to-sort on a column header: toggles direction on the same column, otherwise
+	//! switches to that column ascending. Reimplements, for this one dialog, the sort-toggle
+	//! behaviour CMuleListCtrl used to provide for free.
+	void OnColumnClick(wxListEvent &evt);
 
 	/**
-	 * Updates the contents of the comments/ratings list.
+	 * Updates the comments/ratings list.
 	 */
 	void UpdateList();
 
 	/**
-	 * Clears the contents of the comments/ratings list.
+	 * Clears the comments/ratings list.
 	 */
 	void ClearList();
 
-	//! The file to display comments for.
-	CPartFile* m_file;
+	//! The file to display comments for (download, shared file, or search result).
+	CAbstractFile *m_file;
 
 	//! The list containing comments/ratings.
-	CMuleListCtrl* m_list;
+	wxListCtrl *m_list;
 
+	//! Current sort column/direction, since plain wxListCtrl doesn't track
+	//! this itself. -1 means unsorted (initial state).
+	int m_sortColumn;
+	bool m_sortDescending;
+
+	//! Drives auto-refresh while a Kad notes lookup is in flight.
+	wxTimer m_kadRefreshTimer;
+
+	//! Safety bound on auto-refresh ticks, so the timer can never hang if the
+	//! "running" state is never observed to clear (e.g. daemon rejected it).
+	int m_kadRefreshTicks;
 
 	wxDECLARE_EVENT_TABLE();
 };

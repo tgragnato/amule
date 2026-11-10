@@ -1,0 +1,639 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
+//
+
+#include <muleunit/test.h>
+
+#include "ChatSessionStore.h"
+#include "ChatCaptcha.h"
+#include <wx/base64.h>
+#include "OtherFunctions.h" // GUI_ID
+
+using namespace muleunit;
+
+DECLARE_SIMPLE(ChatSessionStore)
+
+namespace
+{
+CMD4Hash Peer(uint32 n)
+{
+	unsigned char bytes[16] = { 1 };
+	for (unsigned i = 0; i < 4; ++i) {
+		bytes[i + 1] = static_cast<unsigned char>(n >> (8 * i));
+	}
+	return CMD4Hash(bytes);
+}
+
+CNetworkAddress IPv6Route()
+{
+	CNetworkAddress::Octets bytes = { 0x20, 0x01, 0x48, 0x60 };
+	bytes[15] = 1;
+	return CNetworkAddress::IPv6FromOctets(bytes);
+}
+} // namespace
+
+TEST(ChatSessionStore, ProvisionalOpenRequiresRouteAndReusesEndpoint)
+{
+	CChatSessionStore store;
+	const auto route = CNetworkAddress::FromIPv4NetworkOrder(0x0100000Au);
+	ASSERT_TRUE(store.Open(CMD4Hash(), CNetworkAddress(), 4662, "").IsEmpty());
+	ASSERT_TRUE(store.Open(CMD4Hash(), route, 0, "").IsEmpty());
+	const auto first = store.Open(CMD4Hash(), route, 4662, "first");
+	const auto second = store.Open(CMD4Hash(), route, 4662, "second");
+	ASSERT_TRUE(first == second);
+	ASSERT_EQUALS(static_cast<size_t>(1), store.SessionCount());
+	ASSERT_TRUE(store.FindLegacy(GUI_ID(0x0100000Au, 4662)) == store.Find(first));
+	ASSERT_EQUALS(static_cast<uint32>(1), store.AddOutgoing(first, "hello", route, 4662));
+	ASSERT_EQUALS(static_cast<size_t>(1), store.Find(second)->messages.size());
+	const CChatPeer independent(CMD4Hash(), route, 4662);
+	ASSERT_TRUE(store.Promote(independent, Peer(1)));
+	ASSERT_TRUE(first.Hash() == Peer(1));
+	ASSERT_TRUE(independent == first);
+}
+
+TEST(ChatSessionStore, PromotionPreservesCopiedHandleAndReplacementTranscript)
+{
+	CChatSessionStore store;
+	const auto route = CNetworkAddress::FromIPv4NetworkOrder(0x0100000Au);
+	const auto provisional = store.Open(CMD4Hash(), route, 4662, "alice");
+	const auto queuedNotification = provisional;
+	store.AddOutgoing(provisional, "before", route, 4662);
+	store.AddIncoming(Peer(7), "alice", "identified", route, 4662);
+	ASSERT_TRUE(store.Promote(provisional, Peer(7)));
+	ASSERT_TRUE(queuedNotification.Hash() == Peer(7));
+	ASSERT_EQUALS(static_cast<size_t>(1), store.SessionCount());
+	store.AddOutgoing(CChatPeer(Peer(7)), "replacement", route, 4662);
+	const auto *session = store.Find(queuedNotification);
+	ASSERT_EQUALS(static_cast<size_t>(3), session->messages.size());
+	ASSERT_EQUALS(static_cast<uint32>(1), session->messages[0].id);
+	ASSERT_EQUALS(static_cast<uint32>(2), session->messages[1].id);
+	ASSERT_EQUALS(static_cast<uint32>(3), session->messages[2].id);
+	ASSERT_TRUE(!store.Promote(provisional, Peer(8)));
+	ASSERT_TRUE(store.Open(Peer(7), route, 4662, "alice") == provisional);
+	ASSERT_TRUE(store.CloseSession(queuedNotification));
+	ASSERT_TRUE(store.Find(Peer(7)) == nullptr);
+}
+
+TEST(ChatSessionStore, PromotionDoesNotMergeOtherProvisionalOccupants)
+{
+	CChatSessionStore store;
+	const auto route = CNetworkAddress::FromIPv4NetworkOrder(0x0100000Au);
+	const auto first = store.Open(CMD4Hash(), route, 4662, "first");
+	ASSERT_TRUE(store.Promote(first, Peer(1)));
+	const auto second = store.Open(CMD4Hash(), route, 4662, "second");
+	ASSERT_TRUE(second.Hash().IsEmpty());
+	ASSERT_EQUALS(static_cast<size_t>(2), store.SessionCount());
+	ASSERT_TRUE(store.FindLegacy(GUI_ID(0x0100000Au, 4662)) == nullptr);
+	ASSERT_TRUE(store.Promote(second, Peer(2)));
+	ASSERT_TRUE(first != second);
+}
+
+TEST(ChatSessionStore, ProvisionalRoutesNormalizeMappedIPv4AndKeepPortsDistinct)
+{
+	CChatSessionStore store;
+	const auto route = CNetworkAddress::FromIPv4NetworkOrder(0x0100000Au);
+	CNetworkAddress::Octets mapped = {};
+	mapped[10] = mapped[11] = 0xff;
+	mapped[12] = 10;
+	mapped[15] = 1;
+	const auto first = store.Open(CMD4Hash(), route, 4662, "alice");
+	const auto normalized =
+		store.Open(CMD4Hash(), CNetworkAddress::IPv6FromOctets(mapped), 4662, "alice");
+	ASSERT_TRUE(first == normalized);
+	ASSERT_TRUE(first != store.Open(CMD4Hash(), route, 4663, "other port"));
+	ASSERT_TRUE(first != store.Open(CMD4Hash(), IPv6Route(), 4662, "v6"));
+	ASSERT_EQUALS(static_cast<size_t>(3), store.SessionCount());
+	ASSERT_TRUE(!store.Promote(CChatPeer(CMD4Hash(), route, 9999), Peer(1)));
+}
+
+TEST(ChatSessionStore, IndependentPromotionMergesInterleavedHistoryInCursorOrder)
+{
+	CChatSessionStore store;
+	const auto route = IPv6Route();
+	const auto provisional = store.Open(CMD4Hash(), route, 4662, "alice");
+	store.AddOutgoing(provisional, "one", route, 4662);
+	store.AddIncoming(Peer(7), "alice", "two", route, 4662);
+	store.AddOutgoing(provisional, "three", route, 4662);
+	const CChatPeer independent(CMD4Hash(), route, 4662);
+	ASSERT_TRUE(store.Promote(independent, Peer(7)));
+	ASSERT_EQUALS(static_cast<size_t>(1), store.SessionCount());
+	const auto *session = store.Find(Peer(7));
+	ASSERT_EQUALS(static_cast<size_t>(3), session->messages.size());
+	for (size_t i = 0; i < 3; ++i) {
+		ASSERT_EQUALS(static_cast<uint32>(i + 1), session->messages[i].id);
+	}
+	ASSERT_TRUE(provisional == independent);
+	ASSERT_TRUE(!store.Promote(independent, Peer(8)));
+}
+
+TEST(ChatSessionStore, StartsEmpty)
+{
+	CChatSessionStore store;
+	ASSERT_EQUALS(static_cast<size_t>(0), store.SessionCount());
+	ASSERT_EQUALS(static_cast<uint32>(0), store.LastMsgId());
+	ASSERT_TRUE(store.Find(Peer(1)) == nullptr);
+}
+
+TEST(ChatSessionStore, FirstMessageCreatesSessionWithIdOne)
+{
+	// id 0 is the "no cursor yet" sentinel every reader uses, so the first
+	// real message must be 1 or a client starting at 0 would skip it.
+	CChatSessionStore store;
+	const uint32 id = store.AddIncoming(Peer(1), "alice", "hi");
+	ASSERT_EQUALS(static_cast<uint32>(1), id);
+	ASSERT_EQUALS(static_cast<uint32>(1), store.LastMsgId());
+	ASSERT_EQUALS(static_cast<size_t>(1), store.SessionCount());
+
+	const CChatSessionStore::Session *s = store.Find(Peer(1));
+	ASSERT_TRUE(s != nullptr);
+	ASSERT_EQUALS(wxString("alice"), s->name);
+	ASSERT_EQUALS(static_cast<size_t>(1), s->messages.size());
+	ASSERT_EQUALS(wxString("hi"), s->messages[0].text);
+	ASSERT_EQUALS(static_cast<uint8>(CChatSessionStore::DIR_IN), s->messages[0].direction);
+}
+
+TEST(ChatSessionStore, IdsAreMonotonicAcrossSessions)
+{
+	// The store-wide counter is what makes a single `since_id` cursor safe. Per-session
+	// counters would let a client miss a message that landed in another session while it was
+	// polling this one.
+	CChatSessionStore store;
+	ASSERT_EQUALS(static_cast<uint32>(1), store.AddIncoming(Peer(1), "alice", "a"));
+	ASSERT_EQUALS(static_cast<uint32>(2), store.AddIncoming(Peer(2), "bob", "b"));
+	ASSERT_EQUALS(static_cast<uint32>(3), store.AddOutgoing(Peer(1), "c"));
+	ASSERT_EQUALS(static_cast<uint32>(3), store.LastMsgId());
+	ASSERT_EQUALS(static_cast<uint32>(3), store.Find(Peer(1))->LastMsgId());
+	ASSERT_EQUALS(static_cast<uint32>(2), store.Find(Peer(2))->LastMsgId());
+}
+
+TEST(ChatSessionStore, OutgoingDoesNotEraseAKnownPeerName)
+{
+	// An outbound message carries no name. Letting it overwrite would leave a session we
+	// already had a nick for rendering as a bare ip:port the moment the user replied.
+	CChatSessionStore store;
+	store.AddIncoming(Peer(1), "alice", "hi");
+	store.AddOutgoing(Peer(1), "hello back");
+	ASSERT_EQUALS(wxString("alice"), store.Find(Peer(1))->name);
+}
+
+TEST(ChatSessionStore, LaterNameFillsInAnEmptyOne)
+{
+	// The reverse case: a peer whose nick was unknown on the first message
+	// must pick it up when a later one carries it.
+	CChatSessionStore store;
+	store.AddIncoming(Peer(1), wxEmptyString, "hi");
+	ASSERT_TRUE(store.Find(Peer(1))->name.IsEmpty());
+	store.AddIncoming(Peer(1), "alice", "again");
+	ASSERT_EQUALS(wxString("alice"), store.Find(Peer(1))->name);
+}
+
+TEST(ChatSessionStore, MessageCapEvictsOldestKeepingIdsIntact)
+{
+	// The 201st message drops the 1st; ids are NOT renumbered, because a client holding a
+	// cursor into the evicted range must still advance past it rather than re-reading.
+	CChatSessionStore store;
+	const size_t cap = CChatSessionStore::MAX_MESSAGES_PER_SESSION;
+	for (size_t i = 0; i < cap; ++i) {
+		store.AddIncoming(Peer(1), "alice", wxString::Format("m%zu", i));
+	}
+	const CChatSessionStore::Session *s = store.Find(Peer(1));
+	ASSERT_EQUALS(cap, s->messages.size());
+	ASSERT_EQUALS(wxString("m0"), s->messages.front().text);
+	ASSERT_EQUALS(static_cast<uint32>(1), s->messages.front().id);
+
+	store.AddIncoming(Peer(1), "alice", "overflow");
+	s = store.Find(Peer(1));
+	ASSERT_EQUALS(cap, s->messages.size());
+	ASSERT_EQUALS(wxString("m1"), s->messages.front().text);
+	ASSERT_EQUALS(static_cast<uint32>(2), s->messages.front().id);
+	ASSERT_EQUALS(wxString("overflow"), s->messages.back().text);
+	ASSERT_EQUALS(static_cast<uint32>(cap + 1), s->messages.back().id);
+}
+
+TEST(ChatSessionStore, SessionCapEvictsLeastRecentlyActive)
+{
+	CChatSessionStore store;
+	const size_t cap = CChatSessionStore::MAX_SESSIONS;
+	for (size_t i = 0; i < cap; ++i) {
+		store.AddIncoming(Peer(static_cast<uint32>(i)), "peer", "hi");
+	}
+	ASSERT_EQUALS(cap, store.SessionCount());
+
+	// Peer(0) is the least recently active, so it is the one to go.
+	store.AddIncoming(Peer(9999), "newcomer", "hi");
+	ASSERT_EQUALS(cap, store.SessionCount());
+	ASSERT_TRUE(store.Find(Peer(0)) == nullptr);
+	ASSERT_TRUE(store.Find(Peer(9999)) != nullptr);
+	ASSERT_TRUE(store.Find(Peer(1)) != nullptr);
+}
+
+TEST(ChatSessionStore, ActivityRefreshRescuesASessionFromEviction)
+{
+	// Eviction is by activity, not by creation order: a long-running
+	// conversation must not be dropped just because it started first.
+	CChatSessionStore store;
+	const size_t cap = CChatSessionStore::MAX_SESSIONS;
+	for (size_t i = 0; i < cap; ++i) {
+		store.AddIncoming(Peer(static_cast<uint32>(i)), "peer", "hi");
+	}
+	store.AddOutgoing(Peer(0), "still talking"); // moves Peer(0) to the front
+	store.AddIncoming(Peer(9999), "newcomer", "hi");
+
+	ASSERT_TRUE(store.Find(Peer(0)) != nullptr);
+	ASSERT_TRUE(store.Find(Peer(1)) == nullptr); // now the least recently active
+}
+
+TEST(ChatSessionStore, SessionsAreMostRecentlyActiveFirst)
+{
+	CChatSessionStore store;
+	store.AddIncoming(Peer(1), "alice", "a");
+	store.AddIncoming(Peer(2), "bob", "b");
+	store.AddIncoming(Peer(3), "carol", "c");
+	store.AddOutgoing(Peer(1), "reply to alice");
+
+	std::vector<const CChatSessionStore::Session *> list = store.Sessions();
+	ASSERT_EQUALS(static_cast<size_t>(3), list.size());
+	ASSERT_TRUE(Peer(1) == list[0]->peer);
+	ASSERT_TRUE(Peer(3) == list[1]->peer);
+	ASSERT_TRUE(Peer(2) == list[2]->peer);
+}
+
+TEST(ChatSessionStore, CloseRemovesOnlyThatSession)
+{
+	CChatSessionStore store;
+	store.AddIncoming(Peer(1), "alice", "a");
+	store.AddIncoming(Peer(2), "bob", "b");
+
+	ASSERT_TRUE(store.CloseSession(Peer(1)));
+	ASSERT_TRUE(store.Find(Peer(1)) == nullptr);
+	ASSERT_TRUE(store.Find(Peer(2)) != nullptr);
+	ASSERT_EQUALS(static_cast<size_t>(1), store.SessionCount());
+}
+
+TEST(ChatSessionStore, CloseOfUnknownSessionReportsFailure)
+{
+	// The EC handler answers "no such session" off this return rather than
+	// silently succeeding, so an unknown id must be distinguishable.
+	CChatSessionStore store;
+	ASSERT_TRUE(!store.CloseSession(Peer(1)));
+}
+
+TEST(ChatSessionStore, IdsKeepAdvancingAfterAClose)
+{
+	// Reopening a closed conversation must not reissue ids a client already
+	// holds: the counter is store-wide and never rewinds.
+	CChatSessionStore store;
+	store.AddIncoming(Peer(1), "alice", "a");
+	store.AddIncoming(Peer(1), "alice", "b");
+	store.CloseSession(Peer(1));
+	ASSERT_EQUALS(static_cast<uint32>(3), store.AddIncoming(Peer(1), "alice", "c"));
+	ASSERT_EQUALS(static_cast<size_t>(1), store.Find(Peer(1))->messages.size());
+}
+
+TEST(ChatSessionStore, RouteChangesFromIPv4ToIPv6WithoutChangingIdentity)
+{
+	CChatSessionStore store;
+	const auto v4 = CNetworkAddress::FromIPv4NetworkOrder(0x0100000Au);
+	store.AddIncoming(Peer(1), "alice", "hi", v4, 4662);
+	const uint64 legacy = GUI_ID(0x0100000Au, 4662);
+	ASSERT_TRUE(store.FindLegacy(legacy) == store.Find(Peer(1)));
+	store.AddOutgoing(Peer(1), "reply", IPv6Route(), 4663);
+	const auto *s = store.Find(Peer(1));
+	ASSERT_EQUALS(static_cast<size_t>(1), store.SessionCount());
+	ASSERT_EQUALS(static_cast<size_t>(2), s->messages.size());
+	ASSERT_TRUE(s->address == IPv6Route());
+	ASSERT_EQUALS(static_cast<uint16>(4663), s->port);
+	ASSERT_EQUALS(static_cast<uint64>(0), s->LegacyGuiId());
+	// A legacy client keeps the IPv4 conversation it already holds.
+	ASSERT_TRUE(store.FindLegacy(legacy) == s);
+}
+
+TEST(ChatSessionStore, RouteChangeKeepsOneLegacyViewPerRoute)
+{
+	// 3.1.0 keyed conversations by route, so a peer that moved had two. A legacy client
+	// must still see both, each holding only its own messages.
+	CChatSessionStore store;
+	const auto ip = CNetworkAddress::FromIPv4NetworkOrder(0x0100000Au);
+	const uint64 routeA = GUI_ID(0x0100000Au, 4662);
+	const uint64 routeB = GUI_ID(0x0100000Au, 4663);
+	store.AddIncoming(Peer(1), "alice", "on a", ip, 4662);
+	store.AddIncoming(Peer(1), "alice", "on b", ip, 4663);
+	const auto *s = store.Find(Peer(1));
+	ASSERT_EQUALS(static_cast<size_t>(1), store.SessionCount());
+	ASSERT_EQUALS(routeB, s->LegacyGuiId());
+
+	const auto views = store.LegacySessions();
+	ASSERT_EQUALS(static_cast<size_t>(2), views.size());
+	ASSERT_EQUALS(routeB, views[0].gui_id);
+	ASSERT_EQUALS(routeA, views[1].gui_id);
+	ASSERT_TRUE(views[0].session == s && views[1].session == s);
+	ASSERT_TRUE(store.FindLegacy(routeA) == s);
+	ASSERT_TRUE(store.FindLegacy(routeB) == s);
+
+	// A reply written in the old conversation stays there, although it is delivered on B.
+	store.AddOutgoing(Peer(1), "reply in a", ip, 4663, routeA);
+	ASSERT_EQUALS(routeA, s->messages.back().legacy_route);
+	ASSERT_EQUALS(routeB, s->LegacyGuiId());
+	ASSERT_EQUALS(routeA, s->LegacyRoutes().front());
+}
+
+TEST(ChatSessionStore, LegacyCloseDropsOneRouteUntilNothingIsLeft)
+{
+	CChatSessionStore store;
+	const auto ip = CNetworkAddress::FromIPv4NetworkOrder(0x0100000Au);
+	const uint64 routeA = GUI_ID(0x0100000Au, 4662);
+	const uint64 routeB = GUI_ID(0x0100000Au, 4663);
+	store.AddIncoming(Peer(1), "alice", "on a", ip, 4662);
+	store.AddIncoming(Peer(1), "alice", "on b", ip, 4663);
+
+	CChatPeer closed;
+	ASSERT_TRUE(store.CloseLegacy(routeA, closed) == CChatSessionStore::LegacyClose::View);
+	ASSERT_TRUE(store.FindLegacy(routeA) == nullptr);
+	ASSERT_TRUE(store.FindLegacy(routeB) == store.Find(Peer(1)));
+	ASSERT_EQUALS(static_cast<size_t>(1), store.Find(Peer(1))->messages.size());
+
+	ASSERT_TRUE(store.CloseLegacy(routeB, closed) == CChatSessionStore::LegacyClose::Session);
+	ASSERT_TRUE(closed == CChatPeer(Peer(1)));
+	ASSERT_EQUALS(static_cast<size_t>(0), store.SessionCount());
+	ASSERT_TRUE(store.CloseLegacy(routeB, closed) == CChatSessionStore::LegacyClose::None);
+}
+
+TEST(ChatSessionStore, LegacyRouteClaimedByTwoPeersIsNotProjected)
+{
+	// Peer 1 left route A for B, then peer 2 appeared on A. EC cannot tell the two A
+	// conversations apart, so neither is listed or addressable under A.
+	CChatSessionStore store;
+	const auto ip = CNetworkAddress::FromIPv4NetworkOrder(0x0100000Au);
+	const uint64 routeA = GUI_ID(0x0100000Au, 4662);
+	const uint64 routeB = GUI_ID(0x0100000Au, 4663);
+	store.AddIncoming(Peer(1), "alice", "on a", ip, 4662);
+	store.AddIncoming(Peer(1), "alice", "on b", ip, 4663);
+	store.AddIncoming(Peer(2), "bob", "also on a", ip, 4662);
+
+	bool ambiguous = false;
+	ASSERT_TRUE(store.FindLegacy(routeA, &ambiguous) == nullptr);
+	ASSERT_TRUE(ambiguous);
+	const auto views = store.LegacySessions();
+	ASSERT_EQUALS(static_cast<size_t>(1), views.size());
+	ASSERT_EQUALS(routeB, views[0].gui_id);
+}
+
+TEST(ChatSessionStore, OpenedSessionWithoutMessagesIsListedUnderItsRoute)
+{
+	CChatSessionStore store;
+	const auto ip = CNetworkAddress::FromIPv4NetworkOrder(0x0100000Au);
+	const CChatPeer peer = store.Open(CMD4Hash(), ip, 4662, wxEmptyString);
+	const auto views = store.LegacySessions();
+	ASSERT_EQUALS(static_cast<size_t>(1), views.size());
+	ASSERT_EQUALS(GUI_ID(0x0100000Au, 4662), views[0].gui_id);
+	ASSERT_TRUE(views[0].session == store.Find(peer));
+}
+
+TEST(ChatSessionStore, ReplacementClientWithSameHashContinuesTranscript)
+{
+	// The store boundary deliberately accepts no object pointer or ECID. These
+	// independently reconstructed hash values model two successive client objects.
+	CChatSessionStore store;
+	{
+		const CMD4Hash firstClientHash = Peer(7);
+		store.AddIncoming(firstClientHash, "alice", "before replacement");
+	}
+	const CMD4Hash replacementClientHash = Peer(7);
+	store.AddOutgoing(replacementClientHash, "after replacement", IPv6Route(), 4662);
+	ASSERT_EQUALS(static_cast<size_t>(1), store.SessionCount());
+	ASSERT_EQUALS(static_cast<size_t>(2), store.Find(replacementClientHash)->messages.size());
+}
+
+TEST(ChatSessionStore, DistinctPeersAtSameEndpointAreNeverMerged)
+{
+	CChatSessionStore store;
+	const auto route = CNetworkAddress::FromIPv4NetworkOrder(0x0100000Au);
+	store.AddIncoming(Peer(1), "alice", "a", route, 4662);
+	store.AddIncoming(Peer(2), "bob", "b", route, 4662);
+	ASSERT_EQUALS(static_cast<size_t>(2), store.SessionCount());
+	ASSERT_EQUALS(wxString("a"), store.Find(Peer(1))->messages.front().text);
+	ASSERT_EQUALS(wxString("b"), store.Find(Peer(2))->messages.front().text);
+	ASSERT_TRUE(store.FindLegacy(GUI_ID(0x0100000Au, 4662)) == nullptr);
+	store.CloseSession(Peer(1));
+	ASSERT_TRUE(store.FindLegacy(GUI_ID(0x0100000Au, 4662)) == store.Find(Peer(2)));
+}
+
+TEST(ChatSessionStore, AbsentLowIDRouteDoesNotBecomeAnIdentity)
+{
+	// A callback-only LowID is not an IPv4 address. Its route can be absent,
+	// while its hash still identifies a conversation and keeps peers separate.
+	CChatSessionStore store;
+	store.AddIncoming(Peer(1), "alice", "a", CNetworkAddress::Absent(), 4662);
+	store.AddIncoming(Peer(2), "bob", "b", CNetworkAddress::Absent(), 4662);
+	ASSERT_EQUALS(static_cast<size_t>(2), store.SessionCount());
+	ASSERT_TRUE(store.Find(Peer(1))->address.IsAbsent());
+	ASSERT_EQUALS(static_cast<uint64>(0), store.Find(Peer(1))->LegacyGuiId());
+	ASSERT_TRUE(store.FindLegacy(0) == nullptr);
+	store.AddOutgoing(Peer(1), "route acquired", IPv6Route(), 4662);
+	ASSERT_EQUALS(static_cast<size_t>(2), store.Find(Peer(1))->messages.size());
+}
+
+TEST(ChatSessionStore, EmptyHashesAreUnavailableAndDoNotConsumeMessageIds)
+{
+	CChatSessionStore store;
+	ASSERT_EQUALS(static_cast<uint32>(0), store.AddIncoming(CMD4Hash(), "unknown", "hi"));
+	ASSERT_EQUALS(static_cast<uint32>(0), store.AddOutgoing(CMD4Hash(), "reply", IPv6Route(), 4662));
+	ASSERT_EQUALS(static_cast<size_t>(0), store.SessionCount());
+	ASSERT_EQUALS(static_cast<uint32>(0), store.LastMsgId());
+	ASSERT_TRUE(!store.CloseSession(CMD4Hash()));
+	ASSERT_EQUALS(static_cast<uint32>(1), store.AddIncoming(Peer(1), "known", "hi"));
+}
+
+TEST(ChatSessionStore, LegacyProjectionRequiresIPv4AddressAndPort)
+{
+	CChatSessionStore store;
+	const auto route = CNetworkAddress::FromIPv4NetworkOrder(0x0100000Au);
+	store.AddIncoming(Peer(1), "alice", "hi", route, 4662);
+	ASSERT_EQUALS(GUI_ID(0x0100000Au, 4662), store.Find(Peer(1))->LegacyGuiId());
+	store.AddOutgoing(Peer(1), "no port", route, 0);
+	ASSERT_EQUALS(static_cast<uint64>(0), store.Find(Peer(1))->LegacyGuiId());
+	store.AddOutgoing(Peer(1), "no address", CNetworkAddress::FromIPv4NetworkOrder(0), 4662);
+	ASSERT_EQUALS(static_cast<uint64>(0), store.Find(Peer(1))->LegacyGuiId());
+	store.AddOutgoing(Peer(1), "v6", IPv6Route(), 4662);
+	ASSERT_EQUALS(static_cast<uint64>(0), store.Find(Peer(1))->LegacyGuiId());
+	CNetworkAddress::Octets mapped = {};
+	mapped[10] = mapped[11] = 0xff;
+	mapped[12] = 10;
+	mapped[15] = 1;
+	store.AddOutgoing(Peer(1), "mapped", CNetworkAddress::IPv6FromOctets(mapped), 4662);
+	ASSERT_EQUALS(static_cast<uint64>(0), store.Find(Peer(1))->LegacyGuiId());
+	store.AddOutgoing(Peer(1), "route lost", CNetworkAddress::Absent(), 0);
+	ASSERT_TRUE(store.Find(Peer(1))->address.IsAbsent());
+	ASSERT_EQUALS(static_cast<size_t>(1), store.SessionCount());
+	store.AddOutgoing(Peer(1), "v4 restored", route, 4662);
+	ASSERT_TRUE(store.FindLegacy(GUI_ID(0x0100000Au, 4662)) == store.Find(Peer(1)));
+}
+
+namespace
+{
+std::vector<unsigned char> CaptchaBitmap()
+{
+	// 92 x 36, 1-bit Windows BMP, as generated by aMule/eMule.
+	std::vector<unsigned char> bmp(62 + 12 * 36, 0);
+	const auto put32 = [&bmp](size_t offset, uint32 value) {
+		for (size_t i = 0; i < 4; ++i) {
+			bmp[offset + i] = static_cast<unsigned char>(value >> (8 * i));
+		}
+	};
+	bmp[0] = 'B';
+	bmp[1] = 'M';
+	put32(2, static_cast<uint32>(bmp.size()));
+	put32(10, 62);
+	put32(14, 40);
+	put32(18, 92);
+	put32(22, 36);
+	bmp[26] = 1;
+	bmp[28] = 1;
+	return bmp;
+}
+} // namespace
+
+TEST(ChatSessionStore, CaptchaValidationRejectsMalformedAndOversizedImages)
+{
+	const auto valid = CaptchaBitmap();
+	ASSERT_TRUE(IsValidChatCaptcha(valid.data(), valid.size()));
+	ASSERT_TRUE(!IsValidChatCaptcha(nullptr, 0));
+	for (size_t size = 0; size < valid.size(); ++size) {
+		ASSERT_TRUE(!IsValidChatCaptcha(valid.data(), size));
+	}
+	// Signature, file size, pixel offset, header size, dimensions, planes,
+	// bit depth, compression and palette count are all validated.
+	for (size_t offset : { 0U, 2U, 10U, 14U, 18U, 22U, 26U, 28U, 30U, 46U }) {
+		auto invalid = valid;
+		invalid.at(offset) = 255;
+		ASSERT_TRUE(!IsValidChatCaptcha(invalid.data(), invalid.size()));
+	}
+	auto huge = valid;
+	huge.resize(4096);
+	ASSERT_TRUE(!IsValidChatCaptcha(huge.data(), huge.size()));
+}
+
+TEST(ChatSessionStore, CaptchaEntriesUseTheTranscriptCursorAndPreserveTheImage)
+{
+	CChatSessionStore store;
+	const auto peer = Peer(101);
+	const auto bmp = CaptchaBitmap();
+	ASSERT_TRUE(!store.AddCaptchaChallenge(peer, bmp.data(), bmp.size()));
+	ASSERT_TRUE(!store.AddCaptchaResult(peer, 0));
+	store.AddOutgoing(peer, "hello");
+	ASSERT_TRUE(store.AddCaptchaChallenge(peer, bmp.data(), bmp.size()));
+	const auto *session = store.Find(peer);
+	ASSERT_EQUALS(static_cast<uint32>(2), session->LastMsgId());
+	const auto &challenge = session->messages.back();
+	ASSERT_EQUALS(static_cast<uint8>(CChatSessionStore::CAPTCHA_CHALLENGE), challenge.kind);
+	ASSERT_EQUALS(wxBase64Encode(bmp.data(), bmp.size()), challenge.captcha_image);
+	ASSERT_TRUE(!store.AddCaptchaResult(peer, 3));
+	ASSERT_EQUALS(static_cast<uint32>(2), store.LastMsgId());
+	for (uint8 status = 0; status <= 2; ++status) {
+		ASSERT_TRUE(store.AddCaptchaResult(peer, status));
+		const auto &result = session->messages.back();
+		ASSERT_EQUALS(static_cast<uint8>(CChatSessionStore::CAPTCHA_RESULT), result.kind);
+		ASSERT_EQUALS(status, result.captcha_status);
+		ASSERT_TRUE(result.captcha_image.empty());
+	}
+	ASSERT_EQUALS(static_cast<uint32>(5), store.LastMsgId());
+	store.CloseSession(peer);
+	ASSERT_TRUE(!store.AddCaptchaChallenge(peer, bmp.data(), bmp.size()));
+}
+
+TEST(ChatSessionStore, CaptchaHistoryIsBoundedAndFollowsPeerPromotion)
+{
+	CChatSessionStore store;
+	const auto route = CNetworkAddress::FromIPv4NetworkOrder(0x0100000Au);
+	const auto peer = store.Open(CMD4Hash(), route, 4662, "peer");
+	const auto bmp = CaptchaBitmap();
+	ASSERT_TRUE(store.AddCaptchaChallenge(peer, bmp.data(), bmp.size()));
+	ASSERT_TRUE(store.Promote(peer, Peer(102)));
+	for (size_t i = 0; i < CChatSessionStore::MAX_MESSAGES_PER_SESSION; ++i) {
+		ASSERT_TRUE(store.AddCaptchaChallenge(peer, bmp.data(), bmp.size()));
+	}
+	const auto *session = store.Find(CChatPeer(Peer(102)));
+	ASSERT_TRUE(session != nullptr);
+	ASSERT_EQUALS(
+		static_cast<size_t>(CChatSessionStore::MAX_MESSAGES_PER_SESSION), session->messages.size());
+	ASSERT_EQUALS(static_cast<uint32>(2), session->messages.front().id);
+	ASSERT_EQUALS(static_cast<uint32>(201), session->LastMsgId());
+	ASSERT_EQUALS(GUI_ID(0x0100000Au, 4662), session->messages.back().legacy_route);
+}
+
+TEST(ChatSessionStore, CaptchaAcceptsTopDownAnd16BitWindowsBitmaps)
+{
+	auto bmp = CaptchaBitmap();
+	// -36 encoded in the signed 32-bit BMP height field.
+	const uint32 topDown = 0U - 36U;
+	for (size_t i = 0; i < 4; ++i) {
+		bmp[22 + i] = static_cast<unsigned char>(topDown >> (8 * i));
+	}
+	ASSERT_TRUE(IsValidChatCaptcha(bmp.data(), bmp.size()));
+	// Minimum signed height must not overflow when converted to an absolute size.
+	bmp[22] = bmp[23] = bmp[24] = 0;
+	bmp[25] = 0x80;
+	ASSERT_TRUE(!IsValidChatCaptcha(bmp.data(), bmp.size()));
+	// 20 x 20 RGB555: valid uncompressed 16-bit Windows BMP.
+	bmp.assign(54 + 40 * 20, 0);
+	const auto put32 = [&bmp](size_t pos, uint32 value) {
+		for (size_t i = 0; i < 4; ++i)
+			bmp[pos + i] = static_cast<unsigned char>(value >> (8 * i));
+	};
+	bmp[0] = 'B';
+	bmp[1] = 'M';
+	put32(2, static_cast<uint32>(bmp.size()));
+	put32(10, 54);
+	put32(14, 40);
+	put32(18, 20);
+	put32(22, 20);
+	bmp[26] = 1;
+	bmp[28] = 16;
+	ASSERT_TRUE(IsValidChatCaptcha(bmp.data(), bmp.size()));
+	bmp.pop_back();
+	put32(2, static_cast<uint32>(bmp.size()));
+	ASSERT_TRUE(!IsValidChatCaptcha(bmp.data(), bmp.size()));
+}
+
+TEST(ChatSessionStore, PendingCaptchaImageSurvivesTranscriptEvictionAndPromotion)
+{
+	CChatSessionStore store;
+	const auto route = CNetworkAddress::FromIPv4NetworkOrder(0x0100000Au);
+	const auto provisional = store.Open(CMD4Hash(), route, 4662, "peer");
+	const auto bmp = CaptchaBitmap();
+	ASSERT_TRUE(store.AddCaptchaChallenge(provisional, bmp.data(), bmp.size()));
+	const auto id = store.LastMsgId();
+	for (size_t i = 0; i < CChatSessionStore::MAX_MESSAGES_PER_SESSION; ++i) {
+		store.AddIncoming(provisional, "peer", "ordinary message", route, 4662);
+	}
+	ASSERT_TRUE(store.Find(provisional)->messages.front().id > id);
+	const auto hash = Peer(103);
+	store.AddOutgoing(CChatPeer(hash), "known peer");
+	ASSERT_TRUE(store.Promote(provisional, hash));
+	const auto *session = store.Find(CChatPeer(hash));
+	ASSERT_EQUALS(id, session->captcha_id);
+	ASSERT_EQUALS(wxBase64Encode(bmp.data(), bmp.size()), session->captcha_image);
+	ASSERT_TRUE(store.AddCaptchaResult(CChatPeer(hash), 0));
+	ASSERT_EQUALS(static_cast<uint32>(0), session->captcha_id);
+	ASSERT_TRUE(session->captcha_image.empty());
+}

@@ -23,350 +23,529 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include "ServerListCtrl.h"	// Interface declarations
+#include "ServerListCtrl.h" // Interface declarations
+
+#include "MenuIcons.h"
+
+#include <algorithm> // Needed for std::max
+#include <vector>    // Needed for std::vector
 
 #include <common/MenuIDs.h>
 
 #include <wx/menu.h>
 #include <wx/stattext.h>
 #include <wx/msgdlg.h>
-#include <wx/settings.h>
 
-#include "amule.h"		// Needed for theApp
-#include "DownloadQueue.h"	// Needed for CDownloadQueue
-#include "ServerList.h"		// Needed for CServerList
-#include "ServerConnect.h"	// Needed for CServerConnect
-#include "Server.h"		// Needed for CServer and SRV_PR_*
+#include "amule.h"         // Needed for theApp
+#include "DownloadQueue.h" // Needed for CDownloadQueue
+#include "ServerList.h"    // Needed for CServerList
+#include "ServerConnect.h" // Needed for CServerConnect
+#include "Server.h"        // Needed for CServer and SRV_PR_*
 #include "Logger.h"
-#include <common/Format.h>	// Needed for CFormat
-#include "Preferences.h"	// Needed for thePrefs
+#include <common/Format.h> // Needed for CFormat
 
+#include <wx/dcclient.h> // Needed for wxClientDC
 
-#define CMuleColour(x) (wxSystemSettings::GetColour(x))
+// Logical size of the header sort arrows. Country flags are rendered separately.
+static const int LIST_IMAGE_SIZE = 16;
 
+wxBEGIN_EVENT_TABLE(CServerListCtrl, CMuleVirtualDataViewCtrl)
+	EVT_DATAVIEW_ITEM_CONTEXT_MENU(wxID_ANY, CServerListCtrl::OnItemRightClicked)
+	EVT_DATAVIEW_ITEM_ACTIVATED(wxID_ANY, CServerListCtrl::OnItemActivated)
 
-BEGIN_EVENT_TABLE(CServerListCtrl,CMuleListCtrl)
-	EVT_LIST_ITEM_RIGHT_CLICK( -1,	CServerListCtrl::OnItemRightClicked)
-	EVT_LIST_ITEM_ACTIVATED( -1,	CServerListCtrl::OnItemActivated )
+	EVT_MENU(MP_PRIOLOW, CServerListCtrl::OnPriorityChange)
+	EVT_MENU(MP_PRIONORMAL, CServerListCtrl::OnPriorityChange)
+	EVT_MENU(MP_PRIOHIGH, CServerListCtrl::OnPriorityChange)
 
-	EVT_MENU( MP_PRIOLOW,			CServerListCtrl::OnPriorityChange )
-	EVT_MENU( MP_PRIONORMAL,		CServerListCtrl::OnPriorityChange )
-	EVT_MENU( MP_PRIOHIGH,			CServerListCtrl::OnPriorityChange )
+	EVT_MENU(MP_ADDTOSTATIC, CServerListCtrl::OnStaticChange)
+	EVT_MENU(MP_REMOVEFROMSTATIC, CServerListCtrl::OnStaticChange)
 
-	EVT_MENU( MP_ADDTOSTATIC,		CServerListCtrl::OnStaticChange )
-	EVT_MENU( MP_REMOVEFROMSTATIC,	CServerListCtrl::OnStaticChange )
+	EVT_MENU(MP_CONNECTTO, CServerListCtrl::OnConnectToServer)
 
-	EVT_MENU( MP_CONNECTTO,			CServerListCtrl::OnConnectToServer )
+	EVT_MENU(MP_REMOVE, CServerListCtrl::OnRemoveServers)
+	EVT_MENU(MP_REMOVEALL, CServerListCtrl::OnRemoveServers)
 
-	EVT_MENU( MP_REMOVE,			CServerListCtrl::OnRemoveServers )
-	EVT_MENU( MP_REMOVEALL,			CServerListCtrl::OnRemoveServers )
+	EVT_MENU(MP_GETED2KLINK, CServerListCtrl::OnGetED2kURL)
 
-	EVT_MENU( MP_GETED2KLINK,		CServerListCtrl::OnGetED2kURL )
+wxEND_EVENT_TABLE()
 
-	EVT_CHAR( CServerListCtrl::OnKeyPressed )
-END_EVENT_TABLE()
-
-
-
-CServerListCtrl::CServerListCtrl( wxWindow *parent, wxWindowID winid, const wxPoint& pos, const wxSize& size,
-                                  long style, const wxValidator& validator, const wxString& name )
-	: CMuleListCtrl( parent, winid, pos, size, style, validator, name )
+CServerListCtrl::CServerListCtrl(wxWindow *parent,
+	wxWindowID winid,
+	const wxPoint &pos,
+	const wxSize &size,
+	long style,
+	const wxString &name)
+: CMuleVirtualDataViewCtrl(parent, winid, pos, size, style, name)
 {
-	// Setting the sorter function.
-	SetSortFunc( SortProc );
-
-	// Set the table-name (for loading and saving preferences).
-	SetTableName( wxT("Server") );
-
 	m_connected = 0;
 
-	InsertColumn( COLUMN_SERVER_NAME,	_("Server Name"),	wxLIST_FORMAT_LEFT, 150, wxT("N") );
-	InsertColumn( COLUMN_SERVER_ADDR,	_("Address"),		wxLIST_FORMAT_LEFT, 140, wxT("A") );
-	InsertColumn( COLUMN_SERVER_PORT,	_("Port"),		wxLIST_FORMAT_LEFT,  25, wxT("P") );
-	InsertColumn( COLUMN_SERVER_DESC,	_("Description"),	wxLIST_FORMAT_LEFT, 150, wxT("D") );
-	InsertColumn( COLUMN_SERVER_PING,	_("Ping"),		wxLIST_FORMAT_LEFT,  25, wxT("p") );
-	InsertColumn( COLUMN_SERVER_USERS,	_("Users"),		wxLIST_FORMAT_LEFT,  40, wxT("U") );
-	InsertColumn( COLUMN_SERVER_FILES,	_("Files"),		wxLIST_FORMAT_LEFT,  45, wxT("F") );
-	InsertColumn( COLUMN_SERVER_PRIO,	_("Priority"),		wxLIST_FORMAT_LEFT,  60, wxT("r") );
-	InsertColumn( COLUMN_SERVER_FAILS,	_("Failed"),		wxLIST_FORMAT_LEFT,  40, wxT("f") );
-	InsertColumn( COLUMN_SERVER_STATIC,	_("Static"),		wxLIST_FORMAT_LEFT,  40, wxT("S") );
-	InsertColumn( COLUMN_SERVER_VERSION,	_("Version"),		wxLIST_FORMAT_LEFT,  80, wxT("V") );
-	#ifdef __DEBUG__
-	InsertColumn( COLUMN_SERVER_TCPFLAGS,	wxT("TCP Flags"),	wxLIST_FORMAT_LEFT,  80, wxT("t") );
-	InsertColumn( COLUMN_SERVER_UDPFLAGS,	wxT("UDP Flags"),	wxLIST_FORMAT_LEFT,  80, wxT("u") );
-	#endif
+	// The name column carries the country flag, so it is icon+text; the rest
+	// are plain text. Sortable throughout, or wx draws no header caret.
+	const int flags = wxDATAVIEW_COL_RESIZABLE | wxDATAVIEW_COL_SORTABLE;
+	AddIconTextColumn(_("Server Name"), COLUMN_SERVER_NAME, "N", 150, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Address"), COLUMN_SERVER_ADDR, "A", 140, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Port"), COLUMN_SERVER_PORT, "P", 25, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Description"), COLUMN_SERVER_DESC, "D", 150, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Ping"), COLUMN_SERVER_PING, "p", 25, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Users"), COLUMN_SERVER_USERS, "U", 40, wxALIGN_LEFT, flags);
+	// Beside Users, since the pair is read together: how many are on now, and
+	// how many the server will take.
+	AddTextColumn(_("Max Users"), COLUMN_SERVER_MAXUSERS, "m", 85, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Files"), COLUMN_SERVER_FILES, "F", 45, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Priority"), COLUMN_SERVER_PRIO, "r", 60, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Failed"), COLUMN_SERVER_FAILS, "f", 40, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Static"), COLUMN_SERVER_STATIC, "S", 40, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Version"), COLUMN_SERVER_VERSION, "V", 80, wxALIGN_LEFT, flags);
 
+	AddTextColumn(_("Soft Files"), COLUMN_SERVER_SOFTFILES, "s", 85, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Hard Files"), COLUMN_SERVER_HARDFILES, "h", 85, wxALIGN_LEFT, flags);
 
-	LoadSettings();
+	// Same columns in both binaries: diagnostics, hidden by default in release builds (below),
+	// and the flags are streamed over EC so the remote GUI has the data behind them.
+	AddTextColumn(_("TCP Flags"), COLUMN_SERVER_TCPFLAGS, "t", 80, wxALIGN_LEFT, flags);
+	AddTextColumn(_("UDP Flags"), COLUMN_SERVER_UDPFLAGS, "u", 80, wxALIGN_LEFT, flags);
+	// Per-user publishing limits the server advertises: how many of a user's shared files it
+	// will index. Both arrive with the periodic UDP status reply, the same one that fills Users
+	// and Files.
+
+	// Absorbs the macOS trailing-column sizing; the model answers any column
+	// past the real ones with an empty value.
+	AppendSpacerColumn(COLUMN_SERVER_SPACER);
+	AssociateVirtualModel();
+
+	// Default sort is by name, ascending; LoadColumnSettings() replaces it
+	// when the config has something saved.
+	ApplySorting(COLUMN_SERVER_NAME, 0);
+
+#ifndef __DEBUG__
+	// Wire-flag columns are diagnostics: listed in the header menu so they can be switched on,
+	// hidden by default. Set before the settings are loaded, so anything the user saved wins.
+	SetColumnHidden(COLUMN_SERVER_TCPFLAGS, true, 0);
+	SetColumnHidden(COLUMN_SERVER_UDPFLAGS, true, 0);
+#endif
+
+	m_columnStore.SetTableName("Server");
+	LoadColumnSettings();
+	InitColumnState();
 }
-
 
 wxString CServerListCtrl::GetOldColumnOrder() const
 {
 	return wxT("N,A,P,D,p,U,F,r,f,S,V,t,u");
 }
 
+CServerListCtrl::~CServerListCtrl() {}
 
-CServerListCtrl::~CServerListCtrl()
-{
-}
-
-
-void CServerListCtrl::AddServer( CServer* toadd )
+void CServerListCtrl::AddServer(CServer *toadd)
 {
 	// RefreshServer will add the server.
 	// This also means that we have simple duplicity checking. ;)
-	RefreshServer( toadd );
+	RefreshServer(toadd);
 
 	ShowServerCount();
 }
 
-
-void CServerListCtrl::RemoveServer(CServer* server)
+void CServerListCtrl::RemoveServer(CServer *server)
 {
-	long result = FindItem(-1, reinterpret_cast<wxUIntPtr>(server));
-	if ( result != -1 ) {
-		DeleteItem(result);
-		ShowServerCount();
+	const wxUIntPtr ptr = reinterpret_cast<wxUIntPtr>(server);
+	if (!HasItemData(ptr)) {
+		return;
 	}
+	if (server == m_connected) {
+		m_connected = nullptr;
+	}
+	RemoveItemData(ptr);
+	ShowServerCount();
 }
 
-
-void CServerListCtrl::RemoveAllServers(int state)
+void CServerListCtrl::RemoveAllServers(bool selectedOnly)
 {
-	int pos = GetNextItem( -1, wxLIST_NEXT_ALL, state);
-	bool connected = theApp->IsConnectedED2K() ||
-	  theApp->serverconnect->IsConnecting();
+	// Collect first, delete second: the rows are a view onto the model, so removing one
+	// renumbers every row below it -- and the confirmations below run a nested event loop,
+	// during which the list can be updated underneath a row index but never underneath a server
+	// pointer.
+	std::vector<CServer *> candidates;
+	if (selectedOnly) {
+		for (wxUIntPtr data : GetSelectedItemData()) {
+			candidates.push_back(reinterpret_cast<CServer *>(data));
+		}
+	} else {
+		for (long row = 0; row < ItemDataCount(); ++row) {
+			candidates.push_back(reinterpret_cast<CServer *>(ItemAt(row)));
+		}
+	}
 
-	while ( pos != -1 ) {
-		CServer* server = reinterpret_cast<CServer*>(GetItemData(pos));
+	const bool connected = theApp->IsConnectedED2K() || theApp->serverconnect->IsConnecting();
 
-		if (server == m_connected && connected) {
-			wxMessageBox(_("You are connected to a server you are trying to delete. Please disconnect first. The server was NOT deleted."), _("Info"), wxOK, this);
-			++pos;
-		} else if (server->IsStaticMember()) {
-			const wxString name = (!server->GetListName() ? wxString(_("(Unknown name)")) : server->GetListName());
-
-			if (wxMessageBox(CFormat(_("Are you sure you want to delete the static server %s")) % name, _("Cancel"), wxICON_QUESTION | wxYES_NO, this) == wxYES) {
-				theApp->serverlist->SetStaticServer(server, false);
-				DeleteItem( pos );
-				theApp->serverlist->RemoveServer( server );
-			} else {
-				++pos;
-			}
-		} else {
-			DeleteItem( pos );
-			theApp->serverlist->RemoveServer( server );
+	for (CServer *server : candidates) {
+		// May have gone away while a message box was up.
+		if (!HasItemData(reinterpret_cast<wxUIntPtr>(server))) {
+			continue;
 		}
 
-		pos = GetNextItem(pos - 1, wxLIST_NEXT_ALL, state);
+		if (server == m_connected && connected) {
+			wxMessageBox(_("You are connected to a server you are trying to delete. Please "
+				       "disconnect first. The server was NOT deleted."),
+				_("Info"),
+				wxOK,
+				this);
+			continue;
+		}
+
+		if (server->IsStaticMember()) {
+			const wxString name = (!server->GetListName() ? wxString(_("(Unknown name)"))
+								      : server->GetListName());
+
+			if (wxMessageBox(
+				    CFormat(_("Are you sure you want to delete the static server %s")) % name,
+				    _("Cancel"),
+				    wxICON_QUESTION | wxYES_NO | wxNO_DEFAULT,
+				    this) != wxYES) {
+				continue;
+			}
+			theApp->serverlist->SetStaticServer(server, false);
+		}
+
+		// Drop the row before asking for the removal, not as a result of it: amulegui's
+		// CServerListRem::RemoveServer() only sends an EC command, so the row would
+		// otherwise linger until the core's next update. In the monolithic build the
+		// resulting Notify_ServerRemove() finds the row already gone.
+		RemoveServer(server);
+		theApp->serverlist->RemoveServer(server);
 	}
 
 	ShowServerCount();
 }
 
-
-void CServerListCtrl::RefreshServer( CServer* server )
+void CServerListCtrl::RefreshServer(CServer *server)
 {
-	// Can't really refresh a NULL server
 	if (!server) {
 		return;
 	}
 
-	wxUIntPtr ptr = reinterpret_cast<wxUIntPtr>(server);
-	long itemnr = FindItem( -1, ptr );
-	if ( itemnr == -1 ) {
-		// We are not at the sure that the server isn't in the list, so we can re-add
-		itemnr = InsertItem( GetInsertPos( ptr ), server->GetListName() );
-		SetItemPtrData( itemnr, ptr );
-
-		wxListItem item;
-		item.SetId( itemnr );
-		item.SetBackgroundColour(CMuleColour(wxSYS_COLOUR_LISTBOX));
-		SetItem( item );
-	}
-
-	wxString serverName;
-	serverName << server->GetListName();
-	SetItem(itemnr, COLUMN_SERVER_NAME, serverName);
-	SetItem(itemnr, COLUMN_SERVER_ADDR, server->GetAddress());
-	if (server->GetAuxPortsList().IsEmpty()) {
-		SetItem( itemnr, COLUMN_SERVER_PORT,
-			CFormat(wxT("%u")) % server->GetPort());
+	const wxUIntPtr ptr = reinterpret_cast<wxUIntPtr>(server);
+	if (HasItemData(ptr)) {
+		// The cells are rendered from the server on demand, so a refresh is just a repaint
+		// -- plus, when sorted by a column whose value just changed, the re-sort the base
+		// class coalesces for us.
+		RefreshItemData(ptr);
 	} else {
-		SetItem( itemnr, COLUMN_SERVER_PORT,
-			CFormat(wxT("%u (%s)")) % server->GetPort() % server->GetAuxPortsList());
-	}
-	SetItem( itemnr, COLUMN_SERVER_DESC, server->GetDescription() );
-
-	if ( server->GetPing() ) {
-		SetItem( itemnr, COLUMN_SERVER_PING,
-			CastSecondsToHM(server->GetPing()/1000, server->GetPing() % 1000 ) );
-	} else {
-		SetItem( itemnr, COLUMN_SERVER_PING, wxEmptyString );
-	}
-
-	if ( server->GetUsers() ) {
-		SetItem( itemnr, COLUMN_SERVER_USERS,
-			CFormat(wxT("%u")) % server->GetUsers());
-	} else {
-		SetItem( itemnr, COLUMN_SERVER_USERS, wxEmptyString );
-	}
-
-	if ( server->GetFiles() ) {
-		SetItem( itemnr, COLUMN_SERVER_FILES,
-			CFormat(wxT("%u")) % server->GetFiles());
-	} else {
-		SetItem( itemnr, COLUMN_SERVER_FILES, wxEmptyString );
-	}
-
-	switch ( server->GetPreferences() ) {
-		case SRV_PR_LOW:	SetItem(itemnr, COLUMN_SERVER_PRIO, _("Low"));		break;
-		case SRV_PR_NORMAL:	SetItem(itemnr, COLUMN_SERVER_PRIO, _("Normal"));	break;
-		case SRV_PR_HIGH:	SetItem(itemnr, COLUMN_SERVER_PRIO, _("High") );	break;
-		default:		SetItem(itemnr, COLUMN_SERVER_PRIO, wxT("---"));	// this should never happen
-	}
-
-	SetItem( itemnr, COLUMN_SERVER_FAILS, CFormat(wxT("%u")) % server->GetFailedCount());
-	SetItem( itemnr, COLUMN_SERVER_STATIC, ( server->IsStaticMember() ? _("Yes") : _("No") ) );
-	SetItem( itemnr, COLUMN_SERVER_VERSION, server->GetVersion() );
-
-	#if defined(__DEBUG__) && !defined(CLIENT_GUI)
-	wxString flags;
-	/* TCP */
-	if (server->GetTCPFlags() & SRV_TCPFLG_COMPRESSION) {
-		flags += wxT("c");
-	}
-	if (server->GetTCPFlags() & SRV_TCPFLG_NEWTAGS) {
-		flags += wxT("n");
-	}
-	if (server->GetTCPFlags() & SRV_TCPFLG_UNICODE) {
-		flags += wxT("u");
-	}
-	if (server->GetTCPFlags() & SRV_TCPFLG_RELATEDSEARCH) {
-		flags += wxT("r");
-	}
-	if (server->GetTCPFlags() & SRV_TCPFLG_TYPETAGINTEGER) {
-		flags += wxT("t");
-	}
-	if (server->GetTCPFlags() & SRV_TCPFLG_LARGEFILES) {
-		flags += wxT("l");
-	}
-	if (server->GetTCPFlags() & SRV_TCPFLG_TCPOBFUSCATION) {
-		flags += wxT("o");
-	}
-
-	SetItem( itemnr, COLUMN_SERVER_TCPFLAGS, flags );
-
-	/* UDP */
-	flags.Clear();
-	if (server->GetUDPFlags() & SRV_UDPFLG_EXT_GETSOURCES) {
-		flags += wxT("g");
-	}
-	if (server->GetUDPFlags() & SRV_UDPFLG_EXT_GETFILES) {
-		flags += wxT("f");
-	}
-	if (server->GetUDPFlags() & SRV_UDPFLG_NEWTAGS) {
-		flags += wxT("n");
-	}
-	if (server->GetUDPFlags() & SRV_UDPFLG_UNICODE) {
-		flags += wxT("u");
-	}
-	if (server->GetUDPFlags() & SRV_UDPFLG_EXT_GETSOURCES2) {
-		flags += wxT("G");
-	}
-	if (server->GetUDPFlags() & SRV_UDPFLG_LARGEFILES) {
-		flags += wxT("l");
-	}
-	if (server->GetUDPFlags() & SRV_UDPFLG_UDPOBFUSCATION) {
-		flags += wxT("o");
-	}
-	if (server->GetUDPFlags() & SRV_UDPFLG_TCPOBFUSCATION) {
-		flags += wxT("O");
-	}
-	SetItem( itemnr, COLUMN_SERVER_UDPFLAGS, flags );
-
-	#endif
-
-	// Deletions of items causes rather large amount of flicker, so to
-	// avoid this, we resort the list to ensure correct ordering.
-	if (!IsItemSorted(itemnr)) {
-		SortList();
+		AddItemData(ptr);
 	}
 }
 
-
-void CServerListCtrl::HighlightServer( const CServer* server, bool highlight )
+wxString CServerListCtrl::GetItemColumnText(wxUIntPtr item, unsigned column) const
 {
-	// Unset the old highlighted server if we are going to set a new one
-	if ( m_connected && highlight ) {
-		// A recursive call to do the real work.
-		HighlightServer( m_connected, false );
+	const CServer *server = reinterpret_cast<const CServer *>(item);
 
-		m_connected = 0;
+	switch (column) {
+	case COLUMN_SERVER_NAME:
+		// The host country is the flag icon on this column, not a text
+		// prefix -- see OnGetItemColumnImage().
+		return server->GetListName();
+
+	case COLUMN_SERVER_ADDR:
+		return server->GetAddress();
+
+	case COLUMN_SERVER_PORT:
+		if (server->GetAuxPortsList().IsEmpty()) {
+			return CFormat("%u") % server->GetPort();
+		}
+		return CFormat("%u (%s)") % server->GetPort() % server->GetAuxPortsList();
+
+	case COLUMN_SERVER_DESC:
+		return server->GetDescription();
+
+	case COLUMN_SERVER_PING:
+		if (!server->GetPing()) {
+			return wxEmptyString;
+		}
+		// GetPing() is already milliseconds (a GetTickCount64() delta), and milliseconds is
+		// how latency is written everywhere else, including our own REST API's "ping_ms".
+		// It used to go through CastSecondsToHM(), whose sub-minute branch prints "0.203
+		// secs" (issue #823). The unit is translated because it is not written "ms"
+		// everywhere, and the number is kept out of the catalog entry.
+		return CFormat("%u %s") % server->GetPing() % _("ms");
+
+	case COLUMN_SERVER_USERS:
+		if (!server->GetUsers()) {
+			return wxEmptyString;
+		}
+		return CFormat("%u") % server->GetUsers();
+
+	// Zero means "the server never told us", not "the limit is zero": these only arrive once a
+	// UDP status reply has come back, so a freshly added or UDP-silent server has nothing to
+	// show and stays blank, as Users and Files do.
+	case COLUMN_SERVER_SOFTFILES:
+		if (!server->GetSoftFiles()) {
+			return wxEmptyString;
+		}
+		return CFormat("%u") % server->GetSoftFiles();
+
+	case COLUMN_SERVER_HARDFILES:
+		if (!server->GetHardFiles()) {
+			return wxEmptyString;
+		}
+		return CFormat("%u") % server->GetHardFiles();
+
+	case COLUMN_SERVER_MAXUSERS:
+		if (!server->GetMaxUsers()) {
+			return wxEmptyString;
+		}
+		return CFormat("%u") % server->GetMaxUsers();
+
+	case COLUMN_SERVER_FILES:
+		if (!server->GetFiles()) {
+			return wxEmptyString;
+		}
+		return CFormat("%u") % server->GetFiles();
+
+	case COLUMN_SERVER_PRIO:
+		switch (server->GetPreferences()) {
+		case SRV_PR_LOW:
+			return _("Low");
+		case SRV_PR_NORMAL:
+			return _("Normal");
+		case SRV_PR_HIGH:
+			return _("High");
+		default:
+			return "---"; // this should never happen
+		}
+
+	case COLUMN_SERVER_FAILS:
+		return CFormat("%u") % server->GetFailedCount();
+
+	case COLUMN_SERVER_STATIC:
+		return server->IsStaticMember() ? _("Yes") : _("No");
+
+	case COLUMN_SERVER_VERSION:
+		// The placeholder lives here rather than in CServer, so it is translated in the
+		// locale of whoever is reading the column and never reaches server.met, EC or the
+		// API as data.
+		return server->GetVersion().IsEmpty() ? _("Unknown") : server->GetVersion();
+
+	// Rendered in both binaries: the flags are streamed over EC, so the remote
+	// GUI has the same data behind these columns.
+	case COLUMN_SERVER_TCPFLAGS: {
+		wxString flags;
+		if (server->GetTCPFlags() & SRV_TCPFLG_COMPRESSION) {
+			flags += "c";
+		}
+		if (server->GetTCPFlags() & SRV_TCPFLG_NEWTAGS) {
+			flags += "n";
+		}
+		if (server->GetTCPFlags() & SRV_TCPFLG_UNICODE) {
+			flags += "u";
+		}
+		if (server->GetTCPFlags() & SRV_TCPFLG_RELATEDSEARCH) {
+			flags += "r";
+		}
+		if (server->GetTCPFlags() & SRV_TCPFLG_TYPETAGINTEGER) {
+			flags += "t";
+		}
+		if (server->GetTCPFlags() & SRV_TCPFLG_LARGEFILES) {
+			flags += "l";
+		}
+		if (server->GetTCPFlags() & SRV_TCPFLG_TCPOBFUSCATION) {
+			flags += "o";
+		}
+		return flags;
 	}
 
-	long itemnr = FindItem( -1,  reinterpret_cast<wxUIntPtr>(server) );
-	if ( itemnr > -1 ) {
-		wxListItem item;
-		item.SetId( itemnr );
-
-		if ( GetItem( item ) ) {
-			wxFont font = GetFont();
-
-			if ( highlight ) {
-				font.SetWeight( wxFONTWEIGHT_BOLD );
-				m_connected = server;
-			}
-
-			item.SetFont( font );
-
-			SetItem( item );
+	case COLUMN_SERVER_UDPFLAGS: {
+		wxString flags;
+		if (server->GetUDPFlags() & SRV_UDPFLG_EXT_GETSOURCES) {
+			flags += "g";
 		}
+		if (server->GetUDPFlags() & SRV_UDPFLG_EXT_GETFILES) {
+			flags += "f";
+		}
+		if (server->GetUDPFlags() & SRV_UDPFLG_NEWTAGS) {
+			flags += "n";
+		}
+		if (server->GetUDPFlags() & SRV_UDPFLG_UNICODE) {
+			flags += "u";
+		}
+		if (server->GetUDPFlags() & SRV_UDPFLG_EXT_GETSOURCES2) {
+			flags += "G";
+		}
+		if (server->GetUDPFlags() & SRV_UDPFLG_LARGEFILES) {
+			flags += "l";
+		}
+		if (server->GetUDPFlags() & SRV_UDPFLG_UDPOBFUSCATION) {
+			flags += "o";
+		}
+		if (server->GetUDPFlags() & SRV_UDPFLG_TCPOBFUSCATION) {
+			flags += "O";
+		}
+		return flags;
+	}
+
+	default:
+		return wxEmptyString;
 	}
 }
 
+bool CServerListCtrl::GetItemIcon(wxUIntPtr item, unsigned column, wxBitmapBundle &icon) const
+{
+	if (column != COLUMN_SERVER_NAME) {
+		return false;
+	}
+	wxUnusedVar(item);
+	return false;
+}
+
+bool CServerListCtrl::GetItemAttr(wxUIntPtr item, unsigned WXUNUSED(column), wxDataViewItemAttr &attr) const
+{
+	if (m_connected && reinterpret_cast<const CServer *>(item) == m_connected) {
+		attr.SetBold(true);
+		return true;
+	}
+	return false;
+}
+
+bool CServerListCtrl::IsLiveSortColumn() const
+{
+	if (m_sort_orders.empty()) {
+		return false;
+	}
+	switch (static_cast<int>(m_sort_orders.front().first)) {
+	case COLUMN_SERVER_PING:
+	case COLUMN_SERVER_USERS:
+	case COLUMN_SERVER_FILES:
+		return true;
+	default:
+		return false;
+	}
+}
+
+void CServerListCtrl::HighlightServer(const CServer *server, bool highlight)
+{
+	// The bold font is handed out by OnGetItemAttr(), so all this has to do is
+	// move m_connected and repaint the rows either side of the change.
+	const CServer *previous = m_connected;
+
+	if (highlight) {
+		m_connected = server;
+	} else if (m_connected == server) {
+		m_connected = nullptr;
+	}
+
+	if (previous == m_connected) {
+		return;
+	}
+	if (previous) {
+		RefreshItemData(reinterpret_cast<wxUIntPtr>(previous));
+	}
+	if (m_connected) {
+		RefreshItemData(reinterpret_cast<wxUIntPtr>(m_connected));
+	}
+}
 
 void CServerListCtrl::ShowServerCount()
 {
-	wxStaticText* label = CastByName( wxT("serverListLabel"), GetParent(), wxStaticText );
+	wxStaticText *label = CastByName("serverListLabel", GetParent(), wxStaticText);
 
-	if ( label ) {
-		label->SetLabel(CFormat(_("Servers (%i)")) % GetItemCount());
+	if (label) {
+		label->SetLabel(CFormat(_("Servers (%i)")) % ItemDataCount());
 		label->GetParent()->Layout();
 	}
 }
 
-
-void CServerListCtrl::OnItemActivated( wxListEvent& event )
+void CServerListCtrl::FitColumnsToContent()
 {
-	// Unselect all items but the activated one
-	long item = GetNextItem( -1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED );
-	while ( item > -1 ) {
-		SetItemState( item, 0, wxLIST_STATE_SELECTED);
-
-		item = GetNextItem( item, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED );
+	// Only size a profile that has no widths of its own. Both callers run after
+	// LoadColumnSettings() has restored whatever was saved, so fitting unconditionally would
+	// overwrite a width the user had dragged.
+	if (HasPersistedColumnWidths()) {
+		return;
 	}
 
-	SetItemState( event.GetIndex(), wxLIST_STATE_SELECTED, wxLIST_STATE_SELECTED );
+	// Upper bound for the Description column: descriptions can be very long (full forum URLs),
+	// so cap it rather than let one row blow the column out. The other columns hold short,
+	// bounded values.
+	const int descMaxWidth = 300;
 
-	wxCommandEvent nulEvt;
-	OnConnectToServer( nulEvt );
+	// Content is measured against the model rather than asked of the control: wxDataViewCtrl
+	// has no portable "size this column to its contents", and on a list that renders cells on
+	// demand there is nothing native to measure. The margins reproduce what the old
+	// wxLIST_AUTOSIZE produced.
+	const int autosizeMargin = 10;
+	const int imageMargin = 5;
+	const int flagWidth = 16;
+
+	wxClientDC dc(this);
+	dc.SetFont(GetFont());
+
+	const long rows = ItemDataCount();
+
+	Freeze();
+	for (unsigned col = 0; col < RealColumnCount(); ++col) {
+		// Leave hidden columns (the TCP/UDP flag columns, or ones the user
+		// hid from the header menu) hidden.
+		if (IsColumnHidden(static_cast<int>(col))) {
+			continue;
+		}
+
+		int contentWidth = autosizeMargin;
+		for (long row = 0; row < rows; ++row) {
+			const wxUIntPtr data = ItemAt(row);
+			wxCoord textWidth = 0;
+			dc.GetTextExtent(GetItemColumnText(data, col), &textWidth, nullptr);
+			int cellWidth = textWidth;
+			wxBitmapBundle icon;
+			if (GetItemIcon(data, col, icon)) {
+				cellWidth += flagWidth + imageMargin;
+			}
+			if (cellWidth > contentWidth) {
+				contentWidth = cellWidth;
+			}
+		}
+		contentWidth += autosizeMargin;
+
+		wxCoord headerWidth = 0;
+		dc.GetTextExtent(GetColumn(col)->GetTitle(), &headerWidth, nullptr);
+		headerWidth += 2 * autosizeMargin;
+
+		int width = std::max(contentWidth, static_cast<int>(headerWidth));
+		if (col == COLUMN_SERVER_DESC && width > descMaxWidth) {
+			width = descMaxWidth;
+		}
+		GetColumn(col)->SetWidth(width);
+	}
+	Thaw();
 }
 
-
-void CServerListCtrl::OnItemRightClicked(wxListEvent& event)
+void CServerListCtrl::OnItemActivated(wxDataViewEvent &event)
 {
-	// Check if clicked item is selected. If not, unselect all and select it.
-	long index = CheckSelection(event);
+	// Connect to the activated row alone, whatever else was selected.
+	if (event.GetItem().IsOk()) {
+		UnselectAll();
+		Select(event.GetItem());
+	}
+
+	wxCommandEvent nulEvt;
+	OnConnectToServer(nulEvt);
+}
+
+void CServerListCtrl::OnItemRightClicked(wxDataViewEvent &event)
+{
+	// Right-clicking a row outside the selection acts on that row alone.
+	if (event.GetItem().IsOk()) {
+		wxDataViewItemArray selection;
+		GetSelections(selection);
+		if (selection.Index(event.GetItem()) == wxNOT_FOUND) {
+			UnselectAll();
+			Select(event.GetItem());
+		}
+	}
 
 	bool enable_reconnect = false;
 	bool enable_static_on = false;
 	bool enable_static_off = false;
 
-	// Gather information on the selected items
-	while ( index > -1 ) {
-		CServer* server = reinterpret_cast<CServer*>(GetItemData(index));
+	for (wxUIntPtr data : GetSelectedItemData()) {
+		CServer *server = reinterpret_cast<CServer *>(data);
 
 		// The current server is selected, so we might display the reconnect option
 		if (server == m_connected) {
@@ -374,253 +553,263 @@ void CServerListCtrl::OnItemRightClicked(wxListEvent& event)
 		}
 
 		// We want to know which options should be enabled, either one or both
-		enable_static_on	|= !server->IsStaticMember();
-		enable_static_off	|=  server->IsStaticMember();
-
-		index = GetNextItem( index, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED );
+		enable_static_on |= !server->IsStaticMember();
+		enable_static_off |= server->IsStaticMember();
 	}
 
-
-	wxMenu* serverMenu = new wxMenu(_("Server"));
-	wxMenu* serverPrioMenu = new wxMenu();
-	serverPrioMenu->Append( MP_PRIOLOW, _("Low") );
-	serverPrioMenu->Append( MP_PRIONORMAL, _("Normal") );
-	serverPrioMenu->Append( MP_PRIOHIGH, _("High") );
-	serverMenu->Append( MP_CONNECTTO, _("Connect to server") );
-	serverMenu->Append( 12345, _("Priority"), serverPrioMenu );
+	wxMenu *serverMenu = new wxMenu(_("Server"));
+	wxMenu *serverPrioMenu = new wxMenu();
+	serverPrioMenu->Append(MP_PRIOLOW, _("Low"));
+	serverPrioMenu->Append(MP_PRIONORMAL, _("Normal"));
+	serverPrioMenu->Append(MP_PRIOHIGH, _("High"));
+	serverMenu->Append(MP_CONNECTTO, _("Connect to server"));
+	serverMenu->Append(12345, _("Priority"), serverPrioMenu);
 
 	serverMenu->AppendSeparator();
 
-	if (GetSelectedItemCount() == 1) {
-		serverMenu->Append( MP_ADDTOSTATIC, _("Mark server as static") );
-		serverMenu->Append( MP_REMOVEFROMSTATIC, _("Mark server as non-static") );
+	if (static_cast<int>(GetSelectedItemsCount()) == 1) {
+		serverMenu->Append(MP_ADDTOSTATIC, _("Mark server as static"));
+		serverMenu->Append(MP_REMOVEFROMSTATIC, _("Mark server as non-static"));
 	} else {
-		serverMenu->Append( MP_ADDTOSTATIC, _("Mark servers as static") );
-		serverMenu->Append( MP_REMOVEFROMSTATIC, _("Mark servers as non-static") );
+		serverMenu->Append(MP_ADDTOSTATIC, _("Mark servers as static"));
+		serverMenu->Append(MP_REMOVEFROMSTATIC, _("Mark servers as non-static"));
 	}
 
 	serverMenu->AppendSeparator();
 
-	if (GetSelectedItemCount() == 1) {
-		serverMenu->Append( MP_REMOVE, _("Remove server") );
+	if (static_cast<int>(GetSelectedItemsCount()) == 1) {
+		serverMenu->Append(MP_REMOVE, _("Remove server"));
 	} else {
-		serverMenu->Append( MP_REMOVE, _("Remove servers") );
+		serverMenu->Append(MP_REMOVE, _("Remove servers"));
 	}
-	serverMenu->Append( MP_REMOVEALL, _("Remove all servers") );
+	serverMenu->Append(MP_REMOVEALL, _("Remove all servers"));
 
 	serverMenu->AppendSeparator();
 
-	if (GetSelectedItemCount() == 1) {
-		serverMenu->Append( MP_GETED2KLINK, _("Copy eD2k link to clipboard") );
+	if (static_cast<int>(GetSelectedItemsCount()) == 1) {
+		AppendMenuIcon(serverMenu, MP_GETED2KLINK, _("Copy eD2k link to clipboard"), MenuIcon::Link);
 	} else {
-		serverMenu->Append( MP_GETED2KLINK, _("Copy eD2k links to clipboard") );
+		AppendMenuIcon(serverMenu, MP_GETED2KLINK, _("Copy eD2k links to clipboard"), MenuIcon::Link);
 	}
 
-	serverMenu->Enable( MP_REMOVEFROMSTATIC,	enable_static_off );
-	serverMenu->Enable( MP_ADDTOSTATIC,			enable_static_on  );
+	serverMenu->Enable(MP_REMOVEFROMSTATIC, enable_static_off);
+	serverMenu->Enable(MP_ADDTOSTATIC, enable_static_on);
 
-	if ( GetSelectedItemCount() == 1 ) {
-		if ( enable_reconnect )
-			serverMenu->SetLabel( MP_CONNECTTO, _("Reconnect to server") );
+	if (static_cast<int>(GetSelectedItemsCount()) == 1) {
+		if (enable_reconnect)
+			serverMenu->SetLabel(MP_CONNECTTO, _("Reconnect to server"));
 	} else {
-		serverMenu->Enable( MP_CONNECTTO, false );
+		serverMenu->Enable(MP_CONNECTTO, false);
 	}
 
-
-	PopupMenu( serverMenu, event.GetPoint() );
+	PopupMenu(serverMenu, event.GetPosition());
 	delete serverMenu;
 }
 
-
-void CServerListCtrl::OnPriorityChange( wxCommandEvent& event )
+void CServerListCtrl::OnPriorityChange(wxCommandEvent &event)
 {
 	uint32 priority = 0;
 
-	switch ( event.GetId() ) {
-		case MP_PRIOLOW:		priority = SRV_PR_LOW;		break;
-		case MP_PRIONORMAL:		priority = SRV_PR_NORMAL;	break;
-		case MP_PRIOHIGH:		priority = SRV_PR_HIGH;		break;
+	switch (event.GetId()) {
+	case MP_PRIOLOW:
+		priority = SRV_PR_LOW;
+		break;
+	case MP_PRIONORMAL:
+		priority = SRV_PR_NORMAL;
+		break;
+	case MP_PRIOHIGH:
+		priority = SRV_PR_HIGH;
+		break;
 
-		default:
-			return;
+	default:
+		return;
 	}
 
+	const std::vector<wxUIntPtr> items = GetSelectedItemData();
 
-	ItemDataList items = GetSelectedItems();
-
-	for ( unsigned int i = 0; i < items.size(); ++i ) {
-		CServer* server = reinterpret_cast<CServer*>(items[i]);
+	for (wxUIntPtr data : items) {
+		CServer *server = reinterpret_cast<CServer *>(data);
 		theApp->serverlist->SetServerPrio(server, priority);
 	}
 }
 
-
-void CServerListCtrl::OnStaticChange( wxCommandEvent& event )
+void CServerListCtrl::OnStaticChange(wxCommandEvent &event)
 {
-	bool isStatic = ( event.GetId() == MP_ADDTOSTATIC );
+	bool isStatic = (event.GetId() == MP_ADDTOSTATIC);
 
-	ItemDataList items = GetSelectedItems();
+	const std::vector<wxUIntPtr> items = GetSelectedItemData();
 
-	for ( unsigned int i = 0; i < items.size(); ++i ) {
-		CServer* server = reinterpret_cast<CServer*>(items[i]);
+	for (wxUIntPtr data : items) {
+		CServer *server = reinterpret_cast<CServer *>(data);
 
 		// Only update items that have the wrong setting
-		if ( server->IsStaticMember() != isStatic ) {
+		if (server->IsStaticMember() != isStatic) {
 			theApp->serverlist->SetStaticServer(server, isStatic);
 		}
 	}
 }
 
-
-void CServerListCtrl::OnConnectToServer( wxCommandEvent& WXUNUSED(event) )
+void CServerListCtrl::OnConnectToServer(wxCommandEvent &WXUNUSED(event))
 {
-	int item = GetNextItem( -1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED );
+	const std::vector<wxUIntPtr> selected = GetSelectedItemData();
 
-	if ( item > -1 ) {
-		if ( theApp->IsConnectedED2K() ) {
+	if (!selected.empty()) {
+		if (theApp->IsConnectedED2K()) {
 			theApp->serverconnect->Disconnect();
 		}
 
-		theApp->serverconnect->ConnectToServer( reinterpret_cast<CServer*>(GetItemData(item)) );
+		theApp->serverconnect->ConnectToServer(reinterpret_cast<CServer *>(selected.front()));
 	}
 }
 
-
-void CServerListCtrl::OnGetED2kURL( wxCommandEvent& WXUNUSED(event) )
+void CServerListCtrl::OnGetED2kURL(wxCommandEvent &WXUNUSED(event))
 {
-	int pos = GetNextItem( -1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED );
-
 	wxString URL;
 
-	while ( pos != -1 ) {
-		CServer* server = reinterpret_cast<CServer*>(GetItemData(pos));
+	for (wxUIntPtr data : GetSelectedItemData()) {
+		CServer *server = reinterpret_cast<CServer *>(data);
 
-		URL += CFormat(wxT("ed2k://|server|%s|%d|/\n"))	% server->GetFullIP() % server->GetPort();
-
-		pos = GetNextItem( pos, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED );
+		URL += CFormat("ed2k://|server|%s|%d|/\n") % server->GetFullIP() % server->GetPort();
 	}
 
 	URL.RemoveLast();
 
-	theApp->CopyTextToClipboard( URL );
+	theApp->CopyTextToClipboard(URL);
 }
 
-
-void CServerListCtrl::OnRemoveServers( wxCommandEvent& event )
+void CServerListCtrl::OnRemoveServers(wxCommandEvent &event)
 {
-	if ( event.GetId() == MP_REMOVEALL ) {
-		if ( GetItemCount() ) {
+	if (event.GetId() == MP_REMOVEALL) {
+		if (ItemDataCount()) {
 			wxString question = _("Are you sure that you wish to delete all servers?");
 
-			if ( wxMessageBox( question, _("Cancel"), wxICON_QUESTION | wxYES_NO, this) == wxYES ) {
-				if ( theApp->serverconnect->IsConnecting() ) {
+			if (wxMessageBox(
+				    question, _("Cancel"), wxICON_QUESTION | wxYES_NO | wxNO_DEFAULT, this) ==
+				wxYES) {
+				if (theApp->serverconnect->IsConnecting()) {
 					theApp->downloadqueue->StopUDPRequests();
 					theApp->serverconnect->StopConnectionTry();
 					theApp->serverconnect->Disconnect();
 				}
 
-				RemoveAllServers(wxLIST_STATE_DONTCARE);
+				RemoveAllServers(false);
 			}
 		}
-	} else if ( event.GetId() == MP_REMOVE ) {
-		if ( GetSelectedItemCount() ) {
+	} else if (event.GetId() == MP_REMOVE) {
+		if (static_cast<int>(GetSelectedItemsCount())) {
 			wxString question;
-			if (GetSelectedItemCount() == 1) {
+			if (static_cast<int>(GetSelectedItemsCount()) == 1) {
 				question = _("Are you sure that you wish to delete the selected server?");
 			} else {
 				question = _("Are you sure that you wish to delete the selected servers?");
 			}
 
-			if ( wxMessageBox( question, _("Cancel"), wxICON_QUESTION | wxYES_NO, this) == wxYES ) {
-				RemoveAllServers(wxLIST_STATE_SELECTED);
+			if (wxMessageBox(
+				    question, _("Cancel"), wxICON_QUESTION | wxYES_NO | wxNO_DEFAULT, this) ==
+				wxYES) {
+				RemoveAllServers(true);
 			}
 		}
 	}
 }
 
-
-void CServerListCtrl::OnKeyPressed( wxKeyEvent& event )
+bool CServerListCtrl::OnListKey(wxKeyEvent &event)
 {
-	// Check if delete was pressed
+	// Delete removes the selected servers; everything else belongs to the
+	// control's own navigation.
 	if ((event.GetKeyCode() == WXK_DELETE) || (event.GetKeyCode() == WXK_NUMPAD_DELETE)) {
 		wxCommandEvent evt;
-		evt.SetId( MP_REMOVE );
-		OnRemoveServers( evt );
-	} else {
-		event.Skip();
+		evt.SetId(MP_REMOVE);
+		OnRemoveServers(evt);
+		return true;
 	}
+	return false;
 }
 
-
-int CServerListCtrl::SortProc(wxUIntPtr item1, wxUIntPtr item2, long sortData)
+int CServerListCtrl::CompareItemData(
+	wxUIntPtr data1, wxUIntPtr data2, unsigned column, bool WXUNUSED(alt), int modifier) const
 {
-	CServer* server1 = reinterpret_cast<CServer*>(item1);
-	CServer* server2 = reinterpret_cast<CServer*>(item2);
+	const CServer *server1 = reinterpret_cast<const CServer *>(data1);
+	const CServer *server2 = reinterpret_cast<const CServer *>(data2);
 
-	int mode = (sortData & CMuleListCtrl::SORT_DES) ? -1 : 1;
+	const int mode = modifier;
 
-	switch (sortData & CMuleListCtrl::COLUMN_MASK) {
-		// Sort by server-name
-		case COLUMN_SERVER_NAME:
-			return mode * server1->GetListName().CmpNoCase(server2->GetListName());
+	switch (column) {
+	case COLUMN_SERVER_NAME:
+		return mode * server1->GetListName().CmpNoCase(server2->GetListName());
 
-		// Sort by address
-		case COLUMN_SERVER_ADDR:
-			{
-				if ( server1->HasDynIP() && server2->HasDynIP()) {
-					return mode * server1->GetDynIP().CmpNoCase( server2->GetDynIP() );
-				} else if (server1->HasDynIP()) {
-					return mode * -1;
-				} else if (server2->HasDynIP()) {
-					return mode * 1;
-				} else {
-					uint32 a = wxUINT32_SWAP_ALWAYS(server1->GetIP());
-					uint32 b = wxUINT32_SWAP_ALWAYS(server2->GetIP());
-					return mode * CmpAny(a, b);
-				}
-			}
-		// Sort by port
-		case COLUMN_SERVER_PORT: return mode * CmpAny( server1->GetPort(), server2->GetPort() );
-		// Sort by description
-		case COLUMN_SERVER_DESC: return mode * server1->GetDescription().CmpNoCase( server2->GetDescription() );
-		// Sort by Ping
-		// The -1 ensures that a value of zero (no ping known) is sorted last.
-		case COLUMN_SERVER_PING: return mode * CmpAny( server1->GetPing() - 1, server2->GetPing() -1 );
-		// Sort by user-count
-		case COLUMN_SERVER_USERS: return mode * CmpAny( server1->GetUsers(), server2->GetUsers() );
-		// Sort by file-count
-		case COLUMN_SERVER_FILES: return mode * CmpAny( server1->GetFiles(), server2->GetFiles() );
-		// Sort by priority
-		case COLUMN_SERVER_PRIO:
-			{
-				uint32 srv_pr1 = server1->GetPreferences();
-				uint32 srv_pr2 = server2->GetPreferences();
-				switch ( srv_pr1 ) {
-					case SRV_PR_HIGH:	srv_pr1 = SRV_PR_MAX; break;
-					case SRV_PR_NORMAL:	srv_pr1 = SRV_PR_MID; break;
-					case SRV_PR_LOW:	srv_pr1 = SRV_PR_MIN; break;
-					default:		return 0;
-				}
-				switch ( srv_pr2 ) {
-					case SRV_PR_HIGH:	srv_pr2 = SRV_PR_MAX; break;
-					case SRV_PR_NORMAL:	srv_pr2 = SRV_PR_MID; break;
-					case SRV_PR_LOW:	srv_pr2 = SRV_PR_MIN; break;
-					default:		return 0;
-				}
-				return mode * CmpAny( srv_pr1, srv_pr2 );
-			}
-		// Sort by failure-count
-		case COLUMN_SERVER_FAILS: return mode * CmpAny( server1->GetFailedCount(), server2->GetFailedCount() );
-		// Sort by static servers
-		case COLUMN_SERVER_STATIC:
-			{
-				return mode * CmpAny( server2->IsStaticMember(), server1->IsStaticMember() );
-			}
-		// Sort by version
-		case COLUMN_SERVER_VERSION: return mode * FuzzyStrCmp(server1->GetVersion(), server2->GetVersion());
-
+	case COLUMN_SERVER_ADDR: {
+		if (server1->HasDynIP() && server2->HasDynIP()) {
+			return mode * server1->GetDynIP().CmpNoCase(server2->GetDynIP());
+		} else if (server1->HasDynIP()) {
+			return mode * -1;
+		} else if (server2->HasDynIP()) {
+			return mode * 1;
+		} else {
+			uint32 a = wxUINT32_SWAP_ALWAYS(server1->GetIP());
+			uint32 b = wxUINT32_SWAP_ALWAYS(server2->GetIP());
+			return mode * CmpAny(a, b);
+		}
+	}
+	case COLUMN_SERVER_PORT:
+		return mode * CmpAny(server1->GetPort(), server2->GetPort());
+	case COLUMN_SERVER_DESC:
+		return mode * server1->GetDescription().CmpNoCase(server2->GetDescription());
+	// Sort by Ping
+	// The -1 ensures that a value of zero (no ping known) is sorted last.
+	case COLUMN_SERVER_PING:
+		return mode * CmpAny(server1->GetPing() - 1, server2->GetPing() - 1);
+	case COLUMN_SERVER_USERS:
+		return mode * CmpAny(server1->GetUsers(), server2->GetUsers());
+	case COLUMN_SERVER_SOFTFILES:
+		return mode * CmpAny(server1->GetSoftFiles(), server2->GetSoftFiles());
+	case COLUMN_SERVER_HARDFILES:
+		return mode * CmpAny(server1->GetHardFiles(), server2->GetHardFiles());
+	case COLUMN_SERVER_MAXUSERS:
+		return mode * CmpAny(server1->GetMaxUsers(), server2->GetMaxUsers());
+	case COLUMN_SERVER_FILES:
+		return mode * CmpAny(server1->GetFiles(), server2->GetFiles());
+	case COLUMN_SERVER_PRIO: {
+		uint32 srv_pr1 = server1->GetPreferences();
+		uint32 srv_pr2 = server2->GetPreferences();
+		switch (srv_pr1) {
+		case SRV_PR_HIGH:
+			srv_pr1 = SRV_PR_MAX;
+			break;
+		case SRV_PR_NORMAL:
+			srv_pr1 = SRV_PR_MID;
+			break;
+		case SRV_PR_LOW:
+			srv_pr1 = SRV_PR_MIN;
+			break;
 		default:
 			return 0;
+		}
+		switch (srv_pr2) {
+		case SRV_PR_HIGH:
+			srv_pr2 = SRV_PR_MAX;
+			break;
+		case SRV_PR_NORMAL:
+			srv_pr2 = SRV_PR_MID;
+			break;
+		case SRV_PR_LOW:
+			srv_pr2 = SRV_PR_MIN;
+			break;
+		default:
+			return 0;
+		}
+		return mode * CmpAny(srv_pr1, srv_pr2);
+	}
+	case COLUMN_SERVER_FAILS:
+		return mode * CmpAny(server1->GetFailedCount(), server2->GetFailedCount());
+	case COLUMN_SERVER_STATIC: {
+		return mode * CmpAny(server2->IsStaticMember(), server1->IsStaticMember());
+	}
+	case COLUMN_SERVER_VERSION:
+		return mode * FuzzyStrCmp(server1->GetVersion(), server2->GetVersion());
+
+	default:
+		return 0;
 	}
 }
 // File_checked_for_headers

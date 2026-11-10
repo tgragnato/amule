@@ -26,70 +26,102 @@
 #ifndef CLIENTTAGS_H
 #define CLIENTTAGS_H
 
-enum client_tags {
-	CT_NAME				= 0x01,
-	CT_SERVER_UDPSEARCH_FLAGS	= 0x0E,
-	CT_PORT				= 0x0F,
-	CT_VERSION			= 0x11,
-	CT_SERVER_FLAGS			= 0x20,	// currently only used to inform a server about supported features
-	CT_EMULECOMPAT_OPTIONS		= 0xEF,
-	CT_EMULE_RESERVED1		= 0xF0,
-	CT_EMULE_RESERVED2		= 0xF1,
-	CT_EMULE_RESERVED3		= 0xF2,
-	CT_EMULE_RESERVED4		= 0xF3,
-	CT_EMULE_RESERVED5		= 0xF4,
-	CT_EMULE_RESERVED6		= 0xF5,
-	CT_EMULE_RESERVED7		= 0xF6,
-	CT_EMULE_RESERVED8		= 0xF7,
-	CT_EMULE_RESERVED9		= 0xF8,
-	CT_EMULE_UDPPORTS		= 0xF9,
-	CT_EMULE_MISCOPTIONS1		= 0xFA,
-	CT_EMULE_VERSION		= 0xFB,
-	CT_EMULE_BUDDYIP		= 0xFC,
-	CT_EMULE_BUDDYUDP		= 0xFD,
-	CT_EMULE_MISCOPTIONS2		= 0xFE,
-	CT_EMULE_RESERVED13		= 0xFF
+enum client_tags
+{
+	CT_NAME = 0x01,
+	CT_SERVER_UDPSEARCH_FLAGS = 0x0E,
+	CT_PORT = 0x0F,
+	CT_VERSION = 0x11,
+	CT_SERVER_FLAGS = 0x20, // currently only used to inform a server about supported features
+
+	// eMuleAI vendor tags. The 0xA? range is unclaimed by the major mods, which is why the
+	// reference implementation took it. Bit meanings for CT_MOD_MISCOPTIONS live in
+	// src/PeerCapabilities.h -- they are wire format, and a wrong bit position has no runtime
+	// signal.
+	//
+	// <hash> the peer's serving buddy's IPv6 address, 16 bytes. The v6 counterpart of
+	// CT_EMULE_BUDDYIP (0xFC) below, and the hello-side counterpart of the "bi6" Kad tag.
+	CT_EMULE_SERVINGBUDDYIPV6 = 0xA0,
+	CT_MOD_MISCOPTIONS = 0xAA, // <uint32> capability bitfield
+	// <hash> the address the peer observed this client arriving from, 16 bytes. Only the hash
+	// form is read; see src/PublicIPv6Corroboration.h for why, and for why one peer saying it
+	// is not enough.
+	CT_MOD_YOUR_IP = 0xAD,
+	CT_MOD_IP_V6 = 0xAE, // <hash> client IPv6 address, 16 bytes
+	// 0xAF is deliberately not named here. eMuleAI defines it, but nothing in its tree writes
+	// it and its hello path never reads it as an address: the one case that mentions it sits in
+	// the reserved-for-future-releases block and only flags the sender as running an unofficial
+	// build. emule-qt gives the same id a server->client meaning (the server's own public
+	// IPv6), which aMule would be recording from a peer. Reading it as either would state
+	// something the wire does not say, so it falls through to the unknown-vendor-tag log in
+	// BaseClient.cpp like any other unhandled 0xA? id.
+
+	CT_EMULECOMPAT_OPTIONS = 0xEF,
+	CT_EMULE_RESERVED1 = 0xF0,
+	CT_EMULE_RESERVED2 = 0xF1,
+	CT_EMULE_RESERVED3 = 0xF2,
+	CT_EMULE_RESERVED4 = 0xF3,
+	CT_EMULE_RESERVED5 = 0xF4,
+	CT_EMULE_RESERVED6 = 0xF5,
+	CT_EMULE_RESERVED7 = 0xF6,
+	CT_EMULE_RESERVED8 = 0xF7,
+	CT_EMULE_RESERVED9 = 0xF8,
+	CT_EMULE_UDPPORTS = 0xF9,
+	CT_EMULE_MISCOPTIONS1 = 0xFA,
+	CT_EMULE_VERSION = 0xFB,
+	CT_EMULE_BUDDYIP = 0xFC,
+	CT_EMULE_BUDDYUDP = 0xFD,
+	CT_EMULE_MISCOPTIONS2 = 0xFE,
+	CT_EMULE_RESERVED13 = 0xFF
 };
 
 // Old MuleInfo tags
-enum MuleInfo_tags {
-	ET_COMPRESSION		= 0x20u,
-	ET_UDPPORT		= 0x21u,
-	ET_UDPVER		= 0x22u,
-	ET_SOURCEEXCHANGE	= 0x23u,
-	ET_COMMENTS		= 0x24u,
-	ET_EXTENDEDREQUEST	= 0x25u,
-	ET_COMPATIBLECLIENT	= 0x26u,
-	ET_FEATURES		= 0x27u,	//! bit 0: SecIdent v1 - bit 1: SecIdent v2
-	ET_MOD_VERSION		= 0x55u,
+enum MuleInfo_tags
+{
+	ET_COMPRESSION = 0x20u,
+	ET_UDPPORT = 0x21u,
+	ET_UDPVER = 0x22u,
+	ET_SOURCEEXCHANGE = 0x23u,
+	ET_COMMENTS = 0x24u,
+	ET_EXTENDEDREQUEST = 0x25u,
+	ET_COMPATIBLECLIENT = 0x26u,
+	ET_FEATURES = 0x27u, //! bit 0: SecIdent v1 - bit 1: SecIdent v2
+	ET_MOD_VERSION = 0x55u,
 	// ET_FEATURESET	= 0x54u,	// int - [Bloodymad Featureset] // UNUSED
-	ET_OS_INFO		= 0x94u		// Reused rand tag (MOD_OXY), because the type is unknown
+	ET_OS_INFO = 0x94u // Reused rand tag (MOD_OXY), because the type is unknown
 };
 
 // Server capabilities, values for CT_SERVER_FLAGS
-enum ServerCapabilites {
-	SRVCAP_ZLIB		= 0x0001,
-	SRVCAP_IP_IN_LOGIN	= 0x0002,
-	SRVCAP_AUXPORT		= 0x0004,
-	SRVCAP_NEWTAGS		= 0x0008,
-	SRVCAP_UNICODE		= 0x0010,
-	SRVCAP_LARGEFILES	= 0x0100,
-	SRVCAP_SUPPORTCRYPT	= 0x0200,
-	SRVCAP_REQUESTCRYPT	= 0x0400,
-	SRVCAP_REQUIRECRYPT	= 0x0800
+enum ServerCapabilites
+{
+	SRVCAP_ZLIB = 0x0001,
+	SRVCAP_IP_IN_LOGIN = 0x0002,
+	SRVCAP_AUXPORT = 0x0004,
+	SRVCAP_NEWTAGS = 0x0008,
+	SRVCAP_UNICODE = 0x0010,
+	SRVCAP_LARGEFILES = 0x0100,
+	SRVCAP_SUPPORTCRYPT = 0x0200,
+	SRVCAP_REQUESTCRYPT = 0x0400,
+	SRVCAP_REQUIRECRYPT = 0x0800,
+	// Lugdunum's NAT callback opt-in (#1991): Lugdunum then hands out odd LowIDs and forwards
+	// callbacks. Sent only under ENABLE_NATT_SERVER_COORDINATION; see docs/NAT_T_Protocol.md.
+	SRVCAP_NATTRAVERSAL = 0x1000,
+	// ed2k-server's hole-punch extension, always sent together with SRVCAP_NATTRAVERSAL.
+	SRVCAP_HOLEPUNCH_EXTENSION = 0x100000
 };
 
 // aMule used to use these names
-#define CAPABLE_ZLIB			SRVCAP_ZLIB
-#define CAPABLE_IP_IN_LOGIN_FRAME	SRVCAP_IP_IN_LOGIN
-#define CAPABLE_AUXPORT			SRVCAP_AUXPORT
-#define CAPABLE_NEWTAGS			SRVCAP_NEWTAGS
-#define CAPABLE_UNICODE			SRVCAP_UNICODE
-#define CAPABLE_LARGEFILES		SRVCAP_LARGEFILES
+#define CAPABLE_ZLIB SRVCAP_ZLIB
+#define CAPABLE_IP_IN_LOGIN_FRAME SRVCAP_IP_IN_LOGIN
+#define CAPABLE_AUXPORT SRVCAP_AUXPORT
+#define CAPABLE_NEWTAGS SRVCAP_NEWTAGS
+#define CAPABLE_UNICODE SRVCAP_UNICODE
+#define CAPABLE_LARGEFILES SRVCAP_LARGEFILES
 
 // Server capabilities, values for CT_SERVER_UDPSEARCH_FLAGS
-enum ServerUDPCapabilities {
-	SRVCAP_UDP_NEWTAGS_LARGEFILES	= 0x01
+enum ServerUDPCapabilities
+{
+	SRVCAP_UDP_NEWTAGS_LARGEFILES = 0x01
 };
 
 #endif // CLIENTTAGS_H

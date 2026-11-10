@@ -26,125 +26,88 @@
 #ifndef DEADSOURCELIST_H
 #define DEADSOURCELIST_H
 
-
 #include <map>
 
+#include "DeadSourceKey.h"
 #include "Types.h"
-
 
 class CUpDownClient;
 
-
 /**
- * This class keeps track of "invalid" sources.
+ * Tracks "invalid" sources.
  *
- * A dead source is a source that has been evaluated as being useles
- * which can be due to several reasons, such as not responding to
- * queries. This list then allows for those sources to be ignored
- * for an set amount of time in order to avoid the overhead of
- * trying to connect to them.
- *
- * This is important, since these sources would be removed and readded
- * repeatedly, causing extra overhead with no gain.
+ * A dead source is one evaluated as useless, for instance because it does not answer queries.
+ * Listing it lets it be ignored for a set time, avoiding the overhead of trying to connect -- which
+ * matters, since such sources would otherwise be removed and re-added repeatedly for no gain.
  */
 class CDeadSourceList
 {
 public:
 	/**
-	 * Constructor.
-	 *
-	 * @param isGlobal Specifies if the list is global or not, used for debugging.
+	 * @param isGlobal Whether the list is global; used for debugging.
 	 */
 	CDeadSourceList(bool isGlobal = false);
-
 
 	/**
 	 * Adds a client to the list of dead sources.
 	 */
-	void		AddDeadSource(const CUpDownClient* client);
+	void AddDeadSource(const CUpDownClient *client);
 
 	/**
-	 * Returns true if the client object is a dead source.
+	 * True if the client object is a dead source.
 	 */
-	bool		IsDeadSource(const CUpDownClient* client);
-
+	bool IsDeadSource(const CUpDownClient *client);
 
 	/**
-	 * Returns the number of sources.
+	 * The number of sources.
 	 */
-	uint32		GetDeadSourcesCount() const;
+	uint32 GetDeadSourcesCount() const;
 
 private:
 	/**
-	 * Removes too old entries from the list.
+	 * Removes entries that are too old.
 	 */
-	void		CleanUp();
-
+	void CleanUp();
 
 	/**
-	 * Record of dead source.
+	 * Record of a dead source.
 	 */
 	class CDeadSource
 	{
 	public:
-		/**
-		 * Constructor.
-		 *
-		 * @param ID The IP/ID of the recorded client.
-		 * @param Port The TCP port of the recorded client.
-		 * @param ServerIP The ip of the connected server.
-		 * @param KadPort The Kad port used by the client.
-		 *
-		 * Notes:
-		 *  * ID must be specified.
-		 *  * Either KadPort or Port must be specified.
-		 *  * For lowid sources, ServerIP must be specified.
-		 *
-		 */
-		CDeadSource(uint32 ID, uint16 Port, uint32 ServerIP, uint16 KadPort);
-
+		explicit CDeadSource(const CDeadSourceKey &key);
 
 		/**
 		 * Equality operator.
 		 */
-		bool operator==(const CDeadSource& other) const;
-
-
-		/**
-		 * Sets the timestamp for the time where this entry will expire.
-		 */
-		void	SetTimeout( uint64 t );
+		bool operator==(const CDeadSource &other) const;
 
 		/**
-		 * Returns the timestamp of this entry.
+		 * Sets the timestamp at which this entry expires.
 		 */
-		uint64	GetTimeout() const;
+		void SetTimeout(uint64 t);
+
+		/**
+		 * The timestamp of this entry.
+		 */
+		uint64 GetTimeout() const;
 
 	private:
-		//! The ID/IP of the client.
-		uint32			m_ID;
-		//! The TCP port of the client
-		uint16			m_Port;
-		//! The Kad port of the client.
-		uint16			m_KadPort;
-		//! The IP of the server the client is connected to.
-		uint32			m_ServerIP;
+		CDeadSourceKey m_key;
 		//! The timestamp of DOOM!
-		uint64			m_TimeStamp;
+		uint64 m_TimeStamp;
 	};
 
-
-	typedef std::multimap< uint32, CDeadSource > DeadSourceMap;
+	typedef std::multimap<CDeadSourceKey, CDeadSource> DeadSourceMap;
 	typedef DeadSourceMap::iterator DeadSourceIterator;
 	typedef std::pair<DeadSourceIterator, DeadSourceIterator> DeadSourcePair;
 	//! List of currently dead sources.
 	DeadSourceMap m_sources;
 
-
 	//! The timestamp of when the last cleanup was performed.
-	uint64	m_dwLastCleanUp;
+	uint64 m_dwLastCleanUp;
 	//! Specifies if the list is global or not.
-	bool	m_bGlobalList;
+	bool m_bGlobalList;
 };
 
 #endif

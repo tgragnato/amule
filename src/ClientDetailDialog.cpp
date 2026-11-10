@@ -23,98 +23,142 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include "ClientDetailDialog.h"	// Interface declarations
-#include "PartFile.h"		// Needed for CPartFile
-#include "UploadQueue.h"	// Needed for CUploadQueue
-#include "ServerList.h"		// Needed for CServerList
-#include "amule.h"			// Needed for theApp
-#include "Server.h"			// Needed for CServer
-#include "muuli_wdr.h"		// Needed for ID_CLOSEWND
-#include "Preferences.h"	// Needed for thePrefs
+#include "ClientDetailDialog.h" // Interface declarations
+#include "DataToText.h"         // Needed for FormatClientSoftware
+#include "DialogLayout.h"
+#include "PartFile.h"    // Needed for CPartFile
+#include "UploadQueue.h" // Needed for CUploadQueue
+#include "ServerList.h"  // Needed for CServerList
+#include "amule.h"       // Needed for theApp
+#include "Server.h"      // Needed for CServer
+#include "muuli_wdr.h"   // Needed for ID_CLOSEWND
+#include "Preferences.h" // Needed for thePrefs
 
 // CClientDetailDialog dialog
 
-wxBEGIN_EVENT_TABLE(CClientDetailDialog,wxDialog)
-	EVT_BUTTON(ID_CLOSEWND,CClientDetailDialog::OnBnClose)
+wxBEGIN_EVENT_TABLE(CClientDetailDialog, wxDialog)
+	EVT_BUTTON(ID_CLOSEWND, CClientDetailDialog::OnBnClose)
 wxEND_EVENT_TABLE()
 
-
-CClientDetailDialog::CClientDetailDialog(
-	wxWindow *parent,
-	const CClientRef& client)
-:
-wxDialog(
-	parent,
-	9997,
-	_("Client Details"),
-	wxDefaultPosition,
-	wxDefaultSize,
-	wxDEFAULT_DIALOG_STYLE)
+ClientDetailInfo ClientDetailInfoFromClient(const CClientRef &client)
 {
-	m_client = client;
-	wxSizer* content = clientDetails(this, true);
-	// The Close button uses ID_CLOSEWND rather than wxID_CANCEL, so
-	// wxDialog doesn't auto-bind Escape to it. Tell wxDialog to treat
-	// ID_CLOSEWND as the escape target so pressing Escape dismisses
-	// the dialog the same way clicking Close does.
+	CClientRef &c = const_cast<CClientRef &>(client);
+	ClientDetailInfo info;
+	info.userName = c.GetUserName();
+	info.userHash = c.GetUserHash();
+	info.softStr = FormatClientSoftware(c.GetSoftStr(), c.GetClientModString());
+	info.osInfo = c.GetClientOSInfo();
+	info.softVerStr = c.GetSoftVerStr();
+	info.fullIp = c.GetFullIP();
+	info.userPort = c.GetUserPort();
+	info.obfuscationStatus = c.GetObfuscationStatus();
+	info.uploadedTotal = c.GetUploadedTotal();
+	info.downloadedTotal = c.GetDownloadedTotal();
+
+	info.hasSession = true;
+	info.userIdHybrid = c.GetUserIDHybrid();
+	info.lowId = c.HasLowID();
+	info.serverIp = c.GetServerIP();
+	info.serverPort = c.GetServerPort();
+	info.serverName = c.GetServerName();
+	info.kadPort = c.GetKadPort();
+	info.modCapabilities = c.GetModCapabilitiesText();
+	info.uploadFile = c.GetUploadFile();
+	info.transferredDown = c.GetTransferredDown();
+	info.transferredUp = c.GetTransferredUp();
+	info.kBpsDown = c.GetDisplayKBpsDown();
+	info.uploadDatarate = c.GetDisplayUploadDatarate();
+	info.creditRatio = c.GetCreditRatio();
+	// 0 is what the getter returns for a peer with no credit record, which is not a modifier.
+	info.hasCreditRatio = info.creditRatio > 0.0;
+	info.secureIdentStatus = c.GetSecureIdentTextStatus();
+	info.uploadState = c.GetUploadState();
+	info.queueRank = c.GetUploadQueueWaitingPosition();
+	info.score = c.GetScore();
+	return info;
+}
+
+// Both constructors run the same setup; only where m_info came from differs.
+void CClientDetailDialog::Build()
+{
+	wxSizer *content = clientDetails(this, false);
+	// The Close button uses ID_CLOSEWND rather than wxID_CANCEL, so wxDialog does not auto-bind
+	// Escape to it; name it as the escape target so Escape dismisses the dialog the way Close
+	// does.
 	SetEscapeId(ID_CLOSEWND);
 	OnInitDialog();
-	content->SetSizeHints(this);
+	FitScrollableDialog(this, CastChild(IDC_CLIENT_DETAILS_CONTENT, wxScrolledWindow));
 	content->Show(this, true);
 }
 
-CClientDetailDialog::~CClientDetailDialog()
+CClientDetailDialog::CClientDetailDialog(wxWindow *parent, const CClientRef &client)
+: wxDialog(parent,
+	  9997,
+	  _("Client Details"),
+	  wxDefaultPosition,
+	  wxDefaultSize,
+	  wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
 {
+	m_info = ClientDetailInfoFromClient(client);
+	Build();
 }
 
-void CClientDetailDialog::OnBnClose(wxCommandEvent& WXUNUSED(evt))
+CClientDetailDialog::CClientDetailDialog(wxWindow *parent, const ClientDetailInfo &info)
+: wxDialog(parent,
+	  9997,
+	  _("Client Details"),
+	  wxDefaultPosition,
+	  wxDefaultSize,
+	  wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
+{
+	m_info = info;
+	Build();
+}
+
+CClientDetailDialog::~CClientDetailDialog() {}
+
+void CClientDetailDialog::OnBnClose(wxCommandEvent &WXUNUSED(evt))
 {
 	EndModal(0);
 }
 
-bool CClientDetailDialog::OnInitDialog() {
-	// Username, Userhash
-	if (!m_client.GetUserName().IsEmpty()) {
-		CastChild(ID_DNAME, wxStaticText)->SetLabel(
-			m_client.GetUserName());
-		// if we have client name we have userhash
-		wxASSERT(!m_client.GetUserHash().IsEmpty());
-		CastChild(ID_DHASH, wxStaticText)->SetLabel(
-			m_client.GetUserHash().Encode());
+bool CClientDetailDialog::OnInitDialog()
+{
+	// The dash the session fields fall back to when there is no live peer behind this dialog.
+	// Not "0": a zero rate or a zero queue rank is a measurement, and these are the absence of
+	// one.
+	static const wxString kNoValue = "-";
+
+	// Username and hash are reported independently: a credit record keeps a hash long before it
+	// has a name, because the core only writes the name out at disconnect, so the two are not
+	// known together.
+	CastChild(ID_DNAME, wxStaticText)
+		->SetLabel(m_info.userName.IsEmpty() ? _("Unknown") : m_info.userName);
+	CastChild(ID_DHASH, wxStaticText)
+		->SetLabel(m_info.userHash.IsEmpty() ? _("Unknown") : m_info.userHash.Encode());
+
+	if (!m_info.osInfo.IsEmpty()) {
+		CastChild(ID_DSOFT, wxStaticText)->SetLabel(m_info.softStr + " (" + m_info.osInfo + ")");
 	} else {
-		CastChild(ID_DNAME, wxStaticText)->SetLabel(_("Unknown"));
-		CastChild(ID_DHASH, wxStaticText)->SetLabel(_("Unknown"));
+		CastChild(ID_DSOFT, wxStaticText)->SetLabel(m_info.softStr);
 	}
 
-	// Client Software
-	wxString OSInfo = m_client.GetClientOSInfo();
-	if (!OSInfo.IsEmpty()) {
-		CastChild(ID_DSOFT, wxStaticText)->SetLabel(
-			m_client.GetSoftStr()+" ("+OSInfo+")");
-	} else {
-		CastChild(ID_DSOFT, wxStaticText)->SetLabel(
-			m_client.GetSoftStr());
-	}
+	CastChild(ID_DVERSION, wxStaticText)->SetLabel(m_info.softVerStr);
 
-	// Client Version
-	CastChild(ID_DVERSION, wxStaticText)->SetLabel(
-		m_client.GetSoftVerStr());
+	CastChild(ID_DID, wxStaticText)
+		->SetLabel(m_info.hasSession ? wxString(CFormat("%u (%s)") % m_info.userIdHybrid %
+							(m_info.lowId ? _("LowID") : _("HighID")))
+					     : kNoValue);
 
-	// User ID
-	CastChild(ID_DID, wxStaticText)->SetLabel(
-		CFormat("%u (%s)") % m_client.GetUserIDHybrid() % (m_client.HasLowID() ? _("LowID") : _("HighID")));
+	CastChild(ID_DIP, wxStaticText)
+		->SetLabel(m_info.fullIp.IsEmpty()
+				   ? kNoValue
+				   : wxString(CFormat("%s:%i") % m_info.fullIp % m_info.userPort));
 
-	// Client IP/Port
-	CastChild(ID_DIP, wxStaticText)->SetLabel(
-		CFormat("%s:%i") % m_client.GetFullIP() % m_client.GetUserPort());
-
-	// Server IP/Port/Name
-	if (m_client.GetServerIP()) {
-		wxString srvaddr = Uint32toStringIP(m_client.GetServerIP());
-		CastChild(ID_DSIP, wxStaticText)->SetLabel(
-			CFormat("%s:%i") % srvaddr % m_client.GetServerPort());
-		CastChild(ID_DSNAME, wxStaticText)->SetLabel(
-			m_client.GetServerName());
+	if (m_info.serverIp) {
+		wxString srvaddr = Uint32toStringIP(m_info.serverIp);
+		CastChild(ID_DSIP, wxStaticText)->SetLabel(CFormat("%s:%i") % srvaddr % m_info.serverPort);
+		CastChild(ID_DSNAME, wxStaticText)->SetLabel(m_info.serverName);
 	} else {
 		CastChild(ID_DSIP, wxStaticText)->SetLabel(_("Unknown"));
 		CastChild(ID_DSNAME, wxStaticText)->SetLabel(_("Unknown"));
@@ -122,72 +166,99 @@ bool CClientDetailDialog::OnInitDialog() {
 
 	// Obfuscation
 	wxString buffer;
-	switch (m_client.GetObfuscationStatus()) {
-		case OBST_ENABLED:			buffer = _("Enabled"); break;
-		case OBST_SUPPORTED:		buffer = _("Supported"); break;
-		case OBST_NOT_SUPPORTED:	buffer = _("Not supported"); break;
-		case OBST_DISABLED:			buffer = _("Disabled"); break;
-		default:					buffer = _("Unknown"); break;
+	switch (m_info.obfuscationStatus) {
+	case OBST_ENABLED:
+		buffer = _("Enabled");
+		break;
+	case OBST_SUPPORTED:
+		buffer = _("Supported");
+		break;
+	case OBST_NOT_SUPPORTED:
+		buffer = _("Not supported");
+		break;
+	case OBST_DISABLED:
+		buffer = _("Disabled");
+		break;
+	default:
+		buffer = _("Unknown");
+		break;
 	}
 	CastChild(IDT_OBFUSCATION, wxStaticText)->SetLabel(buffer);
 
+	// Protocol extensions the peer claims -- not what this build can do with them: aMule
+	// implements none of these yet, so the line reads as "this peer would support X if we did".
+	//
+	// Label and value are both hidden when there is nothing to claim, rather than shown with a
+	// placeholder. Almost no peer on the network sets any of these bits, and a stored row has
+	// no hello to read at all, so the alternative is a row reading "None" or "-" for nearly
+	// every peer, permanently. Hiding both controls leaves no gap: the sizer skips a hidden
+	// pair, and Layout() below reflows what is left.
+	const bool hasCapabilities = m_info.hasSession && !m_info.modCapabilities.IsEmpty();
+	CastChild(IDT_MOD_CAPABILITIES_LABEL, wxStaticText)->Show(hasCapabilities);
+	wxStaticText *capabilities = CastChild(IDT_MOD_CAPABILITIES, wxStaticText);
+	capabilities->Show(hasCapabilities);
+	if (hasCapabilities) {
+		capabilities->SetLabel(m_info.modCapabilities);
+	}
+
 	// Kad
-	if (m_client.GetKadPort()) {
+	if (!m_info.hasSession) {
+		CastChild(IDT_KAD, wxStaticText)->SetLabel(kNoValue);
+	} else if (m_info.kadPort) {
 		CastChild(IDT_KAD, wxStaticText)->SetLabel(_("Connected"));
 	} else {
 		CastChild(IDT_KAD, wxStaticText)->SetLabel(_("Disconnected"));
 	}
 
 	// File Name
-	const CKnownFile* file = m_client.GetUploadFile();
-	if (file) {
-		wxString filename = MakeStringEscaped(file->GetFileName().TruncatePath(60));
+	if (m_info.uploadFile) {
+		wxString filename = MakeStringEscaped(m_info.uploadFile->GetFileName().TruncatePath(60));
 		CastChild(ID_DDOWNLOADING, wxStaticText)->SetLabel(filename);
 	} else {
-		CastChild(ID_DDOWNLOADING, wxStaticText)->SetLabel("-");
+		CastChild(ID_DDOWNLOADING, wxStaticText)->SetLabel(kNoValue);
 	}
 
 	// Upload
-	CastChild(ID_DDUP, wxStaticText)->SetLabel(
-		CastItoXBytes(m_client.GetTransferredDown()));
+	CastChild(ID_DDUP, wxStaticText)
+		->SetLabel(m_info.hasSession ? CastItoXBytes(m_info.transferredDown) : kNoValue);
 
 	// Download
-	CastChild(ID_DDOWN, wxStaticText)->SetLabel(
-		CastItoXBytes(m_client.GetTransferredUp()));
+	CastChild(ID_DDOWN, wxStaticText)
+		->SetLabel(m_info.hasSession ? CastItoXBytes(m_info.transferredUp) : kNoValue);
 
 	// Average Upload Rate
-	CastChild(ID_DAVUR, wxStaticText)->SetLabel(
-		CFormat(_("%.1f kB/s")) % m_client.GetKBpsDown());
+	CastChild(ID_DAVUR, wxStaticText)
+		->SetLabel(
+			m_info.hasSession ? wxString(CFormat(_("%.1f KiB/s")) % m_info.kBpsDown) : kNoValue);
 
 	// Average Download Rate
-	CastChild(ID_DAVDR, wxStaticText)->SetLabel(
-		CFormat(_("%.1f kB/s")) % (m_client.GetUploadDatarate() / 1024.0f));
+	CastChild(ID_DAVDR, wxStaticText)
+		->SetLabel(m_info.hasSession ? wxString(CFormat(_("%.1f KiB/s")) %
+							((float)m_info.uploadDatarate / 1024.0f))
+					     : kNoValue);
 
-	// Total Upload
-	CastChild(ID_DUPTOTAL, wxStaticText)->SetLabel(
-		CastItoXBytes(m_client.GetDownloadedTotal()));
+	// Lifetime credit, which a stored record knows as well as a live peer. The control ids read
+	// backwards against their labels -- ID_DUPTOTAL sits under "Downloaded (total):" -- so
+	// follow the labels, not the names.
+	CastChild(ID_DUPTOTAL, wxStaticText)->SetLabel(CastItoXBytes(m_info.downloadedTotal));
+	CastChild(ID_DDOWNTOTAL, wxStaticText)->SetLabel(CastItoXBytes(m_info.uploadedTotal));
 
-	// Total Download
-	CastChild(ID_DDOWNTOTAL, wxStaticText)->SetLabel(
-		CastItoXBytes(m_client.GetUploadedTotal()));
-
-	// DL/UP Modifier
-	CastChild(ID_DRATIO, wxStaticText)->SetLabel(
-		CFormat("%.1f") % m_client.GetScoreRatio());
+	// DL/UP modifier. Keyed on having one, not on hasSession: it is lifetime credit like the
+	// two totals above, so a stored record answers it as well as a live peer does.
+	CastChild(ID_DRATIO, wxStaticText)
+		->SetLabel(m_info.hasCreditRatio ? wxString(CFormat("%.2f") % m_info.creditRatio) : kNoValue);
 
 	// Secure Ident
-	CastChild(IDC_CDIDENT, wxStaticText)->SetLabel(
-		m_client.GetSecureIdentTextStatus());
+	CastChild(IDC_CDIDENT, wxStaticText)
+		->SetLabel(m_info.hasSession ? m_info.secureIdentStatus : kNoValue);
 
 	// Queue Score
-	if (m_client.GetUploadState() != US_NONE) {
-		CastChild(ID_QUEUERANK, wxStaticText)->SetLabel(
-			CFormat("%u") % m_client.GetUploadQueueWaitingPosition());
-		CastChild(ID_DSCORE, wxStaticText)->SetLabel(
-			CFormat("%u") % m_client.GetScore());
+	if (m_info.hasSession && m_info.uploadState != US_NONE) {
+		CastChild(ID_QUEUERANK, wxStaticText)->SetLabel(CFormat("%u") % m_info.queueRank);
+		CastChild(ID_DSCORE, wxStaticText)->SetLabel(CFormat("%u") % m_info.score);
 	} else {
-		CastChild(ID_QUEUERANK, wxStaticText)->SetLabel("-");
-		CastChild(ID_DSCORE, wxStaticText)->SetLabel("-");
+		CastChild(ID_QUEUERANK, wxStaticText)->SetLabel(kNoValue);
+		CastChild(ID_DSCORE, wxStaticText)->SetLabel(kNoValue);
 	}
 	Layout();
 

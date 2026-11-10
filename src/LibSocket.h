@@ -23,17 +23,19 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
+#ifndef LIBSOCKET_H
+#define LIBSOCKET_H
 
-#ifndef __LIBSOCKET_H__
-#define __LIBSOCKET_H__
-
+#include "StreamTransport.h" // IStreamTransport and its event sink
 #include "Types.h"
-#include <memory>		// shared_ptr for CAsioUDPSocketImpl ownership
+#include <atomic> // The transport's receive-event latch
+#include <memory> // shared_ptr for CAsioUDPSocketImpl ownership
 class amuleIPV4Address;
-
+class CMuleUDPSocket;
 
 // Socket flags (unused in ASIO implementation, just provide the names)
-enum {
+enum
+{
 	MULE_SOCKET_NONE,
 	MULE_SOCKET_NOWAIT_READ,
 	MULE_SOCKET_NOWAIT_WRITE,
@@ -49,198 +51,312 @@ enum {
 typedef int muleSocketFlags;
 
 // Socket events (used for proxy notification)
-enum {
+enum
+{
 	MULE_SOCKET_CONNECTION,
 	MULE_SOCKET_INPUT,
 	MULE_SOCKET_OUTPUT,
 	MULE_SOCKET_LOST
 };
 
-//
-// Abstraction class for library TCP socket
-// Can be a wxSocket or an ASIO socket
-//
+// Which address families a listening socket binds for. Scoped so a string literal passed for the
+// bind-interface overload of CLibSocketServer cannot convert to it.
+enum class ListenerFamilies
+{
+	FromAddress, // Exactly the family of the given address
+	FromPolicy   // Widen the IPv4 wildcard per AddressFamilyPolicy::Configured()
+};
 
-//
+// Abstraction class for a library TCP socket: either a wxSocket or an ASIO socket.
+
 // Client TCP socket
-//
-class CLibSocket
+class CLibSocket : public IStreamTransportEvents
 {
 	friend class CAsioSocketImpl;
 	friend class CAsioSocketServerImpl;
+
 public:
 	CLibSocket(int flags = 0);
 	virtual ~CLibSocket();
 
 	// wx Stuff
-	void	Notify(bool);
-	bool	Connect(const amuleIPV4Address& adr, bool wait);
-	bool	IsConnected() const;
-	bool	IsOk() const;
-	void	SetLocal(const amuleIPV4Address& local);
-	uint32	Read(void * buffer, uint32 nbytes);
-	uint32	Write(const void * buffer, uint32 nbytes);
-	void	Close();
-	void	Destroy();
+	void Notify(bool);
+	bool Connect(const amuleIPV4Address &adr, bool wait);
+#ifdef ENABLE_IPV6
+	// IPv4 and IPv4-mapped targets are refused here; they keep using Connect().
+	bool ConnectIPv6(const CNetworkAddress &target, uint16 port, bool wait);
+#endif
+	// Bound the synchronous connect to `ms` milliseconds (0 = no bound, the default). Only
+	// affects the blocking connect path used by the synchronous EC clients (amulecmd); the
+	// async path is unaffected.
+	void SetConnectTimeout(int ms);
+	bool IsConnected() const;
+	bool IsOk() const;
+	void SetLocal(const amuleIPV4Address &local);
+	uint32 Read(void *buffer, uint32 nbytes);
+	uint32 Write(const void *buffer, uint32 nbytes);
+	void Close();
+	void Destroy();
+
+	// Swap in a fresh asio socket impl on this same wrapper, so the socket can be re-connected
+	// after a loss WITHOUT recreating the CLibSocket -- and therefore without invalidating any
+	// pointer the app still holds to us, the remote GUI pinning its CRemoteConnect in every
+	// container. The outgoing impl is detached race-safely first (see LinkSocketImpl).
+	void ResetForReconnect();
 
 	// Get last error, 0 == no error
-	int		LastError() const;
+	int LastError() const;
 
 	// not supported
 	void SetFlags(int) {}
 	void Discard() {}
-	bool WaitOnConnect(long, long)	{ return true; }
-	bool WaitForWrite(long, long)	{ return true; }
-	bool WaitForRead(long, long)	{ return true; }
+	bool WaitOnConnect(long, long) { return true; }
+	bool WaitForWrite(long, long) { return true; }
+	bool WaitForRead(long, long) { return true; }
 
 	// new Stuff
 
 	// Check if socket is currently blocking for read or write
-	bool	BlocksRead() const;
-	bool	BlocksWrite() const;
+	bool BlocksRead() const;
+	bool BlocksWrite() const;
+	// Milliseconds since the send that refused a write finished, once; 0 if none did or for a
+	// transport.
+	uint64 TakeSendWakeDelay();
 
 	// Show we're ready for another event
-	void	EventProcessed();
+	void EventProcessed();
 
 	// Get IP of client
-	const wxChar * GetIP() const;
+	const wxChar *GetIP() const;
 
 	// True if Destroy() has been called for socket
-	bool	IsDestroying() const;
+	bool IsDestroying() const;
 
 	// Get/set proxy state
 	bool GetProxyState() const;
-	void SetProxyState(bool state, const amuleIPV4Address * adr = 0);
+	void SetProxyState(bool state, const amuleIPV4Address *adr = 0);
 
 	// Get peer address (better API than wx)
-	wxString	GetPeer();
-	uint32		GetPeerInt();
+	wxString GetPeer();
+	// Socket ingress canonicalizes mapped IPv4; native IPv6 retains its scope.
+	CNetworkAddress GetPeerAddress();
+	// Legacy ed2k IPv4 narrowing; native IPv6 has no uint32 representation.
+	uint32 GetPeerInt();
 
-	// Turn on TCP keepalive with per-socket timings so a half-open
-	// connection (peer gone, FIN/RST lost or never sent) gets torn
-	// down at the TCP layer instead of sitting idle forever. Used by
-	// the EC sockets on both ends — see CECMuleSocket / CECServerSocket.
-	// Idle seconds before the kernel starts probing, the interval
-	// between probes, and how many probes before declaring the peer
-	// dead.  Effective only on POSIX (TCP_KEEPIDLE / TCP_KEEPINTVL /
-	// TCP_KEEPCNT) and Windows (SIO_KEEPALIVE_VALS; only idle +
-	// interval are settable, count uses the system default). No-op if
-	// the underlying socket is not open.
+	// Turn on TCP keepalive with per-socket timings, so a half-open connection (peer gone,
+	// FIN/RST lost or never sent) is torn down at the TCP layer instead of sitting idle
+	// forever. Used by the EC sockets on both ends. Effective only on POSIX (TCP_KEEPIDLE /
+	// TCP_KEEPINTVL / TCP_KEEPCNT) and Windows (SIO_KEEPALIVE_VALS, where only idle and
+	// interval are settable). No-op if the underlying socket is not open.
 	void EnableTcpKeepalive(int idleSec, int probeIntervalSec, int probeCount);
+
+	// Turn off Nagle. Used by the EC sockets on both ends, where a packet's trailing small
+	// write would otherwise wait out the peer's delayed-ACK timer. No-op if the underlying
+	// socket is not open.
+	void EnableTcpNoDelay();
 
 	// Handlers
 	virtual void OnConnect(int) {}
 	virtual void OnSend(int) {}
 	virtual void OnReceive(int) {}
-	// Int argument is unused — exists to give the CLibSocket-layer
-	// hook a different signature from CECSocket::OnLost(), so a class
-	// that multi-inherits from both (CECMuleSocket) can override the
-	// CLibSocket-side hook unambiguously and forward to the EC-layer
-	// OnLost().  Without that disambiguation, the Asio reactor's
-	// EOF-on-read dispatch lands on the empty CLibSocket::OnLost{}
-	// instead of CRemoteConnect / CECServerSocket overrides.
+	// The int argument is unused: it exists to give the CLibSocket-layer hook a different
+	// signature from CECSocket::OnLost(), so a class multi-inheriting from both (CECMuleSocket)
+	// can override this one unambiguously and forward. Without that, the Asio reactor's EOF-on-
+	// read dispatch lands on the empty CLibSocket::OnLost{} instead of the real overrides.
 	virtual void OnLost(int) {}
 	virtual void OnProxyEvent(int) {}
 
+	/**
+	 * Hands this socket's stream over to a transport that is not asio.
+	 *
+	 * Every stream accessor below then answers from it. That has to be all of
+	 * them: none are virtual here, in CEncryptedStreamSocket or in CEMSocket,
+	 * so one left unrouted resolves statically to the asio socket and reports
+	 * on a stream nobody is using -- which is how CEMSocket::Send()'s !IsOk()
+	 * arm would stay dead after wiring.
+	 */
+	void AttachTransport(std::unique_ptr<IStreamTransport> transport);
+	std::unique_ptr<IStreamTransport> DetachTransport();
+
+	//! True while a transport owns this socket's stream.
+	bool HasTransport() const { return m_transport != nullptr; }
+
+	//! Turns stream events into the socket events aMule already raises.
+	//! Offers an attached transport's queue. Main thread only.
+	void FlushTransport();
+
+	//! The attached transport, or null. For owners that must configure it.
+	IStreamTransport *GetTransport() const { return m_transport.get(); }
+
+	void OnStreamConnected() override;
+	void OnStreamReadable() override;
+	void OnStreamWritable() override;
+	void OnStreamLost() override;
+	void OnFlushRequested() override;
+
+#ifdef ENABLE_IPV6
+
+protected:
+	// For a subclass that refuses an IPv6 connect itself, so the refusal still reaches OnConnect().
+	bool RefuseConnectIPv6(const CNetworkAddress &target, uint16 port);
+#endif
+
 private:
 	// Replace the internal socket. Takes ownership of the passed shared_ptr.
-	void	LinkSocketImpl(std::shared_ptr<class CAsioSocketImpl>);
+	void LinkSocketImpl(std::shared_ptr<class CAsioSocketImpl>);
 
-	// shared_ptr so the asio impl can outlive this wrapper for as long as
-	// any in-flight async callback still holds a shared_from_this() ref.
-	// Required to fix the wake-from-sleep use-after-free crash (issue #384).
+	// Owned: outlives nothing and is closed by Destroy() before the asio
+	// wrapper goes, so a libutp callback cannot arrive after teardown.
+	std::unique_ptr<IStreamTransport> m_transport;
+	// GetIP() hands back a borrowed pointer, so the text has to outlive the
+	// call. Written once at attach; never from a const accessor.
+	wxString m_peerText;
+	// A transport has no asio buffer to re-announce, so the bridge posts the next receive event
+	// itself, once at a time, as the asio socket does.
+	void PostTransportReadEvent();
+	std::atomic<bool> m_transportReadEventPending{ false };
+	//! The transport ended cleanly with bytes still unread; the reader learns of the end after them.
+	std::atomic<bool> m_transportLostDeferred{ false };
+
+	// shared_ptr so the asio impl can outlive this wrapper for as long as any in-flight async
+	// callback still holds a shared_from_this() ref. Required to fix the wake-from-sleep use-
+	// after-free crash (issue #384).
 	std::shared_ptr<class CAsioSocketImpl> m_aSocket;
-	void LastCount();	// No. We don't have this. We return it directly with Read() and Write()
-	bool Error() const;	// Only use LastError
+	void LastCount();   // No. We don't have this. We return it directly with Read() and Write()
+	bool Error() const; // Only use LastError
 };
 
-
-//
 // TCP socket server
-//
 class CLibSocketServer
 {
 public:
-	CLibSocketServer(const amuleIPV4Address& adr, int flags);
+	CLibSocketServer(const amuleIPV4Address &adr,
+		int flags,
+		ListenerFamilies families = ListenerFamilies::FromAddress);
+	// Bind the acceptor to a specific network interface (empty = any), independent of the
+	// global bind-to-interface pin set via SetSocketBindInterface(). Used by the EC listener so
+	// external-control traffic can live on a different interface than ed2k/Kad.
+	CLibSocketServer(const amuleIPV4Address &adr, int flags, const wxString &bindInterface);
 	virtual ~CLibSocketServer();
-	// Accepts an incoming connection request, and creates a new CLibSocket object which represents the server-side of the connection.
-	CLibSocket * Accept(bool wait = true);
+	// Accepts an incoming connection request, and creates a new CLibSocket object which represents the
+	// server-side of the connection.
+	CLibSocket *Accept(bool wait = true);
 	// Accept an incoming connection using the specified socket object.
-	bool	AcceptWith(CLibSocket & socket, bool wait);
+	bool AcceptWith(CLibSocket &socket, bool wait);
 
-	virtual	void OnAccept() {}
+	virtual void OnAccept() {}
 
-	bool	IsOk() const;
+	bool IsOk() const;
+	// Host the acceptor is actually bound to ("[::]" for IPv6, dotted quad for IPv4, empty when
+	// not listening); a policy-following listener can bind a different family than requested.
+	wxString BoundHost() const;
+	// Replace only the listening acceptor. Existing accepted CLibSocket instances remain
+	// independent and continue their connections.
+	bool Rebind(const amuleIPV4Address &adr);
 
-	void	Close();
+	void Close();
 
 	// Not needed here
-	void	Discard() {}
-	bool	Notify(bool) { return true; }
+	void Discard() {}
+	bool Notify(bool) { return true; }
 
 	// new Stuff
 
 	// Do we have a socket available if AcceptWith() is called ?
-	bool	SocketAvailable();
+	bool SocketAvailable();
+
 private:
-	// shared_ptr for the same reason as CLibSocket::m_aSocket — pending
+	// shared_ptr for the same reason as CLibSocket::m_aSocket -- pending
 	// async_accept completions must keep the impl alive past wrapper death.
 	std::shared_ptr<class CAsioSocketServerImpl> m_aServer;
+	// Kept here because Rebind() replaces m_aServer.
+	ListenerFamilies m_listenerFamilies;
 };
 
-
-//
 // UDP socket
-//
 class CLibUDPSocket
 {
 	friend class CAsioUDPSocketImpl;
+
 public:
-	CLibUDPSocket(amuleIPV4Address &address, int flags);
+	// The handler comes in here because the first read is posted before the constructor returns.
+	CLibUDPSocket(amuleIPV4Address &address, int flags, CMuleUDPSocket *handler);
 	virtual ~CLibUDPSocket();
 
 	// wx Stuff
-	bool	IsOk() const;
-	virtual uint32 RecvFrom(amuleIPV4Address& addr, void* buf, uint32 nBytes);
-	virtual uint32 SendTo(const amuleIPV4Address& addr, const void* buf, uint32 nBytes);
-	int		LastError() const;
-	void	Close();
-	void	Destroy();
-	void	SetClientData(class CMuleUDPSocket *);
+	bool IsOk() const;
+	virtual uint32 RecvFrom(CNetworkAddress &addr, uint16 &port, void *buf, uint32 nBytes);
+	virtual uint32 SendTo(const amuleIPV4Address &addr, const void *buf, uint32 nBytes);
+	int LastError() const;
+	void Close();
+	void Destroy();
 
 	// Not needed here
-	bool	Notify(bool) { return true; }
+	bool Notify(bool) { return true; }
 
-	// Check if socket is currently blocking for write
-	// Well - we apparently have block in wx. At least we handle it in MuleUDPSocket.
-	// But this makes no sense. We send a packet to an IP in background.
-	// Either this works after some time, or not. But there is no block.
-	bool	BlocksWrite() const { return false; }
+	// Check whether the socket is currently blocking for write. We apparently have block in wx,
+	// at least we handle it in MuleUDPSocket, but it makes no sense: a packet is sent to an IP
+	// in the background, and either that works after some time or it does not. There is no
+	// block.
+	bool BlocksWrite() const { return false; }
 
 private:
-	// shared_ptr so the asio impl can outlive this wrapper for as long as
-	// any in-flight async callback still holds a shared_from_this() ref.
-	// Required to fix the wake-from-sleep use-after-free crash (issue #384).
+	// shared_ptr so the asio impl can outlive this wrapper for as long as any in-flight async
+	// callback still holds a shared_from_this() ref. Required to fix the wake-from-sleep use-
+	// after-free crash (issue #384).
 	std::shared_ptr<class CAsioUDPSocketImpl> m_aSocket;
-	void	LastCount();	// block this
-	bool	Error() const;	// Only use LastError
+	void LastCount();   // block this
+	bool Error() const; // Only use LastError
 };
 
-
-//
 // ASIO event loop
-//
 class CAsioService
 {
 public:
-    CAsioService();
-    ~CAsioService();
+	CAsioService();
+	~CAsioService();
 	void Stop();
+
 private:
-	static const int m_numberOfThreads;
-	class CAsioServiceThread * m_threads;
+	class CAsioServiceThread *m_threads;
 };
 
+// Set the network interface every socket binds its egress to (empty = system default). Pushed in by
+// the core from thePrefs::GetNetworkInterface() so this socket library stays independent of
+// CPreferences. Takes effect for sockets opened after the call.
+void SetSocketBindInterface(const wxString &iface);
 
+// Whether a listener that follows the address-family policy may widen the IPv4 wildcard to IPv6.
+// The core turns it off when a configured bind address did not parse and the wildcard is only the
+// fallback: binding every IPv6 address would be wider than the user asked.
+void SetListenerWidening(bool allowed);
 
-#endif /* __LIBSOCKET_H__ */
+#ifdef ENABLE_IPV6
+// Set the IPv6 address we advertise to peers (absent = none), which outbound IPv6 connections then
+// leave from; see PeerAddressing::OutboundIPv6Source(). Pushed in by the core for the same reason as
+// SetSocketBindInterface(). Takes effect for connections started after the call.
+void SetSocketAdvertisedIPv6(const CNetworkAddress &advertised);
+#endif
+
+// Outcome of validating the configured bind interface, so the core can report
+// it once at startup instead of discovering it silently per socket.
+enum BindInterfaceStatus
+{
+	BindIface_Empty,      // no interface configured (default)
+	BindIface_OK,         // resolves and binds
+	BindIface_NotFound,   // name/index does not match any interface
+	BindIface_Denied,     // bind needs a privilege we don't have (Linux CAP_NET_RAW)
+	BindIface_Unsupported // platform can't bind, or another error
+};
+
+// Validate the configured bind interface on a throwaway socket. Lets the core warn the user (not
+// found, permission denied) before any real socket opens, rather than leaving traffic silently
+// unbound.
+BindInterfaceStatus TestSocketBindInterface(const wxString &iface);
+
+// Bind an already-open raw socket to the given interface, reusing the exact same per-platform logic
+// as aMule's own sockets -- for non-asio sockets such as libcurl's, via CURLOPT_SOCKOPTFUNCTION.
+// The fd is passed as uintptr_t so a Windows SOCKET survives without truncation.
+bool BindRawSocketToInterface(uintptr_t fd, const wxString &iface);
+
+#endif /* LIBSOCKET_H */

@@ -25,8 +25,9 @@
 
 #include <wx/dc.h>
 #include <wx/image.h>
-#include "BarShader.h"		// Interface declarations.
-#include <cstring>		// Needed for std::memcpy
+#include "BarShader.h" // Interface declarations.
+#include <cmath>       // Needed for std::lround
+#include <cstring>     // Needed for std::memcpy
 
 const double Pi = 3.14159265358979323846264338328;
 
@@ -34,78 +35,69 @@ const double Pi = 3.14159265358979323846264338328;
 #define DEFAULT_DEPTH 10
 
 CBarShader::CBarShader(unsigned height, unsigned width)
-: m_Width( width ),
-  m_Height( height ),
-  m_FileSize( 1 ),
-  m_Modifiers( NULL ),
-  m_used3dlevel( DEFAULT_DEPTH ),
-  m_Content(width, 0)
+: m_Width(width)
+, m_Height(height)
+, m_FileSize(1)
+, m_Modifiers(NULL)
+, m_used3dlevel(DEFAULT_DEPTH)
+, m_Content(width, 0)
 {
 }
-
 
 CBarShader::~CBarShader()
 {
-	if ( m_Modifiers ) {
-		delete[] m_Modifiers;
-	}
+	delete[] m_Modifiers;
 }
-
 
 void CBarShader::SetHeight(unsigned height)
 {
-	if( m_Height != height ) {
+	if (m_Height != height) {
 		m_Height = height;
 
 		// Reset the modifiers
-		if ( m_Modifiers ) {
+		if (m_Modifiers) {
 			delete[] m_Modifiers;
 			m_Modifiers = NULL;
 		}
 	}
 }
-
 
 void CBarShader::SetWidth(int width)
 {
 	if (width > 0) {
 		m_Width = width;
-		Fill(CMuleColour(0,0,0));
+		Fill(CMuleColour(0, 0, 0));
 	}
 }
 
-
 void CBarShader::Set3dDepth(unsigned depth)
 {
-	if ( depth < 1 ) {
+	if (depth < 1) {
 		depth = 1;
-	} else if ( depth > 5 ) {
+	} else if (depth > 5) {
 		depth = 5;
 	}
 
-	if ( m_used3dlevel != depth ) {
+	if (m_used3dlevel != depth) {
 		m_used3dlevel = depth;
 
 		// Reset the modifiers
-		if ( m_Modifiers ) {
+		if (m_Modifiers) {
 			delete[] m_Modifiers;
 			m_Modifiers = NULL;
 		}
 	}
 }
 
-
 void CBarShader::BuildModifiers()
 {
 	wxASSERT(m_used3dlevel < 7);
 
-	if ( m_Modifiers ) {
-		delete[] m_Modifiers;
-	}
+	delete[] m_Modifiers;
 
 	unsigned depth = (7 - m_used3dlevel);
 	unsigned count = HALF(m_Height);
-	double piOverDepth = Pi/depth;
+	double piOverDepth = Pi / depth;
 	double base = piOverDepth * ((depth / 2.0) - 1);
 	double increment = piOverDepth / (count - 1);
 
@@ -114,8 +106,7 @@ void CBarShader::BuildModifiers()
 		m_Modifiers[i] = (double)(sin(base + i * increment));
 }
 
-
-void CBarShader::FillRange(uint64 start, uint64 end, const CMuleColour& colour)
+void CBarShader::FillRange(uint64 start, uint64 end, const CMuleColour &colour)
 {
 	wxASSERT(m_FileSize > 0);
 
@@ -123,9 +114,8 @@ void CBarShader::FillRange(uint64 start, uint64 end, const CMuleColour& colour)
 		return;
 	}
 
-	// precision for small files: end must be increased by one
-	// think of each byte as a visible block, then start points to
-	// the beginning of its block, but end points to the END of its block
+	// Precision for small files: end must be increased by one. Think of each byte as a visible
+	// block -- start points at the beginning of its block, end at the END of its block.
 	end++;
 
 	if (end > m_FileSize) {
@@ -133,7 +123,7 @@ void CBarShader::FillRange(uint64 start, uint64 end, const CMuleColour& colour)
 	}
 
 	unsigned firstPixel = start * m_Width / m_FileSize;
-	unsigned lastPixel  = end   * m_Width / m_FileSize;
+	unsigned lastPixel = end * m_Width / m_FileSize;
 	if (lastPixel == m_Width) {
 		lastPixel--;
 	}
@@ -141,7 +131,7 @@ void CBarShader::FillRange(uint64 start, uint64 end, const CMuleColour& colour)
 	double f_Width = m_Width;
 	// calculate how much of this pixels is to be covered with the fill
 	double firstCovered = firstPixel + 1 - start * f_Width / m_FileSize;
-	double lastCovered  = end * f_Width / m_FileSize - lastPixel;
+	double lastCovered = end * f_Width / m_FileSize - lastPixel;
 	// all inside one pixel ?
 	if (firstPixel == lastPixel) {
 		m_Content[firstPixel].BlendWith(colour, firstCovered + lastCovered - 1.0);
@@ -155,28 +145,26 @@ void CBarShader::FillRange(uint64 start, uint64 end, const CMuleColour& colour)
 	}
 }
 
-
-void CBarShader::Draw( wxDC* dc, int iLeft, int iTop, bool bFlat )
+void CBarShader::Draw(wxDC *dc, int iLeft, int iTop, bool bFlat)
 {
-	wxASSERT( dc );
+	wxASSERT(dc);
 
 	// Do we need to rebuild the modifiers?
-	if ( !bFlat && !m_Modifiers ) {
+	if (!bFlat && !m_Modifiers) {
 		BuildModifiers();
 	}
 
 	// Render the bar into a raw buffer
-	unsigned char * buf = (unsigned char *) malloc(
-		static_cast<size_t>(m_Width) *
-		static_cast<size_t>(m_Height) * 3u);
+	unsigned char *buf =
+		(unsigned char *)malloc(static_cast<size_t>(m_Width) * static_cast<size_t>(m_Height) * 3u);
 
 	if (bFlat) {
 		// draw flat bar
 		unsigned idx = 0;
 		for (unsigned x = 0; x < m_Width; x++) {
-			unsigned cRed   = m_Content[x].Red();
+			unsigned cRed = m_Content[x].Red();
 			unsigned cGreen = m_Content[x].Green();
-			unsigned cBlue  = m_Content[x].Blue();
+			unsigned cBlue = m_Content[x].Blue();
 			buf[idx++] = cRed;
 			buf[idx++] = cGreen;
 			buf[idx++] = cBlue;
@@ -187,8 +175,7 @@ void CBarShader::Draw( wxDC* dc, int iLeft, int iTop, bool bFlat )
 			std::memcpy(buf + idx, buf, idx);
 		}
 		if (y < m_Height) {
-			std::memcpy(buf + idx, buf,
-				static_cast<size_t>(m_Height - y) * linelength);
+			std::memcpy(buf + idx, buf, static_cast<size_t>(m_Height - y) * linelength);
 		}
 	} else {
 		// draw rounded bar
@@ -196,12 +183,13 @@ void CBarShader::Draw( wxDC* dc, int iLeft, int iTop, bool bFlat )
 		unsigned idx = 0;
 		for (unsigned y = 0; y < Max; y++) {
 			for (unsigned x = 0; x < m_Width; x++) {
-				unsigned cRed   = (unsigned)(m_Content[x].Red()   * m_Modifiers[y] + .5f);
-				unsigned cGreen = (unsigned)(m_Content[x].Green() * m_Modifiers[y] + .5f);
-				unsigned cBlue  = (unsigned)(m_Content[x].Blue()  * m_Modifiers[y] + .5f);
-				cRed   = std::min(255u, cRed);
+				unsigned cRed = (unsigned)std::lround(m_Content[x].Red() * m_Modifiers[y]);
+				unsigned cGreen =
+					(unsigned)std::lround(m_Content[x].Green() * m_Modifiers[y]);
+				unsigned cBlue = (unsigned)std::lround(m_Content[x].Blue() * m_Modifiers[y]);
+				cRed = std::min(255u, cRed);
 				cGreen = std::min(255u, cGreen);
-				cBlue  = std::min(255u, cBlue);
+				cBlue = std::min(255u, cBlue);
 				buf[idx++] = cRed;
 				buf[idx++] = cGreen;
 				buf[idx++] = cBlue;

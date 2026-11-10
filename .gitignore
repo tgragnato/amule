@@ -51,8 +51,23 @@ unittests/tests/*Test
 # msgfmt artifact
 *.mo
 
+# User files (should go into .git/info/exclude)
+Makefile.user
+*.vcxproj.user
+.vscode
+
+# Build and packaging output. The trailing slash keeps these to directories,
+# so ad-hoc build trees (build-macos, build-release, build-audit, ...) are all
+# covered while the tracked packaging/*/build.sh scripts are not.
+build*/
+dist/
+
+# Windows installer build artifacts
+packaging/windows/installer_strings_generated.nsh
+
 # AI coding assistants
 *.local.md
+.mcp.json
 .claude/
 .cursor/
 .windsurf/
@@ -63,3 +78,12 @@ unittests/tests/*Test
 .gemini/
 .devin/
 .aider*
+.archive/
+.cache/
+
+# Python bytecode, from running the icon embedder by hand
+__pycache__/
+*.pyc
+
+# Temporary catalog regeneration files left after a crash
+/po/.update-po.*/

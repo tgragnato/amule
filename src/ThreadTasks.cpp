@@ -24,61 +24,60 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
+#include <wx/app.h> // Needed for wxTheApp
 
-#include <wx/app.h>			// Needed for wxTheApp
+#include <algorithm>     // std::min
+#include <optional>      // Reset abandons a partial safe-write without promoting it
+#include <unordered_set> // CAICHSyncTask orphan-prune liveRoots set
 
-#include <algorithm>			// std::min
-#include <unordered_set>		// CAICHSyncTask orphan-prune liveRoots set
-
-#include "ThreadTasks.h"		// Interface declarations
-#include "PartFile.h"			// Needed for CPartFile
-#include "Logger.h"			// Needed for Add(Debug)LogLine{C,N}
-#include <common/Format.h>		// Needed for CFormat
-#include "amule.h"			// Needed for theApp
-#include "KnownFileList.h"		// Needed for theApp->knownfiles
-#include "Preferences.h"		// Needed for thePrefs
-#include "ScopedPtr.h"			// Needed for CScopedPtr and CScopedArray
-#include "PlatformSpecific.h"		// Needed for CanFSHandleSpecialChars
+#include "ThreadTasks.h"      // Interface declarations
+#include "PartFile.h"         // Needed for CPartFile
+#include "PartMetWriter.h"    // Needed for CPartMetSaveSlot
+#include "CFile.h"            // Needed for CFile::CloneFile
+#include "Logger.h"           // Needed for Add(Debug)LogLine{C,N}
+#include <common/Format.h>    // Needed for CFormat
+#include "amule.h"            // Needed for theApp
+#include "KnownFileList.h"    // Needed for theApp->knownfiles
+#include "SharedFileList.h"   // Needed for theApp->sharedfiles
+#include "Preferences.h"      // Needed for thePrefs
+#include "ScopedPtr.h"        // Needed for CScopedPtr and CScopedArray
+#include "PlatformSpecific.h" // Needed for CanFSHandleSpecialChars
 #include "config.h"
 
 //! This hash represents the value for an empty MD4 hashing
 const uint8_t g_emptyMD4Hash[16] = {
-	0x31, 0xD6, 0xCF, 0xE0, 0xD1, 0x6A, 0xE9, 0x31,
-	0xB7, 0x3C, 0x59, 0xD7, 0xE0, 0xC0, 0x89, 0xC0 };
-
+	0x31, 0xD6, 0xCF, 0xE0, 0xD1, 0x6A, 0xE9, 0x31, 0xB7, 0x3C, 0x59, 0xD7, 0xE0, 0xC0, 0x89, 0xC0
+};
 
 ////////////////////////////////////////////////////////////
 // CHashingTask
 
-CHashingTask::CHashingTask(const CPath& path, const CPath& filename, const CPartFile* part)
-	// GetPrintable is used to improve the readability of the log.
-	: CThreadTask("Hashing", path.JoinPaths(filename).GetPrintable(), (part ? ETP_High : ETP_Normal)),
-	  m_path(path),
-	  m_filename(filename),
-	  m_toHash(EH_MD4_AND_AICH),
-	  m_owner(part)
+CHashingTask::CHashingTask(const CPath &path, const CPath &filename, const CPartFile *part)
+: CThreadTask("Hashing", path.JoinPaths(filename).GetPrintable(), (part ? ETP_High : ETP_Normal))
+, m_path(path)
+, m_filename(filename)
+, m_toHash(EH_MD4_AND_AICH)
+, m_owner(part)
 {
-	// We can only create the AICH hashset if the file is a knownfile or
-	// if the partfile is complete, since the MD4 hashset is checked first,
-	// so that the AICH hashset only gets assigned if the MD4 hashset
-	// matches what we expected. Due to the rarity of post-completion
-	// corruptions, this gives us a nice speedup in most cases.
+	// We can only create the AICH hashset if the file is a knownfile or the partfile is
+	// complete, since the MD4 hashset is checked first and the AICH hashset is only assigned if
+	// the MD4 one matches what we expected. Post-completion corruptions are rare, so this is a
+	// nice speedup in most cases.
 	if (part && !part->GetGapList().empty()) {
 		m_toHash = EH_MD4;
 	}
 }
 
-
-CHashingTask::CHashingTask(const CKnownFile* toAICHHash)
-	// GetPrintable is used to improve the readability of the log.
-	: CThreadTask("AICH Hashing", toAICHHash->GetFilePath().JoinPaths(toAICHHash->GetFileName()).GetPrintable(), ETP_Low),
-	  m_path(toAICHHash->GetFilePath()),
-	  m_filename(toAICHHash->GetFileName()),
-	  m_toHash(EH_AICH),
-	  m_owner(toAICHHash)
+CHashingTask::CHashingTask(const CKnownFile *toAICHHash)
+: CThreadTask("AICH Hashing",
+	  toAICHHash->GetFilePath().JoinPaths(toAICHHash->GetFileName()).GetPrintable(),
+	  ETP_Low)
+, m_path(toAICHHash->GetFilePath())
+, m_filename(toAICHHash->GetFileName())
+, m_toHash(EH_AICH)
+, m_owner(toAICHHash)
 {
 }
-
 
 void CHashingTask::Entry()
 {
@@ -86,15 +85,14 @@ void CHashingTask::Entry()
 
 	CPath fullPath = m_path.JoinPaths(m_filename);
 	if (!file.Open(fullPath, CFile::read)) {
-		AddDebugLogLineC(logHasher,
-			CFormat("Warning, failed to open file, skipping: %s") % fullPath);
+		AddDebugLogLineC(logHasher, CFormat("Warning, failed to open file, skipping: %s") % fullPath);
 		return;
 	}
 
 	uint64 fileLength = 0;
 	try {
 		fileLength = file.GetLength();
-	} catch (const CIOFailureException&) {
+	} catch (const CIOFailureException &) {
 		AddDebugLogLineC(logHasher,
 			CFormat("Warning, failed to retrieve file-length, skipping: %s") % fullPath);
 		return;
@@ -110,8 +108,7 @@ void CHashingTask::Entry()
 			wxFAIL;
 		} else {
 			// Zero-size partfiles should be hashed, but not zero-sized shared-files.
-			AddDebugLogLineC(logHasher,
-				CFormat("Warning, 0-size file, skipping: %s") % fullPath);
+			AddDebugLogLineC(logHasher, CFormat("Warning, 0-size file, skipping: %s") % fullPath);
 		}
 
 		return;
@@ -124,40 +121,61 @@ void CHashingTask::Entry()
 	knownfile->SetFileSize(fileLength);
 	knownfile->m_lastDateChanged = CPath::GetModificationTime(fullPath);
 	knownfile->m_AvailPartFrequency.insert(
-		knownfile->m_AvailPartFrequency.begin(),
-		knownfile->GetPartCount(), 0);
+		knownfile->m_AvailPartFrequency.begin(), knownfile->GetPartCount(), 0);
 
+	// Info level, not debug: AddDebugLogLineN compiles to nothing outside a debug build, so the
+	// binaries users run had no record that the client was reading every byte of a file (issue
+	// #968). Emitted here rather than where the task was queued, because tasks run serially on
+	// CThreadScheduler long after the directory walk, and after the guards above, so a skipped
+	// file never claims to have been hashed. The full path, not m_filename: the same basename
+	// can exist in several shared directories.
+	//
+	// m_owner is set only for a partfile -- completion hashing or a corrupt-part re-hash. Those
+	// are real disk work, but the path being read is an internal temp name like Temp/003.part,
+	// so report the download's own name and which kind of work it is instead.
+	const bool ownedByPartfile = (m_owner != nullptr);
 	if ((m_toHash & EH_MD4) && (m_toHash & EH_AICH)) {
 		knownfile->GetAICHHashset()->FreeHashSet();
-		AddDebugLogLineN( logHasher, CFormat(
-			"Starting to create MD4 and AICH hash for file: %s") %
-			m_filename );
+		if (ownedByPartfile) {
+			AddLogLineN(CFormat(_("Hashing downloaded file: %s")) % m_owner->GetFileName());
+		} else {
+			AddLogLineN(CFormat(_("Hashing file: %s")) % fullPath);
+		}
+		AddDebugLogLineN(
+			logHasher, CFormat("Starting to create MD4 and AICH hash for file: %s") % m_filename);
 	} else if ((m_toHash & EH_MD4)) {
-		AddDebugLogLineN( logHasher, CFormat(
-			"Starting to create MD4 hash for file: %s") % m_filename );
+		if (ownedByPartfile) {
+			AddLogLineN(CFormat(_("Hashing downloaded file: %s")) % m_owner->GetFileName());
+		} else {
+			AddLogLineN(CFormat(_("Hashing file: %s")) % fullPath);
+		}
+		AddDebugLogLineN(logHasher, CFormat("Starting to create MD4 hash for file: %s") % m_filename);
 	} else if ((m_toHash & EH_AICH)) {
 		knownfile->GetAICHHashset()->FreeHashSet();
-		AddDebugLogLineN( logHasher, CFormat(
-			"Starting to create AICH hash for file: %s") % m_filename );
+		// Distinct wording: this fires for files discovered long ago whose AICH master hash
+		// is missing from known2_64.met, so "hashing" would wrongly suggest the file was
+		// just found. After a known2_64.met loss it re-reads the entire library, which is
+		// the silent multi-hour case worth a line.
+		AddLogLineN(CFormat(_("Rebuilding AICH hashset for file: %s")) % fullPath);
+		AddDebugLogLineN(
+			logHasher, CFormat("Starting to create AICH hash for file: %s") % m_filename);
 	} else {
-		wxCHECK_RET(0, (CFormat("No hashes requested for file, skipping: %s")
-			% m_filename).GetString());
+		wxCHECK_RET(
+			0, (CFormat("No hashes requested for file, skipping: %s") % m_filename).GetString());
 	}
 
-	// This loops creates the part-hashes, loop-de-loop.
 	try {
 		for (uint16 part = 0; part < knownfile->GetPartCount() && !TestDestroy(); part++) {
 			SetHashingProgress(part + 1);
 			if (CreateNextPartHash(file, part, knownfile.get(), m_toHash) == false) {
 				AddDebugLogLineC(logHasher,
-					CFormat("Error while hashing file, skipping: %s")
-						% m_filename);
+					CFormat("Error while hashing file, skipping: %s") % m_filename);
 
 				SetHashingProgress(0);
 				return;
 			}
 		}
-	} catch (const CSafeIOException& e) {
+	} catch (const CSafeIOException &e) {
 		AddDebugLogLineC(logHasher, "IO exception while hashing file: " + e.what());
 		SetHashingProgress(0);
 		return;
@@ -167,10 +185,10 @@ void CHashingTask::Entry()
 	if ((m_toHash & EH_MD4) && !TestDestroy()) {
 		// If the file is < PARTSIZE, then the filehash is that one hash,
 		// otherwise, the filehash is the hash of the parthashes
-		if ( knownfile->m_hashlist.size() == 1 ) {
+		if (knownfile->m_hashlist.size() == 1) {
 			knownfile->m_abyFileHash = knownfile->m_hashlist[0];
 			knownfile->m_hashlist.clear();
-		} else if ( knownfile->m_hashlist.size() ) {
+		} else if (knownfile->m_hashlist.size()) {
 			CMD4Hash hash;
 			knownfile->CreateHashFromHashlist(knownfile->m_hashlist, &hash);
 			knownfile->m_abyFileHash = hash;
@@ -180,17 +198,16 @@ void CHashingTask::Entry()
 		}
 	}
 
-	// Did we create a AICH hashset?
 	if ((m_toHash & EH_AICH) && !TestDestroy()) {
-		CAICHHashSet* AICHHashSet = knownfile->GetAICHHashset();
+		CAICHHashSet *AICHHashSet = knownfile->GetAICHHashset();
 
 		AICHHashSet->ReCalculateHash(false);
-		if (AICHHashSet->VerifyHashTree(true) ) {
+		if (AICHHashSet->VerifyHashTree(true)) {
 			AICHHashSet->SetStatus(AICH_HASHSETCOMPLETE);
 			if (!AICHHashSet->SaveHashSet()) {
-				AddDebugLogLineC( logHasher,
-					CFormat("Warning, failed to save AICH hashset for file: %s")
-						% m_filename );
+				AddDebugLogLineC(logHasher,
+					CFormat("Warning, failed to save AICH hashset for file: %s") %
+						m_filename);
 			}
 			// delete hashset now to free memory
 			AICHHashSet->FreeHashSet();
@@ -208,7 +225,6 @@ void CHashingTask::Entry()
 	}
 }
 
-
 void CHashingTask::SetHashingProgress(uint16 part)
 {
 	if (m_owner) {
@@ -216,8 +232,7 @@ void CHashingTask::SetHashingProgress(uint16 part)
 	}
 }
 
-
-bool CHashingTask::CreateNextPartHash(CFileAutoClose& file, uint16 part, CKnownFile* owner, EHashes toHash)
+bool CHashingTask::CreateNextPartHash(CFileAutoClose &file, uint16 part, CKnownFile *owner, EHashes toHash)
 {
 	wxCHECK_MSG(!file.Eof(), false, "Unexpected EOF in CreateNextPartHash");
 
@@ -226,10 +241,9 @@ bool CHashingTask::CreateNextPartHash(CFileAutoClose& file, uint16 part, CKnownF
 	const uint64 partLength = owner->GetPartSize(part);
 
 	CMD4Hash hash;
-	CMD4Hash* md4Hash = ((toHash & EH_MD4) ? &hash : NULL);
-	CAICHHashTree* aichHash = NULL;
+	CMD4Hash *md4Hash = ((toHash & EH_MD4) ? &hash : NULL);
+	CAICHHashTree *aichHash = NULL;
 
-	// Setup for AICH hashing
 	if (toHash & EH_AICH) {
 		aichHash = owner->GetAICHHashset()->m_pHashTree.FindHash(offset, partLength);
 	}
@@ -237,13 +251,11 @@ bool CHashingTask::CreateNextPartHash(CFileAutoClose& file, uint16 part, CKnownF
 	owner->CreateHashFromFile(file, offset, partLength, md4Hash, aichHash);
 
 	if (toHash & EH_MD4) {
-		// Store the md4 hash
 		owner->m_hashlist.push_back(hash);
 
-		// This is because of the ed2k implementation for parts. A 2 * PARTSIZE
-		// file i.e. will have 3 parts (see CKnownFile::SetFileSize for comments).
-		// So we have to create the hash for the 0-size data, which will be the default
-		// md4 hash for null data: 31D6CFE0D16AE931B73C59D7E0C089C0
+		// The ed2k part implementation means a 2 * PARTSIZE file has 3 parts (see
+		// CKnownFile::SetFileSize), so a hash has to be created for the 0-size data: the
+		// default md4 hash for null data, 31D6CFE0D16AE931B73C59D7E0C089C0.
 		if ((partLength == PARTSIZE) && file.Eof()) {
 			owner->m_hashlist.push_back(CMD4Hash(g_emptyMD4Hash));
 		}
@@ -252,86 +264,99 @@ bool CHashingTask::CreateNextPartHash(CFileAutoClose& file, uint16 part, CKnownF
 	return true;
 }
 
-
 void CHashingTask::OnLastTask()
 {
 	if (GetType() == "Hashing") {
-		// To prevent rehashing in case of crashes, we
-		// explicitly save the list of hashed files here.
-		theApp->knownfiles->Save();
-
-		// Make sure the AICH-hashes are up to date.
-		CThreadScheduler::AddTask(new CAICHSyncTask());
+		// Hand the save to the main thread instead of writing known.met here. This runs the
+		// moment the last hash finishes, while its result is still queued for the main thread:
+		// a save now would miss that file, and would hold the known-file lock for the whole
+		// write while the main thread waits on it to register the file -- seconds on a large
+		// library (issue #1522). This event is queued after that result and the main thread
+		// handles them in order, so the save is only scheduled once the file is registered.
+		wxQueueEvent(wxTheApp, new wxThreadEvent(MULE_EVT_HASHING_DRAINED));
 	}
 }
 
+CKnownFileSaveTask::CKnownFileSaveTask()
+: CThreadTask("Saving known files", "", ETP_High)
+{
+}
+
+void CKnownFileSaveTask::Entry()
+{
+	theApp->knownfiles->Save();
+}
 
 ////////////////////////////////////////////////////////////
 // CAICHSyncTask
 
-CAICHSyncTask::CAICHSyncTask()
-	: CThreadTask("AICH Synchronizing", "", ETP_Low)
+CAICHSyncTask::CAICHSyncTask(bool pruneOrphans)
+: CThreadTask("AICH Synchronizing", "", ETP_Low)
+, m_pruneOrphans(pruneOrphans)
 {
 }
-
 
 void CAICHSyncTask::Entry()
 {
 	ConvertToKnown2ToKnown264();
 
-	AddDebugLogLineN( logAICHThread, "Synchronization thread started." );
+	AddDebugLogLineN(logAICHThread, "Synchronization thread started.");
 
-	// We collect all masterhashs which we find in the known2.met and store them in a list
 	std::list<CAICHHash> hashlist;
 	const CPath fullpath = CPath(thePrefs::GetConfigDir() + KNOWN2_MET_FILENAME);
 
-	// Snapshot of AICH master hashes still referenced by a known.met
-	// record. Used to drop orphans (entries whose owning known.met
-	// record was TTL-evicted by CKnownFileList::PruneDuplicates) from
-	// known2_64.met during the read walk. Empty set disables the prune
-	// (defensive: never wipe everything before knownfiles is loaded).
+	// Snapshot of AICH master hashes still referenced by a known.met record, used to drop
+	// orphans -- entries whose owning record was TTL-evicted by PruneDuplicates -- during the
+	// read walk. An empty set disables the prune, so nothing is ever wiped before knownfiles is
+	// loaded.
+	//
+	// Only the startup sync collects it: a post-hashing sync runs on a worker thread that can
+	// outrun the main-thread SafeAddKFile registering the file it just hashed, whose freshly-
+	// written hashset would then be absent from liveRoots and pruned as an orphan.
 	std::unordered_set<CAICHHash> liveRoots;
-	if (theApp->knownfiles) {
+	if (m_pruneOrphans && theApp->knownfiles) {
 		theApp->knownfiles->CollectLiveAICHRoots(liveRoots);
 	}
 
 	CFile file;
 	if (!fullpath.FileExists()) {
-		// File does not exist. Try to create it to see if it can be created at all (and don't start hashing otherwise).
+		// File does not exist. Try to create it to see if it can be created at all (and don't start
+		// hashing otherwise).
 		if (!file.Open(fullpath, CFile::write)) {
-			AddDebugLogLineC( logAICHThread, "Error, failed to open 'known2_64.met' file!" );
+			AddDebugLogLineC(logAICHThread, "Error, failed to open 'known2_64.met' file!");
 			return;
 		}
 		try {
 			file.WriteUInt8(KNOWN2_MET_VERSION);
-		} catch (const CIOFailureException& e) {
-			AddDebugLogLineC(logAICHThread, "IO failure while creating hashlist (Aborting): " + e.what());
+		} catch (const CIOFailureException &e) {
+			AddDebugLogLineC(
+				logAICHThread, "IO failure while creating hashlist (Aborting): " + e.what());
 			return;
 		}
 	} else {
 		if (!file.Open(fullpath, CFile::read)) {
-			AddDebugLogLineC( logAICHThread, "Error, failed to open 'known2_64.met' file!" );
+			AddDebugLogLineC(logAICHThread, "Error, failed to open 'known2_64.met' file!");
 			return;
 		}
 
-		// Rewrite target. CFile::write_safe writes to "<name>.new" and
-		// renames on Close(); a partial rewrite leaves the original
-		// known2_64.met untouched, so a crash mid-prune doesn't lose
-		// data. Only opened when we actually have a live-roots set to
-		// filter against.
+		// Rewrite target. CFile::write_safe writes to "<name>.new" and renames on Close(),
+		// so a crash mid-prune leaves the original known2_64.met untouched. Opened only
+		// when there is a live-roots set to filter against.
 		const bool prune = !liveRoots.empty();
-		CFile rewriteFile;
+		std::optional<CFile> rewriteFile;
 		bool rewriteOk = false;
 		size_t droppedCount = 0;
 		size_t keptCount = 0;
 		if (prune) {
-			rewriteOk = rewriteFile.Open(fullpath, CFile::write_safe);
+			rewriteFile.emplace();
+			rewriteOk = rewriteFile->Open(fullpath, CFile::write_safe);
 			if (rewriteOk) {
 				try {
-					rewriteFile.WriteUInt8(KNOWN2_MET_VERSION);
-				} catch (const CIOFailureException&) {
+					rewriteFile->WriteUInt8(KNOWN2_MET_VERSION);
+				} catch (const CIOFailureException &) {
 					rewriteOk = false;
-					rewriteFile.Close();
+					rewriteFile.reset();
+					CPath::RemoveFile(fullpath.AppendExt(".new"));
 				}
 			} else {
 				AddDebugLogLineN(logAICHThread,
@@ -348,13 +373,11 @@ void CAICHSyncTask::Entry()
 
 			uint64 nExistingSize = file.GetLength();
 			while (file.GetPosition() < nExistingSize) {
-				// Read the next hash
 				CAICHHash rootHash(&file);
 
 				uint32 nHashCount = file.ReadUInt32();
 				const uint64 hashsetBytes =
-					static_cast<uint64>(nHashCount) *
-					CAICHHash::GetHashSize();
+					static_cast<uint64>(nHashCount) * CAICHHash::GetHashSize();
 				if (file.GetPosition() + hashsetBytes > nExistingSize) {
 					throw CEOFException("Hashlist ends past end of file.");
 				}
@@ -367,40 +390,35 @@ void CAICHSyncTask::Entry()
 
 				if (rewriteOk) {
 					if (keep) {
-						rootHash.Write(&rewriteFile);
-						rewriteFile.WriteUInt32(nHashCount);
-						// Stream the hashset bytes through a small
-						// fixed buffer rather than slurping into RAM:
-						// large files can have many MB of leaf+tree
-						// SHA-1s and we don't want one entry to
-						// dictate the working set.
+						rootHash.Write(&*rewriteFile);
+						rewriteFile->WriteUInt32(nHashCount);
+						// Stream the hashset bytes through a small fixed
+						// buffer rather than slurping into RAM: large files
+						// can have many MB of leaf and tree SHA-1s.
 						uint8_t buf[64 * 1024];
 						uint64 remaining = hashsetBytes;
 						while (remaining > 0) {
 							const size_t chunk = static_cast<size_t>(
 								std::min<uint64>(sizeof(buf), remaining));
 							file.Read(buf, chunk);
-							rewriteFile.Write(buf, chunk);
+							rewriteFile->Write(buf, chunk);
 							remaining -= chunk;
 						}
 						++keptCount;
 						nLastVerifiedPos = static_cast<uint32>(file.GetPosition());
 					} else {
-						nLastVerifiedPos = file.Seek(
-							static_cast<wxFileOffset>(hashsetBytes),
-							wxFromCurrent);
+						nLastVerifiedPos =
+							file.Seek(static_cast<wxFileOffset>(hashsetBytes),
+								wxFromCurrent);
 						++droppedCount;
 					}
 				} else {
-					// No rewrite in progress (prune disabled or
-					// rewrite file failed to open): just skip the
-					// hashset bytes as before.
+					// No rewrite in progress, so just skip the hashset bytes.
 					nLastVerifiedPos = file.Seek(
-						static_cast<wxFileOffset>(hashsetBytes),
-						wxFromCurrent);
+						static_cast<wxFileOffset>(hashsetBytes), wxFromCurrent);
 				}
 			}
-		} catch (const CEOFException&) {
+		} catch (const CEOFException &) {
 			AddDebugLogLineC(logAICHThread, "Hashlist corrupted, truncating file.");
 			file.Close();
 			file.Reopen(CFile::read_write);
@@ -408,48 +426,49 @@ void CAICHSyncTask::Entry()
 			// Drop the SaveHashSet dedup cache: some of its entries
 			// may have just been truncated off the end of the file.
 			CAICHHashSet::InvalidateRootHashCache();
-			// Don't finalise the rewrite when the source was
-			// corrupt -- the partial .new file would replace the
-			// just-truncated source with something different. Abort
-			// the rewrite explicitly so its destructor doesn't end
-			// up renaming a stale .new over the recovered file.
+			// Do not finalise the rewrite when the source was corrupt: the partial .new
+			// file would replace the just-truncated source with something different.
+			// Destroy the safe writer without Close(), which would promote its partial
+			// .new over the recovered file. Remove the abandoned candidate afterwards.
 			if (rewriteOk) {
-				rewriteFile.Close();
-				CPath::RemoveFile(CPath(fullpath.GetRaw() + wxT(".new")));
+				rewriteFile.reset(); // CFile's destructor closes without promoting.
+				CPath::RemoveFile(fullpath.AppendExt(".new"));
 				rewriteOk = false;
 			}
-		} catch (const CIOFailureException& e) {
-			AddDebugLogLineC(logAICHThread, "IO failure while reading hashlist (Aborting): " + e.what());
+		} catch (const CIOFailureException &e) {
+			AddDebugLogLineC(
+				logAICHThread, "IO failure while reading hashlist (Aborting): " + e.what());
 			if (rewriteOk) {
-				rewriteFile.Close();
-				CPath::RemoveFile(CPath(fullpath.GetRaw() + wxT(".new")));
+				rewriteFile.reset(); // CFile's destructor closes without promoting.
+				CPath::RemoveFile(fullpath.AppendExt(".new"));
 			}
 			return;
 		}
 
 		if (rewriteOk) {
-			rewriteFile.Close();
-			if (droppedCount > 0) {
+			// Windows cannot replace the live entry while this reader holds it open.
+			file.Close();
+			if (!rewriteFile->Close()) {
+				AddDebugLogLineC(logAICHThread,
+					"Could not commit pruned known2_64.met; previous file preserved.");
+			} else if (droppedCount > 0) {
 				AddDebugLogLineN(logAICHThread,
-					CFormat("known2_64.met orphan prune: dropped %u, kept %u")
-						% (unsigned)droppedCount
-						% (unsigned)keptCount);
-				// The dedup cache mirrored the old file. Drop it so
-				// the next SaveHashSet rebuilds against the rewritten
-				// known2_64.met instead of insisting hashes we just
-				// pruned are still "present".
+					CFormat("known2_64.met orphan prune: dropped %u, kept %u") %
+						(unsigned)droppedCount % (unsigned)keptCount);
+				// The dedup cache mirrored the old file. Drop it so the next
+				// SaveHashSet rebuilds against the rewritten known2_64.met rather
+				// than insisting pruned hashes are still present.
 				CAICHHashSet::InvalidateRootHashCache();
 			}
 		}
 
-		AddDebugLogLineN( logAICHThread, "Masterhashes of known files have been loaded." );
+		AddDebugLogLineN(logAICHThread, "Masterhashes of known files have been loaded.");
 	}
 
 	// Now we check that all files which are in the sharedfilelist have a
 	// corresponding hash in our list. Those how don't are queued for hashing.
 	theApp->sharedfiles->CheckAICHHashes(hashlist);
 }
-
 
 bool CAICHSyncTask::ConvertToKnown2ToKnown264()
 {
@@ -474,15 +493,14 @@ bool CAICHSyncTask::ConvertToKnown2ToKnown264()
 		return false;
 	}
 
-
 	if (!newfile.Open(newfullpath, CFile::write_excl)) {
 		AddDebugLogLineC(logAICHThread, "Failed to create 'known2_64.met' file.");
 
 		return false;
 	}
 
-	AddLogLineN(CFormat(_("Converting old AICH hashsets in '%s' to 64b in '%s'."))
-			% OLD_KNOWN2_MET_FILENAME % KNOWN2_MET_FILENAME);
+	AddLogLineN(CFormat(_("Converting old AICH hashsets in '%s' to 64b in '%s'.")) %
+		    OLD_KNOWN2_MET_FILENAME % KNOWN2_MET_FILENAME);
 
 	try {
 		newfile.WriteUInt8(KNOWN2_MET_VERSION);
@@ -491,8 +509,7 @@ bool CAICHSyncTask::ConvertToKnown2ToKnown264()
 			CAICHHash aichHash(&oldfile);
 			uint32 nHashCount = oldfile.ReadUInt16();
 
-			const size_t hashBytes = static_cast<size_t>(nHashCount)
-				* CAICHHash::GetHashSize();
+			const size_t hashBytes = static_cast<size_t>(nHashCount) * CAICHHash::GetHashSize();
 			CScopedArray<uint8_t> buffer(hashBytes);
 
 			oldfile.Read(buffer.get(), hashBytes);
@@ -501,43 +518,258 @@ bool CAICHSyncTask::ConvertToKnown2ToKnown264()
 			newfile.Write(buffer.get(), hashBytes);
 		}
 		newfile.Flush();
-	} catch (const CEOFException& e) {
+	} catch (const CEOFException &e) {
 		AddDebugLogLineC(logAICHThread, "Error reading old 'known2.met' file." + e.what());
 		return false;
-	} catch (const CIOFailureException& e) {
+	} catch (const CIOFailureException &e) {
 		AddDebugLogLineC(logAICHThread, "IO error while converting 'known2.met' file: " + e.what());
 		return false;
 	}
 
 	// FIXME LARGE FILES (uncomment)
-	//DeleteFile(oldfullpath);
+	// DeleteFile(oldfullpath);
 
 	return true;
 }
 
+////////////////////////////////////////////////////////////
+// CVerifyLocalDataTask
 
+CVerifyLocalDataTask::CVerifyLocalDataTask(const CKnownFile *file, Mode mode)
+: CThreadTask("VerifyLocalData", file->GetFileHash().Encode(), mode == Mode::Automatic ? ETP_Low : ETP_High)
+, m_fileID(file->GetFileHash())
+, m_mode(mode)
+, m_owner(file)
+, m_fullPath(file->GetFilePath().JoinPaths(file->GetFileName()))
+, m_fileSize(file->GetFileSize())
+, m_fileDate((uint32)file->GetLastChangeDatetime())
+, m_aichRootHash(file->GetAICHHashset()->GetMasterHash())
+, m_aichStatus(file->GetAICHHashset()->GetStatus())
+{
+	m_md4Hashes.reserve(file->GetHashCount());
+	for (size_t i = 0; i < file->GetHashCount(); ++i) {
+		m_md4Hashes.push_back(file->GetPartHash(i));
+	}
+}
+
+bool CVerifyLocalDataTask::OwnerStillShared() const
+{
+	return theApp->sharedfiles && theApp->sharedfiles->GetFileByID(m_fileID) == m_owner;
+}
+
+void CVerifyLocalDataTask::PrintReport(
+	const CPath &fullPath, const bool checkedAICH, const CVerifyLocalDataResult &result)
+{
+	// Automatic successes are visible in file details without filling the user's log.
+	if (m_mode == Mode::Automatic && !result.IsCorrupt()) {
+		return;
+	}
+
+	std::string scope = checkedAICH ? "MD4 & AICH" : "MD4";
+
+	if (!result.IsCorrupt()) {
+		AddLogLineN(CFormat(_("Verify Local Data (%s): Result OK for %s")) % scope % fullPath);
+		return;
+	}
+
+	AddLogLineC(CFormat(_("Verify Local Data (%s): ERRORS FOUND! %s Failed blocks: MD4: %s. %s %s")) %
+		    scope % fullPath % result.EncodedMD4() % (checkedAICH ? "AICH: " : "") %
+		    (checkedAICH ? result.FormatCorruptedAICH() : wxString()));
+}
+
+void CVerifyLocalDataTask::PublishResult(bool checkedAICH)
+{
+	if (TestDestroy()) {
+		return;
+	}
+	CVerifyLocalDataResult result;
+	result.date = static_cast<uint32>(time(nullptr));
+	result.SetCorrupted(m_corruptedMD4, m_corruptedAICH);
+	PrintReport(m_fullPath, checkedAICH, result);
+	CVerifyLocalDataEvent evt(m_fileID, m_fullPath, m_fileDate, m_fileSize, result);
+	wxQueueEvent(wxTheApp, evt.Clone());
+}
+
+void CVerifyLocalDataTask::Entry()
+{
+
+	CFileAutoClose file;
+	uint64 fileLength = 0;
+	const uint64 fileSize = m_fileSize;
+	const std::vector<CMD4Hash> &storedMD4Hashes = m_md4Hashes;
+	const CPath &fullPath = m_fullPath;
+
+	if (!OwnerStillShared()) {
+		AddLogLineN(CFormat(_("Verify Local Data: file %s was removed before it could be "
+				      "checked.")) %
+			    fullPath);
+		return;
+	}
+
+	const wxString notRead = _("Verify Local Data: could not read %s, so it was not checked.");
+	if (!file.Open(fullPath, CFile::read)) {
+		AddLogLineC(CFormat(notRead) % fullPath);
+		return;
+	}
+
+	try {
+		fileLength = file.GetLength();
+	} catch (const CIOFailureException &) {
+		AddLogLineC(CFormat(notRead) % fullPath);
+		return;
+	}
+
+	// A size that differs from the hashed one is a failed check, not a reason to skip it.
+	if (fileLength != fileSize) {
+		AddLogLineC(
+			CFormat(_("Verify Local Data: ERRORS FOUND! %s Size on disk: %u bytes, expected: %u "
+				  "bytes.")) %
+			fullPath % fileLength % fileSize);
+		// A changed length invalidates this completed-file identity. Persist the damage so
+		// subsequent requests and sessions withhold it just like a hash mismatch.
+		const uint64 parts = (fileSize + PARTSIZE - 1) / PARTSIZE;
+		for (uint64 part = 0; part < parts; ++part) {
+			m_corruptedMD4.push_back(static_cast<uint16>(part));
+		}
+		PublishResult(false);
+		return;
+	} else if (fileLength > MAX_FILE_SIZE) {
+		AddLogLineC(CFormat(_("Verify Local Data: %s is larger than aMule supports, so it was not "
+				      "checked.")) %
+			    fullPath);
+		return;
+	} else if (fileLength == 0) {
+		// Zero-size partfiles should be hashed, but not zero-sized shared-files.
+		AddLogLineN(CFormat(_("Verify Local Data: %s is empty, so there is nothing to check.")) %
+			    fullPath);
+		return;
+	}
+
+	// Small files use the file hash. Multipart files require one hash per data part;
+	// never compare their first part with the file hash or index a missing hash.
+	const uint64 partCount = (fileSize + PARTSIZE - 1) / PARTSIZE;
+	if (fileSize >= PARTSIZE && storedMD4Hashes.size() < partCount) {
+		AddLogLineN(
+			CFormat(_("Verify Local Data: missing MD4 hashes for %s, so it was not checked.")) %
+			fullPath);
+		return;
+	}
+
+	// Not the knownFile's own AICHHashSet, which is not thread-safe: while we check AICH hashes
+	// here, a peer could send an OP_AICHREQUEST for the same file and call
+	// LoadHashSet()/FreeHashSet() on the same working set.
+	CKnownFile storedFile;
+	storedFile.SetFileSize(fileSize);
+	storedFile.GetAICHHashset()->SetMasterHash(m_aichRootHash, m_aichStatus);
+	const bool isAICHloaded =
+		m_aichStatus == AICH_HASHSETCOMPLETE && storedFile.GetAICHHashset()->LoadHashSet();
+
+	if (!isAICHloaded) {
+		AddDebugLogLineN(logVerifyLocalData,
+			CFormat("Verify Local Data error: failed to load hashset. File: %s") % fullPath);
+	}
+
+	try {
+		for (uint16 part = 0; part < storedFile.GetPartCount() && !TestDestroy(); part++) {
+
+			const uint64 offset = part * PARTSIZE; // We'll read at most PARTSIZE bytes per cycle
+			const uint64 partLength = storedFile.GetPartSize(part);
+
+			// check if the file is still there, and we are pointing to the same object
+			if (OwnerStillShared())
+				m_owner->SetHashingProgress(part + 1);
+			else {
+				AddLogLineC(
+					CFormat(_("Verify Local Data: %s was removed or changed during the "
+						  "check, which did not finish.")) %
+					fullPath);
+				return;
+			}
+
+			CMD4Hash md4Hash;
+			CKnownFile calculatedCAICHOwner;
+			CAICHHashTree *aichHash = nullptr;
+			if (isAICHloaded) {
+				calculatedCAICHOwner.SetFileSize(storedFile.GetFileSize());
+				aichHash = calculatedCAICHOwner.GetAICHHashset()->m_pHashTree.FindHash(
+					offset, partLength);
+			}
+
+			CKnownFile::CreateHashFromFile(file, offset, partLength, &md4Hash, aichHash);
+			if (isAICHloaded) {
+				std::vector<uint8> corruptedAICHinThisPart;
+				uint8 block = 0;
+				for (uint64 pos = offset; pos < offset + partLength;
+					block++, pos += EMBLOCKSIZE) {
+					const uint32 nBlockSize =
+						min<uint32>(EMBLOCKSIZE, offset + partLength - pos);
+					CAICHHashTree *pVerifiedBlock =
+						storedFile.GetAICHHashset()->m_pHashTree.FindHash(
+							pos, nBlockSize);
+					CAICHHashTree *pOurBlock =
+						calculatedCAICHOwner.GetAICHHashset()->m_pHashTree.FindHash(
+							pos, nBlockSize);
+					if (pVerifiedBlock == nullptr || pOurBlock == nullptr ||
+						!pVerifiedBlock->GetHashValid() ||
+						!pOurBlock->GetHashValid()) {
+						AddDebugLogLineN(logVerifyLocalData,
+							CFormat("Verify Local Data error: Invalid/NULL AICH "
+								"block. File: %s, part %d, block %d") %
+								fullPath % part % block);
+						continue;
+					}
+					if (pOurBlock->GetHash() != pVerifiedBlock->GetHash())
+						corruptedAICHinThisPart.push_back(block);
+				}
+				if (!corruptedAICHinThisPart.empty())
+					m_corruptedAICH.emplace_back(part, corruptedAICHinThisPart);
+			}
+
+			// For files smaller than PARTSIZE, GetPartHash is empty and the MD4 of the
+			// part is the MD4 of the file; see CKnownFile::SetFileSize().
+			if (storedMD4Hashes.empty()) {
+				if (md4Hash != m_fileID)
+					m_corruptedMD4.push_back(part);
+				break;
+			}
+
+			if (storedMD4Hashes[part] != md4Hash)
+				m_corruptedMD4.push_back(part);
+		}
+
+		PublishResult(isAICHloaded);
+
+	} catch (const CSafeIOException &e) {
+		AddLogLineC(CFormat(_("Verify Local Data: could not read %s, so the check did not finish: "
+				      "%s")) %
+			    fullPath % e.what());
+	}
+	if (OwnerStillShared())
+		m_owner->SetHashingProgress(0);
+}
 
 ////////////////////////////////////////////////////////////
 // CCompletionTask
 
-
-CCompletionTask::CCompletionTask(const CPartFile* file)
-	// GetPrintable is used to improve the readability of the log.
-	: CThreadTask("Completing", file->GetFullName().GetPrintable(), ETP_High),
-	  m_filename(file->GetFileName()),
-	  m_metPath(file->GetFullName()),
-	  m_category(file->GetCategory()),
-	  m_owner(file),
-	  m_error(false)
+CCompletionTask::CCompletionTask(const CPartFile *file)
+: CThreadTask("Completing", file->GetFullName().GetPrintable(), ETP_High)
+, m_filename(file->GetFileName())
+, m_metPath(file->GetFullName())
+, m_category(file->GetCategory())
+, m_owner(file)
+, m_metSave(file->GetMetSave())
+, m_error(false)
 {
 	wxASSERT(m_filename.IsOk());
 	wxASSERT(m_metPath.IsOk());
 	wxASSERT(m_owner);
 }
 
-
 void CCompletionTask::Entry()
 {
+	// Otherwise a save still queued could bring the .part.met back after it is removed below.
+	m_metSave->WaitIdle();
+
 	CPath targetPath;
 
 	{
@@ -545,7 +777,7 @@ void CCompletionTask::Entry()
 		// Prevent the preference values from changing underneath us.
 		wxMutexGuiLocker guiLock;
 #else
-		//#warning Thread-safety needed
+		// #warning Thread-safety needed
 #endif
 
 		targetPath = theApp->glob_prefs->GetCategory(m_category)->path;
@@ -556,13 +788,14 @@ void CCompletionTask::Entry()
 
 	CPath dstName = m_filename.Cleanup(true, !PlatformSpecific::CanFSHandleSpecialChars(targetPath));
 
-	// Avoid empty filenames ...
 	if (!dstName.IsOk()) {
 		dstName = CPath("Unknown");
 	}
 
 	if (m_filename != dstName) {
-		AddLogLineC(CFormat(_("WARNING: The filename '%s' is invalid and has been renamed to '%s'.")) % m_filename % dstName);
+		AddLogLineC(
+			CFormat(_("WARNING: The filename '%s' is invalid and has been renamed to '%s'.")) %
+			m_filename % dstName);
 	}
 
 	// Avoid saving to an already existing filename
@@ -574,30 +807,33 @@ void CCompletionTask::Entry()
 	}
 
 	if (newName != targetPath.JoinPaths(dstName)) {
-		AddLogLineC(CFormat(_("WARNING: The file '%s' already exists, new file renamed to '%s'.")) % dstName % newName.GetFullName());
+		AddLogLineC(CFormat(_("WARNING: The file '%s' already exists, new file renamed to '%s'.")) %
+			    dstName % newName.GetFullName());
 	}
 
 	// Move will handle dirs on the same partition, otherwise copy is needed.
 	CPath partfilename = m_metPath.RemoveExt();
 	if (!CPath::RenameFile(partfilename, newName)) {
-		if (!CPath::CloneFile(partfilename, newName, true)) {
+		if (!CFile::CloneFile(partfilename, newName, true)) {
 			m_error = true;
 			return;
 		}
 
 		if (!CPath::RemoveFile(partfilename)) {
-			AddDebugLogLineC(logPartFile, CFormat("WARNING: Could not remove original '%s' after creating backup") % partfilename);
+			AddDebugLogLineC(logPartFile,
+				CFormat("WARNING: Could not remove original '%s' after creating backup") %
+					partfilename);
 		}
 	}
 
-	// Removes the various other data-files
-	const char* otherMetExt[] = { "", PARTMET_BAK_EXT, ".seeds", NULL };
+	const char *otherMetExt[] = { "", PARTMET_BAK_EXT, ".seeds", ".tmp", ".bak.tmp", nullptr };
 	for (size_t i = 0; otherMetExt[i]; ++i) {
 		CPath toRemove = m_metPath.AppendExt(otherMetExt[i]);
 
 		if (toRemove.FileExists()) {
 			if (!CPath::RemoveFile(toRemove)) {
-				AddDebugLogLineC(logPartFile, CFormat("WARNING: Failed to delete %s") % toRemove);
+				AddDebugLogLineC(
+					logPartFile, CFormat("WARNING: Failed to delete %s") % toRemove);
 			}
 		}
 	}
@@ -605,46 +841,43 @@ void CCompletionTask::Entry()
 	m_newName = newName;
 }
 
-
 void CCompletionTask::OnExit()
 {
-	// Notify the app that the completion has finished for this file.
 	CCompletionEvent evt(m_error, m_owner, m_newName);
 
 	wxQueueEvent(wxTheApp, (evt).Clone());
 }
 
-
-
 ////////////////////////////////////////////////////////////
 // CAllocateFileTask
 
 #ifdef HAVE_FALLOCATE
-#	ifndef _GNU_SOURCE
-#		define _GNU_SOURCE
-#	endif
-#	ifdef HAVE_FCNTL_H
-#		include <fcntl.h>
-#	endif
-#	include <linux/falloc.h>
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#ifdef HAVE_FCNTL_H
+#include <fcntl.h>
+#endif
+#include <linux/falloc.h>
 #elif defined HAVE_SYS_FALLOCATE
-#	include <sys/syscall.h>
-#	include <sys/types.h>
-#	include <unistd.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
+#include <unistd.h>
 #elif defined HAVE_POSIX_FALLOCATE
-#	define _XOPEN_SOURCE 600
-#	include <stdlib.h>
-#	ifdef HAVE_FCNTL_H
-#		include <fcntl.h>
-#	endif
+#define _XOPEN_SOURCE 600
+#include <stdlib.h>
+#ifdef HAVE_FCNTL_H
+#include <fcntl.h>
+#endif
 #endif
 #include <stdlib.h>
 #include <errno.h>
 
 CAllocateFileTask::CAllocateFileTask(CPartFile *file, bool pause)
-	// GetPrintable is used to improve the readability of the log.
-	: CThreadTask("Allocating", file->GetFullName().RemoveExt().GetPrintable(), ETP_High),
-	  m_file(file), m_pause(pause), m_result(ENOSYS)
+: CThreadTask("Allocating", file->GetFullName().RemoveExt().GetPrintable(), ETP_High)
+, m_file(file)
+, m_pause(pause)
+, m_result(ENOSYS)
 {
 	wxASSERT(file != NULL);
 }
@@ -670,22 +903,21 @@ void CAllocateFileTask::Entry()
 	CFile file;
 	file.Open(m_file->GetFullName().RemoveExt(), CFile::read_write);
 
-	// Use kernel level routines if possible
-#  ifdef HAVE_FALLOCATE
+#ifdef HAVE_FALLOCATE
 	m_result = fallocate(file.fd(), 0, 0, m_file->GetFileSize());
-#  elif defined HAVE_SYS_FALLOCATE
+#elif defined HAVE_SYS_FALLOCATE
 	m_result = syscall(SYS_fallocate, file.fd(), 0, (loff_t)0, (loff_t)m_file->GetFileSize());
 	if (m_result == -1) {
 		m_result = errno;
 	}
-#  elif defined HAVE_POSIX_FALLOCATE
-	// otherwise use glibc implementation, if available
+#elif defined HAVE_POSIX_FALLOCATE
 	m_result = posix_fallocate(file.fd(), 0, m_file->GetFileSize());
-#  endif
+#endif
 
 	if (m_result != 0 && m_result != ENOSPC) {
-		// If everything else fails, use slow-and-dirty method of allocating the file: write the whole file with zeroes.
-#  define BLOCK_SIZE	1048576		/* Write 1 MB blocks */
+		// If everything else fails, use slow-and-dirty method of allocating the file: write the whole
+		// file with zeroes.
+#define BLOCK_SIZE 1048576 /* Write 1 MB blocks */
 		void *zero = calloc(1, BLOCK_SIZE);
 		if (zero != NULL) {
 			try {
@@ -698,7 +930,7 @@ void CAllocateFileTask::Entry()
 				}
 				file.Close();
 				m_result = 0;
-			} catch (const CSafeIOException&) {
+			} catch (const CSafeIOException &) {
 				m_result = errno;
 			}
 			free(zero);
@@ -714,84 +946,116 @@ void CAllocateFileTask::Entry()
 
 void CAllocateFileTask::OnExit()
 {
-	// Notify the app that the preallocation has finished for this file.
 	CAllocFinishedEvent evt(m_file, m_pause, m_result);
 
 	wxQueueEvent(wxTheApp, (evt).Clone());
 }
-
-
 
 ////////////////////////////////////////////////////////////
 // CHashingEvent
 
 wxDEFINE_EVENT(MULE_EVT_HASHING, wxEvent);
 wxDEFINE_EVENT(MULE_EVT_AICH_HASHING, wxEvent);
-CHashingEvent::CHashingEvent(wxEventType type, CKnownFile* result, const CKnownFile* owner)
-	: wxEvent(-1, type),
-	  m_owner(owner),
-	  m_result(result)
+wxDEFINE_EVENT(MULE_EVT_MEDIA_PROBE, wxEvent);
+wxDEFINE_EVENT(MULE_EVT_VERIFY_LOCAL_DATA, wxEvent);
+wxDEFINE_EVENT(MULE_EVT_HASHING_DRAINED, wxThreadEvent);
+
+CMediaProbeEvent::CMediaProbeEvent(
+	const CMD4Hash &hash, const MediaMetadata &info, bool succeeded, bool markUnprobeable)
+: wxEvent(-1, MULE_EVT_MEDIA_PROBE)
+, m_hash(hash)
+, m_succeeded(succeeded)
+, m_markUnprobeable(markUnprobeable)
+{
+	// Deep-copy every string: this event is built on the probe worker and consumed on the main
+	// thread, and wxString is refcounted, so handing the buffer over shared would race the
+	// worker's own copy going out of scope.
+	m_info.length_seconds = info.length_seconds;
+	m_info.bitrate_kbps = info.bitrate_kbps;
+	m_info.codec = wxString(info.codec.c_str(), info.codec.length());
+	m_info.artist = wxString(info.artist.c_str(), info.artist.length());
+	m_info.album = wxString(info.album.c_str(), info.album.length());
+	m_info.title = wxString(info.title.c_str(), info.title.length());
+}
+
+wxEvent *CMediaProbeEvent::Clone() const
+{
+	return new CMediaProbeEvent(m_hash, m_info, m_succeeded, m_markUnprobeable);
+}
+
+CVerifyLocalDataEvent::CVerifyLocalDataEvent(const CMD4Hash &hash,
+	const CPath &fullPath,
+	uint32 fileDate,
+	uint64 fileSize,
+	const CVerifyLocalDataResult &result)
+: wxEvent(-1, MULE_EVT_VERIFY_LOCAL_DATA)
+, m_hash(hash)
+, m_fullPath(fullPath)
+, m_fileDate(fileDate)
+, m_fileSize(fileSize)
+, m_result(result)
 {
 }
 
+wxEvent *CVerifyLocalDataEvent::Clone() const
+{
+	return new CVerifyLocalDataEvent(m_hash, m_fullPath, m_fileDate, m_fileSize, m_result);
+}
 
-wxEvent* CHashingEvent::Clone() const
+CHashingEvent::CHashingEvent(wxEventType type, CKnownFile *result, const CKnownFile *owner)
+: wxEvent(-1, type)
+, m_owner(owner)
+, m_result(result)
+{
+}
+
+wxEvent *CHashingEvent::Clone() const
 {
 	return new CHashingEvent(GetEventType(), m_result, m_owner);
 }
 
-
-const CKnownFile* CHashingEvent::GetOwner() const
+const CKnownFile *CHashingEvent::GetOwner() const
 {
 	return m_owner;
 }
 
-
-CKnownFile* CHashingEvent::GetResult() const
+CKnownFile *CHashingEvent::GetResult() const
 {
 	return m_result;
 }
-
-
-
 
 ////////////////////////////////////////////////////////////
 // CCompletionEvent
 
 wxDEFINE_EVENT(MULE_EVT_FILE_COMPLETED, wxEvent);
 
-CCompletionEvent::CCompletionEvent(bool errorOccurred, const CPartFile* owner, const CPath& fullPath)
-	: wxEvent(-1, MULE_EVT_FILE_COMPLETED),
-	  m_fullPath(fullPath),
-	  m_owner(owner),
-	  m_error(errorOccurred)
+CCompletionEvent::CCompletionEvent(bool errorOccurred, const CPartFile *owner, const CPath &fullPath)
+: wxEvent(-1, MULE_EVT_FILE_COMPLETED)
+, m_fullPath(fullPath)
+, m_owner(owner)
+, m_error(errorOccurred)
 {
 }
 
-
-wxEvent* CCompletionEvent::Clone() const
+wxEvent *CCompletionEvent::Clone() const
 {
 	return new CCompletionEvent(m_error, m_owner, m_fullPath);
 }
-
 
 bool CCompletionEvent::ErrorOccurred() const
 {
 	return m_error;
 }
 
-
-const CPartFile* CCompletionEvent::GetOwner() const
+const CPartFile *CCompletionEvent::GetOwner() const
 {
 	return m_owner;
 }
 
-
-const CPath& CCompletionEvent::GetFullPath() const
+const CPath &CCompletionEvent::GetFullPath() const
 {
 	return m_fullPath;
 }
-
 
 ////////////////////////////////////////////////////////////
 // CAllocFinishedEvent

@@ -26,149 +26,139 @@
 #ifndef FILEAUTOCLOSE_H
 #define FILEAUTOCLOSE_H
 
-#include "CFile.h"			// Needed for CFile
+#include "CFile.h" // Needed for CFile
+
+#include <atomic>
+#include <mutex>
 
 /**
- * This class encapsulates the CFile class.
- *
- * It allows to close the used file handle and reopen
- * it on usage to minimize the number of used file handles.
- *
+ * Wraps CFile so the file handle can be closed and reopened on use, keeping the number of open
+ * handles down.
  */
 class CFileAutoClose
 {
 public:
-
 	/**
 	 * Creates a closed file.
 	 */
 	CFileAutoClose();
 
 	/**
-	 * Constructor, calls Open on the specified file.
-	 *
-	 * To check if the file was successfully opened, a
-	 * call to IsOpened() is required.
+	 * Calls Open on the specified file. Check IsOpened() to see whether it succeeded.
 	 */
-	CFileAutoClose(const CPath& path, CFile::OpenMode mode = CFile::read);
+	CFileAutoClose(const CPath &path, CFile::OpenMode mode = CFile::read);
 
 	/**
-	 * Request auto closing of the file handle.
-	 *
-	 * @param now true: close immediately  false: close when timeout has expired
-	 * @return True if the file has been (or has already been) autoclosed.
+	 * Request auto closing of the file handle. @a now true closes immediately, false closes
+	 * when the timeout expires. True if the file has been, or already was, autoclosed.
 	 */
 	bool Release(bool now = false);
 
 	/**
-	 * Opens a file.
-	 *
-	 * @param path The full or relative path to the file.
-	 * @param mode The opening mode (see CFile).
-	 * @return True if the file was opened, false otherwise.
+	 * Opens the file at @a path in @a mode (see CFile). @a shareDelete is passed through
+	 * to CFile::Open. True if it was opened.
 	 */
-	bool Open(const CPath& path, CFile::OpenMode mode = CFile::read);
+	bool Open(const CPath &path, CFile::OpenMode mode = CFile::read, bool shareDelete = false);
 
 	/**
-	 * Calling Create is equivalent of calling open with OpenMode 'write'.
-	 *
-	 * @param overwrite Specifies if the target file should be overwritten,
-	 *                  in case that it already exists.
-	 *
-	 * @see CFile::Open
+	 * Equivalent to Open with OpenMode 'write'. @a overwrite says whether an existing target
+	 * file should be overwritten. @see CFile::Open
 	 */
-	bool Create(const CPath& path, bool overwrite = false);
+	bool Create(const CPath &path, bool overwrite = false);
 
 	/**
-	 * Closes the file.
-	 *
-	 * Note that calling Close on an closed file
-	 * is an illegal operation.
+	 * Closes the file. Calling this on a closed file is illegal.
 	 */
 	bool Close();
 
 	/**
-	 * @see CSafeFileIO::GetLength
-	 *
-	 * Note that calling GetLength on a closed file
-	 * is an illegal operation.
+	 * @see CSafeFileIO::GetLength. Calling this on a closed file is illegal.
 	 */
 	uint64 GetLength() const;
 
 	/**
+	 * The size as of the last open, WriteAt or SetLength through this object. Unlike
+	 * GetLength it touches neither a lock nor the file, so it cannot wait for I/O in progress:
+	 * on Windows even an fstat waits for a read or write pending on the same handle.
+	 */
+	uint64 GetKnownSize() const { return m_knownSize.load(std::memory_order_relaxed); }
+
+	/**
 	 * Resizes the file to the specified length.
-	 *
 	 */
 	bool SetLength(uint64 newLength);
 
 	/**
-	 * Returns the path of the currently opened file.
-	 *
+	 * The path of the currently opened file.
 	 */
-	const CPath& GetFilePath() const;
+	const CPath &GetFilePath() const;
 
 	/**
-	 * Returns true if the file is opened, false otherwise.
+	 * True if the file is opened.
 	 */
 	bool IsOpened() const;
 
 	/**
-	 * Reads 'count' bytes into 'buffer'.
-	 *
-	 * @param buffer The target buffer.
-	 * @param offset The seek address in the file.
-	 * @param count The number of bytes to read.
-	 *
-	 * See CFileDataIO::Read
+	 * Reads @a count bytes into @a buffer from @a offset in the file. See CFileDataIO::Read.
 	 */
-	void ReadAt(void* buffer, uint64 offset, size_t count);
+	void ReadAt(void *buffer, uint64 offset, size_t count);
 
 	/**
-	 * Write 'count' bytes from 'buffer' into the file.
-	 *
-	 * @param buffer The source-data buffer.
-	 * @param offset The seek address in the file.
-	 * @param count The number of bytes to write.
-	 *
-	 * See CFileDataIO::Write
+	 * Writes @a count bytes from @a buffer at @a offset in the file. See CFileDataIO::Write.
 	 */
-	void WriteAt(const void* buffer, uint64 offset, size_t count);
+	void WriteAt(const void *buffer, uint64 offset, size_t count);
 
 	/**
-	 * Returns true when the file-position is past or at the end of the file.
+	 * True when the file position is at or past the end of the file.
 	 */
 	bool Eof();
 
 	/**
-	 * Returns the file descriptor associated with the file.
-	 *
-	 * This breaks the purpose of this class of course.
-	 * Therefore the AutoClose mechanism is disabled when fd() is called.
-	 * It's required for FileArea's mmap stuff.
-	 * Currently FileArea objects are shortlived enough for this not being
-	 * a problem anyway, but that might change in the future.
+	 * The file descriptor associated with the file. This defeats the purpose of the class, so
+	 * AutoClose is disabled once fd() is called. Required for FileArea's mmap. FileArea objects
+	 * are currently short-lived enough for that not to matter, but that might change.
 	 */
 	int fd();
 
 	/**
-	 * Reenables AutoClose disabled by fd() before.
+	 * Re-enables AutoClose after a previous fd() disabled it.
 	 */
 	void Unlock();
 
 private:
 	//! A CFileAutoClose is neither copyable nor assignable.
 	//@{
-	CFileAutoClose(const CFileAutoClose&);
-	CFileAutoClose& operator=(const CFileAutoClose&);
+	CFileAutoClose(const CFileAutoClose &);
+	CFileAutoClose &operator=(const CFileAutoClose &);
 	//@}
 
 	/**
-	 * Check if file was autoclosed, and reopen if needed.
+	 * Check whether the file was autoclosed, and reopen it if needed. The caller holds
+	 * m_stateMutex.
 	 */
 	void Reopen();
 
-	//! The wrapped CFile.
+	//! Reopens the file for one I/O call and holds off Release() until the call returns or
+	//! throws, as fd() does for a mapping.
+	class CInUse
+	{
+	public:
+		explicit CInUse(CFileAutoClose &file);
+		~CInUse() { m_owner.Unlock(); }
+		CInUse(const CInUse &) = delete;
+		CInUse &operator=(const CInUse &) = delete;
+
+	private:
+		CFileAutoClose &m_owner;
+	};
+
+	//! The wrapped CFile, unbuffered: WriteAt seeks first, which drained the buffer anyway, and
+	//! another handle (the completion hash) must see a write once WriteAt returns.
 	CFile m_file;
+
+	//! Guards the fields below. CPartFile's worker threads read and write the file while the
+	//! main thread may auto-close it, so a reopen and a close must not interleave.
+	mutable std::mutex m_stateMutex;
 
 	//! The mode used to open it.
 	CFile::OpenMode m_mode;
@@ -176,7 +166,7 @@ private:
 	//! Is it temporarily closed?
 	bool m_autoClosed;
 
-	//! Autoclosing is disabled if != 0
+	//! Autoclosing is disabled if != 0: counts fd() mappings and I/O calls in progress.
 	uint16 m_locked;
 
 	//! Size before it was closed.
@@ -184,8 +174,10 @@ private:
 
 	//! Last access time (s)
 	uint64 m_lastAccess;
-};
 
+	//! See GetKnownSize. Atomic, as the write thread raises it while the main thread reads it.
+	std::atomic<uint64> m_knownSize{ 0 };
+};
 
 #endif // FILEAUTOCLOSE_H
 // File_checked_for_headers

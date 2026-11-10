@@ -27,134 +27,101 @@
 #ifndef NETWORK_FUNCTIONS_H
 #define NETWORK_FUNCTIONS_H
 
-#include "Types.h"		// Needed for uint16 and uint32
-#include <common/Format.h>	// Needed for CFormat
+#include "Types.h"         // Needed for uint16 and uint32
+#include <common/Format.h> // Needed for CFormat
 
 // Network ip/host handling functions
 // These functions take IPs in anti-host order
 
 inline wxString Uint32toStringIP(uint32 ip)
 {
-	return CFormat("%u.%u.%u.%u") % (uint8)ip % (uint8)(ip>>8) % (uint8)(ip>>16) % (uint8)(ip>>24);
+	return CFormat("%u.%u.%u.%u") % (uint8)ip % (uint8)(ip >> 8) % (uint8)(ip >> 16) % (uint8)(ip >> 24);
 }
 
 inline wxString Uint32_16toStringIP_Port(uint32 ip, uint16 port)
 {
-	return CFormat("%u.%u.%u.%u:%u") % (uint8)ip % (uint8)(ip>>8) % (uint8)(ip>>16) % (uint8)(ip>>24) % port;
+	return CFormat("%u.%u.%u.%u:%u") % (uint8)ip % (uint8)(ip >> 8) % (uint8)(ip >> 16) %
+	       (uint8)(ip >> 24) % port;
 }
 
 // These functions take IPs in host-order
 inline wxString KadIPToString(uint32_t ip)
 {
-	return CFormat("%u.%u.%u.%u") % (uint8_t)(ip >> 24) % (uint8_t)(ip >> 16) % (uint8_t)(ip >> 8) % (uint8_t)ip;
+	return CFormat("%u.%u.%u.%u") % (uint8_t)(ip >> 24) % (uint8_t)(ip >> 16) % (uint8_t)(ip >> 8) %
+	       (uint8_t)ip;
 }
 
 inline wxString KadIPPortToString(uint32_t ip, uint16_t port)
 {
-	return CFormat("%u.%u.%u.%u:%u") % (uint8_t)(ip >> 24) % (uint8_t)(ip >> 16) % (uint8_t)(ip >> 8) % (uint8_t)ip % port;
+	return CFormat("%u.%u.%u.%u:%u") % (uint8_t)(ip >> 24) % (uint8_t)(ip >> 16) % (uint8_t)(ip >> 8) %
+	       (uint8_t)ip % port;
 }
 
 /**
- * Parses a String-IP and saves the IP in the referenced variable.
+ * Parses a string IP of the form "a.b.c.d" into @a Ip, returning whether it parsed. Whitespace
+ * around the address is ignored and the result is saved in anti-host order.
  *
- * @param strIP A string-ip in the format "a.b.c.d".
- * @param Ip The value to save the result in.
- * @return True if the string was parsed, false otherwise.
- *
- * When parsing the IP address, whitespace before or after the
- * ip-address is ignored and the resulting IP is saved in
- * anti-host order.
- *
- * The reason for the existence of this function is the fact that
- * the standard inet_aton function treats numbers with 0 prefixed
- * as octals, which is desirable.
- *
- * Note: The reference value will not be changed unless the string
- *       contains a valid IP address.
+ * This exists because the standard inet_aton treats a 0-prefixed number as octal. @a Ip is left
+ * unchanged unless the string holds a valid IP address.
  */
-bool	StringIPtoUint32(const wxString &strIP, uint32& Ip);
-
+bool StringIPtoUint32(const wxString &strIP, uint32 &Ip);
 
 /**
- * Parses a String-IP and returns the IP or 0 if it was invalid.
- *
- * @param strIP A string-ip in the format "a.b.c.d".
- * @return The resulting IP-address or zero if invalid (or 0.0.0.0).
- *
- * The IP will be saved in anti-host order.
+ * Parses a string IP of the form "a.b.c.d" and returns it in anti-host order, or zero if it was
+ * invalid (or 0.0.0.0).
  */
 inline uint32 StringIPtoUint32(const wxString &strIP)
 {
 	uint32 ip = 0;
-	StringIPtoUint32( strIP, ip );
+	StringIPtoUint32(strIP, ip);
 
 	return ip;
 }
 
-
 /**
- * Parses a String-IHost and returns the IP or 0 if it was invalid.
- *
- * @param Host A string with the Host to convert.
- * @return The resulting IP-address or zero if invalid (or 0.0.0.0).
- *
- * The IP will be saved in anti-host order.
+ * Parses a host string and returns its IP in anti-host order, or zero if it was invalid (or
+ * 0.0.0.0).
  */
 uint32 StringHosttoUint32(const wxString &Host);
 
+/**
+ * True if @a IP is a valid address. @a filterLAN also rejects the LAN ranges. @a IP must be in
+ * anti-host order (BE on an LE platform, LE on a BE one).
+ */
+bool IsGoodIP(uint32 IP, bool filterLAN) noexcept;
 
 /**
- * Checks for invalid IP-values.
- *
- * @param IP the IP-address to check.
- * @param filterLAN Specifies if LAN IP-ranges should be filtered.
- * @return True if it was valid, false otherwise.
- *
- * Note: IP must be in anti-host order (BE on LE platform, LE on BE platform).
+ * IsGoodIP() for an eD2k server address. Loopback is allowed with the LAN addresses when LAN
+ * IPs are not filtered: a server on this machine is a valid setup, and IsGoodIP() never allows it.
  */
-bool IsGoodIP( uint32 IP, bool filterLAN ) noexcept;
+bool IsGoodServerIP(uint32 ip, bool filterLAN) noexcept;
 
-
-inline bool IsGoodIPPort(uint32 nIP, uint16 nPort) noexcept
+inline bool IsGoodIPPort(uint32 nIP, uint16 nPort, bool filterLAN) noexcept
 {
-	return IsGoodIP(nIP, true) && nPort!=0;
+	return IsGoodIP(nIP, filterLAN) && nPort != 0;
 }
 
-#define HIGHEST_LOWID_ED2K_KAD		16777216
-
+#define HIGHEST_LOWID_ED2K_KAD 16777216
 
 inline bool IsLowID(uint32 id)
 {
 	return (id < HIGHEST_LOWID_ED2K_KAD);
 }
 
-
 /**
- * Checks for LAN IPs.
- *
- * @param ip The IP-address to check.
- * @return True if it was a LAN IP, false otherwise.
- *
- * @note IP must be in anti-host order.
+ * True if @a ip is a LAN address. Anti-host order.
  */
 bool IsLanIP(uint32_t ip) noexcept;
 
-
 /**
- * Checks for the IPv4 loopback range 127.0.0.0/8.
- *
- * @param ip The IP-address to check (anti-host order, same convention as
- *           StringIPtoUint32 and IsLanIP).
- * @return True if it is a loopback address.
+ * True if @a ip is in the IPv4 loopback range 127.0.0.0/8. Anti-host order, the same convention as
+ * StringIPtoUint32 and IsLanIP.
  */
 bool IsLoopbackIP(uint32_t ip) noexcept;
 
-
 /**
- * Checks for the IPv4 link-local range 169.254.0.0/16 (RFC3927 / zeroconf).
- *
- * @param ip The IP-address to check (anti-host order).
- * @return True if it is a link-local address.
+ * True if @a ip is in the IPv4 link-local range 169.254.0.0/16 (RFC3927 / zeroconf). Anti-host
+ * order.
  */
 bool IsLinkLocalIP(uint32_t ip) noexcept;
 

@@ -22,50 +22,117 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 #include "SourceListCtrl.h"
-#include "KnownFile.h"
 
+#include <common/Format.h> // Needed for CFormat
+
+#include "ClientRef.h" // Needed for CClientRef
+#include "KnownFile.h"
+#include "MuleBarRenderer.h" // Needed for CMuleBarRenderer, CBarFillSpec
+#include "PartFile.h"        // Needed for CPartFile
+#include "Preferences.h"     // Needed for thePrefs::ShowProgBar()
+
+namespace
+{
 static CGenericClientListCtrlColumn s_sources_column_info[] = {
-	{ ColumnUserName,		wxTRANSLATE("User Name"),	260 },
-	{ ColumnUserDownloaded,		wxTRANSLATE("Downloaded"),	65 },
-	{ ColumnUserSpeedDown,		wxTRANSLATE("Speed"),		65 },
-	{ ColumnUserUploaded,		wxTRANSLATE("Uploaded"),	65 },
-	{ ColumnUserProgress,		wxTRANSLATE("Available Parts"),	170 },
-	{ ColumnUserVersion,		wxTRANSLATE("Version"),		50 },
-	{ ColumnUserQueueRankRemote,	wxTRANSLATE("Download Status"),	55 },
-	{ ColumnUserOrigin,		wxTRANSLATE("Origin"),		110 },
-	{ ColumnUserFileNameDownload,	wxTRANSLATE("Local File Name"),	200 },
+	{ ColumnUserName, wxTRANSLATE("User Name"), 260 },
+	{ ColumnUserDownloaded, wxTRANSLATE("Downloaded"), 65 },
+	{ ColumnUserSpeedDown, wxTRANSLATE("Speed"), 65 },
+	{ ColumnUserUploaded, wxTRANSLATE("Uploaded"), 65 },
+	{ ColumnUserProgress, wxTRANSLATE("Part Status"), 170 },
+	{ ColumnUserVersion, wxTRANSLATE("Version"), 50 },
+	{ ColumnUserQueueRankRemote, wxTRANSLATE("Download Status"), 55 },
+	{ ColumnUserOrigin, wxTRANSLATE("Origin"), 110 },
+	{ ColumnUserFileNameDownload, wxTRANSLATE("Local File Name"), 200 },
 	{ ColumnUserFileNameDownloadRemote, wxTRANSLATE("Remote File Name"), 200 },
-	{ ColumnUserSharedFiles,	wxTRANSLATE("Shares File List"), 100 }
+	{ ColumnUserSharedFiles, wxTRANSLATE("Shares File List"), 100 }
 };
 
-wxBEGIN_EVENT_TABLE(CSourceListCtrl, CGenericClientListCtrl)
-wxEND_EVENT_TABLE()
-
-CSourceListCtrl::CSourceListCtrl(
-	wxWindow *parent, wxWindowID winid, const wxPoint& pos, const wxSize& size,
-	long style, const wxValidator& validator, const wxString& name )
-:
-CGenericClientListCtrl( "Sources", parent, winid, pos, size, style | wxLC_OWNERDRAW, validator, name )
+/**
+ * Renders ColumnUserProgress: a client's per-part chunk bar (5 states: no part / have-complete /
+ * downloading / next-requested / have-but-need), or, for an A4AF row, a bordered "A4AF: <filename>"
+ * text badge instead of a bar. A real per-row renderer branch, not a bar overlay, reproducing
+ * DrawSourceStatusBar's A4AF case (GenericClientListCtrl.cpp, pre-port) exactly, including its own
+ * themed border -- its own SetPen, not the base's black one, the base's Render() not being called
+ * for this branch at all.
+ */
+class CSourceBarRenderer : public CMuleBarRenderer
 {
-	// Setting the sorter function.
-	SetSortFunc( SourceSortProc );
+public:
+	bool Render(wxRect cell, wxDC *dc, int state) override
+	{
+		// Gates the whole cell -- bar and A4AF badge alike -- exactly as the
+		// pre-port ColumnUserProgress case did.
+		if (!thePrefs::ShowProgBar()) {
+			return true;
+		}
+		ClientCtrlItem_Struct *item =
+			reinterpret_cast<ClientCtrlItem_Struct *>(GetSpec().GetIdentity());
+		if (!item) {
+			return true;
+		}
+		if (item->GetType() == A4AF_SOURCE) {
+			DrawA4AFBadge(cell, dc, item);
+			return true;
+		}
+		return CMuleBarRenderer::Render(cell, dc, state);
+	}
 
+private:
+	static void DrawA4AFBadge(wxRect cell, wxDC *dc, ClientCtrlItem_Struct *item)
+	{
+		const int iWidth = cell.GetWidth() - 2;
+		const int iHeight = cell.GetHeight() - 2;
+		if (iWidth <= 0 || iHeight <= 0) {
+			return;
+		}
+		wxDCClipper clipper(*dc, cell.GetX(), cell.GetY() + 1, iWidth, iHeight);
+
+		CPartFile *p = item->GetSource().GetRequestFile();
+		const wxString a4af = p ? p->GetFileName().GetPrintable() : wxString("?");
+		const wxString buffer = CFormat("%s: %s") % _("A4AF") % a4af;
+
+		const int mid_x = (2 * cell.GetX() + cell.GetWidth()) >> 1;
+		const int mid_y = (2 * cell.GetY() + cell.GetHeight()) >> 1;
+		wxCoord txtwidth;
+		wxCoord txtheight;
+		dc->GetTextExtent(buffer, &txtwidth, &txtheight);
+
+		// Theme-aware text and border colour. It was *wxBLACK / *wxBLACK_PEN, invisible on
+		// dark themes: the badge sits on the row stripe, not on a known light background.
+		const wxColour badgeColour = wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT);
+		dc->SetTextForeground(badgeColour);
+		dc->DrawText(
+			buffer, wxMax(cell.GetX() + 2, mid_x - (txtwidth >> 1)), mid_y - (txtheight >> 1));
+
+		dc->SetPen(wxPen(badgeColour));
+		dc->SetBrush(*wxTRANSPARENT_BRUSH);
+		dc->DrawRectangle(cell.GetX(), cell.GetY() + 1, iWidth, iHeight);
+	}
+};
+} // namespace
+
+CSourceListCtrl::CSourceListCtrl(wxWindow *parent,
+	wxWindowID winid,
+	const wxPoint &pos,
+	const wxSize &size,
+	long style,
+	const wxString &name)
+: CGenericClientListCtrl("Sources", parent, winid, pos, size, style, name)
+{
 	m_columndata.n_columns = sizeof(s_sources_column_info) / sizeof(CGenericClientListCtrlColumn);
 	m_columndata.columns = s_sources_column_info;
 
 	InitColumnData();
 }
 
-CSourceListCtrl::~CSourceListCtrl()
+CSourceListCtrl::~CSourceListCtrl() {}
+
+CMuleBarRenderer *CSourceListCtrl::CreateProgressBarRenderer() const
 {
+	return new CSourceBarRenderer();
 }
 
-int CSourceListCtrl::SourceSortProc(wxUIntPtr param1, wxUIntPtr param2, wxIntPtr sortData)
-{
-	return CGenericClientListCtrl::SortProc(param1, param2, s_sources_column_info[sortData & CMuleListCtrl::COLUMN_MASK].cid | (sortData & CMuleListCtrl::SORT_DES));
-}
-
-void CSourceListCtrl::SetShowSources(CKnownFile * f, bool b) const
+void CSourceListCtrl::SetShowSources(CKnownFile *f, bool b) const
 {
 	f->SetShowSources(b);
 }

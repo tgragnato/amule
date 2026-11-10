@@ -1,0 +1,620 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+//
+
+#include <muleunit/test.h>
+
+#include "AmuleApiConfig.h"
+
+#include <wx/file.h>
+#include <wx/filename.h>
+#include <wx/stdpaths.h>
+#include <wx/utils.h>
+
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
+
+#include <sys/stat.h>
+#include <unistd.h>
+
+using namespace muleunit;
+
+namespace
+{
+// Every config dir the current test created, removed in tearDown().
+std::vector<wxString> g_tmpDirs;
+} // namespace
+
+DECLARE(AmuleApiConfig)
+void tearDown()
+{
+	for (const wxString &dir : g_tmpDirs) {
+		wxFileName::Rmdir(dir, wxPATH_RMDIR_RECURSIVE);
+	}
+	g_tmpDirs.clear();
+}
+// Fresh per-test config dir under the system temp tree, removed again by tearDown() -- each test
+// owns its own dir. wxStandardPaths::GetTempDir() returns `/tmp` on POSIX and `%TEMP%` on Windows, so
+// the test is portable across the CI matrix.
+wxString MakeTmpDir(const char *tag)
+{
+	wxString d;
+	d.Printf("%s/amuleapi-cfg-test-%s-%ld",
+		wxStandardPaths::Get().GetTempDir(),
+		tag,
+		static_cast<long>(::wxGetProcessId()));
+	// Best-effort cleanup of any stragglers from a prior crashed run.
+	wxString secret = d + "/amuleapi-jwt-secret";
+	wxString pwfile = d + "/amuleapi-passwords";
+	wxString conf = d + "/amuleapi.conf";
+	::wxRemoveFile(secret);
+	::wxRemoveFile(pwfile);
+	::wxRemoveFile(conf);
+	::wxRmdir(d);
+	g_tmpDirs.push_back(d);
+	return d;
+}
+END_DECLARE;
+
+TEST(AmuleApiConfig, FreshLoadCreatesAllThreeFiles)
+{
+	const wxString dir = MakeTmpDir("fresh");
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(cfg.Load(dir));
+
+	ASSERT_TRUE(::wxFileExists(dir + "/amuleapi.conf"));
+	ASSERT_TRUE(::wxFileExists(dir + "/amuleapi-jwt-secret"));
+	ASSERT_TRUE(::wxFileExists(dir + "/amuleapi-passwords"));
+}
+
+TEST(AmuleApiConfig, FreshLoadProducesStreamingDefaults)
+{
+	const wxString dir = MakeTmpDir("stream-defaults");
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(cfg.Load(dir));
+	ASSERT_EQUALS(static_cast<unsigned>(16384), cfg.StreamingCfg().event_bus_ring_capacity);
+	ASSERT_EQUALS(static_cast<unsigned>(6), cfg.StreamingCfg().max_concurrent_file_responses);
+}
+
+// Hand-writes an amuleapi.conf with `extra` after the [Server] basics, at the 0600 Load() insists
+// on, and loads it. The dir is created first so the first-run path cannot get in ahead and write
+// the defaults we are trying to override.
+bool LoadHandWrittenConf(const char *tag, const std::string &extra, CAmuleApiConfig &cfg)
+{
+	// Not MakeTmpDir: that one is a member of the DECLARE block and these
+	// helpers live outside it. Same naming scheme, same straggler cleanup.
+	wxString dir;
+	dir.Printf("%s/amuleapi-cfg-test-%s-%ld",
+		wxStandardPaths::Get().GetTempDir(),
+		tag,
+		static_cast<long>(::wxGetProcessId()));
+	::wxRemoveFile(dir + "/amuleapi-jwt-secret");
+	::wxRemoveFile(dir + "/amuleapi-passwords");
+	::wxRemoveFile(dir + "/amuleapi.conf");
+	::wxRmdir(dir);
+	::wxMkdir(dir, 0700);
+	g_tmpDirs.push_back(dir);
+
+	const std::string conf = "[Server]\nBindAddress=127.0.0.1\nPort=4713\n" + extra + "\n";
+	wxFile f(dir + "/amuleapi.conf", wxFile::write);
+	f.Write(conf.c_str(), conf.size());
+	f.Close();
+	::chmod(std::string((dir + "/amuleapi.conf").utf8_str()).c_str(), S_IRUSR | S_IWUSR);
+
+	return cfg.Load(dir);
+}
+
+// What the parser made of one `[Streaming]` line's file-response cap.
+unsigned LoadedFileResponseCap(const char *tag, const char *streaming_line)
+{
+	CAmuleApiConfig cfg;
+	if (!LoadHandWrittenConf(tag, std::string("\n[Streaming]\n") + streaming_line, cfg)) {
+		return 0;
+	}
+	return cfg.StreamingCfg().max_concurrent_file_responses;
+}
+
+TEST(AmuleApiConfig, FileResponseCapIsConfigurable)
+{
+	// The point of the whole option: 6 is a default, not a ceiling. A NAS with several devices
+	// behind one proxy address raises it; a Pi serving off the disk it downloads to lowers it.
+	ASSERT_EQUALS(
+		static_cast<unsigned>(24), LoadedFileResponseCap("cap-24", "MaxConcurrentFileResponses=24"));
+	ASSERT_EQUALS(
+		static_cast<unsigned>(1), LoadedFileResponseCap("cap-1", "MaxConcurrentFileResponses=1"));
+}
+
+TEST(AmuleApiConfig, InvalidFileResponseCapFallsBackToDefault)
+{
+	// Every one of these has to land on 6 rather than on itself. Zero and a negative would
+	// close the route outright; the four-digit value would trade away the bounded-RSS property
+	// the streaming path exists for; the non-numeric one is what a comment or a stray unit
+	// looks like to wxFileConfig.
+	ASSERT_EQUALS(
+		static_cast<unsigned>(6), LoadedFileResponseCap("cap-zero", "MaxConcurrentFileResponses=0"));
+	ASSERT_EQUALS(
+		static_cast<unsigned>(6), LoadedFileResponseCap("cap-neg", "MaxConcurrentFileResponses=-4"));
+	ASSERT_EQUALS(static_cast<unsigned>(6),
+		LoadedFileResponseCap("cap-huge", "MaxConcurrentFileResponses=100000"));
+	ASSERT_EQUALS(static_cast<unsigned>(6),
+		LoadedFileResponseCap("cap-junk", "MaxConcurrentFileResponses=lots"));
+}
+
+TEST(AmuleApiConfig, GeneratedJwtSecretIs32Bytes)
+{
+	const wxString dir = MakeTmpDir("jwt32");
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(cfg.Load(dir));
+	ASSERT_EQUALS(static_cast<size_t>(32), cfg.JwtSecret().size());
+}
+
+TEST(AmuleApiConfig, GeneratedJwtSecretIsRandom)
+{
+	const wxString dir_a = MakeTmpDir("jwt-a");
+	CAmuleApiConfig cfg_a;
+	ASSERT_TRUE(cfg_a.Load(dir_a));
+	const std::vector<unsigned char> a = cfg_a.JwtSecret();
+
+	const wxString dir_b = MakeTmpDir("jwt-b");
+	CAmuleApiConfig cfg_b;
+	ASSERT_TRUE(cfg_b.Load(dir_b));
+	const std::vector<unsigned char> b = cfg_b.JwtSecret();
+
+	// Two fresh dirs → two distinct secrets. ~2^256 collision odds.
+	ASSERT_TRUE(a != b);
+}
+
+TEST(AmuleApiConfig, JwtSecretRoundTripStable)
+{
+	const wxString dir = MakeTmpDir("jwt-rt");
+
+	CAmuleApiConfig cfg1;
+	ASSERT_TRUE(cfg1.Load(dir));
+	const std::vector<unsigned char> first = cfg1.JwtSecret();
+
+	CAmuleApiConfig cfg2;
+	ASSERT_TRUE(cfg2.Load(dir));
+	const std::vector<unsigned char> second = cfg2.JwtSecret();
+
+	// Second load reads what the first generated -- same bytes.
+	ASSERT_TRUE(first == second);
+}
+
+TEST(AmuleApiConfig, EmptyPasswordsFilePassesLoad)
+{
+	const wxString dir = MakeTmpDir("pw-empty");
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(cfg.Load(dir));
+	// Default state: both roles disabled until a password is set.
+	ASSERT_TRUE(cfg.AdminCredential().empty());
+	ASSERT_TRUE(cfg.GuestCredential().empty());
+	ASSERT_FALSE(cfg.HasAnyCredential());
+}
+
+TEST(AmuleApiConfig, SetPasswordIsReloadableAndVerifies)
+{
+	const wxString dir = MakeTmpDir("pw-rt");
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(cfg.Load(dir));
+
+	// 32 hex chars; doesn't need to be a real MD5.
+	const std::string admin_md5 = "0123456789abcdef0123456789abcdef";
+	const std::string guest_md5 = "fedcba9876543210fedcba9876543210";
+	ASSERT_TRUE(cfg.SetPassword(webcommon::kAdminCredential, admin_md5));
+	ASSERT_TRUE(cfg.SetPassword(webcommon::kGuestCredential, guest_md5));
+
+	CAmuleApiConfig cfg2;
+	ASSERT_TRUE(cfg2.Load(dir));
+	ASSERT_TRUE(cfg2.HasAnyCredential());
+	// The stored form is a salted record, not the digest that produced it.
+	ASSERT_TRUE(cfg2.AdminCredential() != admin_md5);
+	ASSERT_TRUE(CAmuleApiConfig::MatchedRole::Admin == cfg2.VerifyPassword(admin_md5));
+	ASSERT_TRUE(CAmuleApiConfig::MatchedRole::Guest == cfg2.VerifyPassword(guest_md5));
+	ASSERT_TRUE(CAmuleApiConfig::MatchedRole::None ==
+		    cfg2.VerifyPassword("00000000000000000000000000000000"));
+}
+
+// Each role is set independently. The write re-reads the file first, so changing one role never
+// reverts a change another process made to the other -- the whole reason there is a single store.
+TEST(AmuleApiConfig, SetPasswordLeavesTheOtherRoleAlone)
+{
+	const wxString dir = MakeTmpDir("pw-independent");
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(cfg.Load(dir));
+
+	const std::string admin_md5 = "0123456789abcdef0123456789abcdef";
+	const std::string guest_md5 = "fedcba9876543210fedcba9876543210";
+	ASSERT_TRUE(cfg.SetPassword(webcommon::kAdminCredential, admin_md5));
+
+	// A second process (amuled applying an EC push, say) sets the guest
+	// password without ever having seen the admin one.
+	CAmuleApiConfig other;
+	ASSERT_TRUE(other.Load(dir));
+	ASSERT_TRUE(other.SetPassword(webcommon::kGuestCredential, guest_md5));
+
+	CAmuleApiConfig cfg3;
+	ASSERT_TRUE(cfg3.Load(dir));
+	ASSERT_TRUE(CAmuleApiConfig::MatchedRole::Admin == cfg3.VerifyPassword(admin_md5));
+	ASSERT_TRUE(CAmuleApiConfig::MatchedRole::Guest == cfg3.VerifyPassword(guest_md5));
+}
+
+// Clearing the guest credential is how guest access is turned off.
+TEST(AmuleApiConfig, EmptyDigestClearsTheRole)
+{
+	const wxString dir = MakeTmpDir("pw-clear");
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(cfg.Load(dir));
+
+	const std::string admin_md5 = "0123456789abcdef0123456789abcdef";
+	const std::string guest_md5 = "fedcba9876543210fedcba9876543210";
+	ASSERT_TRUE(cfg.SetPassword(webcommon::kAdminCredential, admin_md5));
+	ASSERT_TRUE(cfg.SetPassword(webcommon::kGuestCredential, guest_md5));
+
+	ASSERT_TRUE(cfg.SetPassword(webcommon::kGuestCredential, ""));
+	ASSERT_TRUE(cfg.GuestCredential().empty());
+	ASSERT_TRUE(CAmuleApiConfig::MatchedRole::None == cfg.VerifyPassword(guest_md5));
+	// Admin is untouched, so clearing guest doesn't lock the operator out.
+	ASSERT_TRUE(CAmuleApiConfig::MatchedRole::Admin == cfg.VerifyPassword(admin_md5));
+	ASSERT_TRUE(cfg.HasAnyCredential());
+}
+
+TEST(AmuleApiConfig, SetPasswordRejectsMalformedDigest)
+{
+	const wxString dir = MakeTmpDir("pw-setreject");
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(cfg.Load(dir));
+
+	ASSERT_FALSE(cfg.SetPassword(webcommon::kAdminCredential, "too-short"));
+	ASSERT_FALSE(cfg.SetPassword(webcommon::kAdminCredential, "zzzz56789abcdef0123456789abcdef0"));
+	ASSERT_TRUE(cfg.AdminCredential().empty());
+
+	// Uppercase is accepted: the preferences dialog and the EC path have
+	// historically disagreed about digest case.
+	ASSERT_TRUE(cfg.SetPassword(webcommon::kAdminCredential, "0123456789ABCDEF0123456789ABCDEF"));
+	ASSERT_TRUE(CAmuleApiConfig::MatchedRole::Admin ==
+		    cfg.VerifyPassword("0123456789abcdef0123456789abcdef"));
+}
+
+// A password set by amuled or by aMule's preferences dialog while
+// amuleapi is running has to take effect without restarting amuleapi.
+TEST(AmuleApiConfig, PasswordChangedOnDiskIsPickedUpAtNextLogin)
+{
+	const wxString dir = MakeTmpDir("pw-reload");
+	CAmuleApiConfig running;
+	ASSERT_TRUE(running.Load(dir));
+
+	const std::string first = "0123456789abcdef0123456789abcdef";
+	ASSERT_TRUE(running.SetPassword(webcommon::kAdminCredential, first));
+
+	// Another process rotates the admin password.
+	const std::string second = "fedcba9876543210fedcba9876543210";
+	{
+		CAmuleApiConfig other;
+		ASSERT_TRUE(other.Load(dir));
+		ASSERT_TRUE(other.SetPassword(webcommon::kAdminCredential, second));
+	}
+
+	ASSERT_TRUE(CAmuleApiConfig::MatchedRole::Admin == running.VerifyPassword(second));
+	ASSERT_TRUE(CAmuleApiConfig::MatchedRole::None == running.VerifyPassword(first));
+}
+
+// A config written before the KDF holds a bare MD5. It must still let its owner in, and the record
+// must be rewritten at the current cost so the upgrade needs no operator step.
+TEST(AmuleApiConfig, LegacyBareMd5IsUpgradedOnSuccessfulLogin)
+{
+	const wxString dir = MakeTmpDir("pw-legacy");
+	const std::string legacy = "0123456789abcdef0123456789abcdef";
+	::wxMkdir(dir, 0700);
+	{
+		wxFile f(dir + "/amuleapi-passwords", wxFile::write);
+		const std::string line = "admin=" + legacy + "\n";
+		f.Write(line.data(), line.size());
+	}
+	::chmod(std::string((dir + "/amuleapi-passwords").utf8_str()).c_str(), S_IRUSR | S_IWUSR);
+
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(cfg.Load(dir));
+	ASSERT_EQUALS(legacy, cfg.AdminCredential());
+
+	ASSERT_TRUE(CAmuleApiConfig::MatchedRole::Admin == cfg.VerifyPassword(legacy));
+	// Upgraded in place: no longer the bare digest, and still verifies.
+	ASSERT_TRUE(cfg.AdminCredential() != legacy);
+	ASSERT_FALSE(webcommon::IsLegacyMd5Record(cfg.AdminCredential()));
+
+	CAmuleApiConfig cfg2;
+	ASSERT_TRUE(cfg2.Load(dir));
+	ASSERT_TRUE(CAmuleApiConfig::MatchedRole::Admin == cfg2.VerifyPassword(legacy));
+}
+
+TEST(AmuleApiConfig, MalformedPasswordLineRejected)
+{
+	const wxString dir = MakeTmpDir("pw-bad");
+	// Hand-create the dir and a bad passwords file BEFORE Load() runs, otherwise the auto-
+	// create path writes a fresh empty file and the parser failure path is never exercised.
+	::wxMkdir(dir, 0700);
+	wxFile bad(dir + "/amuleapi-passwords", wxFile::write);
+	const char *bad_line = "admin=not_a_valid_record\n";
+	bad.Write(bad_line, std::strlen(bad_line));
+	bad.Close();
+	::chmod(std::string((dir + "/amuleapi-passwords").utf8_str()).c_str(), S_IRUSR | S_IWUSR);
+
+	CAmuleApiConfig cfg;
+	ASSERT_FALSE(cfg.Load(dir));
+	ASSERT_TRUE(!cfg.LastError().empty());
+}
+
+// POSIX-only: the production hardening (the mode-bit check in AmuleApiConfig::EnforceOwnerOnly) is
+// itself POSIX-only. Windows uses ACLs rather than POSIX mode bits, and the typical Windows daemon
+// footprint -- single-operator workstation, %USERPROFILE%-scoped config dir -- makes the threat
+// model very different. If amuleapi ever ships a Windows hardening pass, via GetSecurityInfo /
+// GetEffectiveRightsFromAcl on the secret file's DACL, the matching test belongs under `#ifdef
+// _WIN32` here. Until then the #ifndef intentionally skips the assertion on Windows, so the suite
+// stays green there without misrepresenting the platform's posture.
+TEST(AmuleApiConfig, LooserSecretFilePermissionsRejected)
+{
+	const wxString dir = MakeTmpDir("perm");
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(cfg.Load(dir)); // first load auto-creates with 0600
+
+	// Loosen the secret file to 0644 and verify the next Load fails with an actionable error.
+	// This guards the "operator accidentally chmodded the secret world-readable" scenario.
+	const std::string path = std::string((dir + "/amuleapi-jwt-secret").utf8_str());
+	ASSERT_EQUALS(0, ::chmod(path.c_str(), S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH));
+
+	CAmuleApiConfig cfg2;
+	ASSERT_FALSE(cfg2.Load(dir));
+	ASSERT_TRUE(cfg2.LastError().find("0600") != std::string::npos);
+}
+
+TEST(AmuleApiConfig, ConfDefaultsArePopulated)
+{
+	const wxString dir = MakeTmpDir("conf-defaults");
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(cfg.Load(dir));
+
+	ASSERT_EQUALS(std::string("127.0.0.1"), cfg.ServerCfg().bind_address);
+	ASSERT_EQUALS(static_cast<unsigned>(4713), cfg.ServerCfg().port);
+	ASSERT_EQUALS(std::string("127.0.0.1"), cfg.EcCfg().host);
+	ASSERT_EQUALS(static_cast<unsigned>(4712), cfg.EcCfg().port);
+	ASSERT_TRUE(!cfg.ServerCfg().allow_cors);
+}
+
+TEST(AmuleApiConfig, BasePathDefaultsToRoot)
+{
+	const wxString dir = MakeTmpDir("base-default");
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(cfg.Load(dir));
+	ASSERT_EQUALS(std::string(""), cfg.ServerCfg().base_path);
+}
+
+TEST(AmuleApiConfig, BasePathIsNormalized)
+{
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(LoadHandWrittenConf("base-norm", "BasePath= amule/ ", cfg));
+	ASSERT_EQUALS(std::string("/amule"), cfg.ServerCfg().base_path);
+}
+
+TEST(AmuleApiConfig, InvalidBasePathFailsLoad)
+{
+	// A cookie attribute smuggled in through the prefix must not reach Set-Cookie.
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(!LoadHandWrittenConf("base-bad", "BasePath=/amule;Domain=evil", cfg));
+	ASSERT_TRUE(cfg.LastError().find("BasePath") != std::string::npos);
+}
+
+TEST(AmuleApiConfig, ExplicitEcDigestIsNotHashedAgain)
+{
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(LoadHandWrittenConf("ec-md5", "[EC]\nPasswordMD5=ABCDEF0123456789ABCDEF0123456789", cfg));
+	ASSERT_TRUE(cfg.ValidateEcPassword());
+	ASSERT_TRUE(cfg.EcCfg().password.empty());
+	ASSERT_EQUALS(std::string("ABCDEF0123456789ABCDEF0123456789"), cfg.EcCfg().password_md5);
+}
+
+TEST(AmuleApiConfig, HexPlaintextRemainsPlaintext)
+{
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(LoadHandWrittenConf("ec-plain", "[EC]\nPassword=abcdef0123456789abcdef0123456789", cfg));
+	ASSERT_TRUE(cfg.ValidateEcPassword());
+	ASSERT_EQUALS(std::string("abcdef0123456789abcdef0123456789"), cfg.EcCfg().password);
+	ASSERT_TRUE(cfg.EcCfg().password_md5.empty());
+}
+
+TEST(AmuleApiConfig, ConflictingEcSecretsAreRejected)
+{
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(LoadHandWrittenConf(
+		"ec-conflict", "[EC]\nPassword=plain\nPasswordMD5=abcdef0123456789abcdef0123456789", cfg));
+	ASSERT_FALSE(cfg.ValidateEcPassword());
+	ASSERT_TRUE(cfg.LastError().find("cannot both be nonempty") != std::string::npos);
+}
+
+TEST(AmuleApiConfig, MalformedEcDigestIsRejected)
+{
+	for (const char *digest :
+		{ "short", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", "abcdef0123456789abcdef01234567890" }) {
+		CAmuleApiConfig cfg;
+		ASSERT_TRUE(
+			LoadHandWrittenConf("ec-invalid", std::string("[EC]\nPasswordMD5=") + digest, cfg));
+		ASSERT_FALSE(cfg.ValidateEcPassword());
+		ASSERT_TRUE(cfg.LastError().find("32 hexadecimal") != std::string::npos);
+	}
+}
+
+TEST(AmuleApiConfig, EcSetupMigratesPlaintextAndPreservesSettings)
+{
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(LoadHandWrittenConf("ec-migrate",
+		"[EC]\nPassword=legacy-secret\nHost=example.invalid\nPort=1234\n[Custom]\nKeep=yes",
+		cfg));
+	const std::string digest = "abcdef0123456789abcdef0123456789";
+	ASSERT_FALSE(cfg.SetEcPasswordMD5("invalid"));
+	ASSERT_TRUE(cfg.SetEcPasswordMD5(digest));
+	CAmuleApiConfig loaded;
+	ASSERT_TRUE(loaded.Load(cfg.ConfigDir()));
+	ASSERT_EQUALS(digest, loaded.EcCfg().password_md5);
+	ASSERT_TRUE(loaded.EcCfg().password.empty());
+	ASSERT_EQUALS(std::string("example.invalid"), loaded.EcCfg().host);
+	ASSERT_EQUALS(static_cast<unsigned>(1234), loaded.EcCfg().port);
+	wxFile file(cfg.ConfigDir() + "/amuleapi.conf");
+	wxString text;
+	ASSERT_TRUE(file.ReadAll(&text));
+	ASSERT_TRUE(text.Find("Keep=yes") != wxNOT_FOUND);
+	ASSERT_TRUE(text.Find("legacy-secret") == wxNOT_FOUND);
+	ASSERT_TRUE(text.Find("Password=") == wxNOT_FOUND);
+}
+
+TEST(AmuleApiConfig, MetricsDisabledByDefault)
+{
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(cfg.Load(MakeTmpDir("metrics-default")));
+	ASSERT_FALSE(cfg.MetricsCfg().enabled);
+	ASSERT_FALSE(cfg.MetricsCfg().IsActive());
+	ASSERT_TRUE(cfg.MetricsCfg().token.empty());
+}
+
+TEST(AmuleApiConfig, MetricsRequireDedicatedValidToken)
+{
+	CAmuleApiConfig missing;
+	ASSERT_TRUE(LoadHandWrittenConf("metrics-missing", "[Metrics]\nEnabled=1\nToken=", missing));
+	ASSERT_FALSE(missing.MetricsCfg().IsActive());
+	CAmuleApiConfig invalid;
+	ASSERT_TRUE(LoadHandWrittenConf("metrics-invalid",
+		"[Metrics]\nEnabled=1\nToken=" + std::string(32, ' ') + "bad token",
+		invalid));
+	ASSERT_FALSE(invalid.MetricsCfg().IsActive());
+	ASSERT_TRUE(invalid.MetricsCfg().token.empty());
+	CAmuleApiConfig valid;
+	const std::string token(64, 'a');
+	ASSERT_TRUE(LoadHandWrittenConf("metrics-valid", "[Metrics]\nEnabled=1\nToken=" + token, valid));
+	ASSERT_TRUE(valid.MetricsCfg().enabled);
+	ASSERT_EQUALS(token, valid.MetricsCfg().token);
+	ASSERT_TRUE(valid.MetricsCfg().IsActive());
+	CAmuleApiConfig token_only;
+	ASSERT_TRUE(LoadHandWrittenConf("metrics-token-only", "[Metrics]\nToken=" + token, token_only));
+	ASSERT_FALSE(token_only.MetricsCfg().IsActive());
+	CAmuleApiConfig disabled;
+	ASSERT_TRUE(LoadHandWrittenConf(
+		"metrics-explicit-disabled", "[Metrics]\nEnabled=0\nToken=" + token, disabled));
+	ASSERT_FALSE(disabled.MetricsCfg().IsActive());
+}
+
+TEST(AmuleApiConfig, ReloadWithoutMetricsSectionDisablesPreviousCredential)
+{
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(LoadHandWrittenConf(
+		"metrics-reload-enabled", "[Metrics]\nEnabled=1\nToken=" + std::string(64, 'b'), cfg));
+	ASSERT_TRUE(cfg.MetricsCfg().enabled);
+	ASSERT_TRUE(LoadHandWrittenConf("metrics-reload-disabled", "", cfg));
+	ASSERT_FALSE(cfg.MetricsCfg().enabled);
+	ASSERT_FALSE(cfg.MetricsCfg().IsActive());
+	ASSERT_TRUE(cfg.MetricsCfg().token.empty());
+}
+
+TEST(AmuleApiConfig, MetricsLimiterIsConfigurableAndResetsOnReload)
+{
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(LoadHandWrittenConf("metrics-limits",
+		"[Metrics]\nFailureThreshold=4\nFailureWindowSeconds=15\nLockoutSeconds=25",
+		cfg));
+	ASSERT_EQUALS(4u, cfg.MetricsCfg().failure_threshold);
+	ASSERT_EQUALS(15u, cfg.MetricsCfg().failure_window_seconds);
+	ASSERT_EQUALS(25u, cfg.MetricsCfg().lockout_seconds);
+	ASSERT_TRUE(LoadHandWrittenConf("metrics-limits-default",
+		"[Metrics]\nFailureThreshold=0\nFailureWindowSeconds=-1\nLockoutSeconds=0",
+		cfg));
+	ASSERT_EQUALS(30u, cfg.MetricsCfg().failure_threshold);
+	ASSERT_EQUALS(60u, cfg.MetricsCfg().failure_window_seconds);
+	ASSERT_EQUALS(300u, cfg.MetricsCfg().lockout_seconds);
+}
+
+TEST(AmuleApiConfig, ProxyAuthOffByDefault)
+{
+	const wxString dir = MakeTmpDir("proxy-default");
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(cfg.Load(dir));
+	ASSERT_FALSE(cfg.AuthCfg().proxy.Enabled());
+	ASSERT_TRUE(cfg.AuthCfg().proxy.role == Role::ADMIN);
+}
+
+TEST(AmuleApiConfig, ProxyAuthIsParsed)
+{
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(LoadHandWrittenConf("proxy-ok",
+		"[Auth]\nProxyAuthHeader= Remote-User \nProxyAuthTrustedAddresses=127.0.0.1, "
+		"::ffff:10.0.0.2,,"
+		"0:0:0:0:0:0:0:1\nProxyAuthRole=Guest\nProxyAuthLogoutUrl=https://sso.example/logout",
+		cfg));
+	const webapi::ProxyAuthPolicy &p = cfg.AuthCfg().proxy;
+	ASSERT_EQUALS(std::string("Remote-User"), p.header);
+	ASSERT_EQUALS(static_cast<std::size_t>(3), p.trusted_addresses.size());
+	ASSERT_EQUALS(std::string("127.0.0.1"), p.trusted_addresses[0]);
+	ASSERT_EQUALS(std::string("10.0.0.2"), p.trusted_addresses[1]);
+	ASSERT_EQUALS(std::string("::1"), p.trusted_addresses[2]);
+	ASSERT_TRUE(p.role == Role::GUEST);
+	ASSERT_EQUALS(std::string("https://sso.example/logout"), p.logout_url);
+}
+
+// Without a trusted address any client could name itself.
+TEST(AmuleApiConfig, ProxyAuthWithoutTrustedAddressesFailsLoad)
+{
+	CAmuleApiConfig cfg;
+	ASSERT_FALSE(LoadHandWrittenConf("proxy-nolist", "[Auth]\nProxyAuthHeader=Remote-User", cfg));
+	ASSERT_TRUE(cfg.LastError().find("ProxyAuthTrustedAddresses") != std::string::npos);
+}
+
+TEST(AmuleApiConfig, ProxyAuthRejectsBadSettings)
+{
+	const std::string base = "[Auth]\nProxyAuthTrustedAddresses=127.0.0.1\n";
+	CAmuleApiConfig cfg;
+	ASSERT_FALSE(LoadHandWrittenConf("proxy-name", base + "ProxyAuthHeader=Remote User", cfg));
+	ASSERT_TRUE(cfg.LastError().find("ProxyAuthHeader") != std::string::npos);
+	ASSERT_FALSE(LoadHandWrittenConf("proxy-addr",
+		"[Auth]\nProxyAuthHeader=Remote-User\nProxyAuthTrustedAddresses=127.0.0.0/8",
+		cfg));
+	ASSERT_TRUE(cfg.LastError().find("ProxyAuthTrustedAddresses") != std::string::npos);
+	ASSERT_FALSE(LoadHandWrittenConf(
+		"proxy-role", base + "ProxyAuthHeader=Remote-User\nProxyAuthRole=root", cfg));
+	ASSERT_TRUE(cfg.LastError().find("ProxyAuthRole") != std::string::npos);
+	ASSERT_FALSE(LoadHandWrittenConf("proxy-url",
+		base + "ProxyAuthHeader=Remote-User\nProxyAuthLogoutUrl=javascript:alert(1)",
+		cfg));
+	ASSERT_TRUE(cfg.LastError().find("ProxyAuthLogoutUrl") != std::string::npos);
+	ASSERT_TRUE(LoadHandWrittenConf(
+		"proxy-path", base + "ProxyAuthHeader=Remote-User\nProxyAuthLogoutUrl=/logout", cfg));
+	ASSERT_EQUALS(std::string("/logout"), cfg.AuthCfg().proxy.logout_url);
+}
+
+// A reload that turns the option off must drop the old policy.
+TEST(AmuleApiConfig, ProxyAuthResetsOnReload)
+{
+	CAmuleApiConfig cfg;
+	ASSERT_TRUE(LoadHandWrittenConf(
+		"proxy-on", "[Auth]\nProxyAuthHeader=Remote-User\nProxyAuthTrustedAddresses=::1", cfg));
+	ASSERT_TRUE(cfg.AuthCfg().proxy.Enabled());
+	ASSERT_TRUE(LoadHandWrittenConf("proxy-off", "", cfg));
+	ASSERT_FALSE(cfg.AuthCfg().proxy.Enabled());
+	ASSERT_TRUE(cfg.AuthCfg().proxy.trusted_addresses.empty());
+}

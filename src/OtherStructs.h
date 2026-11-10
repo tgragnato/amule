@@ -31,80 +31,89 @@
 // Defined in <zlib.h>
 struct z_stream_s;
 
-
-// SERVER TO CLIENT
-struct Header_Struct{
-	int8	eDonkeyID;
-	int32	packetlength;
-	int8	command;
+//			SERVER TO CLIENT
+struct Header_Struct
+{
+	int8 eDonkeyID;
+	int32 packetlength;
+	int8 command;
 }
 __attribute__((__packed__));
 
-struct UDP_Header_Struct {
-	int8	eDonkeyID;
-	int8	command;
+struct UDP_Header_Struct
+{
+	int8 eDonkeyID;
+	int8 command;
 }
 __attribute__((__packed__));
 
-struct Requested_Block_Struct{
-	uint64	StartOffset;
-	uint64	EndOffset;
-	uint32	packedsize;
-	unsigned char	FileID[16];
-	uint32  transferred; // Barry - This counts bytes completed
+struct Requested_Block_Struct
+{
+	uint64 StartOffset;
+	uint64 EndOffset;
+	uint32 packedsize;
+	unsigned char FileID[16];
+	uint32 transferred; // Barry - This counts bytes completed
 }
 __attribute__((__packed__));
 
-struct Pending_Block_Struct{
-	Requested_Block_Struct*	block;
-	struct z_stream_s*       zStream;       // Barry - Used to unzip packets
-	uint32		totalUnzipped; // Barry - This holds the total unzipped bytes for all packets so far
-	uint32		fZStreamError : 1,
-				fRecovered    : 1,
-				fQueued       : 1; // 0 = block sits in m_PendingBlocks_list waiting to be asked over the wire,
-				                   // 1 = block has been written to an OP_REQUESTPARTS packet and the sender owes us bytes for it.
-				                   // Lets m_MaxBlockRequests act as the local queue depth while each wire packet still
-				                   // carries the protocol-mandated 3 blocks (eMule 0.70 SendBlockRequests pattern).
+struct Pending_Block_Struct
+{
+	Requested_Block_Struct *block;
+	struct z_stream_s *zStream; // Barry - Used to unzip packets
+	uint32 totalUnzipped;       // Barry - This holds the total unzipped bytes for all packets so far
+	uint32 fZStreamError : 1, fRecovered : 1,
+		fQueued : 1; // 0 = block sits in m_PendingBlocks_list waiting to be asked over the wire,
+			     // 1 = block has been written to an OP_REQUESTPARTS packet and the
+			     // sender owes us bytes for it. Lets the pending list act as the local
+			     // queue depth while each wire packet still carries the protocol-mandated
+			     // 3 blocks (eMule 0.70 SendBlockRequests pattern).
+	// Tick when this block's request went on the wire; reset to 0 once its first byte arrives.
+	// Used for the per-source min-RTT / BDP depth estimate.
+	uint64 sentTime;
 };
 
-struct Gap_Struct{
+struct Gap_Struct
+{
 	uint64 start;
 	uint64 end;
 };
 
-struct ServerMet_Struct {
-	uint32	ip;
-	uint16	port;
-	uint32	tagcount;
+struct ServerMet_Struct
+{
+	uint32 ip;
+	uint16 port;
+	uint32 tagcount;
 }
 __attribute__((__packed__));
 
-struct TransferredData {
-	uint32	datalen;
-	uint32	timestamp;
+struct TransferredData
+{
+	uint32 datalen;
+	uint32 timestamp;
 };
 
-
-//Kry import of 0.30d
-// Maella -Enhanced Chunk Selection- (based on jicxicmic)
-struct Chunk {
-	uint16 part;      // Index of the chunk
-		union {
-			uint16 frequency; // Availability of the chunk
-			uint16 rank;      // Download priority factor (highest = 0, lowest = 0xffff)
+// Kry import of 0.30d
+//  Maella -Enhanced Chunk Selection- (based on jicxicmic)
+struct Chunk
+{
+	uint16 part; // Index of the chunk
+	union
+	{
+		uint16 frequency; // Availability of the chunk
+		uint16 rank;      // Download priority factor (highest = 0, lowest = 0xffff)
 	};
 }
 __attribute__((__packed__));
 
 struct Category_Struct
 {
-	CPath		path;
-	wxString	title;
-	wxString	comment;
-	uint32		color;
-	uint8		prio;
+	CPath path;
+	wxString title;
+	wxString comment;
+	uint32 color;
+	uint8 prio;
 };
-
 
 #endif // OTHERSTRUCTS_H
 // File_checked_for_headers

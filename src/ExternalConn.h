@@ -27,51 +27,65 @@
 #ifndef EXTERNALCONN_H
 #define EXTERNALCONN_H
 
-
 #include <ec/cpp/ECSpecialTags.h>
 
-#include "amuleIPV4Address.h"	// for amuleIPV4Address
-#include "RLE.h"	// for RLE
-#include "DownloadQueue.h"
-#include "PartFile.h"			// for SourcenameItemMap
+#include <common/RateLimiter.h> // for CRateLimiter (EC auth brute-force guard)
 
-template <class T, ec_tagname_t OP>
-class CTagSet : public std::set<T> {
-		void InSet(const CECTag *tag, uint32)
-		{
-			this->insert(tag->GetInt());		// don't remove this->
-		}
-		void InSet(const CECTag *tag, const CMD4Hash&)
-		{
-			this->insert(tag->GetMD4Data());	// don't remove this->
-		}
-	public:
-		CTagSet(const CECPacket *request) : std::set<T>()
-		{
-			for (CECPacket::const_iterator it = request->begin(); it != request->end(); ++it) {
-				const CECTag *tag = & *it;
-				if ( tag->GetTagName() == OP ) {
-					InSet(tag, T());
-				}
+#include <list>    // for std::list (chat message buffer)
+#include <utility> // for std::pair (chat message buffer)
+
+#include "amuleIPV4Address.h" // for amuleIPV4Address
+#include "RLE.h"              // for RLE
+#include "DownloadQueue.h"
+#include "PartFile.h" // for SourcenameItemMap
+
+/**
+ * Registers a search restored from StoredSearches.met (CSearchList::LoadSearches(), issue #641
+ * Phase 3) with the EC multi-search registry, so EC_OP_SEARCH_LIST and the INC_UPDATE union poll
+ * surface it to a freshly connecting amuleGUI/amuleapi client exactly as they would a live search.
+ * The registry (s_ecSearches) is file-local to ExternalConn.cpp, hence this thin exported wrapper
+ * around its existing Register(id), which already takes an existing ID rather than allocating one.
+ */
+void RegisterRestoredSearch(uint32 searchID);
+
+template <class T, ec_tagname_t OP> class CTagSet : public std::set<T>
+{
+	void InSet(const CECTag *tag, uint32)
+	{
+		this->insert(tag->GetInt()); // don't remove this->
+	}
+	void InSet(const CECTag *tag, const CMD4Hash &)
+	{
+		this->insert(tag->GetMD4Data()); // don't remove this->
+	}
+
+public:
+	CTagSet(const CECPacket *request)
+	: std::set<T>()
+	{
+		for (CECPacket::const_iterator it = request->begin(); it != request->end(); ++it) {
+			const CECTag *tag = &*it;
+			if (tag->GetTagName() == OP) {
+				InSet(tag, T());
 			}
 		}
+	}
 };
 
+class CObjTagMap
+{
+	std::map<uint32, CValueMap> m_obj_map;
 
-class CObjTagMap {
-		std::map<uint32, CValueMap> m_obj_map;
-	public:
-		CValueMap &GetValueMap(uint32 ECID)
-		{
-			return m_obj_map[ECID];
-		}
+public:
+	CValueMap &GetValueMap(uint32 ECID) { return m_obj_map[ECID]; }
 
-		size_t size()
-		{
-			return m_obj_map.size();
-		}
+	// Drop the per-ECID field cache. Called when an encoder for this ECID is freshly
+	// (re-)created, so the next EC_DETAIL_INC_UPDATE emits every identifying field (hash / name
+	// / size) instead of suppressing them against a stale cache the peer no longer holds.
+	void EraseValueMap(uint32 ECID) { m_obj_map.erase(ECID); }
+
+	size_t size() { return m_obj_map.size(); }
 };
-
 
 class CECServerSocket;
 class ECNotifier;
@@ -80,13 +94,15 @@ class ExternalConn;
 class CExternalConnListener : public CLibSocketServer
 {
 public:
-	CExternalConnListener(const amuleIPV4Address& adr, int flags, ExternalConn * conn)
-		: CLibSocketServer(adr, flags), m_conn(conn) {}
+	// Defined in ExternalConn.cpp: the EC listener binds to its own interface
+	// (thePrefs::GetECNetworkInterface(), empty = any), decoupled from the global P2P interface
+	// pin -- see issue #330.
+	CExternalConnListener(const amuleIPV4Address &adr, int flags, ExternalConn *conn);
 	void OnAccept();
-private:
-	ExternalConn * m_conn;
-};
 
+private:
+	ExternalConn *m_conn;
+};
 
 class ExternalConn : public wxEvtHandler
 {
@@ -99,147 +115,176 @@ public:
 	~ExternalConn();
 
 	CExternalConnListener *m_ECServer;
-	ECNotifier *m_ec_notifier;
+	// Stays null when the constructor refuses EC; GuiEvents tests for that.
+	ECNotifier *m_ec_notifier = nullptr;
 
 	void AddSocket(CECServerSocket *s);
 	void RemoveSocket(CECServerSocket *s);
 	void KillAllSockets();
+	// Cancel native timer continuations before shutdown starts yielding for repaint.
+	void CancelNotificationDrains();
+	// Drop the incremental-update cache entry for an object that no longer exists.
+	void ForgetObject(uint32 ecid);
 	void ResetAllLogs();
+
+	// Brute-force protection for the password exchange, shared by every connection. It lives
+	// here rather than on CECServerSocket because a socket dies with its connection: per-socket
+	// buckets would reset on every reconnect, which is exactly what an attacker does between
+	// guesses. Not keyed on whether the listener is bound locally -- an SSH tunnel makes a
+	// remote attacker arrive from 127.0.0.1, so "local means trusted" would exempt the very
+	// setup people adopt for safety.
+	CRateLimiter &AuthRateLimiter() { return m_authRateLimiter; }
+
+	// The address and port the listener is bound to, as the core-started amuleapi must reach
+	// it. False when external connections are off or the bind failed.
+	bool GetListenEndpoint(wxString &ip, uint16 &port) const;
+
+private:
+	CRateLimiter m_authRateLimiter;
+	wxString m_listenIp;
+	uint16 m_listenPort = 0;
 };
 
-class ECUpdateMsgSource {
-	public:
-		virtual ~ECUpdateMsgSource()
-		{
-		}
-		virtual CECPacket *GetNextPacket() = 0;
+class ECUpdateMsgSource
+{
+public:
+	virtual ~ECUpdateMsgSource() {}
+	virtual CECPacket *GetNextPacket() = 0;
 };
 
-class ECPartFileMsgSource : public ECUpdateMsgSource {
-		typedef struct {
-			bool m_new;
-			bool m_comment_changed;
-			bool m_removed;
-			bool m_finished;
-			bool m_dirty;
-			const CPartFile *m_file;
-		} PARTFILE_STATUS;
-		std::map<CMD4Hash, PARTFILE_STATUS> m_dirty_status;
-	public:
-		ECPartFileMsgSource();
+class ECPartFileMsgSource : public ECUpdateMsgSource
+{
+	typedef struct
+	{
+		bool m_new;
+		bool m_comment_changed;
+		bool m_removed;
+		bool m_finished;
+		bool m_dirty;
+		const CPartFile *m_file;
+	} PARTFILE_STATUS;
+	std::map<CMD4Hash, PARTFILE_STATUS> m_dirty_status;
 
-		void SetDirty(const CPartFile *file);
-		void SetNew(const CPartFile *file);
-		void SetCompleted(const CPartFile *file);
-		void SetRemoved(const CPartFile *file);
+public:
+	ECPartFileMsgSource();
 
-		virtual CECPacket *GetNextPacket();
+	void SetDirty(const CPartFile *file);
+	void SetNew(const CPartFile *file);
+	void SetCompleted(const CPartFile *file);
+	void SetRemoved(const CPartFile *file);
 
+	virtual CECPacket *GetNextPacket();
 };
 
-class ECKnownFileMsgSource : public ECUpdateMsgSource {
-		typedef struct {
-			bool m_new;
-			bool m_comment_changed;
-			bool m_removed;
-			bool m_dirty;
-			const CKnownFile *m_file;
-		} KNOWNFILE_STATUS;
-		std::map<CMD4Hash, KNOWNFILE_STATUS> m_dirty_status;
-	public:
-		ECKnownFileMsgSource();
+class ECKnownFileMsgSource : public ECUpdateMsgSource
+{
+	typedef struct
+	{
+		bool m_new;
+		bool m_comment_changed;
+		bool m_removed;
+		bool m_dirty;
+		const CKnownFile *m_file;
+	} KNOWNFILE_STATUS;
+	std::map<CMD4Hash, KNOWNFILE_STATUS> m_dirty_status;
 
-		void SetDirty(const CKnownFile *file);
-		void SetNew(const CKnownFile *file);
-		void SetRemoved(const CKnownFile *file);
+public:
+	ECKnownFileMsgSource();
 
-		virtual CECPacket *GetNextPacket();
+	void SetDirty(const CKnownFile *file);
+	void SetNew(const CKnownFile *file);
+	void SetRemoved(const CKnownFile *file);
+
+	virtual CECPacket *GetNextPacket();
 };
 
-class ECClientMsgSource : public ECUpdateMsgSource {
-	public:
-		virtual CECPacket *GetNextPacket();
+class ECClientMsgSource : public ECUpdateMsgSource
+{
+public:
+	virtual CECPacket *GetNextPacket();
 };
 
-class ECStatusMsgSource : public ECUpdateMsgSource {
-		uint32 m_last_ed2k_status_sent;
-		uint32 m_last_kad_status_sent;
-		void *m_server;
+class ECStatusMsgSource : public ECUpdateMsgSource
+{
+	uint32 m_last_ed2k_status_sent;
+	uint32 m_last_kad_status_sent;
+	void *m_server;
 
-		uint32 GetEd2kStatus();
-		uint32 GetKadStatus();
-	public:
-		ECStatusMsgSource();
+	uint32 GetEd2kStatus();
+	uint32 GetKadStatus();
 
-		virtual CECPacket *GetNextPacket();
+public:
+	ECStatusMsgSource();
+
+	virtual CECPacket *GetNextPacket();
 };
 
-class ECSearchMsgSource : public ECUpdateMsgSource {
-		typedef struct {
-			bool m_new;
-			bool m_child_dirty;
-			bool m_dirty;
-			const CSearchFile *m_file;
-		} SEARCHFILE_STATUS;
-		std::map<CMD4Hash, SEARCHFILE_STATUS> m_dirty_status;
-	public:
-		ECSearchMsgSource();
+class ECSearchMsgSource : public ECUpdateMsgSource
+{
+	typedef struct
+	{
+		bool m_new;
+		bool m_child_dirty;
+		bool m_dirty;
+		const CSearchFile *m_file;
+	} SEARCHFILE_STATUS;
+	std::map<CMD4Hash, SEARCHFILE_STATUS> m_dirty_status;
 
-		void SetDirty(const CSearchFile *file);
-		void SetChildDirty(const CSearchFile *file);
+public:
+	ECSearchMsgSource();
 
-		void FlushStatus();
+	void SetDirty(const CSearchFile *file);
+	void SetChildDirty(const CSearchFile *file);
 
-		virtual CECPacket *GetNextPacket();
+	void FlushStatus();
+
+	virtual CECPacket *GetNextPacket();
 };
 
-class ECNotifier {
-		//
-		// designated priority for each type of update
-		//
-		enum EC_SOURCE_PRIO {
-			EC_PARTFILE = 0,
-			EC_SEARCH,
-			EC_CLIENT,
-			EC_STATUS,
-			EC_KNOWN,
+class ECNotifier
+{
+	// designated priority for each type of update
+	enum EC_SOURCE_PRIO
+	{
+		EC_PARTFILE = 0,
+		EC_SEARCH,
+		EC_CLIENT,
+		EC_STATUS,
+		EC_KNOWN,
 
-			EC_STATUS_LAST_PRIO
-		};
+		EC_STATUS_LAST_PRIO
+	};
 
-		//ECUpdateMsgSource *m_msg_source[EC_STATUS_LAST_PRIO];
-		std::map<CECServerSocket *, ECUpdateMsgSource **> m_msg_source;
+	// ECUpdateMsgSource *m_msg_source[EC_STATUS_LAST_PRIO];
+	std::map<CECServerSocket *, ECUpdateMsgSource **> m_msg_source;
 
-		void NextPacketToSocket();
+	void NextPacketToSocket();
 
-		CECPacket *GetNextPacket(ECUpdateMsgSource *msg_source_array[]);
-		// Make class non assignable
-		void operator=(const ECNotifier&);
-		ECNotifier(const ECNotifier&);
-	public:
-		ECNotifier();
-		~ECNotifier();
+	CECPacket *GetNextPacket(ECUpdateMsgSource *msg_source_array[]);
+	// Make class non assignable
+	void operator=(const ECNotifier &);
+	ECNotifier(const ECNotifier &);
 
-		void Add_EC_Client(CECServerSocket *sock);
-		void Remove_EC_Client(CECServerSocket *sock);
+public:
+	ECNotifier();
+	~ECNotifier();
 
-		CECPacket *GetNextPacket(CECServerSocket *sock);
+	void Add_EC_Client(CECServerSocket *sock);
+	void Remove_EC_Client(CECServerSocket *sock);
 
-		//
-		// Interface to notification macros
-		//
-		void DownloadFile_SetDirty(const CPartFile *file);
-		void DownloadFile_RemoveFile(const CPartFile *file);
-		void DownloadFile_RemoveSource(const CPartFile *file);
-		void DownloadFile_AddFile(const CPartFile *file);
-		void DownloadFile_AddSource(const CPartFile *file);
+	CECPacket *GetNextPacket(CECServerSocket *sock);
 
-		void SharedFile_AddFile(const CKnownFile *file);
-		void SharedFile_RemoveFile(const CKnownFile *file);
-		void SharedFile_RemoveAllFiles();
+	// Interface to notification macros
+	void DownloadFile_SetDirty(const CPartFile *file);
+	void DownloadFile_RemoveFile(const CPartFile *file);
+	void DownloadFile_RemoveSource(const CPartFile *file);
+	void DownloadFile_AddFile(const CPartFile *file);
+	void DownloadFile_AddSource(const CPartFile *file);
 
+	void SharedFile_AddFile(const CKnownFile *file);
+	void SharedFile_RemoveFile(const CKnownFile *file);
+	void SharedFile_RemoveAllFiles();
 };
-
 
 #endif // EXTERNALCONN_H
 // File_checked_for_headers

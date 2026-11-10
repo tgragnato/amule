@@ -27,23 +27,32 @@
 #define TYPES_H
 
 #ifndef USE_STD_STRING
-#include <wx/string.h>		// Needed for wxString and ""
+#include <wx/string.h> // Needed for wxString and ""
 #endif
 
-#include <list>			// Needed for std::list
-#include <vector>		// Needed for std::vector
+#include <list>   // Needed for std::list
+#include <vector> // Needed for std::vector
 
 #ifndef __STDC_FORMAT_MACROS
-	#define __STDC_FORMAT_MACROS
-#endif
+#define __STDC_FORMAT_MACROS
 #include <inttypes.h>
 #define LONGLONG(x) x##ll
 #define ULONGLONG(x) x##llu
+#else
+typedef unsigned __int8 uint8_t;
+typedef unsigned __int16 uint16_t;
+typedef unsigned __int32 uint32_t;
+typedef unsigned __int64 uint64_t;
+typedef signed __int8 int8_t;
+typedef signed __int16 int16_t;
+typedef signed __int32 int32_t;
+typedef signed __int64 int64_t;
+#define LONGLONG(x) x##i64
+#define ULONGLONG(x) x##ui64
+#endif
 
-// These are _MSC_VER defines used in eMule. They should
-// not be used in aMule, instead, use this table to
-// find the type to use in order to get the desired
-// effect.
+// eMule uses these _MSC_VER defines. Do not use them in aMule; use this table to find the type
+// that gives the same effect.
 //////////////////////////////////////////////////
 // Name              // Type To Use In Amule    //
 //////////////////////////////////////////////////
@@ -77,23 +86,21 @@
 // POINT             // wxPoint                 //
 //////////////////////////////////////////////////
 
-/*
- * Backwards compatibility with emule.
- * Note that the int* types are indeed unsigned.
+/**
+ * Backwards compatibility with emule. Note that the int* types are indeed unsigned.
  */
-typedef uint8_t		int8;
-typedef uint8_t		uint8;
-typedef uint16_t	int16;
-typedef uint16_t	uint16;
-typedef uint32_t	int32;
-typedef uint32_t	uint32;
-typedef uint64_t	int64;
-typedef uint64_t	uint64;
-typedef int8_t		sint8;
-typedef int16_t		sint16;
-typedef int32_t		sint32;
-typedef int64_t		sint64;
-
+typedef uint8_t int8;
+typedef uint8_t uint8;
+typedef uint16_t int16;
+typedef uint16_t uint16;
+typedef uint32_t int32;
+typedef uint32_t uint32;
+typedef uint64_t int64;
+typedef uint64_t uint64;
+typedef int8_t sint8;
+typedef int16_t sint16;
+typedef int32_t sint32;
+typedef int64_t sint64;
 
 class CKnownFile;
 
@@ -102,35 +109,33 @@ class CKnownFile;
 #ifndef USE_STD_STRING
 typedef std::list<wxString> CStringList;
 #endif
-typedef std::list<CKnownFile*> CKnownFilePtrList;
+typedef std::list<CKnownFile *> CKnownFilePtrList;
 //@}
 
-typedef std::vector<uint8>  ArrayOfUInts8;
+typedef std::vector<uint8> ArrayOfUInts8;
 typedef std::vector<uint16> ArrayOfUInts16;
 typedef std::vector<uint32> ArrayOfUInts32;
 typedef std::vector<uint64> ArrayOfUInts64;
 
-typedef std::list<uint32>	ListOfUInts32;
+typedef std::list<uint32> ListOfUInts32;
 
 /* This is the Evil Void String For Returning On Const References From Hell */
-// IT MEANS I WANT TO USE IT EVERYWHERE. DO NOT MOVE IT.
-// THE FACT SOMETHING IS USED IN JUST ONE PLACE DOESN'T MEAN IT HAS
-// TO BE MOVED TO THAT PLACE. I MIGHT NEED IT ELSEWHERE LATER.
-//
+// KEEP IT HERE. Being used in one place today does not mean it belongs there.
 
 #ifndef USE_STD_STRING
 static const wxString EmptyString = "";
 #endif
 
 #ifndef __cplusplus
-	typedef int bool;
+typedef int bool;
 #endif
 
-typedef struct sRECT {
-  uint32 left;
-  uint32 top;
-  uint32 right;
-  uint32 bottom;
+typedef struct sRECT
+{
+	uint32 left;
+	uint32 top;
+	uint32 right;
+	uint32 bottom;
 } RECT;
 
 #endif /* TYPES_H */

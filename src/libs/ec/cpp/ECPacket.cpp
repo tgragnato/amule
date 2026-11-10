@@ -22,31 +22,27 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include "ECPacket.h"	// Needed for ECPacket
-#include "ECSocket.h"	// Needed for CECSocket
+#include "ECPacket.h" // Needed for ECPacket
+#include "ECSocket.h" // Needed for CECSocket
 
-/**********************************************************
- *							  *
- *	CECPacket class					  *
- *							  *
- **********************************************************/
+// CECPacket class
 
-bool CECPacket::ReadFromSocket(CECSocket& socket)
+bool CECPacket::ReadFromSocket(CECSocket &socket)
 {
-	return socket.ReadNumber(&m_opCode, sizeof(ec_opcode_t))
-		&& ReadChildren(socket);
+	return socket.ReadNumber(&m_opCode, sizeof(ec_opcode_t)) && ReadChildren(socket);
 }
 
-
-bool CECPacket::WritePacket(CECSocket& socket) const
+bool CECPacket::WritePacket(CECSocket &socket) const
 {
-	if (!socket.WriteNumber(&m_opCode, sizeof(ec_opcode_t))) return false;
-	if (!WriteChildren(socket)) return false;
+	if (!socket.WriteNumber(&m_opCode, sizeof(ec_opcode_t)))
+		return false;
+	if (!WriteChildren(socket))
+		return false;
 	return true;
 }
 
 #ifdef __DEBUG__
-#include <common/Format.h>  // Needed for CFormat
+#include <common/Format.h> // Needed for CFormat
 #include "ECLog.h"
 
 void CECPacket::DebugPrint(bool incoming, uint32 trueSize) const
@@ -54,18 +50,18 @@ void CECPacket::DebugPrint(bool incoming, uint32 trueSize) const
 	wxString GetDebugNameECOpCodes(uint8 arg);
 
 	if (ECLogIsEnabled()) {
-		// full length incl. header: opcode + own children-count field
-		// (uint16, plus a uint32 follow-up if the count was extended
-		// past the 0xFFFF ceiling — see CECTag::WriteChildren).
-		uint32 size = GetPacketLength() + sizeof(ec_opcode_t) + sizeof(uint16)
-			+ (GetTagCount() >= 0xFFFF ? sizeof(uint32) : 0);
+		// full length incl. header: opcode + own children-count field (uint16, plus a
+		// uint32 follow-up if the count was extended past the 0xFFFF ceiling -- see
+		// CECTag::WriteChildren).
+		uint32 size = GetPacketLength() + sizeof(ec_opcode_t) + sizeof(uint16) +
+			      (GetTagCount() >= 0xFFFF ? sizeof(uint32) : 0);
 
 		if (trueSize == 0 || size == trueSize) {
-			DoECLogLine(CFormat("%s %s %d") % (incoming ? "<" : ">")
-				% GetDebugNameECOpCodes(m_opCode) % size);
+			DoECLogLine(CFormat("%s %s %d") % (incoming ? "<" : ">") %
+				    GetDebugNameECOpCodes(m_opCode) % size);
 		} else {
-			DoECLogLine(CFormat("%s %s %d (compressed: %d)") % (incoming ? "<" : ">")
-				% GetDebugNameECOpCodes(m_opCode) % size % trueSize);
+			DoECLogLine(CFormat("%s %s %d (compressed: %d)") % (incoming ? "<" : ">") %
+				    GetDebugNameECOpCodes(m_opCode) % size % trueSize);
 		}
 		CECTag::DebugPrint(1, false);
 	}
@@ -76,23 +72,16 @@ void CECPacket::DebugPrint(bool, uint32) const {}
 
 /*!
  * \fn CECPacket::CECPacket(ec_opcode_t opCode, EC_DETAIL_LEVEL detail_level)
- *
- * \brief Creates a new packet with given OPCODE.
+ * \brief Creates a new packet with the given OPCODE.
  */
 
 /*!
  * \fn ec_opcode_t CECPacket::GetOpCode(void) const
- *
- * \brief Returns OPCODE.
- *
- * \return The OpCode of the packet.
+ * \brief Returns the packet's OpCode.
  */
 
 /*!
  * \fn uint32 CECPacket::GetPacketLength(void) const
- *
  * \brief Returns the length of the packet.
- *
- * \return The length of the packet.
  */
 // File_checked_for_headers

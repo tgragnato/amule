@@ -23,34 +23,30 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
 #include "RC4Encrypt.h"
 #include <common/MD5Sum.h>
 
-
 #include <stdexcept>
 
-CRC4EncryptableBuffer::CRC4EncryptableBuffer() : m_encrypted(false), m_hasKey(false), m_key()
+CRC4EncryptableBuffer::CRC4EncryptableBuffer()
+: m_encrypted(false)
+, m_hasKey(false)
+, m_key()
 {
 }
 
+CRC4EncryptableBuffer::~CRC4EncryptableBuffer() {}
 
-CRC4EncryptableBuffer::~CRC4EncryptableBuffer()
-{
-}
-
-void CRC4EncryptableBuffer::Append(const uint8* buffer, int n)
+void CRC4EncryptableBuffer::Append(const uint8 *buffer, int n)
 {
 	wxASSERT(!m_encrypted);
 	if (!m_encrypted) {
 		CMemFile::Append(buffer, n);
 	} else {
-		throw std::runtime_error(
-			"(CRC4EncryptableBuffer::Append): "
-			"Tried to append data to an encrypted buffer.");
+		throw std::runtime_error("(CRC4EncryptableBuffer::Append): "
+					 "Tried to append data to an encrypted buffer.");
 	}
 }
-
 
 void CRC4EncryptableBuffer::Encrypt()
 {
@@ -59,34 +55,45 @@ void CRC4EncryptableBuffer::Encrypt()
 	m_encrypted = true;
 }
 
-void CRC4EncryptableBuffer::RC4Crypt( const uint8 *pachIn, uint8 *pachOut, uint32 nLen)
+void CRC4EncryptableBuffer::RC4Crypt(const uint8 *pachIn, uint8 *pachOut, uint32 nLen)
 {
-	wxASSERT( m_hasKey && nLen > 0 );
+	wxASSERT(m_hasKey && nLen > 0);
 
 	if (m_hasKey) {
-		uint8 byX = m_key.byX;;
-		uint8 byY = m_key.byY;
-		uint8* pabyState = &m_key.abyState[0];;
+		uint32 byX = m_key.byX;
+		uint32 byY = m_key.byY;
+		uint8 *pabyState = m_key.abyState;
 
-		for (uint32 i = 0; i < nLen; ++i) {
-			uint8 byXorIndex;
-			byX = (byX + 1) % 256;
-			byY = (pabyState[byX] + byY) % 256;
-			std::swap(pabyState[byX], pabyState[byY]);
-			byXorIndex = (pabyState[byX] + pabyState[byY]) % 256;
+		// Keep the swapped values in locals: the output index needs their
+		// sum, without reading the state entries again after the stores.
+		auto advance = [&]() {
+			byX = (byX + 1) & 0xff;
+			const uint32 a = pabyState[byX];
+			byY = (byY + a) & 0xff;
+			const uint32 b = pabyState[byY];
+			pabyState[byX] = static_cast<uint8>(b);
+			pabyState[byY] = static_cast<uint8>(a);
+			return (a + b) & 0xff;
+		};
 
-			if (pachIn != NULL) {
-				pachOut[i] = pachIn[i] ^ pabyState[byXorIndex];
+		if (pachIn != nullptr) {
+			for (uint32 i = 0; i < nLen; ++i) {
+				const uint32 index = advance();
+				pachOut[i] = pachIn[i] ^ pabyState[index];
+			}
+		} else {
+			// Discard advances the permutation without loading keystream.
+			for (uint32 i = 0; i < nLen; ++i) {
+				advance();
 			}
 		}
 
-		m_key.byX = byX;
-		m_key.byY = byY;
+		m_key.byX = static_cast<uint8>(byX);
+		m_key.byY = static_cast<uint8>(byY);
 	} else {
-		throw std::runtime_error(
-			"(CRC4EncryptableBuffer::RC4Crypt): "
-			"Encrypt() has been called without a previous call"
-			"to SetKey().");
+		throw std::runtime_error("(CRC4EncryptableBuffer::RC4Crypt): "
+					 "Encrypt() has been called without a previous call"
+					 "to SetKey().");
 	}
 }
 
@@ -100,26 +107,24 @@ uint8 *CRC4EncryptableBuffer::Detach()
 	return ret;
 }
 
-
-void CRC4EncryptableBuffer::SetKey(const MD5Sum& keyhash, bool bSkipDiscard)
+void CRC4EncryptableBuffer::SetKey(const MD5Sum &keyhash, bool bSkipDiscard)
 {
 	wxASSERT(!m_hasKey);
 	if (!m_hasKey) {
 		m_hasKey = true;
-		RC4CreateKey( keyhash.GetRawHash(), 16, bSkipDiscard);
+		RC4CreateKey(keyhash.GetRawHash(), 16, bSkipDiscard);
 	} else {
-		throw std::runtime_error( "(CRC4EncryptableBuffer::SetKey): SetKey() has been called twice.");
+		throw std::runtime_error("(CRC4EncryptableBuffer::SetKey): SetKey() has been called twice.");
 	}
 }
 
-
-void CRC4EncryptableBuffer::RC4CreateKey(const uint8* pachKeyData, uint32 nLen, bool bSkipDiscard)
+void CRC4EncryptableBuffer::RC4CreateKey(const uint8 *pachKeyData, uint32 nLen, bool bSkipDiscard)
 {
 	uint8 index1;
 	uint8 index2;
-	uint8* pabyState;
+	uint8 *pabyState;
 
-	pabyState= &m_key.abyState[0];
+	pabyState = &m_key.abyState[0];
 	for (int i = 0; i < 256; ++i) {
 		pabyState[i] = (uint8)i;
 	}

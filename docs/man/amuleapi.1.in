@@ -1,0 +1,171 @@
+.TH AMULEAPI 1 @MAN_DATE@ "aMule REST API daemon v@PACKAGE_VERSION@" "aMule REST API daemon"
+.als B_untranslated B
+.als RB_untranslated RB
+.SH NAME
+amuleapi \- the aMule REST API + Server\-Sent Events daemon
+.SH SYNOPSIS
+.B_untranslated amuleapi
+.RB [ \-h " " \fI<host> ]
+.RB [ \-p " " \fI<port> ]
+.RB_untranslated [ \-\-bind " " \fI<address> ]
+.RB_untranslated [ \-\-http\-port " " \fI<num> ]
+.RB_untranslated [ \-\-config\-dir " " \fI<path> ]
+.RB_untranslated [ \-\-log\-file " " \fI<path> ]
+.RB_untranslated [ \-\-no\-log\-file ]
+.RB_untranslated [ \-\-foreground ]
+
+.B_untranslated amuleapi
+.RB_untranslated [ \-\-set\-admin\-pass " " \fI<plain> ]
+
+.B_untranslated amuleapi
+.RB_untranslated [ \-\-set\-guest\-pass " " \fI<plain> ]
+
+.B_untranslated amuleapi
+.RB_untranslated [ \-\-version ]
+
+.B_untranslated amuleapi
+.RB_untranslated [ \-\-help ]
+
+.B_untranslated amuleapi
+.RB_untranslated [ \-\-set\-admin\-pass\-stdin | \-\-set\-guest\-pass\-stdin | \-\-set\-ec\-pass\-stdin ]
+.SH DESCRIPTION
+.B_untranslated amuleapi
+serves a JSON REST API and a live event stream for a running
+\fBamuled\fR(1), so other programs can control aMule over HTTP. It
+connects to amuled the same way \fBamulecmd\fR(1) does, and listens on its
+own port, so it can run at the same time as \fBamuleweb\fR(1).
+.PP
+The wire contract for the REST API is documented at
+\fIdocs/api/REFERENCE.md\fR; the SSE event catalog lives at
+\fIdocs/api/EVENTS.md\fR. See \fIdocs/QUICKSTART\-AMULEAPI.md\fR
+for first\-run setup notes.
+.SH OPTIONS
+.TP
+\fB[ \-h\fR \fI<host>\fR, \fB\-\-host\fR=\fI<host>\fR \fB]\fR
+EC host to connect to (default: 127.0.0.1).
+.TP
+\fB[ \-p\fR \fI<port>\fR, \fB\-\-port\fR=\fI<port>\fR \fB]\fR
+EC port on the amuled instance (default: 4712).
+.TP
+\fB[ \-\-bind\fR=\fI<address>\fR \fB]\fR
+HTTP bind address (default: 127.0.0.1, overrides amuleapi.conf
+[Server]/BindAddress).
+.TP
+\fB[ \-\-http\-port\fR=\fI<num>\fR \fB]\fR
+HTTP listen port (default: 4713, overrides amuleapi.conf
+[Server]/Port).
+.TP
+\fB[ \-\-config\-dir\fR=\fI<path>\fR \fB]\fR
+Path to the amuleapi config dir. Defaults to the same per\-platform
+aMule data directory that \fBamuled\fR uses (~/.aMule/ on Linux,
+~/Library/Application Support/aMule/ on macOS, %APPDATA%\\aMule\\ on
+Windows). Creates the dir with mode 0700 if absent.
+.TP
+.B_untranslated [ \-\-force\-zlib ]\fR
+Always compress the link to \fBamuled\fR(1). By default amuleapi skips
+compression when amuled's address is on the local network. Use this when
+that address is a VPN tunnel over a slow Internet link.
+.TP
+.B_untranslated [ \-\-set\-admin\-pass\-stdin ]
+Set the admin password from stdin, then exit. Terminal input is hidden and
+confirmed; redirected stdin supplies one UTF-8 line without confirmation.
+An empty admin password is rejected. EOF and input errors leave credentials
+unchanged. No HTTP server or EC connection is started.
+.TP
+.B_untranslated [ \-\-set\-guest\-pass\-stdin ]
+As above for the guest password. An explicitly empty line disables guest access;
+EOF does not. Choose exactly one password setter per invocation.
+.TP
+.B_untranslated [ \-\-set\-ec\-pass\-stdin ]
+Read the existing EC password from stdin (hidden on a terminal, without
+confirmation), write its MD5 digest to [EC]/PasswordMD5 in amuleapi.conf,
+remove the plaintext [EC]/Password key, and exit. Other settings are preserved;
+INI formatting and comments may change. Empty input is rejected.
+.TP
+\fB[ \-\-set\-admin\-pass\fR=\fI<plain>\fR \fB]\fR
+Set the admin password to \fI<plain>\fR, storing it salted and
+stretched in \fIamuleapi\-passwords\fR (mode 0600), then exit. Does
+not start the HTTP server or connect to amuled. A stored password
+cannot be read back, only replaced. Prefer the stdin form: literal passwords
+can be exposed through process arguments and shell history.
+.TP
+\fB[ \-\-set\-guest\-pass\fR=\fI<plain>\fR \fB]\fR
+Set the guest password to \fI<plain>\fR, storing it the same way, then
+exit. An empty \fI<plain>\fR clears the guest password, which is how
+guest access is turned off.
+.TP
+\fB[ \-\-foreground ]\fR
+Stay in the foreground (default). aMule does not ship init\-system
+units; if you need a system service wrapper, write a downstream unit
+that wraps the foreground command.
+.TP
+\fB[ \-\-log\-file\fR=\fI<path>\fR \fB]\fR
+Write a copy of the console output to \fI<path>\fR. On by default at
+\fI<config\-dir>/amuleapi.log\fR, so there is always a log to attach to a
+bug report; use this to put it somewhere else. It is capped at 10 MiB and
+rotated to \fI<path>.1\fR, so it cannot grow without bound. Each line
+starts with the local date and time, on the console as well as in the file.
+.TP
+\fB[ \-\-no\-log\-file ]\fR
+Disable the log file entirely and print to the console only, still
+timestamped.
+.TP
+\fB[ \-\-version ]\fR
+Print version information and exit.
+.TP
+\fB[ \-\-help ]\fR
+Print a short usage description.
+.SH FILES
+.TP
+\fI~/.aMule/amuleapi.conf\fR
+Settings file: HTTP address and port, the connection to amuled, login
+rate limits and event\-stream sizing. The QUICKSTART document shipped with
+the source has the full reference.
+.IP
+For standalone use, set the EC password with \fB\-\-set\-ec\-pass\-stdin\fR,
+or copy its MD5 digest from [EC]/Password in remote.conf to [EC]/PasswordMD5
+here. Plaintext [EC]/Password is also supported. Set only one: amuleapi refuses
+to start if both are nonempty or PasswordMD5 is not 32 hexadecimal characters.
+The digest logs in to amuled just like the password, so keep this file private.
+.IP
+To let a reverse proxy that signs users in itself start sessions, set
+[Auth]/ProxyAuthHeader to the header that holds the user name, for example
+Remote\-User, and [Auth]/ProxyAuthTrustedAddresses to the proxy's IP
+addresses, for example 127.0.0.1,::1. amuleapi reads the header only on
+connections from those addresses, and refuses to start if the header is set
+and the list is empty. [Auth]/ProxyAuthRole (admin or guest) is the role every
+such user gets. [Auth]/ProxyAuthLogoutUrl is where the web interface sends a
+user who signs out. The proxy must replace the header on every request;
+if it passes on a header the client sent, anyone can sign in as any user.
+.TP
+\fI~/.aMule/amuleapi\-jwt\-secret\fR
+Key used to sign login tokens. Created on first launch. Deleting it signs
+out everyone.
+.TP
+\fI~/.aMule/amuleapi\-passwords\fR
+The admin and guest passwords, stored so they cannot be read back, only
+replaced. This is the only place they are kept. Set them with
+\fB\-\-set\-admin\-pass\-stdin\fR / \fB\-\-set\-guest\-pass\-stdin\fR, from the REST API, or
+from the Remote Controls preferences in \fBamule\fR(1). A change applies at
+the next login and signs out anyone already logged in.
+.TP
+\fI~/.aMule/amuleapi\-ec\-token\fR
+Short\-lived login token, written by \fBamule\fR(1) / \fBamuled\fR(1) when
+they start amuleapi themselves. Created fresh each time, read once and
+deleted straight away, so an auto\-started amuleapi needs no EC password of
+its own. Started by hand, amuleapi finds no token and uses
+\fB[EC]/PasswordMD5\fR (or plaintext \fB[EC]/Password\fR) from \fIamuleapi.conf\fR instead. There is no
+\fB\-\-password\fR option: a password given on the command line is visible
+through \fBps\fR(1) for the lifetime of the process, and can persist
+in shell history, service unit files and wrapper scripts.
+.SH REPORTING BUGS
+Please report bugs either on our forum
+(\fIhttps://github.com/amule-org/amule/discussions\fR), or in our
+bugtracker (\fIhttps://github.com/amule-org/amule/issues\fR).
+.SH COPYRIGHT
+aMule and all of its related utilities are distributed under the GNU
+General Public License.
+.SH SEE ALSO
+.B_untranslated amule\fR(1), \fBamuled\fR(1), \fBamulecmd\fR(1), \fBamuleweb\fR(1)
+.SH AUTHOR
+This manpage was written for the aMule project.

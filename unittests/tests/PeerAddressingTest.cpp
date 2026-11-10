@@ -1,0 +1,893 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
+//
+
+// Peer identity: what identifies a peer once a peer can be IPv6.
+//
+// Before this change a peer was a 32-bit address, so an inbound IPv6 peer was accepted by the
+// socket and then dropped -- there was nothing to index it under. Widening that identity has three
+// failure modes worth pinning, and only one of them is about IPv6:
+//
+//   1. Merging two peers that are not the same peer. Keeping absence separate from 0.0.0.0 is
+// hardening rather than a bug observed in #1314. Any new address-keyed container must preserve this
+// invariant.
+//   2. Silently changing IPv4 behaviour. The characterisation half of this file records what an
+// IPv4 peer's identity does today, at the value level the unit tests can reach, so a regression in
+// the widening is loud.
+//   3. Handing a subsystem an address it cannot represent. Kad is IPv4 behind a documented
+// conversion boundary, and ed2k UDP obfuscation derives its key from a 32-bit address, so an
+// inbound datagram has to be routed by what its peer address can actually reach.
+
+#include <muleunit/test.h>
+
+#include <PeerAddressing.h>
+#include <CanonicalPeerIndex.h>
+#include <libs/common/Format.h>
+
+#include <memory>
+
+using namespace muleunit;
+using namespace PeerAddressing;
+
+DECLARE_SIMPLE(PeerAddressing)
+
+TEST(PeerAddressing, ProgrammaticFilterPrefixes)
+{
+	const auto host = CNetworkAddress::FromString("2001:db8:1:2:7fff::1");
+	const auto network = CNetworkAddress::FromString("2001:db8:1:2::");
+	ASSERT_TRUE(MatchesFilterPrefix(host, network, 65));
+	ASSERT_FALSE(MatchesFilterPrefix(CNetworkAddress::FromString("2001:db8:1:2:8000::1"), network, 65));
+	ASSERT_TRUE(MatchesFilterPrefix(host, host, 128));
+	ASSERT_FALSE(MatchesFilterPrefix(host, network, 128));
+	ASSERT_FALSE(MatchesFilterPrefix(host, host, 129));
+	ASSERT_TRUE(MatchesFilterPrefix(host, CNetworkAddress::AnyIPv6(), 0));
+	ASSERT_TRUE(MatchesFilterPrefix(
+		CNetworkAddress::FromString("fe80::1%3"), CNetworkAddress::FromString("fe80::1%9"), 128));
+	const auto v4 = CNetworkAddress::FromIPv4NetworkOrder(0x010200c0);
+	const auto mapped = CNetworkAddress::FromString("::ffff:192.0.2.1");
+	ASSERT_TRUE(MatchesFilterPrefix(mapped, v4, 32));
+	ASSERT_TRUE(MatchesFilterPrefix(v4, mapped, 24));
+	ASSERT_FALSE(MatchesFilterPrefix(v4, mapped, 33));
+	// A mapped prefix may also be written in IPv6 width: /96 is all of IPv4, /104 is /8.
+	const auto mappedTen = CNetworkAddress::FromString("::ffff:10.0.0.0");
+	const auto inTen = CNetworkAddress::FromString("10.1.2.3");
+	ASSERT_TRUE(MatchesFilterPrefix(inTen, mappedTen, 96));
+	ASSERT_TRUE(MatchesFilterPrefix(inTen, mappedTen, 104));
+	ASSERT_FALSE(MatchesFilterPrefix(CNetworkAddress::FromString("11.1.2.3"), mappedTen, 104));
+	ASSERT_FALSE(MatchesFilterPrefix(inTen, mappedTen, 95));
+	ASSERT_FALSE(MatchesFilterPrefix(inTen, mappedTen, 129));
+	// Only a mapped-written prefix gets the IPv6 width; plain IPv4 at /104 is invalid.
+	ASSERT_FALSE(MatchesFilterPrefix(inTen, CNetworkAddress::FromString("10.0.0.0"), 104));
+	ASSERT_FALSE(MatchesFilterPrefix(v4, host, 0));
+}
+
+TEST(PeerAddressing, ProgrammaticFilterRanges)
+{
+	const auto first = CNetworkAddress::FromString("2001:db8::ff");
+	const auto middle = CNetworkAddress::FromString("2001:db8::100");
+	const auto last = CNetworkAddress::FromString("2001:db8::101");
+	for (const auto &host : { first, middle, last }) {
+		ASSERT_TRUE(MatchesFilterRange(host, first, last));
+	}
+	ASSERT_FALSE(MatchesFilterRange(CNetworkAddress::FromString("2001:db8::fe"), first, last));
+	ASSERT_FALSE(MatchesFilterRange(CNetworkAddress::FromString("2001:db8::102"), first, last));
+	ASSERT_FALSE(MatchesFilterRange(middle, last, first));
+	ASSERT_TRUE(MatchesFilterRange(middle, middle, middle));
+	const auto v4 = CNetworkAddress::FromIPv4NetworkOrder(0x010200c0);
+	const auto mapped = CNetworkAddress::FromString("::ffff:192.0.2.1");
+	ASSERT_TRUE(MatchesFilterRange(mapped, v4, v4));
+	ASSERT_TRUE(MatchesFilterRange(v4, mapped, mapped));
+	ASSERT_FALSE(MatchesFilterRange(middle, v4, last));
+	ASSERT_TRUE(MatchesFilterRange(CNetworkAddress::FromString("fe80::1%3"),
+		CNetworkAddress::FromString("fe80::1%9"),
+		CNetworkAddress::FromString("fe80::1%9")));
+}
+
+TEST(PeerAddressing, FilterMatchingRejectsUnknownAndUnspecifiedHosts)
+{
+	const auto host = CNetworkAddress::FromString("2001:db8::1");
+	const auto absent = CNetworkAddress::Absent();
+	for (const auto &invalid : { absent,
+		     CNetworkAddress::AnyIPv6(),
+		     CNetworkAddress::FromIPv4HostOrder(0),
+		     CNetworkAddress::FromString("::ffff:0.0.0.0") }) {
+		ASSERT_FALSE(MatchesFilterPrefix(invalid, invalid, 0));
+		ASSERT_FALSE(MatchesFilterRange(invalid, invalid, invalid));
+	}
+	ASSERT_FALSE(MatchesFilterPrefix(host, absent, 0));
+	ASSERT_FALSE(MatchesFilterRange(host, absent, host));
+	ASSERT_FALSE(MatchesFilterRange(host, host, absent));
+	// A prefix matches only inside its own family, whatever its width: ::/0 covers every IPv6
+	// address and no IPv4 one.
+	const auto ipv4Host = CNetworkAddress::FromString("192.0.2.1");
+	ASSERT_FALSE(MatchesFilterPrefix(ipv4Host, CNetworkAddress::FromString("2001:db8::"), 0));
+	ASSERT_TRUE(MatchesFilterPrefix(host, CNetworkAddress::FromString("2001:db8::"), 0));
+	ASSERT_FALSE(MatchesFilterPrefix(host, CNetworkAddress::FromString("0.0.0.0"), 0));
+}
+
+TEST(PeerAddressing, ParanoidHelloSkipsOnlyNativeIPv6)
+{
+	const auto ipv4 = CNetworkAddress::FromString("192.0.2.1");
+	ASSERT_FALSE(ParanoidHelloMismatch(ipv4, false, 0x010200c0u));
+	ASSERT_FALSE(ParanoidHelloMismatch(ipv4, true, 0x010200c0u));
+	ASSERT_TRUE(ParanoidHelloMismatch(ipv4, false, 0x020200c0u));
+	ASSERT_FALSE(ParanoidHelloMismatch(ipv4, true, 0x020200c0u));
+	ASSERT_FALSE(ParanoidHelloMismatch(CNetworkAddress::FromString("2001:db8::1"), false, 0));
+	// An absent address keeps the old fail-closed result: 0 never matches a HighID claim.
+	ASSERT_TRUE(ParanoidHelloMismatch(CNetworkAddress::Absent(), false, 0x010200c0u));
+}
+
+TEST(PeerAddressing, TcpAdmissionAllowsNativeIPv6ButUtpRemainsIPv4Only)
+{
+	ASSERT_TRUE(CanAdmitTcpPeer(CNetworkAddress::FromString("2001:db8::1")));
+	ASSERT_FALSE(CanAdmitUtpPeer(CNetworkAddress::FromString("2001:db8::1")));
+	ASSERT_TRUE(CanAdmitTcpPeer(CNetworkAddress::FromString("192.0.2.1")));
+	ASSERT_TRUE(CanAdmitUtpPeer(CNetworkAddress::FromString("192.0.2.1")));
+	ASSERT_FALSE(CanAdmitTcpPeer(CNetworkAddress::Absent()));
+	ASSERT_FALSE(CanAdmitTcpPeer(CNetworkAddress::AnyIPv6()));
+	ASSERT_FALSE(CanAdmitUtpPeer(CNetworkAddress::FromString("0.0.0.0")));
+	// Production routes an absent peer through the uTP predicate too, and an accept that
+	// produced no address is not a peer to admit on either transport.
+	ASSERT_FALSE(CanAdmitUtpPeer(CNetworkAddress::Absent()));
+	ASSERT_FALSE(CanAdmitUtpPeer(CNetworkAddress::AnyIPv6()));
+	// Mapped IPv4 is unmapped before admission, so it travels as the IPv4 peer it is.
+	ASSERT_TRUE(CanAdmitUtpPeer(CNetworkAddress::FromString("::ffff:192.0.2.1").Unmapped()));
+}
+
+// The rate-limit scope aggregates a delegated /64 and nothing else: outside globally routable
+// space the prefix is shared by unrelated peers, so the address itself is the scope.
+TEST(PeerAddressing, RateLimitScopeAggregatesOnlyDelegatedPrefixes)
+{
+	ASSERT_TRUE(RateLimitScope(CNetworkAddress::FromString("2001:db8:1:2::1")) ==
+		    RateLimitScope(CNetworkAddress::FromString("2001:db8:1:2::2")));
+	ASSERT_TRUE(RateLimitScope(CNetworkAddress::FromString("fe80::1")) ==
+		    CNetworkAddress::FromString("fe80::1"));
+	ASSERT_TRUE(RateLimitScope(CNetworkAddress::FromString("64:ff9b::1")) ==
+		    CNetworkAddress::FromString("64:ff9b::1"));
+	ASSERT_TRUE(RateLimitScope(CNetworkAddress::FromString("192.0.2.1")) ==
+		    CNetworkAddress::FromString("192.0.2.1"));
+}
+
+// Contact security checks support native IPv6, while callbacks remain IPv4-only and unspecified
+// addresses fail closed.
+TEST(PeerAddressing, ContactSecurityChecksAllowNativeIPv6)
+{
+	for (const char *text : { "2001:4860::1", "2001:db8::1", "fe80::1", "fd00::1", "::1" }) {
+		const auto address = CNetworkAddress::FromString(text);
+		ASSERT_TRUE(CanCheckContactAddress(address));
+		ASSERT_FALSE(CanRequestCallback(address));
+	}
+	ASSERT_FALSE(CanCheckContactAddress(CNetworkAddress::AnyIPv6()));
+	ASSERT_FALSE(CanCheckContactAddress(CNetworkAddress::FromString("::")));
+	// Unknown clients still use the existing LowID/server-ID path, not a made-up address.
+	ASSERT_TRUE(CanCheckContactAddress(CNetworkAddress::Absent()));
+	ASSERT_FALSE(CanRequestCallback(CNetworkAddress::Absent()));
+	for (const char *text : { "192.0.2.1", "::ffff:192.0.2.1" }) {
+		const auto address = CNetworkAddress::FromString(text);
+		ASSERT_TRUE(CanCheckContactAddress(address));
+		ASSERT_TRUE(CanRequestCallback(address));
+	}
+	for (const char *text : { "0.0.0.0", "::ffff:0.0.0.0" }) {
+		const auto address = CNetworkAddress::FromString(text);
+		ASSERT_FALSE(CanCheckContactAddress(address));
+		ASSERT_FALSE(CanRequestCallback(address));
+	}
+}
+
+TEST(PeerAddressing, ContactCheckAddressKeepsLowIDUnchecked)
+{
+	const auto absent = CNetworkAddress::Absent();
+	const auto user = CNetworkAddress::FromString("192.0.2.1");
+	ASSERT_TRUE(ContactCheckAddress(user, absent, false, 0x02000000u) == user);
+	ASSERT_TRUE(ContactCheckAddress(user, absent, true, 0) == user);
+	// A HighID source built from its user ID has no user address until its hello.
+	ASSERT_TRUE(ContactCheckAddress(absent, absent, false, 0x010200C0u) ==
+		    CNetworkAddress::FromString("192.0.2.1"));
+	// A HighID source with a native connect address uses it until its hello.
+	const auto native = CNetworkAddress::FromString("2001:4860::1");
+	ASSERT_TRUE(ContactCheckAddress(absent, native, false, 0) == native);
+	ASSERT_FALSE(CanOpenConnection(native, false));
+	ASSERT_TRUE(CanOpenConnection(native, true));
+	// LowID and zero IDs stay absent: filtering one would disconnect every callback contact.
+	ASSERT_TRUE(ContactCheckAddress(absent, native, true, 0x010200C0u).IsAbsent());
+	ASSERT_TRUE(ContactCheckAddress(absent, absent, false, 0).IsAbsent());
+}
+
+TEST(PeerAddressing, CallbackThrottlePreservesIPv4AndExpiryBoundary)
+{
+	const auto address = CNetworkAddress::FromString("192.0.2.1");
+	const auto mapped = CNetworkAddress::FromString("::ffff:192.0.2.1");
+	ASSERT_TRUE(IsCallbackRequestThrottled(address, address, 0));
+	ASSERT_TRUE(IsCallbackRequestThrottled(mapped, address, 179999));
+	ASSERT_TRUE(IsCallbackRequestThrottled(address, mapped, 179999));
+	ASSERT_FALSE(IsCallbackRequestThrottled(address, address, 180000));
+	ASSERT_FALSE(IsCallbackRequestThrottled(address, address, 180001));
+	ASSERT_FALSE(IsCallbackRequestThrottled(address, CNetworkAddress::FromString("192.0.2.2"), 0));
+	// An address that names nobody is not a budget: every seam refuses it.
+	const auto zero = CNetworkAddress::FromIPv4NetworkOrder(0);
+	ASSERT_FALSE(IsCallbackRequestThrottled(zero, zero, 0));
+	ASSERT_FALSE(CanRequestCallback(zero));
+	ASSERT_FALSE(CanOpenConnection(zero, false));
+	ASSERT_TRUE(CanOpenConnection(zero, true));
+	ASSERT_FALSE(IsCallbackRequestThrottled(CNetworkAddress::Absent(), zero, 0));
+	ASSERT_FALSE(IsCallbackRequestThrottled(zero, CNetworkAddress::Absent(), 0));
+}
+
+TEST(PeerAddressing, DormantIPv6CallbackScopeRemainsPerSubscriber)
+{
+	const auto address = CNetworkAddress::FromString("2001:4860:1:2::1");
+	ASSERT_TRUE(IsCallbackRequestThrottled(address, CNetworkAddress::FromString("2001:4860:1:2::2"), 0));
+	ASSERT_FALSE(IsCallbackRequestThrottled(address, CNetworkAddress::FromString("2001:4860:1:3::1"), 0));
+	// Accounting support is independent from callback permission.
+	ASSERT_FALSE(CanRequestCallback(address));
+	ASSERT_TRUE(CanCheckContactAddress(address));
+}
+
+// Indexability
+
+TEST(PeerAddressing, OnlyAnAddressThatNamesAHostIsIndexable)
+{
+	// Absence is not an address, and the unspecified address names nobody. An index entry under
+	// either would group unrelated peers, and bans would refuse the same key, so the two would
+	// disagree about one peer.
+	ASSERT_FALSE(IsIndexable(CNetworkAddress::Absent()));
+	for (const char *text : { "0.0.0.0", "::", "::ffff:0.0.0.0" }) {
+		const auto address = CNetworkAddress::FromString(text);
+		ASSERT_FALSE(IsIndexable(address));
+		ASSERT_EQUALS(IsSecurityKey(address), IsIndexable(address));
+	}
+	ASSERT_TRUE(IsIndexable(CNetworkAddress::FromString("192.0.2.1")));
+	ASSERT_TRUE(IsIndexable(CNetworkAddress::FromString("2001:db8::1")));
+}
+
+TEST(PeerAddressing, AbsentAndAllZeroAreDifferentKeys)
+{
+	// Prevention invariant: absence must not share an address bucket or acquire
+	// a bucket of its own.
+	CCanonicalPeerIndex<int> index;
+
+	const CNetworkAddress absent = CNetworkAddress::Absent();
+	const CNetworkAddress allZeroV4 = CNetworkAddress::FromString("0.0.0.0");
+	const CNetworkAddress allZeroV6 = CNetworkAddress::FromString("::");
+
+	ASSERT_TRUE(absent != allZeroV4);
+	ASSERT_TRUE(absent != allZeroV6);
+	ASSERT_TRUE(allZeroV4 != allZeroV6);
+
+	// None of the three names a host, so none is indexed, and each reads back empty. That is
+	// what keeps "unknown address" un-bannable rather than banned, and it is the rule the ban
+	// record applies to the same values.
+	index.Insert(absent, 3);
+	index.Insert(allZeroV4, 1);
+	index.Insert(allZeroV6, 2);
+
+	ASSERT_EQUALS((size_t)0, index.size());
+	ASSERT_EQUALS((size_t)0, index.count(allZeroV4));
+	ASSERT_EQUALS((size_t)0, index.count(allZeroV6));
+	ASSERT_EQUALS((size_t)0, index.count(absent));
+}
+
+TEST(PeerAddressing, MappedAndNativeIPv4AreTheSamePeer)
+{
+	// A blocked IPv4 peer reconnecting as ::ffff:a.b.c.d is the same peer, and the index must
+	// not give it a second identity. The address type does not normalise on comparison by
+	// design, so the index key is normalised deliberately, once, here -- and the test says so
+	// rather than assuming it.
+	const CNetworkAddress native = CNetworkAddress::FromString("192.0.2.1");
+	const CNetworkAddress mapped = CNetworkAddress::FromString("::ffff:192.0.2.1");
+
+	ASSERT_TRUE(native != mapped);
+	ASSERT_TRUE(IndexKey(native) == IndexKey(mapped));
+	ASSERT_TRUE(IndexKey(mapped).IsIPv4());
+
+	// An absent address has no key, and asking for one does not invent one.
+	ASSERT_TRUE(IndexKey(CNetworkAddress::Absent()).IsAbsent());
+
+	// A native IPv6 address keys as itself, unchanged.
+	const CNetworkAddress v6 = CNetworkAddress::FromString("2001:db8::1");
+	ASSERT_TRUE(IndexKey(v6) == v6);
+}
+
+TEST(PeerAddressing, DistinctIPv6PeersNeverShareAKey)
+{
+	// Two peers in the same /64 are two peers. The rate-limit scope aggregates
+	// them on purpose (below); the identity index must not.
+	static const char *const addresses[] = {
+		"2001:db8::1", "2001:db8::2", "2001:db8:0:0:1::1", "2001:db8:1::1", "fe80::1", "::1"
+	};
+	static const size_t count = sizeof(addresses) / sizeof(addresses[0]);
+
+	CCanonicalPeerIndex<int> index;
+	for (size_t i = 0; i < count; ++i) {
+		const CNetworkAddress address = CNetworkAddress::FromString(addresses[i]);
+		ASSERT_TRUE(address.IsPresent());
+		index.Insert(address, (int)i);
+	}
+
+	for (size_t i = 0; i < count; ++i) {
+		const CNetworkAddress address = CNetworkAddress::FromString(addresses[i]);
+		ASSERT_EQUALS((size_t)1, index.count(IndexKey(address)));
+	}
+	ASSERT_EQUALS(count, index.size());
+}
+
+TEST(PeerAddressing, CanonicalAddressRangeRetainsEveryClient)
+{
+	// The address index is a multimap: clients sharing a host must remain
+	// available for the caller's port/hash checks, including mapped IPv4.
+	CCanonicalPeerIndex<int> index;
+	const auto native = CNetworkAddress::FromString("192.0.2.1");
+	const auto mapped = CNetworkAddress::FromString("::ffff:192.0.2.1");
+	index.Insert(native, 1);
+	index.Insert(mapped, 2);
+	index.Insert(CNetworkAddress::FromString("2001:db8::1"), 3);
+
+	const auto range = index.equal_range(mapped);
+	ASSERT_EQUALS((size_t)2, index.count(native));
+	ASSERT_TRUE(range.first->first == native);
+	auto it = range.first;
+	ASSERT_TRUE(it != range.second);
+	ASSERT_EQUALS(1, it->second);
+	++it;
+	ASSERT_TRUE(it != range.second);
+	ASSERT_EQUALS(2, it->second);
+	++it;
+	ASSERT_TRUE(it == range.second);
+}
+
+TEST(PeerAddressing, CanonicalAddressIndexRekeysWithoutStaleEntries)
+{
+	CCanonicalPeerIndex<int> index;
+	const auto oldAddress = CNetworkAddress::FromString("::ffff:192.0.2.7");
+	const auto newAddress = CNetworkAddress::FromString("2001:db8::7");
+	const auto absent = CNetworkAddress::Absent();
+	const auto isSeven = [](int value) { return value == 7; };
+	index.Insert(oldAddress, 7);
+	index.Insert(oldAddress, 8);
+
+	index.Update(oldAddress, newAddress, 7, isSeven);
+	ASSERT_EQUALS((size_t)1, index.count(oldAddress));
+	ASSERT_EQUALS(8, index.equal_range(oldAddress).first->second);
+	ASSERT_EQUALS((size_t)1, index.count(newAddress));
+
+	index.Update(newAddress, absent, 7, isSeven);
+	ASSERT_EQUALS((size_t)0, index.count(newAddress));
+	ASSERT_EQUALS((size_t)0, index.count(absent));
+	index.Update(absent, oldAddress, 7, isSeven);
+	ASSERT_EQUALS((size_t)2, index.count(oldAddress));
+	index.Update(oldAddress, CNetworkAddress::FromString("192.0.2.7"), 7, isSeven);
+	ASSERT_EQUALS((size_t)2, index.count(oldAddress));
+	ASSERT_EQUALS(8, index.equal_range(oldAddress).first->second);
+}
+
+TEST(PeerAddressing, CanonicalAddressIndexRemovesOnlySelectedClient)
+{
+	CCanonicalPeerIndex<int> index;
+	const auto address = CNetworkAddress::FromString("192.0.2.7");
+	const auto mapped = CNetworkAddress::FromString("::ffff:192.0.2.7");
+	index.Insert(address, 1);
+	index.Insert(mapped, 2);
+	ASSERT_FALSE(index.Remove(address, [](int value) { return value == 3; }));
+	ASSERT_TRUE(index.Remove(mapped, [](int value) { return value == 1; }));
+	ASSERT_EQUALS((size_t)1, index.count(address));
+	ASSERT_EQUALS(2, index.equal_range(address).first->second);
+	ASSERT_FALSE(index.Remove(address, [](int value) { return value == 1; }));
+	ASSERT_TRUE(index.Remove(address, [](int value) { return value == 2; }));
+	ASSERT_EQUALS((size_t)0, index.size());
+}
+
+TEST(PeerAddressing, CanonicalAddressIndexRetainsOwnershipAcrossRekey)
+{
+	using Reference = std::shared_ptr<int>;
+	CCanonicalPeerIndex<Reference> index;
+	const auto oldAddress = CNetworkAddress::FromString("192.0.2.7");
+	const auto newAddress = CNetworkAddress::FromString("2001:db8::7");
+	std::weak_ptr<int> lifetime;
+	{
+		auto reference = std::make_shared<int>(7);
+		lifetime = reference;
+		index.Insert(oldAddress, reference);
+	}
+	ASSERT_FALSE(lifetime.expired());
+	// Pass the index's own reference: erasing its node must not destroy the peer
+	// while Update still needs it for the new entry.
+	index.Update(oldAddress, newAddress, index.begin()->second, [](const Reference &reference) {
+		return *reference == 7;
+	});
+	ASSERT_FALSE(lifetime.expired());
+	ASSERT_EQUALS((size_t)0, index.count(oldAddress));
+	ASSERT_EQUALS(7, *index.equal_range(newAddress).first->second);
+	ASSERT_TRUE(index.Remove(newAddress, [](const Reference &reference) { return *reference == 7; }));
+	ASSERT_TRUE(lifetime.expired());
+
+	{
+		auto reference = std::make_shared<int>(8);
+		lifetime = reference;
+		index.Insert(newAddress, reference);
+	}
+	index.clear();
+	ASSERT_TRUE(lifetime.expired());
+}
+
+TEST(PeerAddressing, CanonicalAddressIndexKeepsLinkLocalScopesSeparate)
+{
+	CCanonicalPeerIndex<int> index;
+	const auto first = CNetworkAddress::FromString("fe80::1%3");
+	const auto second = CNetworkAddress::FromString("fe80::1%9");
+	index.Insert(first, 1);
+	index.Insert(second, 2);
+	ASSERT_EQUALS((size_t)1, index.count(first));
+	ASSERT_EQUALS((size_t)1, index.count(second));
+	ASSERT_EQUALS(1, index.equal_range(first).first->second);
+	ASSERT_EQUALS(2, index.equal_range(second).first->second);
+}
+
+TEST(PeerAddressing, LegacyZeroCannotFindPresentZeroOrIPv6)
+{
+	CCanonicalPeerIndex<int> index;
+	// The unspecified spellings are refused outright; the IPv6 peers are stored and keep their
+	// own keys even though all four narrow to the same legacy zero.
+	for (const char *text : { "0.0.0.0", "::" }) {
+		index.Insert(IndexKey(CNetworkAddress::FromString(text)), 1);
+	}
+	ASSERT_EQUALS((size_t)0, index.size());
+	for (const char *text : { "2001:db8::1", "2001:db8::2" }) {
+		const auto key = IndexKey(CNetworkAddress::FromString(text));
+		ASSERT_TRUE(IsIndexable(key));
+		ASSERT_EQUALS(0u, key.ToIPv4NetworkOrderOrZero());
+		index.Insert(key, 1);
+	}
+
+	// Narrowing is only a compatibility adapter, never an identity key.
+	ASSERT_EQUALS((size_t)2, index.size());
+	ASSERT_EQUALS((size_t)0, index.count(IndexKey(CNetworkAddress::FromIPv4NetworkOrderOrAbsent(0))));
+	for (const auto &entry : index) {
+		ASSERT_EQUALS((size_t)1, index.count(entry.first));
+	}
+}
+
+// IPv4 characterisation -- must not change
+
+TEST(PeerAddressing, IPv4RoundTripThroughIdentityIsExact)
+{
+	// A client's address used to be an ed2k-order uint32 and the accessors still hand one out.
+	// Every IPv4 value must survive the wider storage unchanged, or an IPv4 peer's identity,
+	// its wire encoding and its Kad conversion all shift together and no interface changes.
+	static const uint32_t values[] = {
+		0x0100007Fu, 0x010200C0u, 0xFFFFFFFFu, 0x00000001u, 0x01000000u, 0x2A2A2A2Au
+	};
+	static const size_t count = sizeof(values) / sizeof(values[0]);
+
+	for (size_t i = 0; i < count; ++i) {
+		const CNetworkAddress address = CNetworkAddress::FromIPv4NetworkOrderOrAbsent(values[i]);
+		ASSERT_TRUE(address.IsPresent());
+		ASSERT_TRUE(IsIndexable(address));
+		ASSERT_EQUALS(values[i], address.ToIPv4NetworkOrderOrZero());
+		// And the identity key of an IPv4 peer is the IPv4 address itself:
+		// grouping is byte-for-byte what the 32-bit multimap did.
+		ASSERT_TRUE(IndexKey(address) == address);
+	}
+
+	// Zero still means "unknown" at the 32-bit boundary, and reads back as zero on the way out.
+	// This is the pre-existing behaviour of a client with no address, and it is unchanged by
+	// having somewhere wider to store one.
+	const CNetworkAddress unknown = CNetworkAddress::FromIPv4NetworkOrderOrAbsent(0);
+	ASSERT_TRUE(unknown.IsAbsent());
+	ASSERT_FALSE(IsIndexable(unknown));
+	ASSERT_EQUALS(0u, unknown.ToIPv4NetworkOrderOrZero());
+}
+
+TEST(PeerAddressing, NativeIPv6HasNoThirtyTwoBitForm)
+{
+	// The guarantee that stops a fabricated address reaching Kad, the ed2k wire or an
+	// obfuscation key: the narrowing fails and leaves the caller's variable alone.
+	const CNetworkAddress v6 = CNetworkAddress::FromString("2001:db8::1");
+	uint32_t scratch = 0xDEADBEEFu;
+	ASSERT_FALSE(v6.ToIPv4NetworkOrder(scratch));
+	ASSERT_EQUALS(0xDEADBEEFu, scratch);
+	ASSERT_FALSE(v6.ToIPv4HostOrder(scratch));
+	ASSERT_EQUALS(0xDEADBEEFu, scratch);
+}
+
+// Inbound datagram routing
+
+TEST(PeerAddressing, DatagramRoutingTable)
+{
+	const struct
+	{
+		const char *address;
+		std::uint16_t port;
+		EUdpRoute expected;
+	} cases[] = { { "", 4672, EUdpRoute::Reject },
+		{ "0.0.0.0", 4672, EUdpRoute::Reject },
+		{ "::", 4672, EUdpRoute::Reject },
+		{ "0:0:0:0:0:0:0:0", 4672, EUdpRoute::Reject },
+		{ "::0.0.0.0", 4672, EUdpRoute::Reject },
+		{ "::ffff:0.0.0.0", 4672, EUdpRoute::Reject },
+		{ "::ffff:0:0", 4672, EUdpRoute::Reject },
+		{ "0:0:0:0:0:ffff:0:0", 4672, EUdpRoute::Reject },
+		{ "::%1", 4672, EUdpRoute::Reject },
+		{ "::ffff:0.0.0.0%1", 4672, EUdpRoute::Reject },
+		{ "192.0.2.1", 0, EUdpRoute::Reject },
+		{ "::ffff:192.0.2.1", 0, EUdpRoute::Reject },
+		{ "2606:4700::1111", 0, EUdpRoute::Reject },
+		{ "192.0.2.1", 4672, EUdpRoute::Ed2kAndKad },
+		{ "::ffff:192.0.2.1", 65535, EUdpRoute::Ed2kAndKad },
+		{ "2606:4700::1111", 4672, EUdpRoute::Ed2kOnly },
+		{ "fe80::1", 4672, EUdpRoute::Ed2kOnly } };
+	for (const auto &entry : cases) {
+		const auto address = CNetworkAddress::FromString(entry.address);
+		if (entry.address[0] != '\0') {
+			ASSERT_TRUE(address.IsPresent());
+		}
+		ASSERT_TRUE(ClassifyUdpPeer({ address, entry.port }) == entry.expected);
+	}
+}
+
+TEST(PeerAddressing, Ed2kUdpObfuscationNeedsAThirtyTwoBitPeer)
+{
+	// The ed2k UDP obfuscation key is MD5 over our user hash, a 32-bit address and a magic byte
+	// (EncryptedDatagramSocket.cpp). There is no IPv6 input to that key in the protocol, so an
+	// obfuscated ed2k datagram from a native IPv6 peer cannot be decrypted -- by anyone, not
+	// just by this build. The boundary is reported rather than papered over with a zero, which
+	// would derive a wrong key and read the packet as junk without saying why.
+	ASSERT_TRUE(SupportsEd2kUdpObfuscation(CNetworkAddress::FromString("192.0.2.1")));
+	ASSERT_TRUE(SupportsEd2kUdpObfuscation(CNetworkAddress::FromString("::ffff:192.0.2.1")));
+	ASSERT_FALSE(SupportsEd2kUdpObfuscation(CNetworkAddress::FromString("2001:db8::1")));
+	ASSERT_FALSE(SupportsEd2kUdpObfuscation(CNetworkAddress::Absent()));
+	// The zero the key derivation must never see, in both spellings.
+	ASSERT_FALSE(SupportsEd2kUdpObfuscation(CNetworkAddress::FromString("0.0.0.0")));
+	ASSERT_FALSE(SupportsEd2kUdpObfuscation(CNetworkAddress::FromString("::ffff:0.0.0.0")));
+}
+
+// Rate-limit scope
+
+TEST(PeerAddressing, IPv4RateLimitScopeIsTheAddress)
+{
+	// Unchanged from the 32-bit throttle: one address, one budget. Neighbours are not
+	// aggregated, so a shared IPv4 address is the only thing that shares a budget -- which is
+	// what it meant before.
+	const CNetworkAddress a = CNetworkAddress::FromString("192.0.2.1");
+	const CNetworkAddress b = CNetworkAddress::FromString("192.0.2.2");
+
+	ASSERT_TRUE(RateLimitScope(a) == a);
+	ASSERT_TRUE(RateLimitScope(a) != RateLimitScope(b));
+
+	// The mapped spelling shares the IPv4 budget: it is the same host over the
+	// same family, and a peer must not double its allowance by respelling.
+	ASSERT_TRUE(RateLimitScope(CNetworkAddress::FromString("::ffff:192.0.2.1")) == a);
+
+	// Absence has no budget, because it identifies nobody.
+	ASSERT_TRUE(RateLimitScope(CNetworkAddress::Absent()).IsAbsent());
+}
+
+TEST(PeerAddressing, IPv6RateLimitScopeAggregatesAtSixtyFour)
+{
+	// The decision this change had to make. A /128 budget under IPv6 throttles nothing: a
+	// subscriber holding a /64 sources each request from a fresh address and every one of them
+	// looks like a first offence. Aggregating at /64 restores the IPv4 meaning of the limit --
+	// one subscriber, one budget.
+	ASSERT_EQUALS(64u, kIPv6RateLimitPrefixBits);
+
+	const CNetworkAddress first = CNetworkAddress::FromString("2001:db8:1:2::1");
+	const CNetworkAddress second = CNetworkAddress::FromString("2001:db8:1:2:ffff:ffff:ffff:ffff");
+	const CNetworkAddress neighbour = CNetworkAddress::FromString("2001:db8:1:3::1");
+
+	// Same /64: one budget.
+	ASSERT_TRUE(RateLimitScope(first) == RateLimitScope(second));
+	// The scope is the prefix itself, host bits cleared.
+	ASSERT_TRUE(RateLimitScope(first) == CNetworkAddress::FromString("2001:db8:1:2::"));
+
+	// A different /64 is a different subscriber and keeps its own budget. This is the other
+	// half of the decision: aggregating at /48 or /56 would put unrelated customers of one
+	// provider in a single bucket, where one of them could lock out the rest.
+	ASSERT_TRUE(RateLimitScope(first) != RateLimitScope(neighbour));
+
+	// An IPv6 scope never collides with an IPv4 one.
+	ASSERT_TRUE(RateLimitScope(first) != RateLimitScope(CNetworkAddress::FromString("192.0.2.1")));
+}
+
+// Direct reachability
+
+TEST(PeerAddressing, GlobalIPv6PeerIsDirectlyReachable)
+{
+	// LowID is an IPv4-with-NAT concept: a peer that cannot accept an inbound connection,
+	// inferred from an ed2k ID a server issued. An IPv6 peer has no ed2k ID at all, so the ID
+	// says nothing about it, and a globally routable IPv6 address is exactly the case where a
+	// callback is neither needed nor possible.
+	ASSERT_TRUE(IsDirectlyReachable(CNetworkAddress::FromString("2606:4700::1111")));
+	ASSERT_FALSE(IsDirectlyReachable(CNetworkAddress::FromString("2001:db8::1")));
+
+	// Addresses aMule cannot dial from here, so they prove nothing about
+	// reachability and must not suppress the callback path.
+	ASSERT_FALSE(IsDirectlyReachable(CNetworkAddress::FromString("fe80::1")));
+	ASSERT_FALSE(IsDirectlyReachable(CNetworkAddress::FromString("fc00::1")));
+	ASSERT_FALSE(IsDirectlyReachable(CNetworkAddress::FromString("::1")));
+	ASSERT_FALSE(IsDirectlyReachable(CNetworkAddress::FromString("::")));
+	ASSERT_FALSE(IsDirectlyReachable(CNetworkAddress::Absent()));
+
+	// IPv4, mapped or not, is left to the existing ed2k ID rule: this predicate
+	// answers only for the family the ID cannot describe.
+	ASSERT_FALSE(IsDirectlyReachable(CNetworkAddress::FromString("192.0.2.1")));
+	ASSERT_FALSE(IsDirectlyReachable(CNetworkAddress::FromString("::ffff:192.0.2.1")));
+}
+
+TEST(PeerAddressing, RateLimitScopeMembersAreContiguousInTheIndexOrder)
+{
+	// Prefix members remain contiguous in the canonical index's address order.
+	// This is an ordering contract, not production rate-limit integration.
+	CCanonicalPeerIndex<int> index;
+
+	static const char *const addresses[] = { // Inside the /64 under test, deliberately out of order.
+		"2001:db8:1:2:ffff:ffff:ffff:ffff",
+		"2001:db8:1:2::",
+		"2001:db8:1:2:8000::1",
+		// Immediately outside it, on both sides.
+		"2001:db8:1:1:ffff:ffff:ffff:ffff",
+		"2001:db8:1:3::",
+		// Far away, and in the other family.
+		"2001:db8:9::1",
+		"192.0.2.1",
+		"255.255.255.255"
+	};
+	static const size_t count = sizeof(addresses) / sizeof(addresses[0]);
+	for (size_t i = 0; i < count; ++i) {
+		const CNetworkAddress address = CNetworkAddress::FromString(addresses[i]);
+		ASSERT_TRUE(address.IsPresent());
+		index.Insert(address, (int)i);
+	}
+
+	const CNetworkAddress scope = RateLimitScope(CNetworkAddress::FromString("2001:db8:1:2::5"));
+	ASSERT_TRUE(scope == CNetworkAddress::FromString("2001:db8:1:2::"));
+
+	size_t visited = 0;
+	for (auto it = index.lower_bound(scope); it != index.end(); ++it) {
+		if (RateLimitScope(it->first) != scope) {
+			break;
+		}
+		++visited;
+	}
+	// Exactly the three members, and the walk was not cut short by the
+	// neighbouring /64 sorting in between them.
+	ASSERT_EQUALS((size_t)3, visited);
+}
+
+TEST(PeerAddressing, Ed2kWireFormIsWhatMayBePublished)
+{
+	// Source exchange, the .part.met.seeds record and the relayed callback all carry a peer as
+	// a 32-bit address. A native IPv6 peer has none, and the only correct thing to do with it
+	// in those formats is to leave it out: a zero there would publish 0.0.0.0 as a source to
+	// every peer that asked, and persist it for the next start to dial.
+	//
+	// This matters more after the widening than before it. An IPv6 peer used to be excluded
+	// from those paths incidentally, by having no ed2k id and so reading as LowID. It is now
+	// correctly HighID, so the exclusion has to be this explicit test instead.
+	ASSERT_TRUE(HasEd2kWireForm(CNetworkAddress::FromString("192.0.2.1")));
+	ASSERT_TRUE(HasEd2kWireForm(CNetworkAddress::FromString("::ffff:192.0.2.1")));
+	ASSERT_FALSE(HasEd2kWireForm(CNetworkAddress::FromString("2001:db8::1")));
+	ASSERT_FALSE(HasEd2kWireForm(CNetworkAddress::Absent()));
+
+	// The zero, in both spellings. It narrows successfully, which is why the old test passed
+	// it, but zero is the value the comment above says must never be written into these
+	// fields. Naming nobody is not the same as having a 32-bit form.
+	ASSERT_FALSE(HasEd2kWireForm(CNetworkAddress::FromString("0.0.0.0")));
+	ASSERT_FALSE(HasEd2kWireForm(CNetworkAddress::FromString("::ffff:0.0.0.0")));
+
+	// A peer that may be published is published with exactly the bytes it had before the
+	// widening -- the mapped spelling included, which narrows to its embedded IPv4 rather than
+	// to something new.
+	uint32_t wire = 0;
+	ASSERT_TRUE(CNetworkAddress::FromString("192.0.2.1").ToIPv4NetworkOrder(wire));
+	ASSERT_EQUALS(0x010200C0u, wire);
+	uint32_t mappedWire = 0;
+	ASSERT_TRUE(CNetworkAddress::FromString("::ffff:192.0.2.1").ToIPv4NetworkOrder(mappedWire));
+	ASSERT_EQUALS(wire, mappedWire);
+}
+
+// UDP source ports
+
+TEST(PeerAddressing, UnknownUDPPortIdentifiesNobody)
+{
+	// A client we know by address has a UDP port only if it advertised one, and zero is how "it
+	// never did" is spelled. Comparing that zero for equality would make every such client a
+	// candidate for a datagram whose source port is also zero -- and behind a carrier NAT one
+	// address is many peers, so the match would name an arbitrary one of them. The rendezvous
+	// relay vouches for whoever this lookup returns, so the unknown side has to lose.
+	const auto address = CNetworkAddress::FromString("192.0.2.1");
+	ASSERT_FALSE(MatchesUdpSource({ address, 0 }, { address, 0 }));
+	ASSERT_FALSE(MatchesUdpSource({ address, 0 }, { address, 4672 }));
+	ASSERT_FALSE(MatchesUdpSource({ address, 4672 }, { address, 0 }));
+}
+
+TEST(PeerAddressing, AdvertisedUDPPortMatchesOnlyItself)
+{
+	// The ordinary case, and the reason this predicate exists at all: the port a peer
+	// advertised for UDP is not the ed2k TCP port it also advertised, so a lookup comparing the
+	// wrong one of the two answers "unknown peer" for every real peer while looking like it
+	// works.
+	const auto address = CNetworkAddress::FromString("192.0.2.1");
+	const auto mapped = CNetworkAddress::FromString("::ffff:192.0.2.1");
+	const auto other = CNetworkAddress::FromString("192.0.2.2");
+	ASSERT_TRUE(MatchesUdpSource({ address, 4672 }, { address, 4672 }));
+	ASSERT_FALSE(MatchesUdpSource({ address, 4672 }, { address, 4662 }));
+	ASSERT_TRUE(MatchesUdpSource({ address, 65535 }, { address, 65535 }));
+	ASSERT_TRUE(MatchesUdpSource({ address, 4672 }, { mapped, 4672 }));
+	ASSERT_TRUE(MatchesUdpSource({ mapped, 4672 }, { address, 4672 }));
+	ASSERT_FALSE(MatchesUdpSource({ address, 4672 }, { other, 4672 }));
+	ASSERT_FALSE(MatchesUdpSource({ CNetworkAddress::Absent(), 4672 }, { address, 4672 }));
+	for (const char *text : { "", "0.0.0.0", "::", "::ffff:0.0.0.0" }) {
+		const auto invalid = CNetworkAddress::FromString(text);
+		ASSERT_FALSE(MatchesUdpSource({ invalid, 4672 }, { invalid, 4672 }));
+	}
+	const auto v6 = CNetworkAddress::FromString("2606:4700::1111");
+	ASSERT_TRUE(MatchesUdpSource({ v6, 4672 }, { v6, 4672 }));
+	ASSERT_FALSE(MatchesUdpSource({ v6, 4672 }, { address, 4672 }));
+	ASSERT_FALSE(MatchesUdpSource({ CNetworkAddress::FromString("fe80::1%1"), 4672 },
+		{ CNetworkAddress::FromString("fe80::1%2"), 4672 }));
+}
+
+TEST(PeerAddressing, TagIdentityTable)
+{
+	// A wire tag carries sixteen bytes and no scope id, so an address that needs one to be
+	// meaningful arrives here as a second identity for a peer the socket already named.
+	const struct
+	{
+		const char *label;
+		const char *address;
+		bool usable;
+	} cases[] = {
+		{ "global unicast", "2001:4860:4860::8888", true },
+		{ "documentation range is not routable", "2001:db8::1", false },
+		{ "link-local, the case that splits an identity", "fe80::1", false },
+		{ "unique-local", "fd00::1", false },
+		{ "loopback", "::1", false },
+		{ "unspecified", "::", false },
+		{ "IPv4-mapped is not an IPv6 identity", "::ffff:192.0.2.1", false },
+		{ "NAT64", "64:ff9b::192.0.2.1", false },
+		{ "plain IPv4 never reaches this edge", "192.0.2.1", false },
+		{ "absent", "", false },
+	};
+	for (const auto &row : cases) {
+		const CNetworkAddress address = row.address[0] == '\0'
+							? CNetworkAddress::Absent()
+							: CNetworkAddress::FromString(row.address);
+		CFormat format("%s: %s expected usable=%u");
+		const wxString message = format % row.label % row.address % unsigned(row.usable);
+		ASSERT_EQUALS_M(row.usable, IsUsableTagIdentity(address), message);
+	}
+}
+
+TEST(PeerAddressing, TheSameLinkLocalPeerWouldBeTwoIdentities)
+{
+	// The defect the rule exists to prevent, stated as values: the socket knows the scope,
+	// the tag cannot carry it, and the two forms are not equal. Dropping the scope from
+	// IndexKey() is not the alternative -- these two are different peers.
+	const CNetworkAddress fromSocket = CNetworkAddress::FromString("fe80::1%3");
+	const CNetworkAddress fromTag = CNetworkAddress::FromString("fe80::1");
+	ASSERT_FALSE(IndexKey(fromSocket) == IndexKey(fromTag));
+
+	const CNetworkAddress otherInterface = CNetworkAddress::FromString("fe80::1%9");
+	ASSERT_FALSE(IndexKey(fromSocket) == IndexKey(otherInterface));
+
+	// So the tag form is refused rather than stored beside the socket's.
+	ASSERT_FALSE(IsUsableTagIdentity(fromTag));
+}
+
+TEST(PeerAddressing, ChangeClientIPv6AcceptsFirstGlobalAnnouncement)
+{
+	const auto replacement = CNetworkAddress::FromString("2606:4700:4700::1111");
+	const auto replacementBytes = replacement.GetOctets();
+
+	ASSERT_TRUE(DecodeChangeClientIPv6(replacementBytes.data(), replacementBytes.size()) == replacement);
+	ASSERT_TRUE(DecodeChangeClientIPv6(replacementBytes.data(), replacementBytes.size() - 1).IsAbsent());
+
+	const auto documentation = CNetworkAddress::FromString("2001:db8::1");
+	const auto documentationBytes = documentation.GetOctets();
+	ASSERT_TRUE(DecodeChangeClientIPv6(documentationBytes.data(), documentationBytes.size()).IsAbsent());
+
+	const auto loopback = CNetworkAddress::FromString("::1");
+	const auto loopbackBytes = loopback.GetOctets();
+	ASSERT_TRUE(DecodeChangeClientIPv6(loopbackBytes.data(), loopbackBytes.size()).IsAbsent());
+}
+
+// While we advertise an address, a global peer must see our connections arrive from it rather than
+// from a temporary address it was never told about and that expires within a day.
+TEST(PeerAddressing, OutboundIPv6LeavesFromTheAdvertisedAddressToGlobalPeers)
+{
+	const auto advertised = CNetworkAddress::FromString("2a02:8070:1:2::1");
+	const auto globalPeer = CNetworkAddress::FromString("2606:4700:4700::1111");
+
+	ASSERT_TRUE(OutboundIPv6Source(advertised, globalPeer) == advertised);
+}
+
+// Nothing advertised keeps the system's choice, which is the temporary address that protects
+// privacy. A peer that is not global is reached in another scope, where a global source is wrong.
+TEST(PeerAddressing, OutboundIPv6KeepsTheSystemSourceOtherwise)
+{
+	const auto advertised = CNetworkAddress::FromString("2a02:8070:1:2::1");
+	const auto globalPeer = CNetworkAddress::FromString("2606:4700:4700::1111");
+
+	ASSERT_TRUE(OutboundIPv6Source(CNetworkAddress::Absent(), globalPeer).IsAbsent());
+	ASSERT_TRUE(OutboundIPv6Source(advertised, CNetworkAddress::FromString("fe80::1%3")).IsAbsent());
+	ASSERT_TRUE(OutboundIPv6Source(advertised, CNetworkAddress::FromString("fd00::1")).IsAbsent());
+	ASSERT_TRUE(OutboundIPv6Source(advertised, CNetworkAddress::FromString("::1")).IsAbsent());
+	ASSERT_TRUE(OutboundIPv6Source(CNetworkAddress::FromString("fd00::2"), globalPeer).IsAbsent());
+}
+
+// A second connection carrying a known user hash from another address is banned as a forged hash.
+// It must not be when the address belongs to the same host: the one the peer advertised, or another
+// address in its /64, such as a fresh Windows temporary address beside the one it is known by.
+TEST(PeerAddressing, AnotherAddressOfTheSameHostIsNotAForgedHash)
+{
+	const auto known = CNetworkAddress::FromString("2a07:1:2:3::bd1");
+	const auto advertised = CNetworkAddress::FromString("2a07:1:2:3::a441");
+
+	ASSERT_TRUE(IsSameHostAddress(known, known, CNetworkAddress::Absent()));
+	ASSERT_TRUE(IsSameHostAddress(known, advertised, advertised));
+	ASSERT_TRUE(IsSameHostAddress(
+		known, CNetworkAddress::FromString("2a07:1:2:3::7e"), CNetworkAddress::Absent()));
+	ASSERT_TRUE(IsSameHostAddress(CNetworkAddress::FromString("192.0.2.1"), advertised, advertised));
+}
+
+// Anything else is still treated as a forged hash: another /64, or two different IPv4 addresses.
+TEST(PeerAddressing, AnAddressOutsideTheHostIsStillAForgedHash)
+{
+	const auto known = CNetworkAddress::FromString("2a07:1:2:3::bd1");
+	const auto none = CNetworkAddress::Absent();
+
+	ASSERT_FALSE(IsSameHostAddress(known, CNetworkAddress::FromString("2a07:1:2:4::bd1"), none));
+	ASSERT_FALSE(IsSameHostAddress(
+		CNetworkAddress::FromString("192.0.2.1"), CNetworkAddress::FromString("192.0.2.2"), none));
+	ASSERT_FALSE(IsSameHostAddress(CNetworkAddress::FromString("192.0.2.1"), known, none));
+	ASSERT_FALSE(IsSameHostAddress(none, known, none));
+	// An advertised IPv6 widens the host to its own /64 only.
+	ASSERT_FALSE(IsSameHostAddress(CNetworkAddress::FromString("192.0.2.1"),
+		CNetworkAddress::FromString("2a07:1:2:4::7e"),
+		CNetworkAddress::FromString("2a07:1:2:3::a441")));
+}
+
+// A peer known by IPv4 and dialled at its advertised IPv6 (#1872) opens an overlapping connection
+// from a Windows temporary address: its identity has no /64, so the advertised one decides.
+TEST(PeerAddressing, ATemporaryAddressBesideTheAdvertisedOneIsTheSameHost)
+{
+	const auto ipv4 = CNetworkAddress::FromString("192.0.2.1");
+	const auto advertised = CNetworkAddress::FromString("2a07:1:2:3::a441");
+	const auto temporary = CNetworkAddress::FromString("2a07:1:2:3:9807:7c6b:846d:bd1");
+
+	ASSERT_TRUE(IsSameHostAddress(ipv4, temporary, advertised));
+	ASSERT_FALSE(IsSameHostAddress(ipv4, temporary, CNetworkAddress::Absent()));
+}
+
+// File_checked_for_headers
+
+TEST(PeerAddressing, AnIPv4AndANativeIPv6AreOfOtherFamilies)
+{
+	const auto v4 = CNetworkAddress::FromString("192.0.2.1");
+	const auto mapped = CNetworkAddress::FromString("::ffff:192.0.2.9");
+	const auto v6 = CNetworkAddress::FromString("2a07:1:2:3::bd1");
+	ASSERT_TRUE(IsOtherFamily(v4, v6));
+	ASSERT_TRUE(IsOtherFamily(v6, mapped));
+	ASSERT_FALSE(IsOtherFamily(v4, mapped));
+	ASSERT_FALSE(IsOtherFamily(v6, CNetworkAddress::FromString("2a07:9::1")));
+	ASSERT_FALSE(IsOtherFamily(v4, CNetworkAddress::Absent()));
+}

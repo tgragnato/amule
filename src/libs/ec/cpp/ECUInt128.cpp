@@ -22,31 +22,25 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
-// Implementation of these functions cannot be in ECTag.cpp, because here we
-// use non-inline member functions of CUInt128.  This way these functions are
-// only needed if we actually use the CUInt128 class, and will not cause
-// linker errors for apps like aMuleCmd, which don't use CUInt128.
-//
-// The other working possibility would be to make all these functions inline
-// members of CECTag, but that would clutter the header too much.
-
+// These functions cannot live in ECTag.cpp, because they use non-inline member functions of
+// CUInt128. This way they are only needed if the CUInt128 class is actually used, and cause no
+// linker errors for apps like aMuleCmd that do not use it. The other option would be to make them
+// all inline members of CECTag, which would clutter the header too much.
 
 #include "ECTag.h"
 #include "ECSpecialTags.h"
 #include "../../../kademlia/utils/UInt128.h"
 
-
-CECTag::CECTag(ec_tagname_t tagname, const CUInt128& data)
-	: m_tagName(tagname),
-	  m_dataType(EC_TAGTYPE_UINT128),
-	  m_dataLen(16)
+CECTag::CECTag(ec_tagname_t tagname, const CUInt128 &data)
+: m_tagName(tagname)
+, m_dataType(EC_TAGTYPE_UINT128)
+, m_dataLen(16)
 {
 	NewData();
 	data.ToByteArray(reinterpret_cast<uint8_t *>(m_tagData));
 }
 
-void CECTag::AddTag(ec_tagname_t name, const CUInt128& data, CValueMap *valuemap)
+void CECTag::AddTag(ec_tagname_t name, const CUInt128 &data, CValueMap *valuemap)
 {
 	if (valuemap) {
 		valuemap->CreateTag(name, data, this);
@@ -57,18 +51,11 @@ void CECTag::AddTag(ec_tagname_t name, const CUInt128& data, CValueMap *valuemap
 
 CUInt128 CECTag::GetInt128Data() const
 {
-	if (m_dataType != EC_TAGTYPE_UINT128) {
-		EC_ASSERT(m_dataType == EC_TAGTYPE_UNKNOWN);
+	if (m_dataType != EC_TAGTYPE_UINT128 || m_tagData == nullptr) {
 		return CUInt128(false);
 	}
 
-	EC_ASSERT(m_tagData != NULL);
-
-	if (m_tagData) {
-		return CUInt128(reinterpret_cast<const uint8_t *>(m_tagData));
-	} else {
-		return CUInt128(false);
-	}
+	return CUInt128(reinterpret_cast<const uint8_t *>(m_tagData));
 }
 
 CUInt128 CECTag::AssignIfExist(ec_tagname_t tagname, CUInt128 *target) const

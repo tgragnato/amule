@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <defs>
+    <linearGradient id="bell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffdd70"/>
+      <stop offset="1" stop-color="#e29a12"/>
+    </linearGradient>
+  </defs>
+  <!-- hanger loop on top -->
+  <path d="M8 1.6 a1.15 1.15 0 0 0 -1.15 1.15 a1.15 1.15 0 0 0 2.3 0 A1.15 1.15 0 0 0 8 1.6 Z"
+        fill="url(#bell)" stroke="#b9791a" stroke-width="0.45"/>
+  <!-- bell body: dome that flares to a rim at the bottom -->
+  <path d="M8 3.1 C5.5 3.1 4.5 5.4 4.5 7.9 C4.5 9.9 4.05 10.9 3.35 11.55 A0.55 0.55 0 0 0 3.72 12.5 H12.28 A0.55 0.55 0 0 0 12.65 11.55 C11.95 10.9 11.5 9.9 11.5 7.9 C11.5 5.4 10.5 3.1 8 3.1 Z"
+        fill="url(#bell)" stroke="#b9791a" stroke-width="0.5"/>
+  <!-- clapper -->
+  <circle cx="8" cy="13.35" r="1.15" fill="url(#bell)" stroke="#b9791a" stroke-width="0.45"/>
+  <!-- left-side highlight -->
+  <path d="M6.5 5 C5.85 5.9 5.6 6.9 5.6 8" fill="none" stroke="#fff4cc" stroke-width="0.6" stroke-linecap="round" opacity="0.8"/>
+</svg>

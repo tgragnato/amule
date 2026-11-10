@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <defs>
+    <linearGradient id="uB" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#6bce7d"/>
+      <stop offset="0.55" stop-color="#37b048"/>
+      <stop offset="1" stop-color="#17803a"/>
+    </linearGradient>
+    <radialGradient id="uH" cx="0.42" cy="0.36" r="0.92">
+      <stop offset="0" stop-color="#c2efc9"/>
+      <stop offset="0.5" stop-color="#46b854"/>
+      <stop offset="1" stop-color="#178036"/>
+    </radialGradient>
+  </defs>
+  <!-- both arms: rounded, angled slightly outward -->
+  <path d="M5.73 7.65 C3.72 8.59 2.46 10.93 1.83 13.74 C1.57 15.03 2.83 15.49 3.59 14.44 C4.35 12.1 5.35 10.11 6.74 8.94 Z"
+        fill="url(#uB)" stroke="#0f5a24" stroke-width="0.65" stroke-linejoin="round"/>
+  <path d="M10.27 7.65 C12.28 8.59 13.54 10.93 14.17 13.74 C14.43 15.03 13.17 15.49 12.41 14.44 C11.65 12.1 10.65 10.11 9.26 8.94 Z"
+        fill="url(#uB)" stroke="#0f5a24" stroke-width="0.65" stroke-linejoin="round"/>
+  <!-- torso, facing front; cut flush with the bottom of the arms -->
+  <path d="M8.0 6.95 C10.52 6.95 12.28 8.59 12.28 11.16 L12.16 14.56 Q12.16 15.26 11.4 15.26 L4.6 15.26 Q3.84 15.26 3.84 14.56 L3.72 11.16 C3.72 8.59 5.48 6.95 8.0 6.95 Z"
+        fill="url(#uB)" stroke="#0f5a24" stroke-width="0.65" stroke-linejoin="round"/>
+  <!-- head, facing front -->
+  <ellipse cx="8.0" cy="3.79" rx="3.65" ry="3.39" fill="url(#uH)" stroke="#0f5a24" stroke-width="0.65"/>
+  <!-- gloss -->
+  <ellipse cx="6.61" cy="2.74" rx="1.45" ry="1.58" fill="#ffffff" opacity="0.55"/>
+  <rect x="7.12" y="8.82" width="1.76" height="5.15" rx="0.88" fill="#ffffff" opacity="0.26"/>
+</svg>

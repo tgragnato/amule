@@ -26,9 +26,11 @@
 #ifndef TRANSFERWND_H
 #define TRANSFERWND_H
 
-#include <wx/panel.h>	// Needed for wxPanel
-#include <wx/notebook.h>	// needed for wxBookCtrlEvent in wx 2.8
-#include "Types.h"		// Needed for uint32
+#include <memory>
+
+#include <wx/panel.h>    // Needed for wxPanel
+#include <wx/notebook.h> // needed for wxBookCtrlEvent in wx 2.8
+#include "Types.h"       // Needed for uint32
 #include "OtherStructs.h"
 
 class CSourceListCtrl;
@@ -36,141 +38,136 @@ class CDownloadListCtrl;
 class CMuleNotebook;
 class wxListCtrl;
 class wxSplitterEvent;
+class CClientListSplitter;
 class wxCommandEvent;
 class wxMouseEvent;
 class wxEvent;
 class wxMenu;
 
 /**
- * This class takes care of managing the lists and other controls contained
- * in the transfer-window. It's primary function is to manage the user-defined
+ * Manages the lists and other controls in the transfer window; primarily, the user-defined
  * categories.
  */
 class CTransferWnd : public wxPanel
 {
 public:
-	/**
-	 * Constructor.
-	 */
-	CTransferWnd(wxWindow* pParent = NULL);
+	CTransferWnd(wxWindow *pParent = NULL);
 
-	/**
-	 * Destructor.
-	 */
 	~CTransferWnd();
 
-
 	/**
-	 * Adds the specified category to the end of the list.
-	 *
-	 * @param category A pointer to the new category.
-	 *
-	 * This function should be called after a category has been
-	 * added to the lists of categories. The new category is assumed
-	 * to be the last, and thus will be appended to the end of the tabs
-	 * on the category-notebook.
+	 * Adds @a category to the end of the list. Call after the category has been added to the
+	 * lists of categories: the new one is assumed to be the last, and is appended to the end of
+	 * the tabs on the category notebook.
 	 */
-	void AddCategory( Category_Struct* category );
+	void AddCategory(Category_Struct *category);
 
 	/**
-	 * Updates the title of the specified category.
-	 *
-	 * @param index The index of the category on the notebook. -1 will update all categories.
+	 * Updates the title of the category at notebook index @a index; -1 updates all of them.
 	 */
 	void UpdateCategory(int index);
 
 	/**
-	 * Remove category
+	 * Removes a category.
 	 */
 	void RemoveCategory(int index);
+	//! Everything that follows a category really being gone. Split out so the
+	//! monolithic build can run it inline and amulegui from the EC reply.
+	void CommitRemoveCategory(int index);
 	void RemoveCategoryPage(int index);
 
 	/**
-	 * Helper-function which updates the displayed titles of all existing categories.
+	 * Updates the displayed titles of every existing category.
 	 */
-	void	UpdateCatTabTitles() { UpdateCategory(-1); }
-
+	void UpdateCatTabTitles() { UpdateCategory(-1); }
 
 	/**
-	 * Call this function before displaying the dialog.
-	 *
-	 * This functions does a few tasks to ensure that the dialog is looking the right way.
+	 * Call before displaying the dialog: does a few tasks to make sure it looks the right way.
 	 */
-	void	Prepare();
+	void Prepare();
 
 	//! Pointer to the download-queue.
-	CDownloadListCtrl*	downloadlistctrl;
+	CDownloadListCtrl *downloadlistctrl;
 	//! Pointer to the list of clients.
-	CSourceListCtrl*	clientlistctrl;
+	CSourceListCtrl *clientlistctrl;
 
 private:
 	//! Contains the current (or last if the clientlist is hidden) position of the splitter.
 	int m_splitter;
-	//! Minimum position of splitter bar
-	static const int s_splitterMin = 90;
+	//! Collapse, restore and sash dragging of the client list.
+	std::unique_ptr<CClientListSplitter> m_clientListSplitter;
 
 	/**
-	 * Event-handler for the set status by category menu-item.
+	 * Handler for the set-status-by-category menu item.
 	 */
-	void OnSetCatStatus( wxCommandEvent& event );
+	void OnSetCatStatus(wxCommandEvent &event);
 
 	/**
-	 * Event-handler for the set priority by category menu-item.
+	 * Handler for the set-priority-by-category menu item.
 	 */
-	void OnSetCatPriority( wxCommandEvent& event );
+	void OnSetCatPriority(wxCommandEvent &event);
 
 	/**
-	 * Event-handler for the "Add Category" menu-item.
+	 * Handler for the "Add Category" menu item.
 	 */
-	void OnAddCategory( wxCommandEvent& event );
+	void OnAddCategory(wxCommandEvent &event);
 
 	/**
-	 * Event-handler for the "Delete Category" menu-item.
+	 * Handler for the "Delete Category" menu item.
 	 */
-	void OnDelCategory( wxCommandEvent& event );
+	void OnDelCategory(wxCommandEvent &event);
 
 	/**
-	 * Event-handler for the "Edit Category" menu-item.
+	 * Handler for the "Edit Category" menu item.
 	 */
-	void OnEditCategory( wxCommandEvent& event );
+	void OnEditCategory(wxCommandEvent &event);
+
+	/// Open the selected category's destination in the local file manager.
+	void OnOpenCategoryFolder(wxCommandEvent &event);
 
 	/**
-	 * Event-handler for manipulating the default category.
+	 * Handler for manipulating the default category.
 	 */
-	void OnSetDefaultCat( wxCommandEvent& event );
+	void OnSetDefaultCat(wxCommandEvent &event);
 
 	/**
-	 * Event-handler for the "Clear Completed" button.
+	 * Handler for the "Clear Completed" button.
 	 */
 	void OnBtnClearDownloads(wxCommandEvent &evt);
 
-	/**
-	 * Event-handler for changing categories.
-	 */
-	void OnCategoryChanged(wxBookCtrlEvent& evt);
+#ifdef __WXMAC__
+	//! Vertically centres the header controls on the category tabs' page bezel.
+	void CentreHeaderOnCategoryBar();
+#endif
+
+	/** Live text-filter box changed: push the new text to the download list. */
+	void OnFilterChanged(wxCommandEvent &evt);
 
 	/**
-	 * Event-handler for displaying the category-popup menu.
+	 * Handler for changing categories.
 	 */
-	void OnNMRclickDLtab(wxMouseEvent& evt);
+	void OnCategoryChanged(wxBookCtrlEvent &evt);
 
 	/**
-	 * Event-handler for the list-toggle button.
+	 * Handler for displaying the category popup menu.
 	 */
-	void OnToggleClientList( wxCommandEvent& event );
+	void OnNMRclickDLtab(wxMouseEvent &evt);
 
 	/**
-	 * Event-handler for changes in the sash divider position.
+	 * Handler for the list-toggle button.
 	 */
-	void OnSashPositionChanging(wxSplitterEvent& evt);
+	void OnToggleClientList(wxCommandEvent &event);
 
+	/**
+	 * Handler for changes in the sash divider position.
+	 */
+	void OnSashPositionChanging(wxSplitterEvent &evt);
 
 	//! Variable used to ensure that the category menu doesn't get displayed twice.
-	wxMenu* m_menu;
+	wxMenu *m_menu;
 
 	//! Pointer to the category tabs.
-	CMuleNotebook* m_dlTab;
-
+	CMuleNotebook *m_dlTab;
 
 	wxDECLARE_EVENT_TABLE();
 };

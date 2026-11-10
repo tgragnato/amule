@@ -1,0 +1,313 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+//
+
+#include "PathPatterns.h"
+
+#include <cstdint>
+
+namespace web_api_path
+{
+
+std::vector<std::string> SplitPath(const std::string &path)
+{
+	std::vector<std::string> out;
+	if (path.empty()) {
+		return out;
+	}
+	// A leading '/' is the conventional "absolute" form, so skip the empty segment it would
+	// produce. A trailing '/' still emits its empty segment, so it stays distinguishable from
+	// "no trailing slash".
+	size_t i = (path[0] == '/') ? 1 : 0;
+	std::string cur;
+	for (; i < path.size(); ++i) {
+		if (path[i] == '/') {
+			out.push_back(cur);
+			cur.clear();
+		} else {
+			cur += path[i];
+		}
+	}
+	out.push_back(cur);
+	return out;
+}
+
+bool LooksMalicious(const std::string &path)
+{
+	// NUL byte anywhere. Some downstream tooling (sscanf, fopen) is
+	// NUL-terminated; embedded NULs are a classic injection vector.
+	if (path.find('\0') != std::string::npos)
+		return true;
+
+	// Encoded NUL -- an explicit reject even though today's routes do not percent-decode path
+	// segments. A future hash-by-name endpoint that does decode would otherwise admit this.
+	for (size_t i = 0; i + 2 < path.size(); ++i) {
+		if (path[i] != '%')
+			continue;
+		const char h = path[i + 1];
+		const char l = path[i + 2];
+		if (h == '0' && l == '0')
+			return true;
+	}
+
+	// Encoded ".." (percent-encoded dot). Match `%2e` and `%2E` in both hex cases. The more
+	// exotic `%2e%2E` / `%2E%2e` orderings are not worth bothering with: the simple loop
+	// catches any pair of adjacent `%2e`-looking triplets.
+	for (size_t i = 0; i + 5 < path.size(); ++i) {
+		const bool dot1 =
+			path[i] == '%' && path[i + 1] == '2' && (path[i + 2] == 'e' || path[i + 2] == 'E');
+		if (!dot1)
+			continue;
+		const bool dot2 = path[i + 3] == '%' && path[i + 4] == '2' &&
+				  (path[i + 5] == 'e' || path[i + 5] == 'E');
+		if (dot2)
+			return true;
+	}
+
+	// Literal ".." segment. SplitPath would happily emit a "..", so walk every "/"-delimited
+	// chunk and reject any that equals "..".
+	size_t seg_start = (path[0] == '/') ? 1 : 0;
+	for (size_t i = seg_start; i <= path.size(); ++i) {
+		const bool boundary = (i == path.size()) || (path[i] == '/');
+		if (!boundary)
+			continue;
+		if (i - seg_start == 2 && path[seg_start] == '.' && path[seg_start + 1] == '.') {
+			return true;
+		}
+		seg_start = i + 1;
+	}
+
+	return false;
+}
+
+// See PathPatterns.h.
+std::string StripTrailingSlash(const std::string &path)
+{
+	if (path.size() > 1 && path.back() == '/') {
+		return path.substr(0, path.size() - 1);
+	}
+	return path;
+}
+
+// See PathPatterns.h.
+bool NormalizeBasePath(const std::string &in, std::string &out)
+{
+	std::string path = (in.empty() || in[0] != '/') ? "/" + in : in;
+	while (path.size() > 1 && path.back() == '/') {
+		path.pop_back();
+	}
+	if (path == "/") {
+		out.clear();
+		return true;
+	}
+	for (const std::string &seg : SplitPath(path)) {
+		if (seg.empty() || seg == "." || seg == "..") {
+			return false;
+		}
+		for (const char c : seg) {
+			const bool unreserved = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+						(c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_' ||
+						c == '~';
+			if (!unreserved) {
+				return false;
+			}
+		}
+	}
+	out = path;
+	return true;
+}
+
+// See PathPatterns.h.
+BasePathMatch StripBasePath(const std::string &base, std::string &target)
+{
+	if (base.empty() || target.compare(0, base.size(), base) != 0) {
+		return BasePathMatch::Outside;
+	}
+	if (target.size() == base.size() || target[base.size()] == '?') {
+		return BasePathMatch::Bare;
+	}
+	if (target[base.size()] != '/') {
+		return BasePathMatch::Outside;
+	}
+	target.erase(0, base.size());
+	return BasePathMatch::Inside;
+}
+
+// See PathPatterns.h.
+bool ParseBoundedUint(const std::string &s, std::uint64_t min, std::uint64_t max, std::uint64_t &out)
+{
+	if (s.empty()) {
+		return false;
+	}
+	std::uint64_t v = 0;
+	for (char c : s) {
+		if (c < '0' || c > '9') {
+			return false;
+		}
+		v = v * 10 + static_cast<std::uint64_t>(c - '0');
+		if (v > max) {
+			return false;
+		}
+	}
+	if (v < min) {
+		return false;
+	}
+	out = v;
+	return true;
+}
+
+// See PathPatterns.h.
+bool ParseBoolValue(const std::string &s, bool &out)
+{
+	if (s == "1" || s == "true" || s == "yes") {
+		out = true;
+		return true;
+	}
+	if (s == "0" || s == "false" || s == "no") {
+		out = false;
+		return true;
+	}
+	return false;
+}
+
+namespace
+{
+int HexNibble(char c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	return -1;
+}
+
+// Percent-decode an application/x-www-form-urlencoded fragment. `+` becomes space (form
+// convention), `%hh` becomes a byte; a malformed `%hh` passes through verbatim so a stray `%` does
+// not drop characters.
+std::string PercentDecode(const std::string &in)
+{
+	std::string out;
+	out.reserve(in.size());
+	for (size_t i = 0; i < in.size(); ++i) {
+		if (in[i] == '+') {
+			out += ' ';
+		} else if (in[i] == '%' && i + 2 < in.size()) {
+			const int hi = HexNibble(in[i + 1]);
+			const int lo = HexNibble(in[i + 2]);
+			if (hi >= 0 && lo >= 0) {
+				out += static_cast<char>((hi << 4) | lo);
+				i += 2;
+			} else {
+				out += in[i];
+			}
+		} else {
+			out += in[i];
+		}
+	}
+	return out;
+}
+} // namespace
+
+std::map<std::string, std::string> ParseQuery(const std::string &q)
+{
+	std::map<std::string, std::string> out;
+	std::string key, val;
+	bool in_val = false;
+	for (size_t i = 0; i < q.size(); ++i) {
+		const char c = q[i];
+		if (c == '=' && !in_val) {
+			in_val = true;
+		} else if (c == '&') {
+			if (!key.empty()) {
+				out[PercentDecode(key)] = PercentDecode(val);
+			}
+			key.clear();
+			val.clear();
+			in_val = false;
+		} else {
+			(in_val ? val : key) += c;
+		}
+	}
+	if (!key.empty()) {
+		out[PercentDecode(key)] = PercentDecode(val);
+	}
+	return out;
+}
+
+RoutePattern ParsePattern(const std::string &pattern)
+{
+	RoutePattern out;
+	out.segments = SplitPath(pattern);
+	out.capture_names.reserve(out.segments.size());
+	for (size_t i = 0; i < out.segments.size(); ++i) {
+		const std::string &seg = out.segments[i];
+		if (seg.size() >= 2 && seg.front() == '{' && seg.back() == '}') {
+			out.capture_names.push_back(seg.substr(1, seg.size() - 2));
+		} else {
+			out.capture_names.push_back(std::string());
+		}
+	}
+	return out;
+}
+
+bool Match(const RoutePattern &pattern,
+	const std::vector<std::string> &path_segments,
+	std::map<std::string, std::string> &out_captures)
+{
+	if (pattern.segments.size() != path_segments.size()) {
+		return false;
+	}
+	std::map<std::string, std::string> caps;
+	for (size_t i = 0; i < pattern.segments.size(); ++i) {
+		if (!pattern.capture_names[i].empty()) {
+			// See the header: an empty capture names no resource.
+			if (path_segments[i].empty()) {
+				return false;
+			}
+			caps[pattern.capture_names[i]] = path_segments[i];
+		} else if (pattern.segments[i] != path_segments[i]) {
+			return false;
+		}
+	}
+	out_captures.swap(caps);
+	return true;
+}
+
+bool ShapeEqual(const RoutePattern &a, const RoutePattern &b)
+{
+	if (a.segments.size() != b.segments.size())
+		return false;
+	for (size_t i = 0; i < a.segments.size(); ++i) {
+		const bool a_cap = !a.capture_names[i].empty();
+		const bool b_cap = !b.capture_names[i].empty();
+		if (a_cap != b_cap)
+			return false;
+		if (!a_cap && a.segments[i] != b.segments[i])
+			return false;
+	}
+	return true;
+}
+
+} // namespace web_api_path

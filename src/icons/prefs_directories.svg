@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <defs>
+    <linearGradient id="dirBack" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f6c65b"/>
+      <stop offset="1" stop-color="#e0951f"/>
+    </linearGradient>
+    <linearGradient id="dirFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe6a3"/>
+      <stop offset="1" stop-color="#f4b544"/>
+    </linearGradient>
+  </defs>
+  <!-- Back panel with the folder tab -->
+  <path d="M1.4 4.9 a1 1 0 0 1 1 -1 h3.1 a0.6 0.6 0 0 1 0.44 0.19 l1.22 1.31 H13.6 a1 1 0 0 1 1 1 v5.5 a1 1 0 0 1 -1 1 H2.4 a1 1 0 0 1 -1 -1 Z"
+        fill="url(#dirBack)" stroke="#b9791a" stroke-width="0.5"/>
+  <!-- Open front pocket -->
+  <path d="M2.1 7.35 H13.9 v4.4 a0.85 0.85 0 0 1 -0.85 0.85 H2.95 a0.85 0.85 0 0 1 -0.85 -0.85 Z"
+        fill="url(#dirFront)" stroke="#c8892a" stroke-width="0.5"/>
+  <!-- Soft top highlight on the front edge -->
+  <path d="M2.7 7.9 H13.3" fill="none" stroke="#fff3d4" stroke-width="0.55" stroke-linecap="round" opacity="0.7"/>
+</svg>

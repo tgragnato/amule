@@ -28,20 +28,62 @@
 #define CRYPTOPP_ENABLE_NAMESPACE_WEAK 1
 
 #ifndef CRYPTOPP_INCLUDE_PREFIX
-	#include "config.h"		// Needed for CRYPTOPP_INCLUDE_PREFIX
+#include "config.h" // Needed for CRYPTOPP_INCLUDE_PREFIX
 #endif
 
-#define noinline	noinline
+#define noinline noinline
 
-#define CRYPTO_HEADER(hdr)	<CRYPTOPP_INCLUDE_PREFIX/hdr>
+#define CRYPTO_HEADER(hdr) <CRYPTOPP_INCLUDE_PREFIX/hdr>
 
-#include CRYPTO_HEADER(cryptopp/config.h)
-#include CRYPTO_HEADER(cryptopp/md4.h)
-#include CRYPTO_HEADER(cryptopp/rsa.h)
-#include CRYPTO_HEADER(cryptopp/base64.h)
-#include CRYPTO_HEADER(cryptopp/osrng.h)
-#include CRYPTO_HEADER(cryptopp/files.h)
-#include CRYPTO_HEADER(cryptopp/sha.h)
-#include CRYPTO_HEADER(cryptopp/des.h)
+// cryptopp's headers are heavy on C++03 patterns: virtual dtors that bring in the deprecated
+// implicit copy ctor (P0806 rule), and throw(...) dynamic exception specs formally removed in
+// C++17. On Homebrew macOS the cryptopp include directory reaches consumers via CPATH (an `-I`
+// alias) rather than as `-isystem`, so a strict deprecation-warning audit build (`-Wdeprecated-
+// declarations -Wdeprecated-copy -Wdeprecated`) surfaces ~200 warnings from cryptopp headers alone.
+// GCC's -Wdeprecated-copy does not decompose into the -with-user-provided-dtor sub-case, so this
+// only bites Clang builds today; the pragma is scoped to Clang-known sub-flags for that reason.
+// Local to cryptopp includes; nothing else in the translation unit is affected.
+#include "WarningsPush_CryptoPP.h"
+
+#include CRYPTO_HEADER(config.h)
+#include CRYPTO_HEADER(md4.h)
+#include CRYPTO_HEADER(md5.h)
+#include CRYPTO_HEADER(rsa.h)
+#include CRYPTO_HEADER(sha.h)
+#include CRYPTO_HEADER(base64.h)
+#include CRYPTO_HEADER(osrng.h)
+#include CRYPTO_HEADER(files.h)
+#include CRYPTO_HEADER(sha.h)
+#include CRYPTO_HEADER(des.h)
+
+// Opt-in AEAD block. Kept behind a macro because this header reaches most of the tree through
+// MD5Sum.h, and gcm/chachapoly are heavy: only the EC packet layer needs them. Defining
+// CRYPTOPP_INC_NEED_AEAD before including this header pulls them in under the same deprecation
+// pragmas as everything above, so there is still exactly one place that knows how to include
+// cryptopp safely.
+#ifdef CRYPTOPP_INC_NEED_AEAD
+#include CRYPTO_HEADER(aes.h)
+#include CRYPTO_HEADER(gcm.h)
+#include CRYPTO_HEADER(hmac.h)
+// ChaCha20-Poly1305 arrived in cryptopp 8.1, which is aMule's floor, so it is always compiled in.
+// The EC layer still *negotiates* it, because that is about what the peer can do, not what this
+// build has.
+#include CRYPTO_HEADER(chachapoly.h)
+#include CRYPTO_HEADER(xed25519.h)
+// Runtime CPU feature probes, for picking the cipher the hardware is fastest at. In the AEAD block
+// for the same reason as the rest: only the EC layer asks, and this header reaches most of the tree
+// through MD5Sum.h.
+#include CRYPTO_HEADER(cpu.h)
+#endif
+
+// SRP arithmetic and password stretching are needed only by the EC verifier.
+#ifdef CRYPTOPP_INC_NEED_SRP
+#include CRYPTO_HEADER(integer.h)
+#include CRYPTO_HEADER(nbtheory.h)
+#include CRYPTO_HEADER(scrypt.h)
+#include CRYPTO_HEADER(hmac.h)
+#endif
+
+#include "WarningsPop.h"
 
 #endif /* CRYPTOPP_INC_H */

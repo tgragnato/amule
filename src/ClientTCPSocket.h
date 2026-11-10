@@ -23,20 +23,28 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-//
 // Handling incoming connections (up or downloadrequests)
-//
 
 #ifndef CLIENTTCPSOCKET_H
 #define CLIENTTCPSOCKET_H
 
-#include "EMSocket.h"		// Needed for CEMSocket
+// AMULE_UTP_TRANSPORT and AMULE_QUIC_TRANSPORT change this header and are defined only for
+// amule and amuled. A shared library unit would see another layout than the binary it links into.
+#ifdef AMULE_LIBRARY_UNIT
+#error "ClientTCPSocket.h depends on the amule/amuled transport defines; compile this unit in those targets"
+#endif
+
+#include "EMSocket.h" // Needed for CEMSocket
+#ifdef AMULE_UTP_TRANSPORT
+#include "UtpDialPolicy.h" // Needed for the incoming SYN winner token
+#endif
+#include "SessionTrafficStats.h" // Needed for AMULE_SESSION_TRAFFIC_STATS
+
+#include <atomic>
 
 class CProxyData;
 
-//------------------------------------------------------------------------------
 // CClientTCPSocket
-//------------------------------------------------------------------------------
 
 class CUpDownClient;
 class CPacket;
@@ -45,58 +53,111 @@ class CTimerWnd;
 class CClientTCPSocket : public CEMSocket
 {
 public:
-	CClientTCPSocket(CUpDownClient* in_client = NULL, const CProxyData *ProxyData = NULL);
+	enum class AdmissionTransport
+	{
+		TCP,
+		UTP,
+		QUIC
+	};
+
+	//! When the socket counts against the connections-per-five-seconds limit.
+	enum class ConnectionCount
+	{
+		AtCreation,
+		//! An accepted uTP stream: a SYN proves no address, so only its peer's first data counts.
+		AtFirstData
+	};
+
+	CClientTCPSocket(CUpDownClient *in_client = nullptr,
+		const CProxyData *ProxyData = nullptr,
+		ConnectionCount count = ConnectionCount::AtCreation);
 	virtual ~CClientTCPSocket();
 
-	void		Disconnect(const wxString& strReason);
+	void Disconnect(const wxString &strReason);
 
-	bool		InitNetworkData();
+	bool InitNetworkData(AdmissionTransport transport);
+#ifdef AMULE_UTP_TRANSPORT
+	//! Hands this peer's obfuscation preference and hash to an attached stream.
+	void ApplyUtpCryptParameters();
+	bool HasUtpTransport() const { return HasTransport() && GetTransport()->IsUtp(); }
+	bool IsUtpInbound() const;
+	//! uTP or QUIC.
+	bool IsTransportInbound() const { return HasTransport() && GetTransport()->IsInbound(); }
+	void SetUtpIncomingSynWinner(uint32_t peerToken) { m_utpIncomingSynWinner.Select(peerToken); }
+	bool ConsumeUtpIncomingSynWinner(uint32_t peerToken)
+	{
+		return m_utpIncomingSynWinner.Consume(peerToken);
+	}
+	uint32_t TakeUtpIncomingSynWinner() { return m_utpIncomingSynWinner.Take(); }
+	void ClearUtpIncomingSynWinner() { m_utpIncomingSynWinner.Clear(); }
+#endif
 
-	bool		CheckTimeOut();
+	bool CheckTimeOut();
 
-	void		Safe_Delete();
-	void		Safe_Delete_Client();
+	void Safe_Delete();
+	void Safe_Delete_Client();
 
-	void		OnConnect(int nErrorCode) override;
-	void		OnSend(int nErrorCode) override;
-	void		OnReceive(int nErrorCode) override;
+	void OnConnect(int nErrorCode) override;
+	void OnSend(int nErrorCode) override;
+	void OnReceive(int nErrorCode) override;
 
-	void		OnClose(int nErrorCode) override;
-	void		OnError(int nErrorCode) override;
+	void OnClose(int nErrorCode) override;
+	void OnError(int nErrorCode) override;
 
-	uint32		GetRemoteIP() const { return m_remoteip; }
+	//! Legacy IPv4 accessor; use GetRemoteAddress() for the authoritative peer identity.
+	uint32 GetRemoteIP() const { return m_remoteip; }
+	//! Accepted socket peer: mapped IPv4 is canonicalized to plain IPv4 at ingress;
+	//! native IPv6 retains its family and scope. Use IndexKey() for client identity.
+	const CNetworkAddress &GetRemoteAddress() const { return m_remoteAddress; }
 
-	CUpDownClient* GetClient() { return m_client; }
+	CUpDownClient *GetClient() { return m_client; }
 
-	void		SendPacket(CPacket* packet, bool delpacket = true, bool controlpacket = true, uint32 actualPayloadSize = 0) override;
-	SocketSentBytes SendControlData(uint32 maxNumberOfBytesToSend, uint32 overchargeMaxBytesToSend) override;
-	SocketSentBytes SendFileAndControlData(uint32 maxNumberOfBytesToSend, uint32 overchargeMaxBytesToSend) override;
+	void SendPacket(CPacket *packet,
+		bool delpacket = true,
+		bool controlpacket = true,
+		uint32 actualPayloadSize = 0) override;
+	SocketSentBytes SendControlData(
+		uint32 maxNumberOfBytesToSend, uint32 overchargeMaxBytesToSend) override;
+	SocketSentBytes SendFileAndControlData(
+		uint32 maxNumberOfBytesToSend, uint32 overchargeMaxBytesToSend) override;
 
-	// Bypass the global download bandwidth throttler when the inbound
-	// peer is actually the ed2k server's HighID-callback probe (#778).
-	// CServerSocket already opts out by overriding to false; this
-	// extends the same shape to inbound peer connections whose source
-	// IP matches the connected (or currently-connecting) server, so a
-	// saturated peer-side budget doesn't delay the probe past the
-	// server's verification timer and leave us in permanent LowID.
-	// Implemented out-of-line in the .cpp because we need theApp /
-	// CServerConnect, which the header can't see.
-	bool		IsDownloadThrottled() const override;
+	// Bypass the global download bandwidth throttler when the inbound peer is really the ed2k
+	// server's HighID-callback probe (#778). CServerSocket already opts out by overriding to
+	// false; this extends the same shape to inbound peer connections whose source IP matches
+	// the connected (or currently connecting) server, so a saturated peer-side budget does not
+	// delay the probe past the server's verification timer and leave us in permanent LowID.
+	// Implemented out of line in the .cpp because it needs theApp / CServerConnect, which the
+	// header cannot see.
+	bool IsDownloadThrottled() const override;
 
 protected:
-	bool		PacketReceived(CPacket* packet) override;
+	bool PacketReceived(CPacket *packet) override;
 
 private:
-	CUpDownClient*	m_client;
+	CUpDownClient *m_client;
+	bool m_connectionCountPending = false;
+#ifdef AMULE_SESSION_TRAFFIC_STATS
+	//! A hello was processed: classify the session's traffic and complete a rendezvous with it.
+	void NoteHelloForStatistics();
+#endif
+#ifdef AMULE_UTP_TRANSPORT
+	bool TryUtpTcpFallback();
+	bool m_utpFallbackAttempted = false;
+	// The transport's IsConnected() turns false again when the stream ends.
+	bool m_utpStreamConnected = false;
+	SUtpIncomingSynWinner m_utpIncomingSynWinner;
+#endif
 
-	bool	ProcessPacket(const uint8_t* packet, uint32 size, uint8 opcode);
-	bool	ProcessExtPacket(const uint8_t* packet, uint32 size, uint8 opcode);
-	bool	ProcessED2Kv2Packet(const uint8_t* packet, uint32 size, uint8 opcode);
-	void	ResetTimeOutTimer();
-	void	SetClient(CUpDownClient* client);
+	bool ProcessPacket(const uint8_t *packet, uint32 size, uint8 opcode);
+	bool ProcessExtPacket(const uint8_t *packet, uint32 size, uint8 opcode);
+	bool ProcessED2Kv2Packet(const uint8_t *packet, uint32 size, uint8 opcode);
+	void ResetTimeOutTimer();
+	void SetClient(CUpDownClient *client);
 
-	uint64	timeout_timer;
-	uint32	m_remoteip;
+	// atomic: the main and throttler threads both reset it
+	std::atomic<uint64> timeout_timer;
+	uint32 m_remoteip;
+	CNetworkAddress m_remoteAddress; // Dial target, or the peer captured at accepted TCP ingress.
 };
 
 #endif // CLIENTTCPSOCKET_H

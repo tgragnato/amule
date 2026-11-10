@@ -23,8 +23,10 @@
 //
 
 #include "Logger.h"
+
+#include <common/MuleDebug.h>       // Needed for ReserveCrashFd
+#include <common/StringFunctions.h> // Needed for char2unicode
 #include "amule.h"
-#include "Preferences.h"
 #include <common/Macros.h>
 #include <common/MacrosProgramSpecific.h>
 #include <sstream>
@@ -33,98 +35,80 @@
 #include <wx/sstream.h>
 #include <wx/filename.h>
 
-
 wxDEFINE_EVENT(MULE_EVT_LOGLINE, wxEvent);
 
-CDebugCategory g_debugcats[] = {
-	CDebugCategory( logGeneral,		"General" ),
-	CDebugCategory( logHasher,		"Hasher" ),
-	CDebugCategory( logClient,		"ED2k Client" ),
-	CDebugCategory( logLocalClient,		"Local Client Protocol" ),
-	CDebugCategory( logRemoteClient,	"Remote Client Protocol" ),
-	CDebugCategory( logPacketErrors,	"Packet Parsing Errors" ),
-	CDebugCategory( logCFile,		"CFile" ),
-	CDebugCategory( logFileIO,		"FileIO" ),
-	CDebugCategory( logZLib,		"ZLib" ),
-	CDebugCategory( logAICHThread,		"AICH-Hasher" ),
-	CDebugCategory( logAICHTransfer,	"AICH-Transfer" ),
-	CDebugCategory( logAICHRecovery,	"AICH-Recovery" ),
-	CDebugCategory( logListenSocket,	"ListenSocket" ),
-	CDebugCategory( logCredits,		"Credits" ),
-	CDebugCategory( logClientUDP,		"ClientUDPSocket" ),
-	CDebugCategory( logDownloadQueue,	"DownloadQueue" ),
-	CDebugCategory( logIPFilter,		"IPFilter" ),
-	CDebugCategory( logKnownFiles,		"KnownFileList" ),
-	CDebugCategory( logPartFile,		"PartFiles" ),
-	CDebugCategory( logSHAHashSet,		"SHAHashSet" ),
-	CDebugCategory( logServer,		"Servers" ),
-	CDebugCategory( logProxy,		"Proxy" ),
-	CDebugCategory( logSearch,		"Searching" ),
-	CDebugCategory( logServerUDP,		"ServerUDP" ),
-	CDebugCategory( logClientKadUDP,	"Client Kademlia UDP" ),
-	CDebugCategory( logKadSearch,		"Kademlia Search" ),
-	CDebugCategory( logKadRouting,		"Kademlia Routing" ),
-	CDebugCategory( logKadIndex,		"Kademlia Indexing" ),
-	CDebugCategory( logKadMain,		"Kademlia Main Thread" ),
-	CDebugCategory( logKadPrefs,		"Kademlia Preferences" ),
-	CDebugCategory( logPfConvert,		"PartFileConvert" ),
-	CDebugCategory( logMuleUDP,		"MuleUDPSocket" ),
-	CDebugCategory( logThreads,		"ThreadScheduler" ),
-	CDebugCategory( logUPnP,		"Universal Plug and Play" ),
-	CDebugCategory( logKadUdpFwTester,	"Kademlia UDP Firewall Tester" ),
-	CDebugCategory( logKadPacketTracking,	"Kademlia Packet Tracking" ),
-	CDebugCategory( logKadEntryTracking,	"Kademlia Entry Tracking" ),
-	CDebugCategory( logEC,			"External Connect" ),
-	CDebugCategory( logHTTP,		"HTTP" ),
-	CDebugCategory( logAsio,		"Asio Sockets" )
-};
-
+CDebugCategory g_debugcats[] = { CDebugCategory(logGeneral, "General"),
+	CDebugCategory(logHasher, "Hasher"),
+	CDebugCategory(logClient, "ED2k Client"),
+	CDebugCategory(logLocalClient, "Local Client Protocol"),
+	CDebugCategory(logRemoteClient, "Remote Client Protocol"),
+	CDebugCategory(logPacketErrors, "Packet Parsing Errors"),
+	CDebugCategory(logCFile, "CFile"),
+	CDebugCategory(logFileIO, "FileIO"),
+	CDebugCategory(logZLib, "ZLib"),
+	CDebugCategory(logAICHThread, "AICH-Hasher"),
+	CDebugCategory(logAICHTransfer, "AICH-Transfer"),
+	CDebugCategory(logAICHRecovery, "AICH-Recovery"),
+	CDebugCategory(logListenSocket, "ListenSocket"),
+	CDebugCategory(logCredits, "Credits"),
+	CDebugCategory(logClientUDP, "ClientUDPSocket"),
+	CDebugCategory(logDownloadQueue, "DownloadQueue"),
+	CDebugCategory(logIPFilter, "IPFilter"),
+	CDebugCategory(logKnownFiles, "KnownFileList"),
+	CDebugCategory(logPartFile, "PartFiles"),
+	CDebugCategory(logSHAHashSet, "SHAHashSet"),
+	CDebugCategory(logServer, "Servers"),
+	CDebugCategory(logProxy, "Proxy"),
+	CDebugCategory(logSearch, "Searching"),
+	CDebugCategory(logServerUDP, "ServerUDP"),
+	CDebugCategory(logClientKadUDP, "Client Kademlia UDP"),
+	CDebugCategory(logKadSearch, "Kademlia Search"),
+	CDebugCategory(logKadRouting, "Kademlia Routing"),
+	CDebugCategory(logKadIndex, "Kademlia Indexing"),
+	CDebugCategory(logKadMain, "Kademlia Main Thread"),
+	CDebugCategory(logKadPrefs, "Kademlia Preferences"),
+	CDebugCategory(logPfConvert, "PartFileConvert"),
+	CDebugCategory(logMuleUDP, "MuleUDPSocket"),
+	CDebugCategory(logThreads, "ThreadScheduler"),
+	CDebugCategory(logUPnP, "Universal Plug and Play"),
+	CDebugCategory(logKadUdpFwTester, "Kademlia UDP Firewall Tester"),
+	CDebugCategory(logKadPacketTracking, "Kademlia Packet Tracking"),
+	CDebugCategory(logKadEntryTracking, "Kademlia Entry Tracking"),
+	CDebugCategory(logKadNodeTracking, "Kademlia Node Tracking"),
+	CDebugCategory(logEC, "External Connect"),
+	CDebugCategory(logHTTP, "HTTP"),
+	CDebugCategory(logAsio, "Asio Sockets"),
+	CDebugCategory(logMediaProbe, "Media Probe"),
+	CDebugCategory(logVerifyLocalData, "Verify Local Data"),
+	CDebugCategory(logGUI, "GUI") };
 
 const int categoryCount = itemsof(g_debugcats);
+static_assert(categoryCount == logCategoryCount, "Update the debug category table");
 
-
-
-#ifdef __DEBUG__
-bool CLogger::IsEnabled( DebugType type ) const
+void CLogger::SetEnabled(DebugType type, bool enabled)
 {
 	int index = (int)type;
 
-	if ( index >= 0 && index < categoryCount ) {
-		const CDebugCategory& cat = g_debugcats[ index ];
-		wxASSERT( type == cat.GetType() );
+	if (index >= 0 && index < categoryCount) {
+		CDebugCategory &cat = g_debugcats[index];
+		wxASSERT(type == cat.GetType());
 
-		return ( cat.IsEnabled() && thePrefs::GetVerbose() );
-	}
-
-	wxFAIL;
-	return false;
-}
-#endif
-
-
-void CLogger::SetEnabled( DebugType type, bool enabled )
-{
-	int index = (int)type;
-
-	if ( index >= 0 && index < categoryCount ) {
-		CDebugCategory& cat = g_debugcats[ index ];
-		wxASSERT( type == cat.GetType() );
-
-		cat.SetEnabled( enabled );
+		cat.SetEnabled(enabled);
+		m_debugEnabled[index].store(enabled && m_verbose, std::memory_order_relaxed);
 	} else {
 		wxFAIL;
 	}
 }
 
-
 void CLogger::SetVerbose(bool verbose)
 {
-	thePrefs::SetVerbose(verbose);
+	m_verbose = verbose;
+	for (int i = 0; i < categoryCount; ++i) {
+		m_debugEnabled[i].store(verbose && g_debugcats[i].IsEnabled(), std::memory_order_relaxed);
+	}
 }
 
-
-void CLogger::AddLogLine(
-	const wxString& DEBUG_ONLY(file),
+void CLogger::AddLogLine(const wxString &DEBUG_ONLY(file),
 	int DEBUG_ONLY(line),
 	bool critical,
 	DebugType type,
@@ -132,23 +116,33 @@ void CLogger::AddLogLine(
 	bool toStdout,
 	bool toGUI)
 {
+#ifdef __DEBUG__
 	wxString msg(str);
-// handle Debug messages
+#else
+	const wxString &msg = str;
+#endif
+	wxString category =
+#ifdef CLIENT_GUI
+		"remote-GUI";
+#else
+		"";
+#endif
+	// handle Debug messages
 	if (type != logStandard) {
 		if (!critical && !IsEnabled(type)) {
 			return;
 		}
-		if (!critical && thePrefs::GetVerboseLogfile()) {
+		if (!critical && m_verboseLogfile.load(std::memory_order_relaxed)) {
 			// print non critical debug messages only to the logfile
 			toGUI = false;
 		}
 		int index = (int)type;
 
-		if ( index >= 0 && index < categoryCount ) {
-			const CDebugCategory& cat = g_debugcats[ index ];
+		if (index >= 0 && index < categoryCount) {
+			const CDebugCategory &cat = g_debugcats[index];
 			wxASSERT(type == cat.GetType());
 
-			msg = cat.GetName() + ": " + msg;
+			category = cat.GetName();
 		} else {
 			wxFAIL;
 		}
@@ -156,63 +150,78 @@ void CLogger::AddLogLine(
 
 #ifdef __DEBUG__
 	if (line) {
-		msg = file.AfterLast(wxFileName::GetPathSeparator()).AfterLast('/') << "(" << line << "): " + msg;
+		msg = file.AfterLast(wxFileName::GetPathSeparator()).AfterLast('/')
+		      << "(" << line << "): " + msg;
 	}
 #endif
 
+	// Legacy C means status-bar visibility, not severity. Preserve it as INFO
+	// until call sites are explicitly classified; ordinary debug traces are DEBUG.
+	Log(type != logStandard && !critical ? LogLevel::Debug : LogLevel::Info,
+		category,
+		msg,
+		critical,
+		toStdout,
+		toGUI);
+}
+
+void CLogger::Log(LogLevel level,
+	const wxString &category,
+	const wxString &message,
+	bool toStatusBar,
+	bool toStdout,
+	bool toGUI)
+{
+	Log(CLogRecord(level, category, message), toStatusBar, toStdout, toGUI);
+}
+
+void CLogger::Log(const CLogRecord &record, bool toStatusBar, bool toStdout, bool toGUI)
+{
 	if (toGUI && !wxThread::IsMain()) {
-		// put to background
-		CLoggingEvent Event(critical, toStdout, toGUI, msg);
-		AddPendingEvent(Event);
+		CLoggingEvent event(toStatusBar, toStdout, toGUI, record);
+		AddPendingEvent(event);
 	} else {
-		// Try to handle events immediately when possible (to save to file).
-		DoLines(msg, critical, toStdout, toGUI);
+		DoLines(record, toStatusBar, toStdout, toGUI);
 	}
 }
 
-
 void CLogger::AddLogLine(
-	const wxString &file,
-	int line,
-	bool critical,
-	DebugType type,
-	const std::ostringstream &msg)
+	const wxString &file, int line, bool critical, DebugType type, const std::ostringstream &msg)
 {
 	AddLogLine(file, line, critical, type, wxString(char2unicode(msg.str().c_str())));
 }
 
-
-const CDebugCategory& CLogger::GetDebugCategory( int index )
+const CDebugCategory &CLogger::GetDebugCategory(int index)
 {
-	// wxCHECK rather than wxASSERT so a release build returns a safe
-	// fallback on out-of-range instead of reading past the array; the
-	// debug-build behaviour (assert + abort) is unchanged.
-	wxCHECK_MSG( index >= 0 && index < categoryCount, g_debugcats[0],
-		"CLogger::GetDebugCategory: index out of range" );
+	// wxCHECK rather than wxASSERT so a release build returns a safe fallback on out-of-range
+	// instead of reading past the array; the debug-build assert + abort is unchanged.
+	wxCHECK_MSG(index >= 0 && index < categoryCount,
+		g_debugcats[0],
+		"CLogger::GetDebugCategory: index out of range");
 
-	return g_debugcats[ index ];
+	return g_debugcats[index];
 }
-
 
 unsigned int CLogger::GetDebugCategoryCount()
 {
 	return categoryCount;
 }
 
-
-bool CLogger::OpenLogfile(const wxString & name)
+bool CLogger::OpenLogfile(const wxString &name, bool append)
 {
-	applog = new wxFFileOutputStream(name);
+	applog = new wxFFileOutputStream(name, append ? "ab" : "wb");
 	bool ret = applog->Ok();
 	if (ret) {
 		FlushApplog();
 		m_LogfileName = name;
+		// A daemon's stderr is /dev/null, so the abort handler needs a real file to write to.
+		// Reserved rather than looked up on demand: it runs from a signal handler.
+		m_crashFd = ReserveCrashFd(m_crashFd, applog->GetFile()->fp());
 	} else {
 		CloseLogfile();
 	}
 	return ret;
 }
-
 
 void CLogger::CloseLogfile()
 {
@@ -221,79 +230,59 @@ void CLogger::CloseLogfile()
 	m_LogfileName.Clear();
 }
 
-
-void CLogger::OnLoggingEvent(class CLoggingEvent& evt)
+void CLogger::OnLoggingEvent(class CLoggingEvent &evt)
 {
-	DoLines(evt.Message(), evt.IsCritical(), evt.ToStdout(), evt.ToGUI());
+	DoLines(evt.Record(), evt.IsCritical(), evt.ToStdout(), evt.ToGUI());
 }
 
-
-void CLogger::DoLines(const wxString & lines, bool critical, bool toStdout, bool toGUI)
+void CLogger::DoLines(const CLogRecord &record, bool critical, bool toStdout, bool toGUI)
 {
-	// Remove newspace at end
-	wxString bufferline = lines.Strip(wxString::trailing);
-
-	// Create the timestamp
-	wxString stamp = wxDateTime::Now().FormatISODate() + " " + wxDateTime::Now().FormatISOTime()
-#ifdef CLIENT_GUI
-					+ " (remote-GUI): ";
-#else
-					+ ": ";
-#endif
-
-	// critical lines get a ! prepended, ordinary lines a blank
-	// logfile-only lines get a . to prevent transmission on EC
-	wxString prefix = !toGUI ? "." : (critical ? "!" : " ");
-
-	if ( bufferline.IsEmpty() ) {
-		// If it's empty we just write a blank line with no timestamp.
-		DoLine(" \n", toStdout, toGUI);
-	} else {
-		// Split multi-line messages into individual lines
-		wxStringTokenizer tokens( bufferline, "\n" );
-		while ( tokens.HasMoreTokens() ) {
-			wxString fullline = prefix + stamp + tokens.GetNextToken() + "\n";
-			DoLine(fullline, toStdout, toGUI);
-		}
+	const wxString lines = FormatLogLines(record);
+	wxStringTokenizer tokens(lines, "\n", wxTOKEN_RET_EMPTY);
+	while (tokens.HasMoreTokens()) {
+		DoLine(tokens.GetNextToken() + "\n", critical, toStdout, toGUI);
 	}
 }
 
-
-void CLogger::DoLine(const wxString & line, bool toStdout, bool GUI_ONLY(toGUI))
+void CLogger::DoLine(const wxString &line, bool toStatusBar, bool toStdout, bool toGUI)
 {
 	{
 		wxMutexLocker lock(m_lineLock);
 		++m_count;
 
-		// write to logfile
-		m_ApplogBuf += line;
+		m_ApplogBuf += EncodeLogFileLine(line, toStatusBar, toGUI);
 		FlushApplog();
 
-		// write to Stdout
 		if (m_StdoutLog || toStdout) {
-			printf("%s", (const char*)unicode2char(line));
+			// Use UTF-8 even in the C locale, as on disk.
+			printf("%s", static_cast<const char *>(line.utf8_str()));
+			fflush(stdout);
 		}
 	}
 #ifndef AMULE_DAEMON
-	// write to Listcontrol
 	if (toGUI) {
-		theApp->AddGuiLogLine(line);
+		theApp->AddGuiLogLine(
+			wxString(static_cast<wxChar>(LegacyLogMarker(toStatusBar, toGUI))) + line);
 	}
 #endif
 }
 
-
 void CLogger::EmergencyLog(const wxString &message, bool closeLog)
 {
-	fprintf(stderr, "%s", (const char*)unicode2char(message));
-	m_ApplogBuf += message;
+	const wxString lines = FormatLogLines(CLogRecord(LogLevel::Error, "crash", message));
+	fprintf(stderr, "%s", static_cast<const char *>(lines.utf8_str()));
+	// Do not queue or reacquire the logging mutex on this emergency path.
+	wxStringTokenizer tokens(lines, "\n", wxTOKEN_RET_EMPTY);
+	while (tokens.HasMoreTokens()) {
+		m_ApplogBuf += EncodeLogFileLine(tokens.GetNextToken() + "\n", true, true);
+	}
 	FlushApplog();
 	if (closeLog && applog) {
 		applog->Close();
-		applog = NULL;
+		delete applog;
+		applog = nullptr;
 	}
 }
-
 
 void CLogger::FlushApplog()
 {
@@ -311,27 +300,18 @@ wxBEGIN_EVENT_TABLE(CLogger, wxEvtHandler)
 	EVT_MULE_LOGGING(CLogger::OnLoggingEvent)
 wxEND_EVENT_TABLE()
 
+CLoggerTarget::CLoggerTarget() {}
 
-CLoggerTarget::CLoggerTarget()
+void CLoggerTarget::DoLogRecord(wxLogLevel level, const wxString &msg, const wxLogRecordInfo &info)
 {
-}
-
-void CLoggerTarget::DoLogText(const wxString &msg)
-{
-	// prevent infinite recursion
-	static bool recursion = false;
+	// A thread-local guard does not suppress unrelated messages on other threads.
+	static thread_local bool recursion = false;
 	if (recursion) {
 		return;
 	}
 	recursion = true;
-
-	// This is much simpler than manually handling all wx log-types.
-	if (msg.StartsWith(_("ERROR: ")) || msg.StartsWith(_("WARNING: "))) {
-		AddLogLineC(msg);
-	} else {
-		AddLogLineN(msg);
-	}
-
+	theLogger.Log(RecordFromWx(level, "wx", msg, info),
+		level == wxLOG_Error || level == wxLOG_FatalError || level == wxLOG_Warning);
 	recursion = false;
 }
 
@@ -343,15 +323,14 @@ CLoggerAccess::CLoggerAccess()
 	Reset();
 }
 
-
 void CLoggerAccess::Reset()
 {
 	delete m_logfile;
 	m_logfile = new wxFFileInputStream(theLogger.GetLogfileName());
 	m_pos = 0;
 	m_ready = false;
+	m_replayLine.clear();
 }
-
 
 CLoggerAccess::~CLoggerAccess()
 {
@@ -359,29 +338,25 @@ CLoggerAccess::~CLoggerAccess()
 	delete m_logfile;
 }
 
-
-//
-// read a line of text from the logfile if available
-// (can't believe there's no library function for this >:( )
-//
+// Read a line of text from the logfile if available. (Can't believe there's no library function
+// for this >:( )
 bool CLoggerAccess::HasString()
 {
 	while (!m_ready) {
 		int c = m_logfile->GetC();
 		if (c == wxEOF) {
-			// wxFFileInputStream wraps a stdio FILE* whose EOF flag is
-			// sticky: once GetC() returns wxEOF, subsequent reads keep
-			// returning wxEOF even when amuled has appended more lines
-			// to the logfile in the meantime. Re-seek to the current
-			// position; this calls fseek() which clears the FILE*'s
-			// EOF indicator and resets the wxInputStream error state,
-			// so the next poll picks up newly appended log lines.
-			// Without this, EC clients (amuleGUI, amuleweb) display
-			// the log content captured at connection time and never
-			// see anything emitted afterwards (#215).
+			// wxFFileInputStream wraps a stdio FILE* whose EOF flag is sticky: once
+			// GetC() returns wxEOF, later reads keep returning it even after amuled has
+			// appended more lines. The old fix re-seeked to the current position to
+			// clear it, but wx 3.3 short-circuits a seek to the current offset, so EOF
+			// is never cleared and EC clients stop seeing new lines after the batch
+			// captured at connect time. Reopening gives a stream with no EOF set, and
+			// seeking back resumes at the first newly appended byte.
 			wxFileOffset pos = m_logfile->TellI();
 			if (pos != wxInvalidOffset) {
-				m_logfile->SeekI(pos);
+				delete m_logfile;
+				m_logfile = new wxFFileInputStream(theLogger.GetLogfileName());
+				m_logfile->SeekI(pos, wxFromStart);
 			}
 			break;
 		}
@@ -392,25 +367,21 @@ bool CLoggerAccess::HasString()
 		}
 		m_buffer->data()[m_pos++] = c;
 		if (c == '\n') {
-			if (m_buffer->data()[0] == '.') {
-				// Log-only line, skip
-				m_pos = 0;
-			} else {
-				m_ready = true;
-			}
+			m_ready = DecodeLogFileLine(
+				wxString(m_buffer->data(), wxConvUTF8, m_pos), m_replayLine);
+			m_pos = 0;
 		}
 	}
 	return m_ready;
 }
 
-
-bool CLoggerAccess::GetString(wxString & s)
+bool CLoggerAccess::GetString(wxString &s)
 {
 	if (!HasString()) {
 		return false;
 	}
-	s = wxString(m_buffer->data(), wxConvUTF8, m_pos);
-	m_pos = 0;
+	s = m_replayLine;
+	m_replayLine.clear();
 	m_ready = false;
 	return true;
 }

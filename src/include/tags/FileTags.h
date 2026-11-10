@@ -27,117 +27,155 @@
 #define FILETAGS_H
 
 // ED2K search + known.met + .part.met
-#define	FT_FILENAME			0x01	// <string>
-#define	FT_FILESIZE			0x02	// <uint32>
-#define	FT_FILESIZE_HI			0x3A	// <uint32>
-#define	FT_FILETYPE			0x03	// <string> or <uint32>
-#define	FT_FILEFORMAT			0x04	// <string>
-#define	FT_LASTSEENCOMPLETE		0x05	// <uint32>
-#define	FT_TRANSFERRED			0x08	// <uint32>
-#define	FT_GAPSTART			0x09	// <uint32>
-#define	FT_GAPEND			0x0A	// <uint32>
-#define	FT_PARTFILENAME			0x12	// <string>
-#define	FT_OLDDLPRIORITY		0x13	// Not used anymore
-#define	FT_STATUS			0x14	// <uint32>
-#define	FT_SOURCES			0x15	// <uint32>
-#define	FT_PERMISSIONS			0x16	// <uint32>
-#define	FT_OLDULPRIORITY		0x17	// Not used anymore
-#define	FT_DLPRIORITY			0x18	// Was 13
-#define	FT_ULPRIORITY			0x19	// Was 17
-#define	FT_KADLASTPUBLISHKEY		0x20	// <uint32>
-#define	FT_KADLASTPUBLISHSRC		0x21	// <uint32>
-#define	FT_FLAGS			0x22	// <uint32>
-#define	FT_DL_ACTIVE_TIME		0x23	// <uint32>
-#define	FT_CORRUPTEDPARTS		0x24	// <string>
-#define	FT_DL_PREVIEW			0x25
-#define	FT_KADLASTPUBLISHNOTES		0x26	// <uint32>
-#define	FT_AICH_HASH			0x27
-// Per-record "last seen alive" timestamp written by aMule's KnownFileList
-// so the dedup-list cap/TTL can drop entries whose file hasn't existed
-// for the user-configured window. aMule-internal; eMule and older
-// aMule binaries ignore unknown tags on load.
-#define	FT_LASTSEEN			0x28	// <uint32>
-#define	FT_COMPLETE_SOURCES		0x30	// nr. of sources which share a
-						// complete version of the
-						// associated file (supported
-						// by eserver 16.46+) statistic
+#define FT_FILENAME 0x01          // <string>
+#define FT_FILESIZE 0x02          // <uint32>
+#define FT_FILESIZE_HI 0x3A       // <uint32>
+#define FT_FILETYPE 0x03          // <string> or <uint32>
+#define FT_FILEFORMAT 0x04        // <string>
+#define FT_LASTSEENCOMPLETE 0x05  // <uint32>
+#define FT_TRANSFERRED 0x08       // <uint32>
+#define FT_GAPSTART 0x09          // <uint32>
+#define FT_GAPEND 0x0A            // <uint32>
+#define FT_PARTFILENAME 0x12      // <string>
+#define FT_OLDDLPRIORITY 0x13     // Not used anymore
+#define FT_STATUS 0x14            // <uint32>
+#define FT_SOURCES 0x15           // <uint32>
+#define FT_PERMISSIONS 0x16       // <uint32>
+#define FT_OLDULPRIORITY 0x17     // Not used anymore
+#define FT_DLPRIORITY 0x18        // Was 13
+#define FT_ULPRIORITY 0x19        // Was 17
+#define FT_KADLASTPUBLISHKEY 0x20 // <uint32>
+#define FT_KADLASTPUBLISHSRC 0x21 // <uint32>
+#define FT_FLAGS 0x22             // <uint32>
+#define FT_DL_ACTIVE_TIME 0x23    // <uint32>
+#define FT_CORRUPTEDPARTS 0x24    // <string>
+#define FT_DL_PREVIEW 0x25
+#define FT_KADLASTPUBLISHNOTES 0x26 // <uint32>
+#define FT_AICH_HASH 0x27
+// Per-record "last seen alive" timestamp written by aMule's KnownFileList, so the dedup-list
+// cap/TTL can drop entries whose file has not existed for the user-configured window. aMule-
+// internal; eMule and older aMule binaries ignore unknown tags on load.
+#define FT_LASTSEEN 0x28 // <uint32>
+#define FT_COMPLETE_SOURCES \
+	0x30 // nr. of sources which share a
+	     // complete version of the
+	     // associated file (supported
+	     // by eserver 16.46+) statistic
 
-#define	FT_PUBLISHINFO			0x33	// <uint32>
-#define	FT_ATTRANSFERRED		0x50	// <uint32>
-#define	FT_ATREQUESTED			0x51	// <uint32>
-#define	FT_ATACCEPTED			0x52	// <uint32>
-#define	FT_CATEGORY			0x53	// <uint32>
-#define	FT_ATTRANSFERREDHI		0x54	// <uint32>
-#define	FT_MEDIA_ARTIST			0xD0	// <string>
-#define	FT_MEDIA_ALBUM			0xD1	// <string>
-#define	FT_MEDIA_TITLE			0xD2	// <string>
-#define	FT_MEDIA_LENGTH			0xD3	// <uint32> !!!
-#define	FT_MEDIA_BITRATE		0xD4	// <uint32>
-#define	FT_MEDIA_CODEC			0xD5	// <string>
-#define	FT_FILERATING			0xF7	// <uint8>
-
+#define FT_PUBLISHINFO 0x33     // <uint32>
+#define FT_ATTRANSFERRED 0x50   // <uint32>
+#define FT_ATREQUESTED 0x51     // <uint32>
+#define FT_ATACCEPTED 0x52      // <uint32>
+#define FT_CATEGORY 0x53        // <uint32>
+#define FT_ATTRANSFERREDHI 0x54 // <uint32>
+#define FT_LASTUPLOADED 0x55    // <uint32> last time data was uploaded for this file (issue #466)
+#define FT_SHAREDSINCE 0x56     // <uint32> when the file was completed / first shared (issue #466)
+#define FT_MEDIA_ARTIST 0xD0    // <string>
+#define FT_MEDIA_ALBUM 0xD1     // <string>
+#define FT_MEDIA_TITLE 0xD2     // <string>
+#define FT_MEDIA_LENGTH 0xD3    // <uint32> !!!
+#define FT_MEDIA_BITRATE 0xD4   // <uint32>
+#define FT_MEDIA_CODEC 0xD5     // <string>
+// Value 1 is a legacy ffprobe failure and gets one helper retry. Value 2 is set
+// when the helper ran on this file and produced nothing usable -- a broken or truncated container,
+// an unreadable file, a binary that errored out. Without it such a file is indistinguishable from
+// one never probed, so the "already probed" gate re-queues it on every share reload and every
+// restart, forever, to fail the same way (issue #1116).
+//
+// aMule-internal, like FT_LASTSEEN: stored in known.met and NOT published -- the ed2k and Kad
+// publishers build their tag lists by explicit allow-list, so a peer never sees it. Deliberately
+// NOT counted by GetMetaDataVer(): "we tried and failed" is not metadata, and a file carrying only
+// this must still read as having none.
+//
+// A media refresh (issue #1079) ignores it and clears it on success, so the marker is a default,
+// never a life sentence.
+#define FT_MEDIA_PROBE_FAILED 0x57 // <uint32> aMule-internal, see above
+// Last Verify Local Data result, aMule-internal like FT_MEDIA_PROBE_FAILED. The date is written
+// after every completed check, the lists only on failure. Not 0x24 (FT_CORRUPTEDPARTS): that
+// means "part re-opened as a gap" in a .part.met.
+#define FT_VERIFY_DATE 0x58        // <uint32>
+#define FT_VERIFY_CORRUPTMD4 0x59  // <string> "p,p,p" corrupt parts
+#define FT_VERIFY_CORRUPTAICH 0x5A // <string> "p:b.b;p:b" corrupt AICH blocks per part
+#define FT_FILERATING 0xF7         // <uint8>
 
 // Kad search + some unused tags to mirror the ed2k ones.
-#define	TAG_FILENAME			wxT("\x01")	// <string>
-#define	TAG_FILESIZE			wxT("\x02")	// <uint32>
-#define	TAG_FILESIZE_HI			wxT("\x3A")	// <uint32>
-#define	TAG_FILETYPE			wxT("\x03")	// <string>
-#define	TAG_FILEFORMAT			wxT("\x04")	// <string>
-#define	TAG_COLLECTION			wxT("\x05")
-#define	TAG_PART_PATH			wxT("\x06")	// <string>
-#define	TAG_PART_HASH			wxT("\x07")
-#define	TAG_COPIED			wxT("\x08")	// <uint32>
-#define	TAG_GAP_START			wxT("\x09")	// <uint32>
-#define	TAG_GAP_END			wxT("\x0A")	// <uint32>
-#define	TAG_DESCRIPTION			wxT("\x0B")	// <string>
-#define	TAG_PING			wxT("\x0C")
-#define	TAG_FAIL			wxT("\x0D")
-#define	TAG_PREFERENCE			wxT("\x0E")
-#define	TAG_PORT			wxT("\x0F")
-#define	TAG_IP_ADDRESS			wxT("\x10")
-#define	TAG_VERSION			wxT("\x11")	// <string>
-#define	TAG_TEMPFILE			wxT("\x12")	// <string>
-#define	TAG_PRIORITY			wxT("\x13")	// <uint32>
-#define	TAG_STATUS			wxT("\x14")	// <uint32>
-#define	TAG_SOURCES			wxT("\x15")	// <uint32>
-#define	TAG_AVAILABILITY		wxT("\x15")	// <uint32>
-#define	TAG_PERMISSIONS			wxT("\x16")
-#define	TAG_QTIME			wxT("\x16")
-#define	TAG_PARTS			wxT("\x17")
-#define	TAG_PUBLISHINFO			wxT("\x33")	// <uint32>
-#define	TAG_MEDIA_ARTIST		wxT("\xD0")	// <string>
-#define	TAG_MEDIA_ALBUM			wxT("\xD1")	// <string>
-#define	TAG_MEDIA_TITLE			wxT("\xD2")	// <string>
-#define	TAG_MEDIA_LENGTH		wxT("\xD3")	// <uint32> !!!
-#define	TAG_MEDIA_BITRATE		wxT("\xD4")	// <uint32>
-#define	TAG_MEDIA_CODEC			wxT("\xD5")	// <string>
-#define	TAG_KADMISCOPTIONS		wxT("\xF2")	// <uint8>
-#define	TAG_ENCRYPTION			wxT("\xF3")	// <uint8>
-#define	TAG_FILERATING			wxT("\xF7")	// <uint8>
-#define	TAG_BUDDYHASH			wxT("\xF8")	// <string>
-#define	TAG_CLIENTLOWID			wxT("\xF9")	// <uint32>
-#define	TAG_SERVERPORT			wxT("\xFA")	// <uint16>
-#define	TAG_SERVERIP			wxT("\xFB")	// <uint32>
-#define	TAG_SOURCEUPORT			wxT("\xFC")	// <uint16>
-#define	TAG_SOURCEPORT			wxT("\xFD")	// <uint16>
-#define	TAG_SOURCEIP			wxT("\xFE")	// <uint32>
-#define	TAG_SOURCETYPE			wxT("\xFF")	// <uint8>
+#define TAG_FILENAME wxT("\x01")    // <string>
+#define TAG_FILESIZE wxT("\x02")    // <uint32>
+#define TAG_FILESIZE_HI wxT("\x3A") // <uint32>
+#define TAG_FILETYPE wxT("\x03")    // <string>
+#define TAG_FILEFORMAT wxT("\x04")  // <string>
+#define TAG_COLLECTION wxT("\x05")
+#define TAG_PART_PATH wxT("\x06") // <string>
+#define TAG_PART_HASH wxT("\x07")
+#define TAG_COPIED wxT("\x08")      // <uint32>
+#define TAG_GAP_START wxT("\x09")   // <uint32>
+#define TAG_GAP_END wxT("\x0A")     // <uint32>
+#define TAG_DESCRIPTION wxT("\x0B") // <string>
+#define TAG_PING wxT("\x0C")
+#define TAG_FAIL wxT("\x0D")
+#define TAG_PREFERENCE wxT("\x0E")
+#define TAG_PORT wxT("\x0F")
+#define TAG_IP_ADDRESS wxT("\x10")
+#define TAG_VERSION wxT("\x11")      // <string>
+#define TAG_TEMPFILE wxT("\x12")     // <string>
+#define TAG_PRIORITY wxT("\x13")     // <uint32>
+#define TAG_STATUS wxT("\x14")       // <uint32>
+#define TAG_SOURCES wxT("\x15")      // <uint32>
+#define TAG_AVAILABILITY wxT("\x15") // <uint32>
+#define TAG_PERMISSIONS wxT("\x16")
+#define TAG_QTIME wxT("\x16")
+#define TAG_PARTS wxT("\x17")
+#define TAG_PUBLISHINFO wxT("\x33") // <uint32>
+// AICH hashes on Kad keyword storage, introduced by Kad protocol version 0x09. Both are gated on
+// the peer's advertised Kad version (KADEMLIA_VERSION9_50a): the publish tag only goes to peers at
+// 0x09 or above, and the result tag is only honoured from senders at 0x09 or above.
+#define TAG_KADAICHHASHPUB wxT("\x36")    // <AICH Hash> (BSOB, 20 bytes)
+#define TAG_KADAICHHASHRESULT wxT("\x37") // <Count 1>{<Publishers 1><AICH Hash 20>} Count (BSOB)
+// Not a Kad wire tag: the AICH root hash a Kad search result agreed on, handed from the Kad layer
+// to CSearchList in the same in-process tag list the other result metadata travels in. It shares
+// FT_AICH_HASH's id (0x27) so a search result carries its AICH hash under the same tag name as
+// everywhere else.
+#define TAG_AICHHASH wxT("\x27")       // <string> (base32)
+#define TAG_MEDIA_ARTIST wxT("\xD0")   // <string>
+#define TAG_MEDIA_ALBUM wxT("\xD1")    // <string>
+#define TAG_MEDIA_TITLE wxT("\xD2")    // <string>
+#define TAG_MEDIA_LENGTH wxT("\xD3")   // <uint32> !!!
+#define TAG_MEDIA_BITRATE wxT("\xD4")  // <uint32>
+#define TAG_MEDIA_CODEC wxT("\xD5")    // <string>
+#define TAG_KADMISCOPTIONS wxT("\xF2") // <uint8>
+#define TAG_ENCRYPTION wxT("\xF3")     // <uint8>
+#define TAG_FILERATING wxT("\xF7")     // <uint8>
+#define TAG_BUDDYHASH wxT("\xF8")      // <string>
+#define TAG_CLIENTLOWID wxT("\xF9")    // <uint32>
+#define TAG_SERVERPORT wxT("\xFA")     // <uint16>
+#define TAG_SERVERIP wxT("\xFB")       // <uint32>
+#define TAG_SOURCEUPORT wxT("\xFC")    // <uint16>
+#define TAG_SOURCEPORT wxT("\xFD")     // <uint16>
+#define TAG_SOURCEIP wxT("\xFE")       // <uint32>
+#define TAG_SOURCETYPE wxT("\xFF")     // <uint8>
+
+// eMuleAI vendor tags in Kad source publish/search results. Multi-character names, deliberately:
+// the single-byte space above is full. Both carry a 128-bit address as exactly 32 hexadecimal
+// characters, most significant byte first -- see DecodeIPv6HexTag() in src/PeerCapabilities.h.
+// aMule may dial a firewalled source on its ip6 address; bi6 is unused.
+#define TAG_IPV6 wxT("ip6")             // <string> unfirewalled IPv6
+#define TAG_SERVINGBUDDYIPV6 wxT("bi6") // <string> serving buddy IPv6
 
 // Media values for FT_FILETYPE
-#define	ED2KFTSTR_AUDIO			wxT("Audio")
-#define	ED2KFTSTR_VIDEO			wxT("Video")
-#define	ED2KFTSTR_IMAGE			wxT("Image")
-#define	ED2KFTSTR_DOCUMENT		wxT("Doc")
-#define	ED2KFTSTR_PROGRAM		wxT("Pro")
-#define	ED2KFTSTR_ARCHIVE		wxT("Arc")	// *Mule internal use only
-#define	ED2KFTSTR_CDIMAGE		wxT("Iso")	// *Mule internal use only
+#define ED2KFTSTR_AUDIO wxT("Audio")
+#define ED2KFTSTR_VIDEO wxT("Video")
+#define ED2KFTSTR_IMAGE wxT("Image")
+#define ED2KFTSTR_DOCUMENT wxT("Doc")
+#define ED2KFTSTR_PROGRAM wxT("Pro")
+#define ED2KFTSTR_ARCHIVE wxT("Arc") // *Mule internal use only
+#define ED2KFTSTR_CDIMAGE wxT("Iso") // *Mule internal use only
 
 // Additional media meta data tags from eDonkeyHybrid (note also the uppercase/lowercase)
-#define	FT_ED2K_MEDIA_ARTIST		"Artist"	// <string>
-#define	FT_ED2K_MEDIA_ALBUM		"Album"		// <string>
-#define	FT_ED2K_MEDIA_TITLE		"Title"		// <string>
-#define	FT_ED2K_MEDIA_LENGTH		"length"	// <string> !!!
-#define	FT_ED2K_MEDIA_BITRATE		"bitrate"	// <uint32>
-#define	FT_ED2K_MEDIA_CODEC		"codec"		// <string>
+#define FT_ED2K_MEDIA_ARTIST "Artist"   // <string>
+#define FT_ED2K_MEDIA_ALBUM "Album"     // <string>
+#define FT_ED2K_MEDIA_TITLE "Title"     // <string>
+#define FT_ED2K_MEDIA_LENGTH "length"   // <string> !!!
+#define FT_ED2K_MEDIA_BITRATE "bitrate" // <uint32>
+#define FT_ED2K_MEDIA_CODEC "codec"     // <string>
 
 #endif // FILETAGS_H

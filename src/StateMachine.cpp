@@ -28,23 +28,18 @@
 #include <common/StringFunctions.h>
 
 CStateMachine::CStateMachine(
-		const wxString &name,
-		const unsigned int maxStates,
-		const t_sm_state initialState )
-:
-m_stateMutex(wxMUTEX_RECURSIVE),
-m_queueMutex(wxMUTEX_RECURSIVE),
-m_name(name),
-m_maxStates(maxStates)
+	const wxString &name, const unsigned int maxStates, const t_sm_state initialState)
+: m_stateMutex(wxMUTEX_RECURSIVE)
+, m_queueMutex(wxMUTEX_RECURSIVE)
+, m_name(name)
+, m_maxStates(maxStates)
 {
 	m_state = initialState;
 	m_clockCounter = 0;
 	m_clocksInCurrentState = 0;
 }
 
-CStateMachine::~CStateMachine()
-{
-}
+CStateMachine::~CStateMachine() {}
 
 void CStateMachine::Clock()
 {
@@ -64,25 +59,22 @@ void CStateMachine::Clock()
 
 	/* State changes can only happen here */
 	wxMutexLocker lock(m_stateMutex);
-	m_state = next_state( event );
+	m_state = next_state(event);
 
 	++m_clockCounter;
-	state_entry = ( m_state != old_state ) || ( m_clockCounter == 1 );
-	if( state_entry )
-	{
+	state_entry = (m_state != old_state) || (m_clockCounter == 1);
+	if (state_entry) {
 		m_clocksInCurrentState = 0;
-		// Uncomment here to debug the state machine.
-		// State changes will be printed to stdout.
-		//printf("%s(%04d): %d -> %d\n", (const char *)unicode2char(m_name), m_clockCounter, old_state, m_state);
+		// Uncomment to debug the state machine; state changes print to stdout.
+		// printf("%s(%04d): %d -> %d\n", (const char *)unicode2char(m_name), m_clockCounter,
+		//     old_state, m_state);
 	}
 	++m_clocksInCurrentState;
 
 	/* Process new state entry */
-	if( m_state < m_maxStates )
-	{
-		/* It should be ok to call Clock() recursively inside this
-		 * procedure because state change has already happened. Also
-		 * the m_state mutex is recursive. */
+	if (m_state < m_maxStates) {
+		// Calling Clock() recursively inside this procedure should be fine: the state
+		// change has already happened, and the m_state mutex is recursive.
 		process_state(m_state, state_entry);
 	}
 }

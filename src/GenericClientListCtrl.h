@@ -25,236 +25,234 @@
 #ifndef GENERICCLIENTLISTCTRL_H
 #define GENERICCLIENTLISTCTRL_H
 
-#include <map>				// Needed for std::multimap
-#include <vector>			// Needed for std::vector
-#include <wx/brush.h>
+#include <map>    // Needed for std::multimap
+#include <vector> // Needed for std::vector
 
-#include "Types.h"			// Needed for uint8
-#include "Constants.h"		// Needed for DownloadItemType
-#include "MuleListCtrl.h"	// Needed for CMuleListCtrl
-#include "amuleDlg.h"		// Needed for CamuleDlg::DialogType
+#include "Types.h"              // Needed for uint8
+#include "Constants.h"          // Needed for DownloadItemType
+#include "ClientRef.h"          // Needed for CClientRef (stored by value below)
+#include "ClientNameListCtrl.h" // Needed for CClientNameListCtrl
+#include "PartBarLegend.h"      // Needed for GenericColumnEnum, partbar::BarLegendKind
+#include "amuleDlg.h"           // Needed for CamuleDlg::DialogType
 
 class CPartFile;
-class CClientRef;
-class wxBitmap;
-class wxRect;
-class wxDC;
+class CMuleBarRenderer;
+class wxMenu;
 
-struct ClientCtrlItem_Struct;
+/**
+ * One row: a client together with the file it is a source or peer of, and whether it is a current
+ * or A4AF source. Not just a cache-avoidance wrapper like the pre-port CDownloadListCtrl's
+ * FileCtrlItem_Struct -- genuinely necessary here, since one client (ECID) can be a source or peer
+ * of more than one file at once, so identity has to be the (client, owner, type) tuple, not the
+ * CClientRef alone. Public because CSourceBarRenderer, in the leaf's own .cpp, needs to read it
+ * back from a CBarFillSpec identity.
+ */
+struct ClientCtrlItem_Struct
+{
+	ClientCtrlItem_Struct()
+	: m_owner(nullptr)
+	, m_type(UNAVAILABLE_SOURCE)
+	{
+	}
 
-enum GenericColumnEnum {
-	ColumnUserName = 0,
-	ColumnUserDownloaded,
-	ColumnUserUploaded,
-	ColumnUserSpeedDown,
-	ColumnUserSpeedUp,
-	ColumnUserProgress,
-	ColumnUserAvailable,
-	ColumnUserVersion,
-	ColumnUserQueueRankLocal,
-	ColumnUserQueueRankRemote,
-	ColumnUserOrigin,
-	ColumnUserFileNameDownload,
-	ColumnUserFileNameUpload,
-	ColumnUserFileNameDownloadRemote,
-	ColumnUserSharedFiles,
-	ColumnInvalid
+	SourceItemType GetType() const { return m_type; }
+
+	CKnownFile *GetOwner() const { return m_owner; }
+
+	CClientRef &GetSource() { return m_sourceValue; }
+	const CClientRef &GetSource() const { return m_sourceValue; }
+
+	void SetContents(CKnownFile *owner, const CClientRef &source, SourceItemType type)
+	{
+		m_owner = owner;
+		m_sourceValue = source;
+		m_type = type;
+	}
+
+	void SetType(SourceItemType type) { m_type = type; }
+
+private:
+	CKnownFile *m_owner;
+	CClientRef m_sourceValue;
+	SourceItemType m_type;
 };
 
-struct CGenericClientListCtrlColumn {
+struct CGenericClientListCtrlColumn
+{
 	GenericColumnEnum cid;
 	wxString title;
 	int width;
 };
 
-struct GenericColumnInfo {
-	GenericColumnInfo(int n, CGenericClientListCtrlColumn* col) : n_columns(n), columns(col) { };
+struct GenericColumnInfo
+{
+	GenericColumnInfo(int n, CGenericClientListCtrlColumn *col)
+	: n_columns(n)
+	, columns(col) {};
 	int n_columns;
-	CGenericClientListCtrlColumn* columns;
+	CGenericClientListCtrlColumn *columns;
 };
 
-typedef std::vector<CKnownFile*> CKnownFileVector;
+typedef std::vector<CKnownFile *> CKnownFileVector;
 
 /**
- * This class is responsible for representing clients in a generic way.
+ * Represents clients in a generic way. Rows are addressed by ClientCtrlItem_Struct* identity --
+ * unlike every other ported list, that wrapper survives the port: a client (ECID) can be a source
+ * or peer of more than one file at once, so each row needs the client together with its owner file
+ * and A4AF/available type, not just the CClientRef alone.
  */
-
-class CGenericClientListCtrl : public CMuleListCtrl
+class CGenericClientListCtrl : public CClientNameListCtrl
 {
 public:
-	/**
-	 * Constructor.
-	 *
-	 * @see CMuleListCtrl::CMuleListCtrl for documentation of parameters.
-	 */
-	 CGenericClientListCtrl(
-				const wxString& tablename,
-	            wxWindow *parent,
-                wxWindowID winid,
-                const wxPoint &pos,
-                const wxSize &size,
-                long style,
-                const wxValidator& validator,
-                const wxString &name);
+	CGenericClientListCtrl(const wxString &tablename,
+		wxWindow *parent,
+		wxWindowID winid,
+		const wxPoint &pos,
+		const wxSize &size,
+		long style,
+		const wxString &name);
 
-	/**
-	 * Destructor.
-	 */
-	virtual	~CGenericClientListCtrl();
+	virtual ~CGenericClientListCtrl();
 
-	/**
-	 * Initializes the control. We need a 2-stage initialization so the derived class members can be called.
-	 */
-	 void InitColumnData();
+	/// Initializes the control. Two-stage initialization, so the derived class members can be
+	/// called.
+	void InitColumnData();
 
-	/**
-	 * Adds a source belonging to the specified file.
-	 *
-	 * @param owner The owner of this specific source-entry, must be a valid pointer.
-	 * @param source The client object to be added, must be a valid pointer.
-	 * @param type If the source is a current source, or a A4AF source.
-	 *
-	 * Please note that the specified client will only be added to the list if it's
-	 * owner is shown, otherwise the source will simply be ignored.
-	 * Duplicates wont be added.
-	 */
-	void AddSource( CKnownFile* owner, const CClientRef& source, SourceItemType type );
+	/// Adds @a source as a source of @a owner, of @a type (current or A4AF). Added only if the
+	/// owner is shown; duplicates are ignored.
+	void AddSource(CKnownFile *owner, const CClientRef &source, SourceItemType type);
 
-	/**
-	 * Removes a source from the list.
-	 *
-	 * @param source ID of the source to be removed.
-	 * @param owner Either a specific file, or NULL to remove the source from all files.
-	 */
-	void RemoveSource( uint32 source, const CKnownFile* owner );
+	/// Removes the source with ID @a source from @a owner, or from every file when @a owner is
+	/// NULL.
+	void RemoveSource(uint32 source, const CKnownFile *owner);
 
-	/**
-	 * Shows the clients of specific files.
-	 *
-	 * @param file A valid, sorted vector of files whose clients will be shown.
-	 *
-	 * WARNING: The received vector *MUST* be odered with std::sort.
-	 *
-	 */
-	void ShowSources( const CKnownFileVector& files );
+	/// Shows the clients of @a files. WARNING: the vector *MUST* be ordered with std::sort.
+	void ShowSources(const CKnownFileVector &files);
 
-	/**
-	 * Updates the state of the specified item, possibly causing a redrawing.
-	 *
-	 * @param toupdate ID of the client to be updated.
-	 * @param type If the source is a current source, or a A4AF source.
-	 *
-	 */
+	/// Updates the state of client @a toupdate of @a type, possibly causing a redraw.
 	void UpdateItem(uint32 toupdate, SourceItemType type);
 
-	void SetShowing( bool status ) { m_showing = status; }
+	void SetShowing(bool status) { m_showing = status; }
 	bool GetShowing() const { return m_showing; }
 
 	/**
-	 * Drop every reference to `file` from this control before the
-	 * CKnownFile is destroyed. Called from
-	 * MuleNotify::KnownFileBeingDestroyed (see GuiEvents.cpp) for
-	 * every CKnownFile destruction site. The control walks
-	 * m_knownfiles by pointer-value comparison and erases matching
-	 * entries — does NOT dereference `file`, which by the time this
-	 * runs on the main thread is already freed. Also strips any
-	 * ClientCtrlItem_Struct rows whose m_owner matches.
+	 * Drop every reference to `file` from this control before the CKnownFile is destroyed.
 	 *
-	 * Without this, m_knownfiles would carry the dangling pointer
-	 * into the next ShowSources() call's `SetShowSources(_, false)`
-	 * loop and crash on the freed heap (issue #755).
+	 * Called from MuleNotify::KnownFileBeingDestroyed (see GuiEvents.cpp) for every CKnownFile
+	 * destruction site. The control walks m_knownfiles by pointer-value comparison and erases
+	 * matching entries -- it does NOT dereference `file`, which by the time this runs on the
+	 * main thread is already freed. It also strips any ClientCtrlItem_Struct rows whose m_owner
+	 * matches.
+	 *
+	 * Without this, m_knownfiles would carry the dangling pointer into the next ShowSources()
+	 * call's `SetShowSources(_, false)` loop and crash on the freed heap (issue #755).
 	 */
-	void RemoveKnownFile(CKnownFile* file);
+	void RemoveKnownFile(CKnownFile *file);
 
 protected:
 	// The columns with their attributes; MUST be defined by the derived class.
 	GenericColumnInfo m_columndata;
-	static int wxCALLBACK SortProc(wxUIntPtr item1, wxUIntPtr item2, wxIntPtr sortData);
+
+	/// Text of one cell, pulled on demand for the cells being drawn.
+	wxString GetItemColumnText(wxUIntPtr item, unsigned column) const override;
+
+	/// Per-row/per-column display attributes: the queue-rank-diff and
+	/// filename-mismatch colour cues DrawClientItem used to set on the wxDC.
+	bool GetItemAttr(wxUIntPtr item, unsigned column, wxDataViewItemAttr &attr) const override;
+
+	std::optional<ClientNameCell> NameCellOf(wxUIntPtr item) const override;
+
+	/// Fill data for the Name column (see CClientNameListCtrl) and for a leaf's own bar
+	/// column.
+	void GetItemBarFill(wxUIntPtr item, unsigned column, CBarFillSpec &out) const override;
+
+	/// Single-column comparison for the base's sort chain, after the
+	/// type-precedence pre-check (A4AF sources always last).
+	int CompareItemData(
+		wxUIntPtr data1, wxUIntPtr data2, unsigned column, bool alt, int modifier) const override;
+
+	/// Live auto-sort: re-order when sorted by a column whose value changes during transfer
+	/// (speed, progress, up/downloaded, availability, queue rank). Static columns do not auto-
+	/// resort.
+	bool IsLiveSortColumn() const override;
+
+	/** Pause live auto-sort while the context menu is open. */
+	bool IsMenuOpen() const override { return m_menu != nullptr; }
+
+	//! Renderer for a leaf's own bar column (ColumnUserProgress for Sources,
+	//! ColumnUserAvailable for Peers). Sources overrides this to opt into the A4AF-badge-
+	//! drawing subclass; Peers' plain 2-state bar needs no subclass, so the default nullptr is
+	//! a plain CMuleBarRenderer.
+	virtual CMuleBarRenderer *CreateProgressBarRenderer() const { return nullptr; }
 
 private:
-	/**
-     *
-	 * Must be overridden by the derived class and return the dialog where this list is.
-     * @see CamuleDlg::DialogType
-	 *
-     */
+	/// Must be overridden to return the dialog this list is in. @see CamuleDlg::DialogType
 	virtual CamuleDlg::DialogType GetParentDialog() = 0;
 
-	/**
-	 * Updates the displayed number representing the amount of clients currently shown.
-	 */
-	void ShowSourcesCount( int diff );
+	/// Updates the displayed count of clients currently shown.
+	void ShowSourcesCount(int diff);
 
-	/**
-	 * Overloaded function needed for custom drawing of items.
-	 */
-	virtual void OnDrawItem( int item, wxDC* dc, const wxRect& rect, const wxRect& rectHL, bool highlighted );
-
-	/**
-	 * Draws a client item.
-	 */
-	void	DrawClientItem( wxDC* dc, int nColumn, const wxRect& rect, ClientCtrlItem_Struct* item, int iTextOffset, int iBitmapOffset, int iBitmapXSize ) const;
-
-	/**
-	 * Draws the download status (chunk) bar for a client.
-	 */
-	void	DrawSourceStatusBar( const CClientRef& source, wxDC* dc, const wxRect& rect, bool  bFlat) const;
-
-	/**
-	  * Draaws the file parts bar for a client.
-	  */
-	void	DrawStatusBar( const CClientRef& client, wxDC* dc, const wxRect& rect1 ) const;
-
-	/**
-	 * @see CMuleListCtrl::GetTTSText
-	 * Just a dummy
-	 */
-	virtual wxString GetTTSText(unsigned) const { return ""; }
-
-	/**
-	 * Set "show sources" or "show peers" flag in Known File
-	 */
+	/// Sets the "show sources" or "show peers" flag on a known file.
 	virtual void SetShowSources(CKnownFile *, bool) const = 0;
 
-	/**
-	 * Translate the CID to a unique string for saving column sizes
-	 * @see CMuleListCtrl::InsertColumn
-	 */
+	/// Translates the CID to a unique string for saving column sizes.
 	wxString TranslateCIDToName(GenericColumnEnum cid);
 
-	static int Compare( const CClientRef& client1, const CClientRef& client2, long lParamColumnSort);
+	int CompareByCid(GenericColumnEnum cid, const CClientRef &client1, const CClientRef &client2) const;
 
 	// Event-handlers for clients.
-	void	OnSwapSource( wxCommandEvent& event );
-	void	OnViewFiles( wxCommandEvent& event );
-	void	OnAddFriend( wxCommandEvent& event );
-	void	OnSetFriendslot( wxCommandEvent& event );
-	void	OnSendMessage( wxCommandEvent& event );
-	void	OnViewClientInfo( wxCommandEvent& event );
+	void OnSwapSource(wxCommandEvent &event);
+	void OnViewFiles(wxCommandEvent &event);
+	void OnAddFriend(wxCommandEvent &event);
+	void OnSetFriendslot(wxCommandEvent &event);
+	void OnSendMessage(wxCommandEvent &event);
+	void OnViewClientInfo(wxCommandEvent &event);
+	/// Opens the colour legend for this list's chunk-bar column. The bar has no other
+	/// explanation of what its colours mean (issue #1192), and the two variants of the column
+	/// -- ColumnUserProgress for Sources, ColumnUserAvailable for Peers -- have different
+	/// palettes, so the legend is chosen per cid (partbar::LegendForColumn).
+	void OnShowBarLegend(wxCommandEvent &event);
 
 	// Misc event-handlers
-	void	OnItemActivated( wxListEvent& event );
-	void	OnMouseRightClick( wxListEvent& event );
-	void	OnMouseMiddleClick( wxListEvent& event );
-	void	OnKeyPressed( wxKeyEvent& event );
+	void OnItemActivated(wxDataViewEvent &event);
+	void OnItemRightClicked(wxDataViewEvent &event);
+	/// Shows the client detail dialog for the row under the pointer. wxDataViewCtrl has no
+	/// dedicated middle-click item event, unlike wxListCtrl's EVT_LIST_ITEM_MIDDLE_CLICK, so
+	/// this is a raw mouse event resolved through HitTest() -- see
+	/// CDownloadListCtrl::OnItemActivated for why an event's item is resolved rather than read
+	/// off the selection.
+	void OnMouseMiddleClick(wxMouseEvent &event);
+
+	/// Index in m_columndata of the chunk-bar column this list shows, or -1 when there is none
+	/// on screen -- either the subclass declares no bar column, or the user has hidden the one
+	/// it declares. Found by asking partbar::LegendForColumn() about the list's own columns
+	/// rather than by naming cids here, so a subclass that gains or loses a bar column needs
+	/// nothing changed in this class.
+	int FindBarLegendColumn() const;
+
+	//! Pops up the legend of @a kind, titled with @a columnTitle. Swatches are filled from
+	//! partbar::SourcePartColour()/PeerPartColour(), the same functions GetItemBarFill() fills
+	//! the bar itself from.
+	void ShowBarLegend(partbar::BarLegendKind kind, const wxString &columnTitle);
+
+	/// The item the context menu was built for, by identity rather than row -- see the
+	/// identical field on CDownloadListCtrl for why (PopupMenu runs a nested event loop, so a
+	/// row index would not survive it).
+	wxUIntPtr m_menuItem = 0;
 
 	//! The type of list used to store items on the listctrl. We use the unique ECID as key.
-	typedef std::multimap<uint32, ClientCtrlItem_Struct*> ListItems;
+	typedef std::multimap<uint32, ClientCtrlItem_Struct *> ListItems;
 	//! Shortcut to the pair-type used on the list.
 	typedef ListItems::value_type ListItemsPair;
 	//! This pair is used when searching for equal-ranges.
-	typedef std::pair< ListItems::iterator, ListItems::iterator > ListIteratorPair;
+	typedef std::pair<ListItems::iterator, ListItems::iterator> ListIteratorPair;
 
 	//! This list contains everything shown on the list. Sources are only to
 	//! be found on this list if they are being displayed
-	ListItems	m_ListItems;
+	ListItems m_ListItems;
 
 	//! Pointer to the current menu object, used to avoid multiple menus.
-	wxMenu*		m_menu;
-	//! Cached brush object.
-	wxBrush	m_highlightBrush;
-	//! Cached brush object.
-	wxBrush	m_highlightUnfocusBrush;
+	wxMenu *m_menu;
 
 	//! The number of displayed sources
 	int m_clientcount;
@@ -266,8 +264,8 @@ private:
 
 	bool m_showing;
 
-	void RawAddSource(CKnownFile* owner, CClientRef source, SourceItemType type);
-	void RawRemoveSource( ListItems::iterator& it );
+	void RawAddSource(CKnownFile *owner, CClientRef source, SourceItemType type);
+	void RawRemoveSource(ListItems::iterator &it);
 
 	virtual bool IsShowingDownloadSources() const = 0;
 };

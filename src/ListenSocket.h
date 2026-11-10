@@ -23,14 +23,12 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-//
 // Handling incoming connections (up or downloadrequests)
-//
 
 #ifndef LISTENSOCKET_H
 #define LISTENSOCKET_H
 
-#include "Proxy.h"		// Needed for CProxyData, CSocketServerProxy
+#include "Proxy.h" // Needed for CProxyData, CSocketServerProxy
 
 #include <set>
 
@@ -40,40 +38,40 @@ class CClientTCPSocket;
 class CListenSocket : public CSocketServerProxy
 {
 public:
-	CListenSocket(amuleIPV4Address &addr, const CProxyData *ProxyData = NULL);
+	CListenSocket(amuleIPV4Address &addr,
+		const CProxyData *ProxyData = nullptr,
+		ListenerFamilies families = ListenerFamilies::FromAddress);
 	~CListenSocket();
-	void	OnAccept();
-	void	Process();
-	void	RemoveSocket(CClientTCPSocket* todel);
-	void	AddSocket(CClientTCPSocket* toadd);
-	uint32	GetOpenSockets()		{return socket_list.size();}
-	void	KillAllSockets();
-	bool	TooManySockets(bool bIgnoreInterval = false);
-	bool    IsValidSocket(CClientTCPSocket* totest);
-	void	AddConnection();
-	void	RecalculateStats();
-	void	UpdateConnectionsStatus();
+	void OnAccept();
+	void Process();
+	void RemoveSocket(CClientTCPSocket *todel);
+	void AddSocket(CClientTCPSocket *toadd);
+	uint32 GetOpenSockets() { return socket_list.size(); }
+	void KillAllSockets();
+	bool TooManySockets(bool bIgnoreInterval = false);
+	bool IsValidSocket(CClientTCPSocket *totest);
+	void AddConnection();
+	void RecalculateStats();
+	void UpdateConnectionsStatus();
 
-	float	GetMaxConperFiveModifier();
-	uint32	GetTotalConnectionChecks()	{ return totalconnectionchecks; }
-	float	GetAverageConnections()		{ return averageconnections; }
+	float GetMaxConperFiveModifier();
+	uint32 GetTotalConnectionChecks() { return totalconnectionchecks; }
+	float GetAverageConnections() { return averageconnections; }
 
-	bool	OnShutdown() { return shutdown;}
+	bool OnShutdown() { return shutdown; }
 
 private:
-
 	typedef std::set<CClientTCPSocket *> SocketSet;
 	SocketSet socket_list;
 
 	bool shutdown;
 	bool m_pending;
 
-	uint16	m_OpenSocketsInterval;
-	uint16	m_ConnectionStates[3];
-	uint32	totalconnectionchecks;
-	float	averageconnections;
+	uint16 m_OpenSocketsInterval;
+	uint16 m_ConnectionStates[3];
+	uint32 totalconnectionchecks;
+	float averageconnections;
 };
-
 
 #endif // LISTENSOCKET_H
 // File_checked_for_headers

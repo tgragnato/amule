@@ -23,33 +23,34 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
+#include "FriendList.h" // Interface declarations.
 
-#include "FriendList.h" // Interface
+#include "BrowseManager.h"
 
 #include <common/DataFileVersion.h>
 
-#include "amule.h"			// Needed for theApp
-#include "ClientList.h"		// Needed for CClientList
-#include "updownclient.h"	// Needed for CUpDownClient
-#include "Friend.h"		// Needed for CFriend
+#include "amule.h"
+#include "ClientList.h"   // Needed for CClientList
+#include "updownclient.h" // Needed for CUpDownClient
+#include "Friend.h"       // Needed for CFriend
 #include "CFile.h"
 #include "Logger.h"
 #include "GuiEvents.h"
-#include "Preferences.h"	// Needed for thePrefs
+#include "Preferences.h" // Needed for thePrefs
 
-CFriendList::CFriendList()
-{
-}
+CFriendList::CFriendList() {}
 
 CFriendList::~CFriendList()
 {
+	// Whatever happened, the list gets written. A batch left open would make SaveList() a no-op
+	// here, and losing emfriends.met on exit is the one outcome worth defending against twice.
+	m_batchDepth = 0;
 	SaveList();
 
 	DeleteContents(m_FriendList);
 }
 
-
-void CFriendList::AddFriend(CFriend* toadd, bool notify)
+void CFriendList::AddFriend(CFriend *toadd, bool notify)
 {
 	m_FriendList.push_back(toadd);
 	SaveList();
@@ -58,30 +59,31 @@ void CFriendList::AddFriend(CFriend* toadd, bool notify)
 	}
 }
 
-
-void CFriendList::AddFriend(const CMD4Hash& userhash, uint32 lastUsedIP, uint32 lastUsedPort, const wxString& name, uint32 lastSeen, uint32 lastChatted)
+void CFriendList::AddFriend(const CMD4Hash &userhash,
+	uint32 lastUsedIP,
+	uint32 lastUsedPort,
+	const wxString &name,
+	uint32 lastSeen,
+	uint32 lastChatted)
 {
-	CFriend* NewFriend = new CFriend( userhash, lastSeen, lastUsedIP, lastUsedPort, lastChatted, name);
+	CFriend *NewFriend = new CFriend(userhash, lastSeen, lastUsedIP, lastUsedPort, lastChatted, name);
 
-	AddFriend( NewFriend );
-
+	AddFriend(NewFriend);
 }
 
-
-void CFriendList::AddFriend(const CClientRef& toadd)
+void CFriendList::AddFriend(const CClientRef &toadd)
 {
-	if ( toadd.IsFriend() ) {
+	if (toadd.IsFriend()) {
 		return;
 	}
 
-	CFriend* NewFriend = new CFriend( toadd );
+	CFriend *NewFriend = new CFriend(toadd);
 	toadd.SetFriend(NewFriend);
 
-	AddFriend(NewFriend, false);	// has already notified
+	AddFriend(NewFriend, false); // has already notified
 }
 
-
-void CFriendList::RemoveFriend(CFriend* toremove)
+void CFriendList::RemoveFriend(CFriend *toremove)
 {
 	if (toremove) {
 		CClientRef client = toremove->GetLinkedClient();
@@ -95,7 +97,8 @@ void CFriendList::RemoveFriend(CFriend* toremove)
 
 		SaveList();
 
-		Notify_ChatRemoveFriend(toremove);	// this deletes the friend
+		theApp->ForgetECObject(toremove->ECID());
+		Notify_ChatRemoveFriend(toremove); // this deletes the friend
 	}
 }
 
@@ -109,11 +112,11 @@ void CFriendList::LoadList()
 
 	CFile file;
 	try {
-		if ( file.Open(metfile) ) {
-			if ( file.ReadUInt8() /*header*/ == MET_HEADER ) {
+		if (file.Open(metfile)) {
+			if (file.ReadUInt8() /*header*/ == MET_HEADER) {
 				uint32 nRecordsNumber = file.ReadUInt32();
 				for (uint32 i = 0; i < nRecordsNumber; i++) {
-					CFriend* Record = new CFriend();
+					CFriend *Record = new CFriend();
 					Record->LoadFromFile(&file);
 					m_FriendList.push_back(Record);
 					Notify_ChatUpdateFriend(Record);
@@ -122,17 +125,39 @@ void CFriendList::LoadList()
 		} else {
 			AddLogLineN(_("Failed to open friend list file 'emfriends.met' for reading!"));
 		}
-	} catch (const CInvalidPacket& e) {
-		AddDebugLogLineC(logGeneral, "Invalid entry in friend list, file may be corrupt: " + e.what());
-	} catch (const CSafeIOException& e) {
+	} catch (const CInvalidPacket &e) {
+		AddDebugLogLineC(
+			logGeneral, "Invalid entry in friend list, file may be corrupt: " + e.what());
+	} catch (const CSafeIOException &e) {
 		AddDebugLogLineC(logGeneral, "IO error while reading 'emfriends.met': " + e.what());
 	}
-
 }
 
+void CFriendList::BeginBatch()
+{
+	++m_batchDepth;
+}
+
+void CFriendList::EndBatch()
+{
+	if (m_batchDepth == 0) {
+		return;
+	}
+	if (--m_batchDepth == 0 && m_savePending) {
+		m_savePending = false;
+		SaveList();
+	}
+}
 
 void CFriendList::SaveList()
 {
+	if (m_batchDepth > 0) {
+		// Inside a batch: remember that a write is owed and let EndBatch()
+		// do it once, rather than rewriting the whole file per friend.
+		m_savePending = true;
+		return;
+	}
+
 	CFile file;
 	if (file.Create(thePrefs::GetConfigDir() + "emfriends.met", true)) {
 		try {
@@ -142,7 +167,7 @@ void CFriendList::SaveList()
 			for (FriendList::iterator it = m_FriendList.begin(); it != m_FriendList.end(); ++it) {
 				(*it)->WriteToFile(&file);
 			}
-		} catch (const CIOFailureException& e) {
+		} catch (const CIOFailureException &e) {
 			AddDebugLogLineC(logGeneral, "IO failure while saving 'emfriends.met': " + e.what());
 		}
 	} else {
@@ -150,39 +175,44 @@ void CFriendList::SaveList()
 	}
 }
 
-
-CFriend* CFriendList::FindFriend(const CMD4Hash& userhash, uint32 dwIP, uint16 nPort)
+CFriend *CFriendList::LookupFriend(const CMD4Hash &userhash, uint32 dwIP, uint16 nPort) const
 {
-
-	for(FriendList::iterator it = m_FriendList.begin(); it != m_FriendList.end(); ++it) {
-
-		CFriend* cur_friend = *it;
+	for (CFriend *cur_friend : m_FriendList) {
 		// to avoid that unwanted clients become a friend, we have to distinguish between friends with
 		// a userhash and of friends which are identified by IP+port only.
-		if ( !userhash.IsEmpty() && cur_friend->HasHash() ) {
+		if (!userhash.IsEmpty() && cur_friend->HasHash()) {
 			// check for a friend which has the same userhash as the specified one
 			if (cur_friend->GetUserHash() == userhash) {
 				return cur_friend;
 			}
-		} else if (cur_friend->GetIP() == dwIP && cur_friend->GetPort() == nPort) {
-			if (!userhash.IsEmpty() && !cur_friend->HasHash() ) {
-				// Friend without hash (probably IP entered through dialog)
-				// -> save the hash
-				cur_friend->SetUserHash(userhash);
-				SaveList();
-			}
+		} else if (dwIP != 0 && cur_friend->GetIP() == dwIP && cur_friend->GetPort() == nPort) {
+			// A zero address is the absence of one, not a value to match on. Friends
+			// can be added from a record that never carried an IP, and without this
+			// every such record answers to the same query: a client would link to
+			// whichever was stored first and inherit its persistent friend slot.
 			return cur_friend;
 		}
 	}
 
-	return NULL;
+	return nullptr;
 }
 
+CFriend *CFriendList::FindFriend(const CMD4Hash &userhash, uint32 dwIP, uint16 nPort)
+{
+	CFriend *found = LookupFriend(userhash, dwIP, nPort);
+	// A match can only lack a hash when it was matched on address, so this
+	// is the "friend entered as IP:port, now seen connecting" case.
+	if (found != nullptr && !userhash.IsEmpty() && !found->HasHash()) {
+		found->SetUserHash(userhash);
+		SaveList();
+	}
+	return found;
+}
 
-CFriend* CFriendList::FindFriend(uint32 ecid)
+CFriend *CFriendList::FindFriend(uint32 ecid)
 {
 	for (FriendList::iterator it = m_FriendList.begin(); it != m_FriendList.end(); ++it) {
-		CFriend* cur_friend = *it;
+		CFriend *cur_friend = *it;
 		if (cur_friend->ECID() == ecid) {
 			return cur_friend;
 		}
@@ -191,47 +221,66 @@ CFriend* CFriendList::FindFriend(uint32 ecid)
 	return NULL;
 }
 
-
-bool CFriendList::IsAlreadyFriend( uint32 dwLastUsedIP, uint32 nLastUsedPort )
+bool CFriendList::IsAlreadyFriend(uint32 dwLastUsedIP, uint32 nLastUsedPort)
 {
-	return (FindFriend( CMD4Hash(), dwLastUsedIP, nLastUsedPort ) != NULL);
+	return (FindFriend(CMD4Hash(), dwLastUsedIP, nLastUsedPort) != NULL);
 }
-
 
 void CFriendList::RemoveAllFriendSlots()
 {
-	for(FriendList::iterator it = m_FriendList.begin(); it != m_FriendList.end(); ++it) {
-		CFriend* cur_friend = *it;
+	for (FriendList::iterator it = m_FriendList.begin(); it != m_FriendList.end(); ++it) {
+		CFriend *cur_friend = *it;
 		if (cur_friend->GetLinkedClient().IsLinked()) {
-				cur_friend->GetLinkedClient().SetFriendSlot(false);
+			cur_friend->GetLinkedClient().SetFriendSlot(false);
 		}
 	}
 }
 
-
-void CFriendList::RequestSharedFileList(CFriend* cur_friend)
+CFriendList::BrowseResult CFriendList::RequestSharedFileList(CFriend *cur_friend, uint32 browseSearchId)
 {
 	if (cur_friend) {
-		CUpDownClient* client = cur_friend->GetLinkedClient().GetClient();
+		CUpDownClient *client = cur_friend->GetLinkedClient().GetClient();
 		if (!client) {
-			client = new CUpDownClient(cur_friend->GetPort(), cur_friend->GetIP(), 0, 0, 0, true, true);
-			client->SetUserName(cur_friend->GetName());
-			theApp->clientlist->AddClient(client);
-			cur_friend->LinkClient(CCLIENTREF(client, "CFriendList::RequestSharedFileList"));
+			// Asked before deciding there is nothing to reach: this finds a client
+			// already held for the hash even when the record carries no address, and
+			// answers empty only when there is genuinely neither.
+			CClientRef ref = theApp->clientlist->CreateForAddress(cur_friend->GetUserHash(),
+				cur_friend->GetIP(),
+				cur_friend->GetPort(),
+				cur_friend->GetName());
+			if (!ref.IsLinked()) {
+				AddLogLineC(CFormat(_("No address known for friend '%s' yet, cannot browse "
+						      "them.")) %
+					    cur_friend->GetName());
+				return BrowseResult::Unreachable;
+			}
+			cur_friend->LinkClient(ref);
+			client = ref.GetClient();
 		}
+		// A browse already running for this peer will decline the request below, so say so
+		// rather than reporting a browse that never starts. Reusing an existing client
+		// makes this reachable where building a fresh one every time could not: the
+		// caller's id would otherwise name a browse nothing will ever answer or expire.
+		if (theApp->browsemanager->SearchIdFor(client) != 0) {
+			return BrowseResult::AlreadyRunning;
+		}
+		// Pin the EC-allocated browse ID before firing the request, so
+		// ProcessSharedFileList files the listing under it.
+		client->PinBrowseSearchId(browseSearchId);
 		client->RequestSharedFileList();
+		return BrowseResult::Started;
 	}
+	return BrowseResult::Unreachable;
 }
 
-
-void CFriendList::SetFriendSlot(CFriend* Friend, bool new_state)
+void CFriendList::SetFriendSlot(CFriend *Friend, bool new_state)
 {
 	if (!Friend) {
 		return;
 	}
-	// Persist the flag on the friend record so it survives the friend
-	// going offline (the live CUpDownClient::m_bFriendSlot is per-session
-	// state that dies with the client object on disconnect).
+	// Persist the flag on the friend record so it survives the friend going offline: the live
+	// CUpDownClient::m_bFriendSlot is per-session state that dies with the client object on
+	// disconnect.
 	Friend->SetPersistentFriendSlot(new_state);
 	if (new_state) {
 		// Only one friend can hold the slot at a time. Clear any other
@@ -250,22 +299,24 @@ void CFriendList::SetFriendSlot(CFriend* Friend, bool new_state)
 	SaveList();
 }
 
-
-void CFriendList::StartChatSession(CFriend* Friend)
+void CFriendList::StartChatSession(CFriend *Friend)
 {
 	if (Friend) {
-		CUpDownClient* client = Friend->GetLinkedClient().GetClient();
-		if (!client) {
-			client = new CUpDownClient(Friend->GetPort(), Friend->GetIP(), 0, 0, 0, true, true);
-			client->SetIP(Friend->GetIP());
-			client->SetUserName(Friend->GetName());
-			theApp->clientlist->AddClient(client);
-			Friend->LinkClient(CCLIENTREF(client, "CFriendList::StartChatSession"));
+		if (!Friend->GetLinkedClient().GetClient()) {
+			// Same order as browsing: ask first, so a hash we already hold a
+			// client for still resolves.
+			CClientRef ref = theApp->clientlist->CreateForAddress(
+				Friend->GetUserHash(), Friend->GetIP(), Friend->GetPort(), Friend->GetName());
+			if (!ref.IsLinked()) {
+				// Reported by the caller, which is also the one that knows
+				// whether the chat tab could be opened afterwards.
+				return;
+			}
+			Friend->LinkClient(ref);
 		}
 	} else {
 		AddLogLineC(_("CRITICAL - no client on StartChatSession"));
 	}
-
 }
 
 // File_checked_for_headers

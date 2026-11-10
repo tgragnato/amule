@@ -1,0 +1,198 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
+//
+
+#ifndef LISTCOLUMNSTORE_H
+#define LISTCOLUMNSTORE_H
+
+#include <wx/string.h>
+
+#include <list>
+#include <utility>
+#include <vector>
+
+/**
+ * Width at or below which a column counts as hidden. wxGTK reserves a few pixels for the header
+ * grip and will not shrink a column below that, so "hidden" cannot mean literally zero there.
+ * Shared by every list that offers the header's show/hide menu, so the threshold and the width
+ * written to the config stay in agreement.
+ */
+#ifdef __WXGTK__
+constexpr int COL_SIZE_MIN = 10;
+#elif defined(__WXMAC__) || defined(__WXCOCOA__)
+constexpr int COL_SIZE_MIN = 0;
+#else
+#error Need to define COL_SIZE_MIN for your OS
+#endif
+
+/**
+ * The subset of a list widget's column API that column persistence needs. CMuleListCtrl already
+ * implements this exact signature set by inheriting wxGenericListCtrl, so it satisfies the
+ * interface for free. A wxDataViewCtrl-backed list only has to forward these three calls to its own
+ * columns (GetColumnCount() / GetColumn(i)->GetWidth() / SetWidth()) to reuse CListColumnStore
+ * unchanged.
+ */
+class IColumnWidthProvider
+{
+public:
+	virtual ~IColumnWidthProvider() = default;
+	virtual int GetColumnCount() const = 0;
+	virtual int GetColumnWidth(int col) const = 0;
+	virtual bool SetColumnWidth(int col, int width) = 0;
+	//! Width coordinate units per DIP; providers already using DIPs use identity.
+	virtual double GetWidthScale() const { return 1.0; }
+};
+
+/**
+ * Owns a list control's column-persistence state -- the stable, translation-independent name and
+ * default width per column, the last-known width cache, and (de)serialization to and from wxConfig
+ * -- independently of which widget renders the columns.
+ *
+ * Extracted from CMuleListCtrl (see the #675/#180 phase 2 discussion): the persisted format and
+ * config keys ("/eMule/TableOrdering<name>", "/eMule/TableWidths<name>") are unchanged, so existing
+ * user settings keep working. Sort-order *mutation* deliberately stays out of this class --
+ * applying a loaded sort order can have widget-specific side effects (CMuleListCtrl::SetSorting()
+ * also triggers a re-sort and validates against AltSortAllowed()), so LoadSettings() only decodes
+ * the stored order and hands it back to the caller.
+ */
+class CListColumnStore
+{
+public:
+	/**
+	 * The sort flags this store reads and writes.
+	 *
+	 * Deliberately its own, not borrowed from either list base: the two use different bit
+	 * values for the same idea (CMuleListCtrl 0x1000/0x2000, CMuleDataViewCtrl 0x1/0x2), so a
+	 * store that spoke one of them silently dropped descending and alternate sorting for every
+	 * list built on the other -- saving them as "not set" and restoring them as ascending. The
+	 * store owns the serialised format; each base converts to and from it at the call, which is
+	 * the only place the two vocabularies meet.
+	 *
+	 * These values are not interchangeable with either base's flags even where the numbers
+	 * happen to line up. Convert; never pass through.
+	 */
+	enum SortFlag
+	{
+		//! Sort this column in descending order.
+		SORT_DESCENDING = 0x1,
+		//! Sort this column by its alternate criterion.
+		SORT_ALTERNATE = 0x2,
+		//! Every bit this store defines; anything else is malformed.
+		SORT_FLAG_MASK = SORT_DESCENDING | SORT_ALTERNATE
+	};
+
+	//! A column index paired with this store's SortFlag bits.
+	typedef std::pair<unsigned, unsigned> CColPair;
+	typedef std::list<CColPair> CSortingList;
+
+	/**
+	 * Sets the persistence key prefix. Mirrors CMuleListCtrl::SetTableName(): an empty name
+	 * means "do not persist".
+	 */
+	void SetTableName(const wxString &name) { m_name = name; }
+	bool HasTableName() const { return !m_name.IsEmpty(); }
+
+	/**
+	 * Registers a column's persistence name and default width at the given index, from the
+	 * list's InsertColumn() equivalent. In debug builds it also asserts the name is free of ':'
+	 * and ',' (the serialization format's own delimiters) and not already registered -- this
+	 * store is the only thing that can check uniqueness now.
+	 */
+	void RegisterColumn(int index, int defaultWidth, const wxString &name);
+
+	//! Forgets all registered columns (mirrors CMuleListCtrl::ClearAll()).
+	void ClearColumns() { m_column_names.clear(); }
+
+	const wxString &GetColumnName(int index) const;
+	int GetColumnDefaultWidth(int index) const;
+	int GetColumnIndex(const wxString &name) const;
+
+	/**
+	 * Last-known width cache for a hidden column, keyed by column index. Used by the hide/show-
+	 * via-menu interaction (CMuleListCtrl::OnMenuSelected): the width is cached here when a
+	 * column is hidden, so it can be restored when the column is shown again in the same
+	 * session. 0 if never cached.
+	 */
+	int GetCachedWidth(int index) const;
+	void SetCachedWidth(int index, int width);
+
+	/**
+	 * Writes pixel widths and their scale, preserving visibility and sort order. Profiles
+	 * without a saved scale retain their original pixel widths on first load.
+	 * No-op if no table name has been set.
+	 */
+	void SaveSettings(const IColumnWidthProvider &widget, const CSortingList &sortOrders) const;
+
+	/**
+	 * Reads column widths and visibility and sort order back from wxConfig, applying widths
+	 * directly through the given widget and returning the decoded sort order (in the primary-
+	 * last order CMuleListCtrl::LoadSettings() has always built, ready for the caller's own
+	 * SetSorting()). No-op, and clears outSortOrders, if no table name has been set.
+	 *
+	 * @param oldColumnOrder Pre-2.2.2 column order, comma-separated, as
+	 * CMuleListCtrl::GetOldColumnOrder() provides; empty to skip that migration path.
+	 * @return true when at least one stored column width was applied, i.e. this profile has a
+	 * saved layout. Callers use it to decide whether an auto-fit would be helping a fresh
+	 * profile or destroying a width the user chose.
+	 */
+	bool LoadSettings(
+		IColumnWidthProvider &widget, const wxString &oldColumnOrder, CSortingList &outSortOrders);
+
+private:
+	bool RestoreWidth(IColumnWidthProvider &widget, int column, long width, double savedScale);
+	int GetNewColumnIndex(int oldindex, const wxString &oldColumnOrder) const;
+	bool ParseOldConfigEntries(const wxString &sortOrders,
+		const wxString &columnWidths,
+		IColumnWidthProvider &widget,
+		const wxString &oldColumnOrder,
+		CSortingList &outSortOrders);
+
+	class ColNameEntry
+	{
+	public:
+		int index;
+		int defaultWidth;
+		wxString name;
+		ColNameEntry(int _index, int _defaultWidth, const wxString &_name)
+		: index(_index)
+		, defaultWidth(_defaultWidth)
+		, name(_name)
+		{
+		}
+	};
+	typedef std::list<ColNameEntry> ColNameList;
+
+	//! The persistence key prefix. Empty means "don't persist".
+	wxString m_name;
+
+	//! Column names, sorted by column index.
+	ColNameList m_column_names;
+
+	//! Cache of the columns' sizes (used to remember a hidden column's
+	//! last width, per CMuleListCtrl::SaveSettings' original comment).
+	typedef std::vector<int> ColSizeVector;
+	ColSizeVector m_column_sizes;
+};
+
+#endif // LISTCOLUMNSTORE_H
+// File_checked_for_headers

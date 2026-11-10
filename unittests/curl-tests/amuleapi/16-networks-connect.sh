@@ -1,0 +1,248 @@
+#!/usr/bin/env bash
+#
+# amuleapi 16-networks-connect — connection control mutations.
+#
+# Endpoints:
+#   POST /api/v1/networks/connect       — EC_OP_CONNECT (all enabled
+#                                         nets) or one of
+#                                         EC_OP_SERVER_CONNECT / EC_OP_KAD_START
+#                                         when a network selector is passed
+#   POST /api/v1/networks/disconnect    — EC_OP_DISCONNECT (all nets)
+#   (Kad connect/disconnect use the network-selector form on
+#   /networks/*.)
+#   POST /api/v1/kad/bootstrap          — EC_OP_KAD_BOOTSTRAP_FROM_IP
+#       body: {ip: "1.2.3.4" | uint32, port: uint16}
+#   POST /api/v1/kad/update             — EC_OP_KAD_UPDATE_FROM_URL
+#       body: {url: "https://.../nodes.dat"}
+#
+# amuled's CONNECT/DISCONNECT return EC_OP_STRINGS with status
+# messages — the handler relays those into `response.message`. That
+# message is the whole body: there is no `ok` field because the status code
+# already carries it, while the daemon's own explanation of what it did
+# is not recoverable from any later read.
+
+set -u
+set -o pipefail
+
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+
+# A 202 from a connection-control trigger carries a body only when amuled had
+# something to say: `{"message": ...}` if it did, no body at all if it did not
+# (no empty `{}`, so these match the URL-fetch triggers beside
+# them). Either is correct; a constant `ok` field is not.
+_assert_no_body_or_message() {
+	local what=$1
+	if [ -z "$CURL_BODY" ]; then
+		_pass "$what: 202 with no body (amuled reported nothing)"
+	elif echo "$CURL_BODY" | jq -e '(has("ok") | not) and (.message | type == "string")' >/dev/null 2>&1; then
+		_pass "$what: 202 body carries amuled's message and no constant ok"
+	else
+		_fail "$what 202 body" "expected no body or {message}, got: $CURL_BODY"
+	fi
+}
+
+_preflight
+
+echo "amuleapi 16-networks-connect smoke @ $HOST"
+
+ADMIN_TOKEN=$(_login "$ADMIN_PASS")
+[ -n "$ADMIN_TOKEN" ] || _die "admin login failed"
+
+GUEST_TOKEN=$(_login "$GUEST_PASS")
+HAVE_GUEST=0
+[ -n "$GUEST_TOKEN" ] && HAVE_GUEST=1
+
+sleep 4
+
+# --- 1. Auth + admin gate. -----------------------------------------
+_curl -X POST "$API/networks/disconnect"
+_assert_status 401 "POST /networks/disconnect (no token) → 401"
+
+if [ "$HAVE_GUEST" = "1" ]; then
+	_curl -X POST -H "Authorization: Bearer $GUEST_TOKEN" \
+		"$API/networks/disconnect"
+	_assert_status 403 "POST /networks/disconnect (guest) → 403"
+fi
+
+# --- 2. networks/disconnect → 202 + message. -----------------------
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/networks/disconnect"
+_assert_status 202 "POST /networks/disconnect → 202"
+_assert_json_eq '.message | type' string 'disconnect response carries .message'
+_assert_json_eq '. | has("ok")' false 'disconnect response has no constant ok field'
+
+# --- 3. networks/connect → 202 + message. --------------------------
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/networks/connect"
+_assert_status 202 "POST /networks/connect → 202"
+_assert_json_eq '. | has("ok")' false 'connect response has no constant ok field'
+_assert_json_eq '.message | type' string 'connect response carries .message'
+
+# --- 4. networks/{disconnect,connect} (Kad-only via selector). ----
+# Kad connect/disconnect go through /networks/{connect,disconnect} with
+# `{"network":"kad"}`.
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"network":"kad"}' \
+	"$API/networks/disconnect"
+_assert_status 202 "POST /networks/disconnect {network:kad} → 202"
+_assert_no_body_or_message 'networks/disconnect(kad)'
+
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"network":"kad"}' \
+	"$API/networks/connect"
+_assert_status 202 "POST /networks/connect {network:kad} → 202"
+_assert_no_body_or_message 'networks/connect(kad)'
+
+# ed2k-only selector should also round-trip via the network field.
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"network":"ed2k"}' \
+	"$API/networks/connect"
+_assert_status 202 "POST /networks/connect {network:ed2k} → 202"
+
+# Bogus selector → 400 on both directions.
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"network":"wat"}' \
+	"$API/networks/connect"
+_assert_status 400 "POST /networks/connect {network:wat} → 400"
+
+# --- 5. kad/bootstrap happy path + error paths. -------------------
+#
+# Bootstrap to a localhost dummy address — amuled doesn't validate
+# routability; the call always succeeds at the EC-handler level (the
+# actual Kad probe is fire-and-forget UDP).
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"ip":"127.0.0.1","port":4672}' \
+	"$API/kad/bootstrap"
+_assert_status 202 "POST /kad/bootstrap (dotted-quad) → 202"
+# `ip`/`port` are the documented exception to the no-body rule for actions:
+# amuleapi's own parse, in canonical form. There is no `ok` field; the 202
+# carries it.
+_assert_json_eq '. | has("ok")' false 'kad/bootstrap response has no constant ok field'
+_assert_json_eq '.port' 4672   'kad/bootstrap response echoes port'
+
+# The uint32 form is refused: every IP on this surface is a dotted quad, in both
+# directions, so a client never has to know which byte order EC carries. The
+# echo above cannot show where the probe went: it is read back with the same
+# packing the request was parsed with.
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"ip":2130706433,"port":4672}' \
+	"$API/kad/bootstrap"
+_assert_status 400 "POST /kad/bootstrap (uint32 IP) → 400 (quad only)"
+_assert_json_eq '.error.message | test("dotted-quad")' true \
+	'the uint32 400 says a dotted quad is wanted'
+
+# Error: missing port.
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"ip":"127.0.0.1"}' "$API/kad/bootstrap"
+_assert_status 400 "POST /kad/bootstrap (no port) → 400"
+
+# Error: bogus IP.
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"ip":"not.an.ip.addr","port":4672}' "$API/kad/bootstrap"
+_assert_status 400 "POST /kad/bootstrap (bad IP) → 400"
+
+# Error: anything after the fourth octet. A pasted "ip:port" or an extra octet
+# used to parse as its first four octets and bootstrap that host instead.
+for bad in "127.0.0.1:4672" "127.0.0.1.5" "127.0.0.1 "; do
+	_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d "{\"ip\":\"$bad\",\"port\":4672}" "$API/kad/bootstrap"
+	_assert_status 400 "POST /kad/bootstrap (ip \"$bad\") → 400"
+done
+
+# Error: port out of range.
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"ip":"127.0.0.1","port":99999}' "$API/kad/bootstrap"
+_assert_status 400 "POST /kad/bootstrap (port>65535) → 400"
+
+# --- 6. Method gates. ----------------------------------------------
+_curl -X GET -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/networks/connect"
+_assert_status 405 "GET /networks/connect → 405"
+
+_curl -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/kad/bootstrap"
+_assert_status 405 "DELETE /kad/bootstrap → 405"
+
+# --- 6. kad/update validation + auth (#693). ----------------------
+#
+# Deliberately NO happy-path call here. A successful POST makes amuled
+# download a nodes.dat and then STOP AND RESTART Kad, which would tear
+# down the connection state every later phase depends on and leave the
+# operator's node re-bootstrapping. The 202 path is exercised by hand
+# instead; what is pinned here is everything that must be rejected
+# before any of that can happen.
+_curl -X POST -H "Content-Type: application/json" \
+	-d '{"url":"https://example.com/nodes.dat"}' "$API/kad/update"
+_assert_status 401 "POST /kad/update (no token) → 401"
+
+if [ "$HAVE_GUEST" = "1" ]; then
+	_curl -X POST -H "Authorization: Bearer $GUEST_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d '{"url":"https://example.com/nodes.dat"}' "$API/kad/update"
+	_assert_status 403 "POST /kad/update (guest) → 403"
+fi
+
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" -d '{}' "$API/kad/update"
+_assert_status 400 "POST /kad/update missing url → 400"
+
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"url":""}' "$API/kad/update"
+_assert_status 400 "POST /kad/update empty url → 400"
+
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"url":123}' "$API/kad/update"
+_assert_status 400 "POST /kad/update non-string url → 400"
+
+# Scheme gate: amuled hands the string to libcurl, so a non-http(s)
+# scheme has to be rejected here or it fails asynchronously with no
+# way to report back.
+for BAD in "ftp://example.com/nodes.dat" "file:///etc/passwd" "example.com/nodes.dat"; do
+	_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d "{\"url\":\"$BAD\"}" "$API/kad/update"
+	_assert_status 400 "POST /kad/update rejects scheme: $BAD → 400"
+done
+
+_curl -X GET -H "Authorization: Bearer $ADMIN_TOKEN" "$API/kad/update"
+_assert_status 405 "GET /kad/update → 405"
+
+# --- 7. kad/bootstrap echoes the IP as a dotted quad (#1159 section 2). ---
+#
+# The handler answers with the address it parsed (its own parse, not where the
+# probe went), and that echo is a quad -- the same spelling the request used, and
+# the one every other IP on this surface uses. It answers with the dotted quad,
+# not a host-order integer, so a client that posts "1.2.3.4" and stores the reply
+# can post it back without converting, and it matches every other field on this
+# surface.
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"ip":"127.0.0.1","port":4672}' \
+	"$API/kad/bootstrap"
+_assert_status 202 "POST /kad/bootstrap (dotted-quad) -> 202"
+_assert_json_eq '.ip' '127.0.0.1' 'kad/bootstrap echoes the IP as a dotted quad'
+
+# The echo round-trips: what came back can be posted straight back in, which
+# is what "one notation, both directions" has to mean to be worth anything.
+ECHOED=$(printf '%s' "$CURL_BODY" | jq -r '.ip')
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d "{\"ip\":\"$ECHOED\",\"port\":4672}" \
+	"$API/kad/bootstrap"
+_assert_status 202 'the echoed ip is accepted verbatim on a second request'
+_assert_json_eq '.ip' "$ECHOED" 'and echoes the same quad again'
+
+# --- Summary. -----------------------------------------------------
+_summary

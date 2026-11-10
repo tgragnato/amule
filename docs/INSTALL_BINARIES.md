@@ -14,6 +14,7 @@ For building from source, see [INSTALL.md](INSTALL.md).
 - [Linux](#linux)
   - [AppImage (recommended)](#appimage-recommended)
   - [Flatpak](#flatpak)
+  - [Static binaries (headless)](#static-binaries-headless)
   - [Distro packages (older release)](#distro-packages-older-release)
 - [macOS](#macos)
 - [Windows](#windows)
@@ -26,6 +27,7 @@ For building from source, see [INSTALL.md](INSTALL.md).
   - [macOS .dmg](#macos-dmg)
   - [Linux AppImage](#linux-appimage)
   - [Linux Flatpak](#linux-flatpak)
+  - [Linux static tarball](#linux-static-tarball)
 
 
 ## Linux
@@ -33,7 +35,7 @@ For building from source, see [INSTALL.md](INSTALL.md).
 ### AppImage (recommended)
 
 A single self-contained binary that runs on any modern distro
-(glibc ≥ 2.31). Both `x64` and `arm64` builds are published.
+(glibc ≥ 2.35). Both `x64` and `arm64` builds are published.
 
 1. Download `aMule-<version>-Linux-<arch>.AppImage` from the
    [Releases page][rel].
@@ -44,9 +46,11 @@ A single self-contained binary that runs on any modern distro
    ./aMule-*-Linux-*.AppImage
    ```
 
-On first launch aMule offers to install a `.desktop` entry into
-your application menu (opt-in, reversible — declined runs and the
-"Don't ask again" choice are remembered).
+On first launch aMule offers to integrate with your desktop: menu
+entries for aMule and aMuleGUI, icons, the `.emulecollection` file
+type, and command symlinks in `~/.local/bin`. It is opt-in and
+reversible, and a declined offer and the "Don't ask again" choice are
+remembered.
 
 **Pitfall — FUSE missing:** if the AppImage exits immediately with
 `AppImages require FUSE to run`, install it:
@@ -69,12 +73,54 @@ are published.
    flatpak run org.amule.aMule
    ```
 
-The Flatpak runs against the GNOME Platform 47 runtime, but the
+The Flatpak runs against the GNOME Platform 50 runtime, but the
 manifest grants `--filesystem=home` so aMule has full access to
 your home directory and stores state in `~/.aMule/` — the same
 path as a native install. Existing config, shared files, and
 partfiles from a previous non-Flatpak install are picked up
 automatically.
+
+### Static binaries (headless)
+
+A self-contained tarball for running aMule without a desktop: a
+NAS, a VPS, a container, or any Linux too old or too minimal to
+satisfy the AppImage. The binaries are built against musl and
+linked fully static, so they depend on no shared library at all -
+not wxWidgets, not Boost, not Crypto++, not even libc. Both `x64`
+and `arm64` builds are published.
+
+1. Download `aMule-<version>-Linux-<arch>-static.tar.gz` from the
+   [Releases page][rel].
+2. Unpack and run:
+
+   ```sh
+   tar xzf aMule-*-Linux-*-static.tar.gz
+   cd aMule-*-Linux-*-static
+   ./amuled
+   ```
+
+What is in it:
+
+* `amuled` - the headless daemon.
+* `amulecmd` - the command-line client, for driving the daemon.
+* `amuleapi` - the REST + SSE daemon, which also serves the Web UI.
+* `amule-media-probe` - the helper `amuled` runs to read the length,
+  bitrate, codec and tags of shared media files. Keep it next to
+  `amuled`.
+* `amuleapi-static/` - the Web UI itself. `amuleapi` finds it next
+  to its own executable, so keep it beside the binary; moving or
+  renaming that directory leaves the API answering `/api/v1` and
+  nothing on `/`.
+
+What is **not** in it: the GUIs (`amule`, `amulegui`) and
+`amuleweb`. This track is daemon, CLI and API only. To drive it
+from a desktop, run `amulegui` from any other package on your own
+machine and point it at this daemon over External Connect, or open
+the Web UI that `amuleapi` serves.
+
+State lives in `~/.aMule/` exactly as it does for every other
+package, so a static daemon picks up an existing config, shared
+files and partfiles without conversion.
 
 ### Distro packages (older release)
 
@@ -140,9 +186,9 @@ and dependencies. Pick whichever fits your workflow.
 
 1. Download `aMule-<version>-Windows-Setup-<arch>.exe` from the
    [Releases page][rel].
-2. Run it. The wizard offers per-user (no admin) or all-users
-   (admin elevation) install, an option to create desktop /
-   Start-menu shortcuts, and registers an uninstaller in
+2. Run it. It installs for all users under `C:\Program Files\aMule\`
+   (so it asks for admin rights), creates Start-menu shortcuts and an
+   optional desktop shortcut, and registers an uninstaller in
    *Settings → Apps*.
 3. Launch aMule from the Start menu or desktop shortcut.
 
@@ -161,7 +207,9 @@ who prefer not to touch the registry.
    [Releases page][rel].
 2. Unzip anywhere (e.g., `C:\Program Files\aMule\` or
    `%USERPROFILE%\amule\`).
-3. Run `aMule.exe` (GUI) or `amuled.exe` (headless daemon).
+3. Run `aMule.exe` (GUI) or `amuled.exe` (headless daemon). Keep
+   `amule-media-probe.exe` in the same folder: the core runs it to
+   read the length, bitrate, codec and tags of shared media files.
 
 ---
 
@@ -211,9 +259,8 @@ binaries differently.
 
 ### Windows NSIS installer
 
-The installer drops every binary into `<InstallDir>\bin\`. Default
-install dir is `C:\Program Files\aMule\` for all-users or
-`%LOCALAPPDATA%\Programs\aMule\` for per-user. Open PowerShell or
+The installer drops every binary into `<InstallDir>\bin\`. The default
+install dir is `C:\Program Files\aMule\`. Open PowerShell or
 Command Prompt and invoke by full path:
 
 ```
@@ -241,7 +288,9 @@ PowerShell or Command Prompt in that folder and run them directly:
 ### macOS .dmg
 
 `aMule.app/Contents/MacOS/` holds the GUI plus `amuled`,
-`amulecmd`, `amuleweb`, and `ed2k`; invoke them by full path:
+`amulecmd`, `amuleweb`, `amuleapi`, `ed2k` and the `cas`, `wxcas`,
+`alc` and `alcc` utilities, and the `amule-media-probe` helper the core
+runs to read media metadata; invoke them by full path:
 
 ```sh
 /Applications/aMule.app/Contents/MacOS/amuled --full-daemon
@@ -262,6 +311,7 @@ already on `$PATH`:
 sudo ln -s /Applications/aMule.app/Contents/MacOS/amuled       /usr/local/bin/amuled
 sudo ln -s /Applications/aMule.app/Contents/MacOS/amulecmd     /usr/local/bin/amulecmd
 sudo ln -s /Applications/aMule.app/Contents/MacOS/amuleweb     /usr/local/bin/amuleweb
+sudo ln -s /Applications/aMule.app/Contents/MacOS/amuleapi     /usr/local/bin/amuleapi
 sudo ln -s /Applications/aMuleGUI.app/Contents/MacOS/aMuleGUI  /usr/local/bin/amulegui
 ```
 
@@ -271,13 +321,13 @@ The AppImage dispatches on its own filename — symlink it to the
 tool name you want and invoke the symlink:
 
 ```sh
-ln -s aMule-3.0.0-Linux-x64.AppImage amuled
+ln -s aMule-3.2.0-Linux-x64.AppImage amuled
 ./amuled --full-daemon
 
-ln -s aMule-3.0.0-Linux-x64.AppImage amulecmd
+ln -s aMule-3.2.0-Linux-x64.AppImage amulecmd
 ./amulecmd -h 127.0.0.1 -p 4712 -P <password>
 
-ln -s aMule-3.0.0-Linux-x64.AppImage amulegui
+ln -s aMule-3.2.0-Linux-x64.AppImage amulegui
 ./amulegui
 ```
 
@@ -295,7 +345,26 @@ flatpak run --command=amuled    org.amule.aMule --full-daemon
 flatpak run --command=amulecmd  org.amule.aMule -h 127.0.0.1 -p 4712 -P <password>
 flatpak run --command=amulegui  org.amule.aMule
 flatpak run --command=amuleweb  org.amule.aMule --admin-pass=<password>
+flatpak run --command=amuleapi  org.amule.aMule
 ```
 
 The Flatpak grants `--filesystem=home`, so `~/.aMule/` is shared
 with native installs and other package formats on the same machine.
+
+### Linux static tarball
+
+The one package that needs no path advice: `amuled`, `amulecmd`
+and `amuleapi` sit together in the directory you unpacked, and
+none of them resolve anything through `$PATH`. Run them from there
+with `./amuled`, or put that directory on your `$PATH` yourself.
+
+```sh
+./amuled                      # start the daemon
+./amulecmd                    # drive it from the CLI
+./amuleapi                    # REST API + Web UI on http://localhost:4713
+```
+
+`amuleapi` serves the bundled Web UI from `amuleapi-static/` next
+to the binary, so no extra download is needed for the web
+interface. See [QUICKSTART-AMULEAPI.md](QUICKSTART-AMULEAPI.md)
+for its first-run setup.

@@ -31,12 +31,6 @@ add_executable (amuleweb
 	WebSocket.cpp
 )
 
-if (WIN32)
-	target_sources (amuleweb
-		PRIVATE ${CMAKE_BINARY_DIR}/version.rc
-	)
-endif()
-
 target_compile_definitions (amuleweb
 	PRIVATE wxUSE_GUI=0
 )
@@ -49,6 +43,7 @@ target_include_directories (amuleweb
 )
 
 target_link_libraries (amuleweb
+	PRIVATE webcommon
 	PRIVATE ec
 	PRIVATE mulecommon
 	PRIVATE mulesocket
@@ -60,12 +55,6 @@ target_link_libraries (amuleweb
 if (ENABLE_NLS AND Intl_FOUND)
 	target_include_directories (amuleweb PRIVATE ${Intl_INCLUDE_DIRS})
 	target_link_libraries (amuleweb PRIVATE ${Intl_LIBRARIES})
-endif()
-
-if (ENABLE_UPNP)
-	target_link_libraries (amuleweb
-		PRIVATE UPNP::Shared
-	)
 endif()
 
 if (HAVE_BFD)
@@ -91,6 +80,11 @@ if (WITH_LIBPNG)
 endif()
 
 if (APPLE)
+	# Mark this helper process background-only before wx starts.
+	target_sources (amuleweb
+		PRIVATE ${CMAKE_SOURCE_DIR}/src/MacBackgroundOnly_mac.mm
+	)
+
 	target_link_libraries (amuleweb
 		PRIVATE "-framework CoreServices"
 		PRIVATE "-framework ApplicationServices"

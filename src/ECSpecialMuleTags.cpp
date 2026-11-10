@@ -23,35 +23,37 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
+#include <ec/cpp/ECTag.h>         // Needed for CECTag
+#include <ec/cpp/ECSpecialTags.h> // Needed for special EC tag creator classes
 
-
-#include <ec/cpp/ECTag.h>		// Needed for CECTag
-#include <ec/cpp/ECSpecialTags.h>	// Needed for special EC tag creator classes
-
+#include "config.h" // Needed for ENABLE_VERSION_CHECK
+#include "Logger.h" // for AddLogLineC on the refusal paths
 #include "Preferences.h"
 #include "amule.h"
-#include "SharedFileList.h"		// for EnableDirectoryWatcher on the apply path
+#include "SharedFileList.h" // for EnableDirectoryWatcher on the apply path
 
-CEC_Category_Tag::CEC_Category_Tag(uint32 cat_index, EC_DETAIL_LEVEL detail_level) : CECTag(EC_TAG_CATEGORY, cat_index)
+CEC_Category_Tag::CEC_Category_Tag(uint32 cat_index, EC_DETAIL_LEVEL detail_level)
+: CECTag(EC_TAG_CATEGORY, cat_index)
 {
 	Category_Struct *cat = theApp->glob_prefs->GetCategory(cat_index);
 	switch (detail_level) {
-		case EC_DETAIL_UPDATE:
-		case EC_DETAIL_INC_UPDATE:
-		case EC_DETAIL_WEB:
-		case EC_DETAIL_FULL:
-			AddTag(CECTag(EC_TAG_CATEGORY_PATH, cat->path.GetRaw()));
-			AddTag(CECTag(EC_TAG_CATEGORY_COMMENT, cat->comment));
-			AddTag(CECTag(EC_TAG_CATEGORY_COLOR, (uint32)cat->color));
-			AddTag(CECTag(EC_TAG_CATEGORY_PRIO, cat->prio));
-		/* fall through */
-		case EC_DETAIL_CMD:
-			AddTag(CECTag(EC_TAG_CATEGORY_TITLE, cat->title));
-		}
+	case EC_DETAIL_UPDATE:
+	case EC_DETAIL_INC_UPDATE:
+	case EC_DETAIL_WEB:
+	case EC_DETAIL_FULL:
+		AddTag(CECTag(EC_TAG_CATEGORY_PATH, cat->path.GetRaw()));
+		AddTag(CECTag(EC_TAG_CATEGORY_COMMENT, cat->comment));
+		AddTag(CECTag(EC_TAG_CATEGORY_COLOR, (uint32)cat->color));
+		AddTag(CECTag(EC_TAG_CATEGORY_PRIO, cat->prio));
+	/* fall through */
+	case EC_DETAIL_CMD:
+		AddTag(CECTag(EC_TAG_CATEGORY_TITLE, cat->title));
+	}
 }
 
-CEC_Category_Tag::CEC_Category_Tag(uint32 cat_index, wxString name, wxString path,
-			wxString comment, uint32 color, uint8 prio) : CECTag(EC_TAG_CATEGORY, cat_index)
+CEC_Category_Tag::CEC_Category_Tag(
+	uint32 cat_index, wxString name, wxString path, wxString comment, uint32 color, uint8 prio)
+: CECTag(EC_TAG_CATEGORY, cat_index)
 {
 	AddTag(CECTag(EC_TAG_CATEGORY_PATH, path));
 	AddTag(CECTag(EC_TAG_CATEGORY_COMMENT, comment));
@@ -62,25 +64,144 @@ CEC_Category_Tag::CEC_Category_Tag(uint32 cat_index, wxString name, wxString pat
 
 bool CEC_Category_Tag::Apply()
 {
-	bool ret = theApp->glob_prefs->UpdateCategory(GetInt(), Name(), CPath(Path()), Comment(), Color(), Prio());
+	// The index arrives from an EC client and the protocol does not constrain it: the tag
+	// admits any uint8 while only GetCatCount() categories exist. Refused here rather than only
+	// inside UpdateCategory, because BOTH calls below index with it -- the failure branch reads
+	// GetCatPath(), guarded by a wxASSERT that vanishes in a release build. Unchecked,
+	// UpdateCategory indexed m_CatList out of range and took the daemon down with SIGABRT
+	// (#1227).
+	if (GetInt() >= theApp->glob_prefs->GetCatCount()) {
+		// The EC_OP_UPDATE_CATEGORY handler turns false into EC_OP_FAILED carrying the
+		// category and the client's own path, which is the rejection this case wants -- no
+		// new protocol surface needed.
+		return false;
+	}
+	bool ret = theApp->glob_prefs->UpdateCategory(
+		GetInt(), Name(), CPath(Path()), Comment(), Color(), Prio());
 	if (!ret) {
-		GetTagByName(EC_TAG_CATEGORY_PATH)->SetStringData(theApp->glob_prefs->GetCatPath(GetInt()).GetRaw());
+		SetPath(theApp->glob_prefs->GetCatPath(GetInt()).GetRaw());
 	}
 	return ret;
 }
 
 bool CEC_Category_Tag::Create()
 {
-	Category_Struct * category = NULL;
-	bool ret = theApp->glob_prefs->CreateCategory(category, Name(), CPath(Path()), Comment(), Color(), Prio());
+	Category_Struct *category = NULL;
+	bool ret = theApp->glob_prefs->CreateCategory(
+		category, Name(), CPath(Path()), Comment(), Color(), Prio());
 	if (!ret) {
-		GetTagByName(EC_TAG_CATEGORY_PATH)->SetStringData(theApp->glob_prefs->GetCatPath(
-			theApp->glob_prefs->GetCatCount() - 1).GetRaw());
+		SetPath(theApp->glob_prefs->GetCatPath(theApp->glob_prefs->GetCatCount() - 1).GetRaw());
 	}
 	return ret;
 }
 
-CEC_Prefs_Packet::CEC_Prefs_Packet(uint32 selection, EC_DETAIL_LEVEL pref_details, EC_DETAIL_LEVEL cat_details) : CECPacket(EC_OP_SET_PREFERENCES, pref_details)
+void CEC_Category_Tag::CanonicalizeStoredPath()
+{
+	SetPath(CPath(Path()).CanonicalForContainment().GetRaw());
+}
+
+static CECTag MakeStringListTag(ec_tagname_t name, const wxArrayString &values)
+{
+	CECTag list(name, static_cast<uint32>(values.GetCount()));
+	for (const wxString &value : values) {
+		list.AddTag(CECTag(EC_TAG_STRING, value));
+	}
+	return list;
+}
+
+static wxArrayString ReadStringListTag(const CECTag &list)
+{
+	wxArrayString values;
+	for (const CECTag &child : list) {
+		if (child.GetTagName() == EC_TAG_STRING && child.IsString()) {
+			values.Add(child.GetStringData());
+		}
+	}
+	return values;
+}
+
+#ifndef CLIENT_GUI
+// amuled has no window, so it neither reports the GUI category nor changes its saved value.
+static bool CoreHandlesDebugCategory(const CDebugCategory &category)
+{
+#ifdef AMULE_DAEMON
+	return category.GetType() != logGUI;
+#else
+	wxUnusedVar(category);
+	return true;
+#endif
+}
+#endif
+
+static void AddDebugSettingsTags(CECTag &coreTweaks)
+{
+	wxArrayString all;
+	wxArrayString enabled;
+#ifdef CLIENT_GUI
+	for (const auto &category : thePrefs::GetCoreDebugCategories()) {
+		all.Add(category.name);
+		if (category.enabled) {
+			enabled.Add(category.name);
+		}
+	}
+	if (all.IsEmpty()) {
+		return; // An older core reports none and cannot apply them.
+	}
+	const bool logfileOnly = thePrefs::GetCoreVerboseLogfile();
+#else
+	const bool logfileOnly = thePrefs::GetVerboseLogfile();
+	for (unsigned int i = 0; i < theLogger.GetDebugCategoryCount(); ++i) {
+		const CDebugCategory &category = theLogger.GetDebugCategory(static_cast<int>(i));
+		if (!CoreHandlesDebugCategory(category)) {
+			continue;
+		}
+		all.Add(category.GetName());
+		if (category.IsEnabled()) {
+			enabled.Add(category.GetName());
+		}
+	}
+#endif
+	coreTweaks.AddTag(CECTag(EC_TAG_CORETW_VERBOSE_LOGFILE, logfileOnly));
+	coreTweaks.AddTag(MakeStringListTag(EC_TAG_CORETW_DEBUG_CATEGORIES, all));
+	coreTweaks.AddTag(MakeStringListTag(EC_TAG_CORETW_DEBUG_CATEGORIES_ENABLED, enabled));
+}
+
+// Absent tags leave the setting alone: older clients never send them.
+static void ApplyDebugSettingsTags(const CECTag &coreTweaks)
+{
+	if (const CECTag *logfile = coreTweaks.GetTagByName(EC_TAG_CORETW_VERBOSE_LOGFILE)) {
+#ifdef CLIENT_GUI
+		thePrefs::SetCoreVerboseLogfile(logfile->GetInt() != 0);
+#else
+		thePrefs::SetVerboseLogfile(logfile->GetInt() != 0);
+#endif
+	}
+	const CECTag *enabledTag = coreTweaks.GetTagByName(EC_TAG_CORETW_DEBUG_CATEGORIES_ENABLED);
+	const wxArrayString enabled = enabledTag ? ReadStringListTag(*enabledTag) : wxArrayString();
+#ifdef CLIENT_GUI
+	std::vector<CPreferences::CoreDebugCategory> categories;
+	if (const CECTag *all = coreTweaks.GetTagByName(EC_TAG_CORETW_DEBUG_CATEGORIES)) {
+		for (const wxString &name : ReadStringListTag(*all)) {
+			categories.push_back({ name, enabled.Index(name) != wxNOT_FOUND });
+		}
+	}
+	thePrefs::SetCoreDebugCategories(std::move(categories));
+#else
+	if (enabledTag) {
+		for (unsigned int i = 0; i < theLogger.GetDebugCategoryCount(); ++i) {
+			const CDebugCategory &category = theLogger.GetDebugCategory(static_cast<int>(i));
+			if (CoreHandlesDebugCategory(category)) {
+				theLogger.SetEnabled(
+					category.GetType(), enabled.Index(category.GetName()) != wxNOT_FOUND);
+			}
+		}
+	}
+#endif
+}
+
+CEC_Prefs_Packet::CEC_Prefs_Packet(
+	uint32 selection, EC_DETAIL_LEVEL pref_details, EC_DETAIL_LEVEL cat_details)
+: CECPacket(EC_OP_SET_PREFERENCES, pref_details)
 {
 	if (selection & EC_PREFS_CATEGORIES) {
 		if (theApp->glob_prefs->GetCatCount() > 1) {
@@ -99,6 +220,19 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(uint32 selection, EC_DETAIL_LEVEL pref_detail
 		user_prefs.AddTag(CECTag(EC_TAG_USER_HASH, thePrefs::GetUserHash()));
 		user_prefs.AddTag(CECTag(EC_TAG_USER_HOST, thePrefs::GetYourHostname()));
 		user_prefs.AddTag(CECTag(EC_TAG_GENERAL_CHECK_NEW_VERSION, thePrefs::GetCheckNewVersion()));
+		// Capability signal: whether this build can perform version checks. Emitted as a
+		// bool by every 3.1+ daemon, so a client can tell "compiled out" (false) from an
+		// old daemon predating the tag (absent). Distinct from the CHECK_NEW_VERSION
+		// PREFERENCE above: update checking is active only when available AND the pref is
+		// set.
+#ifdef ENABLE_VERSION_CHECK
+		const bool versionCheckAvailable = true;
+#else
+		const bool versionCheckAvailable = false;
+#endif
+		user_prefs.AddTag(CECTag(EC_TAG_GENERAL_VERSION_CHECK_AVAILABLE, versionCheckAvailable));
+		const bool upnpAvailable = false;
+		user_prefs.AddTag(CECTag(EC_TAG_GENERAL_UPNP_AVAILABLE, upnpAvailable));
 		AddTag(user_prefs);
 	}
 
@@ -128,6 +262,45 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(uint32 selection, EC_DETAIL_LEVEL pref_detail
 		if (thePrefs::GetNetworkKademlia()) {
 			connPrefs.AddTag(CECEmptyTag(EC_TAG_NETWORK_KADEMLIA));
 		}
+		connPrefs.AddTag(CECTag(EC_TAG_CONN_BIND_ADDRESS, thePrefs::GetAddress()));
+		connPrefs.AddTag(CECTag(EC_TAG_CONN_BIND_INTERFACE, thePrefs::GetNetworkInterface()));
+		// Proxy: the daemon routes P2P and its HTTP fetches through this, and the remote
+		// GUI must be able to read and set it. The password rides plainly (it is a
+		// plaintext credential, not a hash) so amulegui can show it; the amuleapi surface
+		// keeps it write-only.
+		const CProxyData *proxy = thePrefs::GetProxyData();
+		connPrefs.AddTag(CECTag(EC_TAG_PROXY_ENABLE, proxy->m_proxyEnable));
+		connPrefs.AddTag(CECTag(EC_TAG_PROXY_TYPE, static_cast<uint32>(proxy->m_proxyType)));
+		connPrefs.AddTag(CECTag(EC_TAG_PROXY_HOST, proxy->m_proxyHostName));
+		connPrefs.AddTag(CECTag(EC_TAG_PROXY_PORT, static_cast<uint16>(proxy->m_proxyPort)));
+		connPrefs.AddTag(CECTag(EC_TAG_PROXY_AUTH, proxy->m_enablePassword));
+		connPrefs.AddTag(CECTag(EC_TAG_PROXY_USER, proxy->m_userName));
+		connPrefs.AddTag(CECTag(EC_TAG_PROXY_PASSWORD, proxy->m_password));
+		// UPnP: the enable toggle forwards the P2P ports above, while UPnPTCPPort is the
+		// control point's own local port, not a forwarded one. Web-server and EC-port UPnP
+		// are deliberately not carried.
+		connPrefs.AddTag(CECTag(EC_TAG_CONN_UPNP_ENABLED, thePrefs::GetUPnPEnabled()));
+		connPrefs.AddTag(CECTag(EC_TAG_CONN_UPNP_TCP_PORT, thePrefs::GetUPnPTCPPort()));
+#ifdef ENABLE_IPV6
+#ifdef CLIENT_GUI
+		// Never sent to a daemon whose prefs reply lacked them.
+		if (thePrefs::GetAddressFamiliesTagSupported()) {
+			connPrefs.AddTag(CECTag(EC_TAG_CONN_ADDRESS_FAMILIES,
+				static_cast<uint32>(thePrefs::GetAddressFamiliesSetting())));
+			connPrefs.AddTag(CECTag(EC_TAG_CONN_ADVERTISE_IPV6,
+				IPv6AdvertisingModeAsECBool(thePrefs::GetAdvertiseIPv6Mode())));
+			connPrefs.AddTag(CECTag(EC_TAG_CONN_ADVERTISE_IPV6_MODE,
+				static_cast<uint32>(thePrefs::GetAdvertiseIPv6Mode())));
+		}
+#else
+		connPrefs.AddTag(CECTag(EC_TAG_CONN_ADDRESS_FAMILIES,
+			static_cast<uint32>(thePrefs::GetAddressFamiliesSetting())));
+		connPrefs.AddTag(CECTag(EC_TAG_CONN_ADVERTISE_IPV6,
+			IPv6AdvertisingModeAsECBool(thePrefs::GetAdvertiseIPv6Mode())));
+		connPrefs.AddTag(CECTag(EC_TAG_CONN_ADVERTISE_IPV6_MODE,
+			static_cast<uint32>(thePrefs::GetAdvertiseIPv6Mode())));
+#endif
+#endif
 		AddTag(connPrefs);
 	}
 
@@ -149,6 +322,23 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(uint32 selection, EC_DETAIL_LEVEL pref_detail
 			msg_prefs.AddTag(CECEmptyTag(EC_TAG_MSGFILTER_BY_KEYWORD));
 		}
 		msg_prefs.AddTag(CECTag(EC_TAG_MSGFILTER_KEYWORDS, thePrefs::GetMessageFilterString()));
+		if (thePrefs::ShowMessagesInLog()) {
+			msg_prefs.AddTag(CECEmptyTag(EC_TAG_MSGFILTER_SHOW_IN_LOG));
+		}
+		if (thePrefs::FilterComments()) {
+			msg_prefs.AddTag(CECEmptyTag(EC_TAG_MSGFILTER_FILTER_COMMENTS));
+		}
+		msg_prefs.AddTag(
+			CECTag(EC_TAG_MSGFILTER_COMMENT_KEYWORDS, thePrefs::GetCommentFilterString()));
+#ifdef CLIENT_GUI
+		if (thePrefs::GetChatSpamFilterSupported()) {
+#endif
+			msg_prefs.AddTag(
+				CECTag(EC_TAG_MSGFILTER_ADVANCED, thePrefs::IsAdvancedSpamfilterEnabled()));
+			msg_prefs.AddTag(CECTag(EC_TAG_MSGFILTER_CAPTCHA, thePrefs::IsChatCaptchaEnabled()));
+#ifdef CLIENT_GUI
+		}
+#endif
 		AddTag(msg_prefs);
 	}
 
@@ -177,6 +367,55 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(uint32 selection, EC_DETAIL_LEVEL pref_detail
 		}
 		rc_prefs.AddTag(CECTag(EC_TAG_WEBSERVER_REFRESH, thePrefs::GetWebPageRefresh()));
 		rc_prefs.AddTag(CECTag(EC_TAG_WEBSERVER_TEMPLATE, thePrefs::GetWebTemplate()));
+		rc_prefs.AddTag(CECTag(EC_TAG_AMULEAPI_PORT, thePrefs::GetAmuleApiPort()));
+		if (thePrefs::GetAmuleApiIsEnabled()) {
+			rc_prefs.AddTag(CECEmptyTag(EC_TAG_AMULEAPI_AUTORUN));
+		}
+		rc_prefs.AddTag(CECTag(EC_TAG_AMULEAPI_BIND, thePrefs::GetAmuleApiBindAddress()));
+
+		// amuleapi's credentials are stored salted and stretched in amuleapi-passwords, so unlike
+		// the webserver's there is no digest to put on the wire. Both tags therefore carry a REQUEST
+		// from a client and a STATE from the daemon:
+		//
+		//   admin absent          leave the stored password alone
+		//   admin present, empty  a password is set (daemon -> client)
+		//   admin present + hash  set the admin password to this
+		//
+		//   guest absent          guest access off; clear the credential
+		//   guest present, empty  guest access on, password unchanged
+		//   guest present + hash  guest access on with this password
+		//
+		// Guest has the same container-plus-optional-child shape as EC_TAG_WEBSERVER_GUEST, so
+		// absence can mean "off". Admin has no off state on purpose: clearing it from a stray prefs
+		// push would leave a non-loopback deployment with no way back in.
+		if (!thePrefs::GetAmuleApiPass().IsEmpty()) {
+			CECEmptyTag adminTag(EC_TAG_AMULEAPI_PASSWD);
+			CMD4Hash passhash;
+			wxCHECK2(passhash.Decode(thePrefs::GetAmuleApiPass()), /* Do nothing. */);
+			adminTag.AddTag(CECTag(EC_TAG_PASSWD_HASH, passhash));
+			rc_prefs.AddTag(adminTag);
+		} else if (thePrefs::GetAmuleApiAdminIsSet()) {
+			rc_prefs.AddTag(CECEmptyTag(EC_TAG_AMULEAPI_PASSWD));
+		}
+		if (thePrefs::GetAmuleApiGuestIsEnabled()) {
+			CECEmptyTag guestTag(EC_TAG_AMULEAPI_GUEST_PASSWD);
+			if (!thePrefs::GetAmuleApiGuestPass().IsEmpty()) {
+				CMD4Hash passhash;
+				wxCHECK2(
+					passhash.Decode(thePrefs::GetAmuleApiGuestPass()), /* Do nothing. */);
+				guestTag.AddTag(CECTag(EC_TAG_PASSWD_HASH, passhash));
+			}
+			rc_prefs.AddTag(guestTag);
+		}
+		// Read-only: Apply() has no counterpart, as the listener only rereads these on restart.
+		rc_prefs.AddTag(CECTag(EC_TAG_EXTERNALCONN_ENABLED, thePrefs::AcceptExternalConnections()));
+		rc_prefs.AddTag(CECTag(EC_TAG_EXTERNALCONN_ADDRESS, thePrefs::GetECAddress()));
+		rc_prefs.AddTag(CECTag(EC_TAG_EXTERNALCONN_INTERFACE, thePrefs::GetECNetworkInterface()));
+		rc_prefs.AddTag(CECTag(EC_TAG_EXTERNALCONN_PORT, thePrefs::ECPort()));
+		rc_prefs.AddTag(CECTag(EC_TAG_EXTERNALCONN_UPNP, thePrefs::GetUPnPECEnabled()));
+		rc_prefs.AddTag(CECTag(EC_TAG_EXTERNALCONN_REQUIRE_ENCRYPTION, true));
+		rc_prefs.AddTag(
+			CECTag(EC_TAG_EXTERNALCONN_PASSWD_SET, !thePrefs::ECPasswordVerifier().IsEmpty()));
 		AddTag(rc_prefs);
 	}
 
@@ -185,6 +424,13 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(uint32 selection, EC_DETAIL_LEVEL pref_detail
 		if (thePrefs::IsOnlineSignatureEnabled()) {
 			online_sig.AddTag(CECEmptyTag(EC_TAG_ONLINESIG_ENABLED));
 		}
+#ifndef CLIENT_GUI
+		// The daemon reports its online-signature folder so a remote client can display it, but
+		// the path is local daemon configuration: amulegui must not send it back (the core
+		// ignores it anyway, see Apply()), so only the core emits this tag.
+		online_sig.AddTag(CECTag(EC_TAG_ONLINESIG_DIRECTORY, thePrefs::GetOSDir().GetRaw()));
+#endif
+		online_sig.AddTag(CECTag(EC_TAG_ONLINESIG_UPDATE, thePrefs::GetOSUpdate()));
 		AddTag(online_sig);
 	}
 
@@ -193,11 +439,17 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(uint32 selection, EC_DETAIL_LEVEL pref_detail
 		if (thePrefs::DeadServer()) {
 			srv_prefs.AddTag(CECEmptyTag(EC_TAG_SERVERS_REMOVE_DEAD));
 		}
-		srv_prefs.AddTag(CECTag(EC_TAG_SERVERS_DEAD_SERVER_RETRIES, (uint16)thePrefs::GetDeadserverRetries()));
+		srv_prefs.AddTag(
+			CECTag(EC_TAG_SERVERS_DEAD_SERVER_RETRIES, (uint16)thePrefs::GetDeadserverRetries()));
 		if (thePrefs::AutoServerlist()) {
 			srv_prefs.AddTag(CECEmptyTag(EC_TAG_SERVERS_AUTO_UPDATE));
 		}
-		// Here should come the URL list...
+		const auto urls = thePrefs::GetServerListURLs();
+		CECEmptyTag sources(EC_TAG_SERVERS_URL_LIST);
+		for (const auto &url : urls) {
+			sources.AddTag(CECTag(EC_TAG_STRING, url));
+		}
+		srv_prefs.AddTag(sources);
 		if (thePrefs::AddServersFromServer()) {
 			srv_prefs.AddTag(CECEmptyTag(EC_TAG_SERVERS_ADD_FROM_SERVER));
 		}
@@ -219,7 +471,10 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(uint32 selection, EC_DETAIL_LEVEL pref_detail
 		if (thePrefs::IsManualHighPrio()) {
 			srv_prefs.AddTag(CECEmptyTag(EC_TAG_SERVERS_MANUAL_HIGH_PRIO));
 		}
-		srv_prefs.AddTag(CECTag(EC_TAG_SERVERS_UPDATE_URL, thePrefs::GetEd2kServersUrl()));
+		srv_prefs.AddTag(CECTag(EC_TAG_SERVERS_UPDATE_URL, urls.empty() ? wxString() : urls[0]));
+		// By value: a client that predates the tag leaves the setting unchanged.
+		srv_prefs.AddTag(CECTag(EC_TAG_SERVERS_ED2K_ACCELERATED_PUBLICATION,
+			thePrefs::GetED2KAcceleratedPublication()));
 		AddTag(srv_prefs);
 	}
 
@@ -240,6 +495,9 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(uint32 selection, EC_DETAIL_LEVEL pref_detail
 		if (thePrefs::GetPreviewPrio()) {
 			filePrefs.AddTag(CECEmptyTag(EC_TAG_FILES_PREVIEW_PRIO));
 		}
+		if (thePrefs::GetEndgame()) {
+			filePrefs.AddTag(CECEmptyTag(EC_TAG_FILES_ENDGAME));
+		}
 		if (thePrefs::GetNewAutoUp()) {
 			filePrefs.AddTag(CECEmptyTag(EC_TAG_FILES_NEW_AUTO_UL_PRIO));
 		}
@@ -252,18 +510,38 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(uint32 selection, EC_DETAIL_LEVEL pref_detail
 		if (thePrefs::GetSrcSeedsOn()) {
 			filePrefs.AddTag(CECEmptyTag(EC_TAG_FILES_SAVE_SOURCES));
 		}
-		if (thePrefs::GetExtractMetaData()) {
-			filePrefs.AddTag(CECEmptyTag(EC_TAG_FILES_EXTRACT_METADATA));
-		}
 		if (thePrefs::GetAllocFullFile()) {
 			filePrefs.AddTag(CECEmptyTag(EC_TAG_FILES_ALLOC_FULL_SIZE));
+		}
+		// mmap capability negotiation: advertise support (tag presence) plus the current
+		// value. Gated on the RUNTIME capability rather than #ifdef MMAP_SUPPORTED, so a
+		// remote GUI on a platform without mmap can still relay the value to a daemon that
+		// has it.
+		if (thePrefs::GetMMapSupported()) {
+			filePrefs.AddTag(CECEmptyTag(EC_TAG_FILES_MMAP_SUPPORTED));
+			if (thePrefs::GetMMapEnabled()) {
+				filePrefs.AddTag(CECEmptyTag(EC_TAG_FILES_MMAP_ENABLED));
+			}
 		}
 		if (thePrefs::IsCheckDiskspaceEnabled()) {
 			filePrefs.AddTag(CECEmptyTag(EC_TAG_FILES_CHECK_FREE_SPACE));
 		}
 		filePrefs.AddTag(CECTag(EC_TAG_FILES_MIN_FREE_SPACE, thePrefs::GetMinFreeDiskSpaceMB()));
+		filePrefs.AddTag(
+			CECTag(EC_TAG_FILES_SHARED_REVERIFY_DAYS, thePrefs::GetSharedFileReverifyDays()));
 		if (!thePrefs::CreateFilesSparse()) {
 			filePrefs.AddTag(CECEmptyTag(EC_TAG_FILES_CREATE_NORMAL));
+		}
+		if (thePrefs::GetMediaMetadataEnabled()) {
+			filePrefs.AddTag(CECEmptyTag(EC_TAG_FILES_MEDIA_METADATA_ENABLED));
+		}
+#ifndef CLIENT_GUI
+		// By value, so a client can tell "no helper" from an older core that does not say.
+		filePrefs.AddTag(
+			CECTag(EC_TAG_FILES_MEDIA_METADATA_AVAILABLE, thePrefs::IsMediaMetadataAvailable()));
+#endif
+		if (thePrefs::StartNextFileAlpha()) {
+			filePrefs.AddTag(CECEmptyTag(EC_TAG_FILES_START_NEXT_ALPHA));
 		}
 		AddTag(filePrefs);
 	}
@@ -278,13 +556,41 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(uint32 selection, EC_DETAIL_LEVEL pref_detail
 			dirtag.AddTag(CECTag(EC_TAG_STRING, theApp->glob_prefs->shareddir_list[i].GetRaw()));
 		}
 		dirPrefs.AddTag(dirtag);
-		dirPrefs.AddTag(CECTag(EC_TAG_DIRECTORIES_SHARE_HIDDEN, thePrefs::ShareHiddenFiles()));
-		dirPrefs.AddTag(CECTag(EC_TAG_DIRECTORIES_AUTO_RESCAN, thePrefs::AutoRescanSharedDirs()));
+		if (thePrefs::ShareHiddenFiles()) {
+			dirPrefs.AddTag(CECEmptyTag(EC_TAG_DIRECTORIES_SHARE_HIDDEN));
+		}
+		if (thePrefs::AutoRescanSharedDirs()) {
+			dirPrefs.AddTag(CECEmptyTag(EC_TAG_DIRECTORIES_AUTO_RESCAN));
+		}
+#ifndef CLIENT_GUI
+		// follow_symlinks widens what a share exposes on the host, so it is local daemon
+		// configuration: the core reports it for display but amulegui must not send it back (the
+		// core ignores a change anyway, see Apply()), so only the core emits this tag.
+		if (thePrefs::FollowSymlinksInShares()) {
+			dirPrefs.AddTag(CECEmptyTag(EC_TAG_DIRECTORIES_FOLLOW_SYMLINKS));
+		}
+#endif
+		dirPrefs.AddTag(
+			CECTag(EC_TAG_DIRECTORIES_EXCLUDE_PATTERNS, thePrefs::GetExcludeSharePatterns()));
+		dirPrefs.AddTag(
+			CECTag(EC_TAG_DIRECTORIES_EXCLUDE_REGEX, thePrefs::ExcludeSharePatternsUseRegex()));
+#ifndef CLIENT_GUI
+		// The allowed-roots list is local daemon configuration, reported read-only so a remote
+		// client can display what the daemon will accept for a folder change. amulegui/amuleapi
+		// never send it back -- the core ignores it in Apply(), which is how it stays unsettable
+		// over EC -- so only the core emits it.
+		CECTag allowedRoots(EC_TAG_DIRECTORIES_ALLOWED_ROOTS,
+			(uint32)theApp->glob_prefs->allowed_remote_dir_roots.size());
+		for (const CPath &root : theApp->glob_prefs->allowed_remote_dir_roots) {
+			allowedRoots.AddTag(CECTag(EC_TAG_STRING, root.GetRaw()));
+		}
+		dirPrefs.AddTag(allowedRoots);
+#endif
 		AddTag(dirPrefs);
 	}
 
 	if (selection & EC_PREFS_STATISTICS) {
-		//#warning TODO
+		// #warning TODO
 	}
 
 	if (selection & EC_PREFS_SECURITY) {
@@ -317,6 +623,12 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(uint32 selection, EC_DETAIL_LEVEL pref_detail
 		if (thePrefs::IsClientCryptLayerRequired()) {
 			secPrefs.AddTag(CECEmptyTag(EC_TAG_SECURITY_OBFUSCATION_REQUIRED));
 		}
+		if (thePrefs::ParanoidFilter()) {
+			secPrefs.AddTag(CECEmptyTag(EC_TAG_IPFILTER_PARANOID));
+		}
+		if (thePrefs::UseIPFilterSystem()) {
+			secPrefs.AddTag(CECEmptyTag(EC_TAG_IPFILTER_SYSTEM));
+		}
 
 		AddTag(secPrefs);
 	}
@@ -324,31 +636,72 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(uint32 selection, EC_DETAIL_LEVEL pref_detail
 	if (selection & EC_PREFS_CORETWEAKS) {
 		CECEmptyTag cwPrefs(EC_TAG_PREFS_CORETWEAKS);
 		cwPrefs.AddTag(CECTag(EC_TAG_CORETW_MAX_CONN_PER_FIVE, thePrefs::GetMaxConperFive()));
-		if (thePrefs::GetVerbose()) {
+#ifdef CLIENT_GUI
+		const bool verbose = thePrefs::GetCoreVerbose();
+#else
+		const bool verbose = thePrefs::GetVerbose();
+#endif
+		if (verbose) {
 			cwPrefs.AddTag(CECEmptyTag(EC_TAG_CORETW_VERBOSE));
 		}
+		AddDebugSettingsTags(cwPrefs);
 		cwPrefs.AddTag(CECTag(EC_TAG_CORETW_FILEBUFFER, thePrefs::GetFileBufferSize()));
+		if (thePrefs::IsWriteBufferLimitSupported()) {
+			cwPrefs.AddTag(CECTag(
+				EC_TAG_CORETW_WRITE_BUFFER_LIMIT_MIB, thePrefs::GetWriteBufferLimitMiB()));
+		}
 		cwPrefs.AddTag(CECTag(EC_TAG_CORETW_UL_QUEUE, thePrefs::GetQueueSize()));
-		cwPrefs.AddTag(CECTag(EC_TAG_CORETW_SRV_KEEPALIVE_TIMEOUT, thePrefs::GetServerKeepAliveTimeout()));
+		cwPrefs.AddTag(
+			CECTag(EC_TAG_CORETW_SRV_KEEPALIVE_TIMEOUT, thePrefs::GetServerKeepAliveTimeout()));
+		cwPrefs.AddTag(CECTag(EC_TAG_CORETW_KAD_MAX_SEARCHES, thePrefs::GetKadMaxSourceSearches()));
+		cwPrefs.AddTag(CECTag(EC_TAG_CORETW_KAD_REASK_MS, thePrefs::GetKadSourceReaskTime()));
+		cwPrefs.AddTag(CECTag(EC_TAG_CORETW_SOURCE_REASK_MS, thePrefs::GetSourceReaskTime()));
 		AddTag(cwPrefs);
 	}
 
 	if (selection & EC_PREFS_KADEMLIA) {
 		CECEmptyTag kadPrefs(EC_TAG_PREFS_KADEMLIA);
 		kadPrefs.AddTag(CECTag(EC_TAG_KADEMLIA_UPDATE_URL, thePrefs::GetKadNodesUrl()));
+		kadPrefs.AddTag(CECTag(EC_TAG_KADEMLIA_PROTOCOL10, thePrefs::GetKadProtocol10()));
+		kadPrefs.AddTag(CECTag(
+			EC_TAG_KADEMLIA_STRICT_AICH_PUBLISHERS, thePrefs::GetKadStrictAichPublishers()));
 		AddTag(kadPrefs);
+	}
+
+	if (selection & EC_PREFS_IP2COUNTRY) {
+		CECEmptyTag ip2cPrefs(EC_TAG_PREFS_IP2COUNTRY);
+		// SUPPORTED tells a remote GUI whether THIS build has GeoIP compiled in at all;
+		// amulegui gates its whole GeoIP config panel on it. The settings below are plain
+		// prefs and always sent so the panel can populate.
+		ip2cPrefs.AddTag(CECTag(EC_TAG_IP2COUNTRY_SUPPORTED, false));
+		ip2cPrefs.AddTag(CECTag(EC_TAG_IP2COUNTRY_ENABLED, thePrefs::IsGeoIPEnabled()));
+		ip2cPrefs.AddTag(CECTag(EC_TAG_IP2COUNTRY_SOURCE, (uint8)thePrefs::GetGeoIPSource()));
+		ip2cPrefs.AddTag(CECTag(EC_TAG_IP2COUNTRY_CUSTOM_URL, thePrefs::GetGeoIPCustomUrl()));
+		ip2cPrefs.AddTag(
+			CECTag(EC_TAG_IP2COUNTRY_MAXMIND_LICENSE, thePrefs::GetGeoIPMaxMindLicense()));
+		ip2cPrefs.AddTag(CECTag(EC_TAG_IP2COUNTRY_AUTO_UPDATE, thePrefs::IsGeoIPAutoUpdate()));
+		// Read-only live status, filled only where a resolver exists, so a remote GUI can
+		// render the status line and disable buttons while a refresh runs. NULL on
+		// amulegui, which only receives these.
+		// Transient "Update now" trigger set by amulegui's prefs panel, carried on the
+		// outgoing packet so the daemon's Apply() kicks off a manual refresh. Only ever set
+		// on amulegui, so the daemon's own outbound prefs never emit it.
+		if (thePrefs::IsGeoIPUpdateRequested()) {
+			ip2cPrefs.AddTag(CECTag(EC_TAG_IP2COUNTRY_UPDATE_NOW, true));
+		}
+		AddTag(ip2cPrefs);
 	}
 }
 
 /**
- * Applies a boolean value from the set_preferences request
+ * Applies a boolean value from the set_preferences request.
  *
- * @param use_tag	If true, an unset variable means "leave unchanged". If false, an unset variable means false.
- * @param thisTab	The TAG that contains the TAG with a boolean value
- * @param applyFunc	The function to use for applying the value
- * @param tagName	The name of the TAG that holds the boolean value
+ * @param use_tag If true, an unset variable means "leave unchanged"; if false, it means false.
+ * @param thisTab The TAG containing the TAG with a boolean value.
+ * @param applyFunc The function to apply the value with.
+ * @param tagName The name of the TAG holding the boolean value.
  */
-static void ApplyBoolean(bool use_tag, const CECTag *thisTab, void (applyFunc)(bool), int tagName)
+static void ApplyBoolean(bool use_tag, const CECTag *thisTab, void(applyFunc)(bool), int tagName)
 {
 	const CECTag *boolTag = thisTab->GetTagByName(tagName);
 	if (use_tag) {
@@ -360,15 +713,64 @@ static void ApplyBoolean(bool use_tag, const CECTag *thisTab, void (applyFunc)(b
 	}
 }
 
-/*
- * This will set all preferences except of categories, which are work as following:
- *  -> On remote gui they are loaded on startup, and then changed on-command
- *  -> Webserver doesn't supposed to change it.
- */
-void CEC_Prefs_Packet::Apply() const
+#ifndef CLIENT_GUI
+// Applies a remote change to the incoming or temp folder, confined to the configured roots.
+// Only a real change is checked: re-sending the current value (3.1.0 amulegui resends the
+// whole packet on every save) always passes, and a stored value keeps working even if it now
+// sits outside the roots. A change to a location outside every allowed root is refused -- the
+// old value is kept and the raw path is appended to refusedDirs so the EC_OP_SET_PREFERENCES
+// handler can report it (reason code 3). With no roots configured (the default) every change
+// is refused, which is also the opt-in gate.
+static void ApplyRemoteDirChange(
+	const CECTag *tag, const CPath &(*get)(), void (*set)(const CPath &), wxArrayString *refusedDirs)
 {
+	const CPath newDir(tag->GetStringData());
+	if (newDir.IsSameDir(get())) {
+		set(newDir); // unchanged: keep the current value as-is
+	} else if (theApp->glob_prefs->IsRemoteDirChangeAllowed(newDir)) {
+		// A permitted change: store the canonical (symlink/junction-resolved) path we checked,
+		// not the raw string, so a later use cannot re-resolve it through a repointed link.
+		set(newDir.CanonicalForContainment());
+	} else if (refusedDirs != nullptr) {
+		refusedDirs->Add(tag->GetStringData());
+	}
+}
+#endif
+
+/*
+ * Sets every preference except the categories, which work as follows: the remote GUI loads them
+ * at startup and then changes them on command, and the webserver is not supposed to change them.
+ */
+bool CEC_Prefs_Packet::Apply(wxArrayString *refusedDirs) const
+{
+#ifdef CLIENT_GUI
+	// Refusals are produced only by the core; amulegui applies the daemon's own state for
+	// display and never refuses a folder here.
+	(void)refusedDirs;
+#endif
 	const CECTag *thisTab = NULL;
 	const CECTag *oneTag = NULL;
+
+	// Persist/validate the source list before changing any other preference.
+	if (const auto *servers = GetTagByName(EC_TAG_PREFS_SERVERS)) {
+		if (const auto *sources = servers->GetTagByName(EC_TAG_SERVERS_URL_LIST)) {
+			// EC lists use either an empty container or a count payload.
+			if (!(sources->IsCustom() && sources->GetTagDataLen() == 0) &&
+				!(sources->IsInt() && sources->GetInt() == sources->GetTagCount()))
+				return false;
+			wxArrayString urls;
+			for (const auto &tag : *sources) {
+				if (tag.GetTagName() != EC_TAG_STRING || !tag.IsString())
+					return false;
+				urls.Add(tag.GetStringData());
+			}
+			if (!thePrefs::SetServerListURLs(urls))
+				return false;
+		} else if (const auto *url = servers->GetTagByName(EC_TAG_SERVERS_UPDATE_URL)) {
+			if (!url->IsString() || !thePrefs::SetEd2kServersUrl(url->GetStringData()))
+				return false;
+		}
+	}
 
 	if ((thisTab = GetTagByName(EC_TAG_PREFS_GENERAL)) != NULL) {
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_USER_NICK)) != NULL) {
@@ -383,11 +785,26 @@ void CEC_Prefs_Packet::Apply() const
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_GENERAL_CHECK_NEW_VERSION)) != NULL) {
 			thePrefs::SetCheckNewVersion(oneTag->GetInt() != 0);
 		}
+#ifdef CLIENT_GUI
+		// Capability of the connected daemon: 3.1+ daemons always send this bool. A pre-3.1
+		// daemon omits it but still supports the NewVersionCheck preference, so absent
+		// means available (keep the checkbox) and only an explicit false hides it.
+		if (const CECTag *vc = thisTab->GetTagByName(EC_TAG_GENERAL_VERSION_CHECK_AVAILABLE)) {
+			thePrefs::SetVersionCheckAvailable(vc->GetInt() != 0);
+		} else {
+			thePrefs::SetVersionCheckAvailable(true);
+		}
+		// A pre-3.1 daemon omits this tag; treat "absent" as no UPnP so the
+		// controls stay disabled rather than dead (only explicit true enables).
+		if (const CECTag *up = thisTab->GetTagByName(EC_TAG_GENERAL_UPNP_AVAILABLE)) {
+			thePrefs::SetUPnPAvailable(up->GetInt() != 0);
+		} else {
+			thePrefs::SetUPnPAvailable(false);
+		}
+#endif
 	}
 
-	//
-	// webserver doesn't transmit all boolean values
-	//
+	// the webserver does not transmit all boolean values
 	bool use_tag = (GetDetailLevel() == EC_DETAIL_FULL);
 
 	if ((thisTab = GetTagByName(EC_TAG_PREFS_CONNECTIONS)) != NULL) {
@@ -423,9 +840,94 @@ void CEC_Prefs_Packet::Apply() const
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetReconnect, EC_TAG_CONN_RECONNECT);
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetNetworkED2K, EC_TAG_NETWORK_ED2K);
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetNetworkKademlia, EC_TAG_NETWORK_KADEMLIA);
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_CONN_BIND_ADDRESS)) != nullptr) {
+			thePrefs::SetAddress(oneTag->GetStringData());
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_CONN_BIND_INTERFACE)) != nullptr) {
+			thePrefs::SetNetworkInterface(oneTag->GetStringData());
+		}
+		// Proxy is a compound value; start from the current config and overwrite only the
+		// fields the packet actually carried, so a partial PATCH leaves the rest -- notably
+		// the write-only password -- untouched.
+		CProxyData proxy = *thePrefs::GetProxyData();
+		bool proxySet = false;
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_PROXY_ENABLE)) != nullptr) {
+			proxy.m_proxyEnable = oneTag->GetInt() != 0;
+			proxySet = true;
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_PROXY_TYPE)) != nullptr) {
+			proxy.m_proxyType = static_cast<CProxyType>(oneTag->GetInt());
+			proxySet = true;
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_PROXY_HOST)) != nullptr) {
+			proxy.m_proxyHostName = oneTag->GetStringData();
+			proxySet = true;
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_PROXY_PORT)) != nullptr) {
+			proxy.m_proxyPort = static_cast<unsigned short>(oneTag->GetInt());
+			proxySet = true;
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_PROXY_AUTH)) != nullptr) {
+			proxy.m_enablePassword = oneTag->GetInt() != 0;
+			proxySet = true;
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_PROXY_USER)) != nullptr) {
+			proxy.m_userName = oneTag->GetStringData();
+			proxySet = true;
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_PROXY_PASSWORD)) != nullptr) {
+			proxy.m_password = oneTag->GetStringData();
+			proxySet = true;
+		}
+		if (proxySet) {
+			thePrefs::SetProxyData(proxy);
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_CONN_UPNP_ENABLED)) != nullptr) {
+			thePrefs::SetUPnPEnabled(oneTag->GetInt() != 0);
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_CONN_UPNP_TCP_PORT)) != nullptr) {
+			thePrefs::SetUPnPTCPPort(static_cast<uint16>(oneTag->GetInt()));
+		}
+#ifdef ENABLE_IPV6
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_CONN_ADDRESS_FAMILIES)) != nullptr) {
+			thePrefs::SetAddressFamiliesSetting(static_cast<long>(oneTag->GetInt()));
+#ifdef CLIENT_GUI
+			thePrefs::SetAddressFamiliesTagSupported(true);
+#endif
+		}
+#ifdef CLIENT_GUI
+		else {
+			thePrefs::SetAddressFamiliesTagSupported(false);
+		}
+#endif
+		{
+			// The mode tag is authoritative; the boolean is only what a client that predates it
+			// can express, so it is consulted when the mode tag is absent.
+			const CECTag *modeTag = thisTab->GetTagByName(EC_TAG_CONN_ADVERTISE_IPV6_MODE);
+			const CECTag *booleanTag = thisTab->GetTagByName(EC_TAG_CONN_ADVERTISE_IPV6);
+			thePrefs::SetAdvertiseIPv6Mode(
+				ResolveAdvertiseIPv6ModeFromEC(thePrefs::GetAdvertiseIPv6Mode(),
+					modeTag != nullptr,
+					modeTag != nullptr ? modeTag->GetInt() : 0,
+					booleanTag != nullptr,
+					booleanTag != nullptr && booleanTag->GetInt() != 0));
+		}
+#endif
 	}
 
 	if ((thisTab = GetTagByName(EC_TAG_PREFS_MESSAGEFILTER)) != NULL) {
+#ifdef CLIENT_GUI
+		thePrefs::SetChatSpamFilterSupported(thisTab->GetTagByName(EC_TAG_MSGFILTER_ADVANCED) &&
+						     thisTab->GetTagByName(EC_TAG_MSGFILTER_CAPTCHA));
+#endif
+		// These new options use explicit values at every detail level. An older
+		// GUI saving the message group must not turn either option off by omission.
+		if (const auto *tag = thisTab->GetTagByName(EC_TAG_MSGFILTER_ADVANCED)) {
+			thePrefs::SetAdvancedSpamfilterEnabled(tag->GetInt() != 0);
+		}
+		if (const auto *tag = thisTab->GetTagByName(EC_TAG_MSGFILTER_CAPTCHA)) {
+			thePrefs::SetChatCaptchaEnabled(tag->GetInt() != 0);
+		}
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetMustFilterMessages, EC_TAG_MSGFILTER_ENABLED);
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetFilterAllMessages, EC_TAG_MSGFILTER_ALL);
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetMsgOnlyFriends, EC_TAG_MSGFILTER_FRIENDS);
@@ -434,12 +936,55 @@ void CEC_Prefs_Packet::Apply() const
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_MSGFILTER_KEYWORDS)) != NULL) {
 			thePrefs::SetMessageFilterString(oneTag->GetStringData());
 		}
+		ApplyBoolean(use_tag, thisTab, thePrefs::SetShowMessagesInLog, EC_TAG_MSGFILTER_SHOW_IN_LOG);
+		ApplyBoolean(use_tag, thisTab, thePrefs::SetFilterComments, EC_TAG_MSGFILTER_FILTER_COMMENTS);
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_MSGFILTER_COMMENT_KEYWORDS)) != nullptr) {
+			thePrefs::SetCommentFilterString(oneTag->GetStringData());
+		}
 	}
 
 	if ((thisTab = GetTagByName(EC_TAG_PREFS_REMOTECTRL)) != NULL) {
+#ifdef CLIENT_GUI
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_EXTERNALCONN_PASSWD_SET)) != nullptr) {
+			thePrefs::LoadECVerifier(oneTag->GetInt() ? "set" : "");
+		}
+#endif
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetWSIsEnabled, EC_TAG_WEBSERVER_AUTORUN);
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_WEBSERVER_PORT)) != NULL) {
 			thePrefs::SetWSPort(oneTag->GetInt());
+		}
+		ApplyBoolean(use_tag, thisTab, thePrefs::SetAmuleApiIsEnabled, EC_TAG_AMULEAPI_AUTORUN);
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_AMULEAPI_PORT)) != nullptr) {
+			thePrefs::SetAmuleApiPort(static_cast<uint16>(oneTag->GetInt()));
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_AMULEAPI_BIND)) != nullptr) {
+			thePrefs::SetAmuleApiBindAddress(oneTag->GetStringData());
+		}
+		// See the emit side for the encoding. The pending-password prefs start empty and
+		// are cleared again by AmuleApiCredentials::ApplyPrefs, so "tag present but
+		// carrying no hash" correctly leaves the stored password untouched.
+		//
+		// The guest toggle goes through ApplyBoolean for the same reason
+		// EC_TAG_WEBSERVER_GUEST does: this method serves two callers with opposite
+		// conventions. amulegui sends the whole group at EC_DETAIL_UPDATE, where an absent
+		// tag means "off"; amuleapi's PATCH /preferences sends only the named fields at
+		// EC_DETAIL_FULL, where absent means "leave alone".
+		thePrefs::SetAmuleApiPass(wxEmptyString);
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_AMULEAPI_PASSWD)) != nullptr) {
+			thePrefs::SetAmuleApiAdminIsSet(true);
+			const CECTag *const adminHash = oneTag->GetTagByName(EC_TAG_PASSWD_HASH);
+			if (adminHash != nullptr) {
+				thePrefs::SetAmuleApiPass(adminHash->GetMD4Data().Encode());
+			}
+		}
+		thePrefs::SetAmuleApiGuestPass(wxEmptyString);
+		ApplyBoolean(
+			use_tag, thisTab, thePrefs::SetAmuleApiGuestIsEnabled, EC_TAG_AMULEAPI_GUEST_PASSWD);
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_AMULEAPI_GUEST_PASSWD)) != nullptr) {
+			const CECTag *const guestHash = oneTag->GetTagByName(EC_TAG_PASSWD_HASH);
+			if (guestHash != nullptr) {
+				thePrefs::SetAmuleApiGuestPass(guestHash->GetMD4Data().Encode());
+			}
 		}
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_PASSWD_HASH)) != NULL) {
 			thePrefs::SetWSPass(oneTag->GetMD4Data().Encode());
@@ -447,7 +992,8 @@ void CEC_Prefs_Packet::Apply() const
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetWSIsLowUserEnabled, EC_TAG_WEBSERVER_GUEST);
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_WEBSERVER_GUEST)) != NULL) {
 			if ((oneTag->GetTagByName(EC_TAG_PASSWD_HASH)) != NULL) {
-				thePrefs::SetWSLowPass(oneTag->GetTagByName(EC_TAG_PASSWD_HASH)->GetMD4Data().Encode());
+				thePrefs::SetWSLowPass(
+					oneTag->GetTagByName(EC_TAG_PASSWD_HASH)->GetMD4Data().Encode());
 			}
 		}
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetWebUseGzip, EC_TAG_WEBSERVER_USEGZIP);
@@ -455,12 +1001,46 @@ void CEC_Prefs_Packet::Apply() const
 			thePrefs::SetWebPageRefresh(oneTag->GetInt());
 		}
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_WEBSERVER_TEMPLATE)) != NULL) {
-			thePrefs::SetWebTemplate(oneTag->GetStringData());
+			const wxString webTemplate = oneTag->GetStringData();
+			// amuleweb joins this name onto its template search directories without a further
+			// check, so a remote value is confined to a bare file name: a path separator, an
+			// absolute path or a ".."/"." component is refused, which stops it pointing the
+			// webserver at an arbitrary file (CWE-22). An unchanged value always passes; a bad
+			// change is ignored and logged.
+			if (webTemplate == thePrefs::GetWebTemplate() ||
+				CPath(webTemplate).IsBareFileName()) {
+				thePrefs::SetWebTemplate(webTemplate);
+			} else {
+				AddLogLineC(_("Refused a remote request to set the web-server template: the "
+					      "value must be a plain template name, not a path."));
+			}
 		}
 	}
 
 	if ((thisTab = GetTagByName(EC_TAG_PREFS_ONLINESIG)) != NULL) {
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetOnlineSignatureEnabled, EC_TAG_ONLINESIG_ENABLED);
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_ONLINESIG_DIRECTORY)) != nullptr) {
+#ifdef CLIENT_GUI
+			// Remote GUI: the daemon's own value, stored only so the (read-only) Preferences
+			// field can show it. amulegui never sends this tag back (see the emit side).
+			thePrefs::SetOSDir(CPath(oneTag->GetStringData()));
+#else
+			// The online-signature folder is where the core writes amulesig.dat/onlinesig.dat,
+			// a path on the daemon host, so it is NOT remotely settable: EC and amuleapi
+			// credentials administer the application, not the host. It is configured locally in
+			// amule.conf. A value equal to the current one is accepted silently (an older
+			// amulegui resends the whole packet on every save, and amuleapi clients may PATCH
+			// back what they read); a real change is refused and logged.
+			if (oneTag->GetStringData() != thePrefs::GetOSDir().GetRaw()) {
+				AddLogLineC(
+					_("Refused a remote request to change the online-signature folder: "
+					  "it can only be set in the daemon's own configuration."));
+			}
+#endif
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_ONLINESIG_UPDATE)) != nullptr) {
+			thePrefs::SetOSUpdate(oneTag->GetInt());
+		}
 	}
 
 	if ((thisTab = GetTagByName(EC_TAG_PREFS_SERVERS)) != NULL) {
@@ -469,17 +1049,26 @@ void CEC_Prefs_Packet::Apply() const
 			thePrefs::SetDeadserverRetries(oneTag->GetInt());
 		}
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetAutoServerlist, EC_TAG_SERVERS_AUTO_UPDATE);
-		// Here should come the URL list...
-		ApplyBoolean(use_tag, thisTab, thePrefs::SetAddServersFromServer, EC_TAG_SERVERS_ADD_FROM_SERVER);
-		ApplyBoolean(use_tag, thisTab, thePrefs::SetAddServersFromClient, EC_TAG_SERVERS_ADD_FROM_CLIENT);
+
+		ApplyBoolean(
+			use_tag, thisTab, thePrefs::SetAddServersFromServer, EC_TAG_SERVERS_ADD_FROM_SERVER);
+		ApplyBoolean(
+			use_tag, thisTab, thePrefs::SetAddServersFromClient, EC_TAG_SERVERS_ADD_FROM_CLIENT);
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetScoreSystem, EC_TAG_SERVERS_USE_SCORE_SYSTEM);
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetSmartIdCheck, EC_TAG_SERVERS_SMART_ID_CHECK);
-		ApplyBoolean(use_tag, thisTab, thePrefs::SetSafeServerConnectEnabled, EC_TAG_SERVERS_SAFE_SERVER_CONNECT);
-		ApplyBoolean(use_tag, thisTab, thePrefs::SetAutoConnectStaticOnly, EC_TAG_SERVERS_AUTOCONN_STATIC_ONLY);
+		ApplyBoolean(use_tag,
+			thisTab,
+			thePrefs::SetSafeServerConnectEnabled,
+			EC_TAG_SERVERS_SAFE_SERVER_CONNECT);
+		ApplyBoolean(use_tag,
+			thisTab,
+			thePrefs::SetAutoConnectStaticOnly,
+			EC_TAG_SERVERS_AUTOCONN_STATIC_ONLY);
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetManualHighPrio, EC_TAG_SERVERS_MANUAL_HIGH_PRIO);
-		if ((oneTag = thisTab->GetTagByName(EC_TAG_SERVERS_UPDATE_URL)) != NULL) {
-			thePrefs::SetEd2kServersUrl(oneTag->GetStringData());
-		}
+		ApplyBoolean(true,
+			thisTab,
+			thePrefs::SetED2KAcceleratedPublication,
+			EC_TAG_SERVERS_ED2K_ACCELERATED_PUBLICATION);
 	}
 
 	if ((thisTab = GetTagByName(EC_TAG_PREFS_FILES)) != NULL) {
@@ -488,49 +1077,180 @@ void CEC_Prefs_Packet::Apply() const
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetAddNewFilesPaused, EC_TAG_FILES_NEW_PAUSED);
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetNewAutoDown, EC_TAG_FILES_NEW_AUTO_DL_PRIO);
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetPreviewPrio, EC_TAG_FILES_PREVIEW_PRIO);
+		ApplyBoolean(use_tag, thisTab, thePrefs::SetEndgame, EC_TAG_FILES_ENDGAME);
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetNewAutoUp, EC_TAG_FILES_NEW_AUTO_UL_PRIO);
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetStartNextFile, EC_TAG_FILES_START_NEXT_PAUSED);
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetStartNextFileSame, EC_TAG_FILES_RESUME_SAME_CAT);
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetSrcSeedsOn, EC_TAG_FILES_SAVE_SOURCES);
-		ApplyBoolean(use_tag, thisTab, thePrefs::SetExtractMetaData, EC_TAG_FILES_EXTRACT_METADATA);
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetAllocFullFile, EC_TAG_FILES_ALLOC_FULL_SIZE);
-		ApplyBoolean(use_tag, thisTab, thePrefs::SetCheckDiskspaceEnabled, EC_TAG_FILES_CHECK_FREE_SPACE);
+		ApplyBoolean(
+			use_tag, thisTab, thePrefs::SetCheckDiskspaceEnabled, EC_TAG_FILES_CHECK_FREE_SPACE);
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_FILES_SHARED_REVERIFY_DAYS)) != nullptr) {
+			const uint64 days = oneTag->GetInt();
+			if (days <= 3650) {
+				thePrefs::SetSharedFileReverifyDays(static_cast<uint32>(days));
+			}
+		}
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_FILES_MIN_FREE_SPACE)) != NULL) {
 			thePrefs::SetMinFreeDiskSpaceMB(oneTag->GetInt());
 		}
 		ApplyBoolean(use_tag, thisTab, thePrefs::CreateFilesNormal, EC_TAG_FILES_CREATE_NORMAL);
+		ApplyBoolean(use_tag,
+			thisTab,
+			thePrefs::SetMediaMetadataEnabled,
+			EC_TAG_FILES_MEDIA_METADATA_ENABLED);
+		// EC_TAG_FILES_MEDIA_FFPROBE_PATH is reserved and ignored.
+#ifdef CLIENT_GUI
+		// An older core sends no capability; it may still extract with ffprobe.
+		oneTag = thisTab->GetTagByName(EC_TAG_FILES_MEDIA_METADATA_AVAILABLE);
+		thePrefs::SetMediaMetadataAvailable(oneTag == nullptr || oneTag->GetInt() != 0);
+#endif
+		ApplyBoolean(
+			use_tag, thisTab, thePrefs::SetStartNextFileAlpha, EC_TAG_FILES_START_NEXT_ALPHA);
+#ifdef CLIENT_GUI
+		// Remote GUI: mmap capability is whatever the daemon advertised in this
+		// preferences response (tag presence), not the GUI's own build.
+		thePrefs::SetMMapSupported(thisTab->GetTagByName(EC_TAG_FILES_MMAP_SUPPORTED) != nullptr);
+#endif
+		ApplyBoolean(use_tag, thisTab, thePrefs::SetMMapEnabled, EC_TAG_FILES_MMAP_ENABLED);
 	}
 
 	if ((thisTab = GetTagByName(EC_TAG_PREFS_DIRECTORIES)) != NULL) {
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_DIRECTORIES_INCOMING)) != NULL) {
+#ifdef CLIENT_GUI
 			thePrefs::SetIncomingDir(CPath(oneTag->GetStringData()));
+#else
+			ApplyRemoteDirChange(
+				oneTag, &thePrefs::GetIncomingDir, &thePrefs::SetIncomingDir, refusedDirs);
+#endif
 		}
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_DIRECTORIES_TEMP)) != NULL) {
+#ifdef CLIENT_GUI
 			thePrefs::SetTempDir(CPath(oneTag->GetStringData()));
+#else
+			ApplyRemoteDirChange(
+				oneTag, &thePrefs::GetTempDir, &thePrefs::SetTempDir, refusedDirs);
+#endif
 		}
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_DIRECTORIES_SHARED)) != NULL) {
+#ifdef CLIENT_GUI
 			theApp->glob_prefs->shareddir_list.clear();
 			for (CECTag::const_iterator it = oneTag->begin(); it != oneTag->end(); ++it) {
 				theApp->glob_prefs->shareddir_list.push_back(CPath(it->GetStringData()));
 			}
+#else
+			// Core: confine newly added shares to the allowed roots. An already-shared folder is
+			// kept unchecked -- re-sending the whole list (amulegui does this on every edit) must
+			// not drop a legacy share that now sits outside the roots, nor one whose disk is
+			// currently unmounted. A newly added folder outside every root is skipped and
+			// reported (reason code 3). Removing a folder (absent from the list) is always
+			// allowed. This is the EC_TAG_DIRECTORIES_SHARED route; EC_OP_SET_SHARED_DIRS applies
+			// the same rule.
+			const CPreferences::PathList &storedDirs = theApp->glob_prefs->shareddir_list;
+			CPreferences::PathList dirs;
+			for (const CECTag &dirTag : *oneTag) {
+				const CPath dir(dirTag.GetStringData());
+				bool alreadyShared = false;
+				for (const CPath &stored : storedDirs) {
+					if (dir.IsSameDir(stored)) {
+						alreadyShared = true;
+						break;
+					}
+				}
+				if (alreadyShared) {
+					dirs.push_back(dir);
+				} else if (theApp->glob_prefs->IsRemoteDirChangeAllowed(dir)) {
+					// Store the canonical path we checked, not the raw string (see
+					// ApplyRemoteDirChange / Get_EC_Response_SetSharedDirs).
+					dirs.push_back(dir.CanonicalForContainment());
+				} else if (refusedDirs != nullptr) {
+					refusedDirs->Add(dirTag.GetStringData());
+				}
+			}
+			// The client sent the union, but only the explicit and recursive lists are saved.
+			theApp->glob_prefs->SetSharedFoldersFromUnion(dirs);
+#endif
 		}
-		ApplyBoolean(use_tag, thisTab, thePrefs::SetShareHiddenFiles, EC_TAG_DIRECTORIES_SHARE_HIDDEN);
-		ApplyBoolean(use_tag, thisTab, thePrefs::SetAutoRescanSharedDirs, EC_TAG_DIRECTORIES_AUTO_RESCAN);
-		// Apply the new auto-rescan state immediately on amuled so a
-		// remote toggle from amulegui doesn't need a daemon restart to
-		// take effect.
+#ifdef CLIENT_GUI
+		// Remote GUI: the daemon's allowed-roots list, stored only so the (read-only) Directories
+		// page can show what the daemon will accept. amulegui never sends it back (see the emit
+		// side); the core ignores this tag entirely, so it cannot be set over EC.
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_DIRECTORIES_ALLOWED_ROOTS)) != nullptr) {
+			theApp->glob_prefs->allowed_remote_dir_roots.clear();
+			for (const CECTag &rootTag : *oneTag) {
+				theApp->glob_prefs->allowed_remote_dir_roots.emplace_back(
+					rootTag.GetStringData());
+			}
+		}
+#endif
+		ApplyBoolean(
+			use_tag, thisTab, thePrefs::SetShareHiddenFiles, EC_TAG_DIRECTORIES_SHARE_HIDDEN);
+		ApplyBoolean(
+			use_tag, thisTab, thePrefs::SetAutoRescanSharedDirs, EC_TAG_DIRECTORIES_AUTO_RESCAN);
+#ifdef CLIENT_GUI
+		// Remote GUI: store the daemon's value so the (read-only) Preferences checkbox can show it.
+		// amulegui never sends it back (see the emit side).
+		ApplyBoolean(use_tag,
+			thisTab,
+			thePrefs::SetFollowSymlinksInShares,
+			EC_TAG_DIRECTORIES_FOLLOW_SYMLINKS);
+#else
+		// follow_symlinks decides whether the share walk crosses symlinks out of the shared tree,
+		// so it widens what an allowed share exposes on the host. It is NOT
+		// remotely settable: it is configured locally in amule.conf. A change is refused and
+		// logged; an unchanged value is accepted silently. Only a present tag is considered -- a
+		// presence-encoded packet that omits it (as amulegui now does) means "no request", not
+		// "set false".
+		if (const CECTag *followTag = thisTab->GetTagByName(EC_TAG_DIRECTORIES_FOLLOW_SYMLINKS)) {
+			const bool requested = use_tag ? (followTag->GetInt() != 0) : true;
+			if (requested != thePrefs::FollowSymlinksInShares()) {
+				AddLogLineC(
+					_("Refused a remote request to change the follow-symlinks-in-shares "
+					  "setting: it can only be set in the daemon's own configuration."));
+			}
+		}
+#endif
+
+		// Shared-file exclusion filter. Each incoming tag is compared against the
+		// current value so a recompile and rescan happen only on a real change.
+		bool excludeChanged = false;
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_DIRECTORIES_EXCLUDE_PATTERNS)) != nullptr) {
+			if (oneTag->GetStringData() != thePrefs::GetExcludeSharePatterns()) {
+				thePrefs::SetExcludeSharePatterns(oneTag->GetStringData());
+				excludeChanged = true;
+			}
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_DIRECTORIES_EXCLUDE_REGEX)) != nullptr) {
+			const bool useRegex = oneTag->GetInt() != 0;
+			if (useRegex != thePrefs::ExcludeSharePatternsUseRegex()) {
+				thePrefs::SetExcludeSharePatternsUseRegex(useRegex);
+				excludeChanged = true;
+			}
+		}
+		if (excludeChanged) {
+			thePrefs::RecompileShareExcludeFilter();
+		}
+
+#ifndef CLIENT_GUI
+		// Apply the new auto-rescan state immediately on amuled so a remote toggle from
+		// amulegui does not need a daemon restart to take effect. Core only: on amulegui this
+		// packet is the core's own state, and a reload request would rescan every share again.
 		if (theApp->sharedfiles) {
 			theApp->sharedfiles->EnableDirectoryWatcher(thePrefs::AutoRescanSharedDirs());
+			// Same for a changed exclusion filter: re-walk so newly excluded files
+			// leave the shareset and un-excluded ones return. Scheduled rather than
+			// inline, since this runs inside the EC request handler.
+			if (excludeChanged) {
+				theApp->sharedfiles->RequestReload();
+			}
 		}
+#endif
 	}
 
-	// EC_TAG_PREFS_STATISTICS arrives but is unhandled. The prior
-	// assignment to thisTab was dead-stored (caught on lint as
-	// clang-analyzer-deadcode.DeadStores) since thisTab is overwritten
-	// by the next if block. Keep the existence-check shape so future
-	// work has an obvious home.
+	// EC_TAG_PREFS_STATISTICS arrives but is unhandled. The existence check is kept
+	// so future work has an obvious home.
 	if (GetTagByName(EC_TAG_PREFS_STATISTICS) != NULL) {
-		//#warning TODO
+		// #warning TODO
 	}
 
 	if ((thisTab = GetTagByName(EC_TAG_PREFS_SECURITY)) != NULL) {
@@ -549,16 +1269,38 @@ void CEC_Prefs_Packet::Apply() const
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetFilterLanIPs, EC_TAG_IPFILTER_FILTER_LAN);
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetSecureIdentEnabled, EC_TAG_SECURITY_USE_SECIDENT);
 
-		ApplyBoolean(use_tag, thisTab, thePrefs::SetClientCryptLayerSupported, EC_TAG_SECURITY_OBFUSCATION_SUPPORTED);
-		ApplyBoolean(use_tag, thisTab, thePrefs::SetClientCryptLayerRequested, EC_TAG_SECURITY_OBFUSCATION_REQUESTED);
-		ApplyBoolean(use_tag, thisTab, thePrefs::SetClientCryptLayerRequired,  EC_TAG_SECURITY_OBFUSCATION_REQUIRED);
+		ApplyBoolean(use_tag,
+			thisTab,
+			thePrefs::SetClientCryptLayerSupported,
+			EC_TAG_SECURITY_OBFUSCATION_SUPPORTED);
+		ApplyBoolean(use_tag,
+			thisTab,
+			thePrefs::SetClientCryptLayerRequested,
+			EC_TAG_SECURITY_OBFUSCATION_REQUESTED);
+		ApplyBoolean(use_tag,
+			thisTab,
+			thePrefs::SetClientCryptLayerRequired,
+			EC_TAG_SECURITY_OBFUSCATION_REQUIRED);
+		ApplyBoolean(use_tag, thisTab, thePrefs::SetParanoidFilter, EC_TAG_IPFILTER_PARANOID);
+		ApplyBoolean(use_tag, thisTab, thePrefs::SetIPFilterSystem, EC_TAG_IPFILTER_SYSTEM);
 	}
 
 	if ((thisTab = GetTagByName(EC_TAG_PREFS_CORETWEAKS)) != NULL) {
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_CORETW_MAX_CONN_PER_FIVE)) != NULL) {
 			thePrefs::SetMaxConsPerFive(oneTag->GetInt());
 		}
+		// Verbose last: with logfile-only in the same packet, no line may reach guests first.
+		ApplyDebugSettingsTags(*thisTab);
+#ifdef CLIENT_GUI
+		ApplyBoolean(use_tag, thisTab, thePrefs::SetCoreVerbose, EC_TAG_CORETW_VERBOSE);
+		thePrefs::SetWriteBufferLimitSupported(
+			thisTab->GetTagByName(EC_TAG_CORETW_WRITE_BUFFER_LIMIT_MIB) != nullptr);
+#else
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetVerbose, EC_TAG_CORETW_VERBOSE);
+#endif
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_CORETW_WRITE_BUFFER_LIMIT_MIB)) != nullptr) {
+			thePrefs::SetWriteBufferLimitMiB(oneTag->GetInt());
+		}
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_CORETW_FILEBUFFER)) != NULL) {
 			thePrefs::SetFileBufferSize(oneTag->GetInt());
 		}
@@ -568,14 +1310,34 @@ void CEC_Prefs_Packet::Apply() const
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_CORETW_SRV_KEEPALIVE_TIMEOUT)) != NULL) {
 			thePrefs::SetServerKeepAliveTimeout(oneTag->GetInt());
 		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_CORETW_KAD_MAX_SEARCHES)) != nullptr) {
+			thePrefs::SetKadMaxSourceSearches(oneTag->GetInt());
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_CORETW_KAD_REASK_MS)) != nullptr) {
+			thePrefs::SetKadSourceReaskTime(oneTag->GetInt());
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_CORETW_SOURCE_REASK_MS)) != nullptr) {
+			thePrefs::SetSourceReaskTime(oneTag->GetInt());
+		}
 	}
 
-	if ((thisTab = GetTagByName(EC_TAG_PREFS_KADEMLIA)) != NULL) {
-		if ((oneTag = thisTab->GetTagByName(EC_TAG_KADEMLIA_UPDATE_URL)) != NULL) {
+	if ((thisTab = GetTagByName(EC_TAG_PREFS_KADEMLIA)) != nullptr) {
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_KADEMLIA_UPDATE_URL)) != nullptr) {
 			thePrefs::SetKadNodesUrl(oneTag->GetStringData());
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_KADEMLIA_PROTOCOL10)) != nullptr) {
+			thePrefs::SetKadProtocol10(oneTag->GetInt() != 0);
+#ifdef CLIENT_GUI
+			// A 3.2+ core always sends it, so its presence is the capability.
+			thePrefs::SetKadProtocol10Supported(true);
+#endif
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_KADEMLIA_STRICT_AICH_PUBLISHERS)) != nullptr) {
+			thePrefs::SetKadStrictAichPublishers(oneTag->GetInt() != 0);
 		}
 	}
 
 	theApp->glob_prefs->Save();
+	return true;
 }
 // File_checked_for_headers

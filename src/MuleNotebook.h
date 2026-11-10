@@ -27,117 +27,128 @@
 #define MULENOTEBOOK_H
 
 #include <wx/notebook.h>
-
+#include <map>
 
 wxDECLARE_EVENT(wxEVT_COMMAND_MULENOTEBOOK_PAGE_CLOSING, wxEvent);
 wxDECLARE_EVENT(wxEVT_COMMAND_MULENOTEBOOK_ALL_PAGES_CLOSED, wxEvent);
 
 #define EVT_MULENOTEBOOK_PAGE_CLOSING(id, fn) \
-	wx__DECLARE_EVT1(wxEVT_COMMAND_MULENOTEBOOK_PAGE_CLOSING, id, \
+	wx__DECLARE_EVT1(wxEVT_COMMAND_MULENOTEBOOK_PAGE_CLOSING, \
+		id, \
 		wxEVENT_HANDLER_CAST(wxNotebookEventFunction, fn))
 #define EVT_MULENOTEBOOK_ALL_PAGES_CLOSED(id, fn) \
-	wx__DECLARE_EVT1(wxEVT_COMMAND_MULENOTEBOOK_ALL_PAGES_CLOSED, id, \
+	wx__DECLARE_EVT1(wxEVT_COMMAND_MULENOTEBOOK_ALL_PAGES_CLOSED, \
+		id, \
 		wxEVENT_HANDLER_CAST(wxNotebookEventFunction, fn))
-
 
 class wxWindow;
 
+class wxBitmap;
+class wxSize;
 
 /**
- * This is an NoteBook control which adds additional features above what is
- * provided by the wxNoteBook widget. Currently it includes:
- *  - Use of images on the tabs for closing the pages.
- *  - A popup-menu for closing one or more pages.
- *  - Events triggered when pages are closed.
+ * The stock close icon for a tab, recoloured when the desktop is dark.
+ *
+ * wx has no themed close icon on MSW, so the icon would otherwise stay black
+ * against a dark tab (issue #1399).
+ */
+wxBitmap ThemedCloseIcon(const wxSize &size);
+
+/**
+ * A wxNotebook with a few extra features: images on the tabs for closing pages, a popup menu for
+ * closing one or more pages, and events triggered when pages are closed.
  */
 class CMuleNotebook : public wxNotebook
 {
 public:
 	/**
-	 * Constructor.
-	 *
 	 * @see wxNotebook::wxNotebook
 	 */
-	CMuleNotebook( wxWindow *parent, wxWindowID id, const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxDefaultSize, long style = 0, const wxString& name = "notebook" );
+	CMuleNotebook(wxWindow *parent,
+		wxWindowID id,
+		const wxPoint &pos = wxDefaultPosition,
+		const wxSize &size = wxDefaultSize,
+		long style = 0,
+		const wxString &name = "notebook");
 
-	/**
-	 * Destructor.
-	 */
 	virtual ~CMuleNotebook();
 
 	/**
-	 * Deletes the page and triggers an event.
-	 *
-	 * @param nPage The page to be removed.
+	 * Deletes page @a nPage and triggers an event.
 	 */
 	virtual bool DeletePage(int nPage);
 
 	/**
-	 * Deletes and triggers and event for every page.
+	 * Deletes every page, triggering an event for each.
 	 */
 	virtual bool DeleteAllPages();
 
+	/**
+	 * Enables or disables the display of a popup menu.
+	 */
+	void EnablePopup(bool enable);
 
 	/**
-	 * Enables or disables the displaying of a popup-menu.
-	 *
-	 * @param enabled The new setting.
+	 * Sets an external widget to handle the popup event, or NULL to disable. With one set, a
+	 * right click sends a right-click event to that widget so it can create a popup menu; the
+	 * coordinates are fixed to fit it, so no mapping is needed.
 	 */
-	void EnablePopup( bool enable );
+	void SetPopupHandler(wxWindow *widget);
 
-	/**
-	 * Sets an external widget to handle the popup-event.
-	 *
-	 * @param widget The widget which would receive the event or NULL to disable.
-	 *
-	 * Setting the handler to a non-NULL pointer means that upon right-clicks, a
-	 * right click event will be sent to that widget, so that it can create a
-	 * popup-menu. The coordinates will be fixed to fit onto the specified widget,
-	 * so no mapping is needed.
-	 */
-	void SetPopupHandler( wxWindow* widget );
+	// 0: the whole image closes (legacy tabs); positive: only that many leftmost
+	// pixels close, leaving the rest for a mode icon; -1: images never close tabs.
+	void SetCloseIconWidth(int width) { m_closeIconWidth = width; }
+	void SetPageToolTip(size_t page, const wxString &text);
 
 protected:
+	bool IsCloseIconHit(const wxPoint &position, int tab, long flags) const;
+	void OnMouseLeave(wxMouseEvent &event);
 	/**
-	 * Event handler for left or middle mouse button to press or release (for closing pages)
+	 * Left or middle mouse button press or release, for closing pages.
 	 */
 	void OnMouseButton(wxMouseEvent &event);
 
 	/**
-	 * Event handler for mouse motion (for highlighting the 'x')
+	 * Mouse motion, for highlighting the 'x'.
 	 */
 	void OnMouseMotion(wxMouseEvent &event);
 
 	/**
-	 * Event-handler for right-clicks that takes care of displaying the popup-menu.
+	 * Right clicks, which display the popup menu.
 	 */
-	void OnRMButton(wxMouseEvent& event);
+	void OnRMButton(wxMouseEvent &event);
 
 	/**
-	 * Event-handler of the Close item on the popup-menu.
+	 * The Close item on the popup menu.
 	 */
-	void OnPopupClose(wxCommandEvent& evt);
+	void OnPopupClose(wxCommandEvent &evt);
 
 	/**
-	 * Event-handler of the CloseAll item on the popup-menu.
+	 * The CloseAll item on the popup menu.
 	 */
-	void OnPopupCloseAll(wxCommandEvent& evt);
+	void OnPopupCloseAll(wxCommandEvent &evt);
 
 	/**
-	 * Event-handler of the CloseOthers item on the popup-menu.
+	 * The CloseOthers item on the popup menu.
 	 */
-	void OnPopupCloseOthers(wxCommandEvent& evt);
+	void OnPopupCloseOthers(wxCommandEvent &evt);
 
 	//! Keeps track of the popup-menu being enabled or not.
-	bool		m_popup_enable;
+	bool m_popup_enable;
 
 	//! The pointer to the widget which would receive right-click events or NULL.
-	wxWindow*	m_popup_widget;
+	wxWindow *m_popup_widget;
+	int m_closeIconWidth = 0;
+	// Window keys survive tab reordering. Entries are removed with their pages;
+	// unlike SetHelpText(), this does not require an installed wxHelpProvider.
+	std::map<const wxWindow *, wxString> m_pageTooltips;
+	int m_tabDownIcon = -1;
+	int m_tabDownMiddle = -1;
 
 	wxDECLARE_EVENT_TABLE();
 };
 
-	#define MULE_NOTEBOOK_TAB_HEIGHT 40
-	
+#define MULE_NOTEBOOK_TAB_HEIGHT 40
+
 #endif
 // File_checked_for_headers

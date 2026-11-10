@@ -22,22 +22,27 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include "GuiEvents.h"
+#include "MuleGUIEvent.h"
 #include "amule.h"
-#include <common/MenuIDs.h>		// MP_PAUSE/STOP/RESUME/CANCEL + MP_PRIO* for the
+#ifndef CLIENT_GUI
+#include "ClientList.h"   // Needed for FindClientByECID (Browse_Started)
+#include "updownclient.h" // Needed for IsBrowseEcInitiated (Browse_Started)
+#endif
+#include <common/MenuIDs.h> // MP_PAUSE/STOP/RESUME/CANCEL + MP_PRIO* for the
+#include <common/Format.h>  // CFormat for CompletedFiles_DeleteFromDisk
 #ifndef AMULE_DAEMON
-#include "CommentDialog.h"		// CCommentDialog::DropReferencesTo
-#include "CommentDialogLst.h"		// CCommentDialogLst::DropReferencesTo
-#include "FileDetailDialog.h"		// CFileDetailDialog::DropReferencesTo
-#include "GenericClientListCtrl.h"	// CGenericClientListCtrl::RemoveKnownFile
-#include "TransferWnd.h"		// access to m_transferwnd->clientlistctrl
-#include "SharedFilesWnd.h"		// access to m_sharedfileswnd->peerslistctrl
+#include "CommentDialog.h"         // CCommentDialog::DropReferencesTo
+#include "CommentDialogLst.h"      // CCommentDialogLst::DropReferencesTo
+#include "FileDetailDialog.h"      // CFileDetailDialog::DropReferencesTo
+#include "GenericClientListCtrl.h" // CGenericClientListCtrl::RemoveKnownFile
+#include "TransferWnd.h"           // access to m_transferwnd->clientlistctrl
+#include "SharedFilesWnd.h"        // access to m_sharedfileswnd->peerslistctrl
 #endif
 #ifndef CLIENT_GUI
-#include "SHAHashSet.h"			// CAICHHashSet::DropReferencesTo
-#include "PartFileWriteThread.h"	// CPartFileWriteThread::DropReferencesTo
+#include "SHAHashSet.h"          // CAICHHashSet::DropReferencesTo
+#include "PartFileWriteThread.h" // CPartFileWriteThread::DropReferencesTo
 #endif
-					// CLIENT_GUI implementations of Download_Set_Cat_*
+// CLIENT_GUI implementations of Download_Set_Cat_*
 #include "PartFile.h"
 #include "DownloadQueue.h"
 #include "ServerList.h"
@@ -49,34 +54,33 @@
 #include "Friend.h"
 #include "Logger.h"
 
-#ifdef __WXMAC__
-#include "MacAppHelper.h"	// mac_set_accessory_mode
-#endif
-
 #ifndef AMULE_DAEMON
-#	include "ChatWnd.h"
-#	include "amuleDlg.h"
-#	include "ServerWnd.h"
-#	include "SearchDlg.h"
-#	include "TransferWnd.h"
-#	include "SharedFilesWnd.h"
-#	include "ServerListCtrl.h"
-#	include "SourceListCtrl.h"
-#	include "SharedFilesCtrl.h"
-#	include "DownloadListCtrl.h"
-#	include "muuli_wdr.h"
-#	include "SharedFilePeersListCtrl.h"
-#	ifndef CLIENT_GUI
-#		include "PartFileConvertDlg.h"
-#		include "PartFileConvert.h"
-#	endif
+#include "ChatWnd.h"
+#include "amuleDlg.h"
+#include "ClientRef.h" // Needed for CClientRef
+#include "ServerWnd.h"
+#include "SearchDlg.h"
+#include "SearchListModel.h" // Needed for CSearchListModel::DropReferencesTo
+#include "TransferWnd.h"
+#include "SharedFilesWnd.h"
+#include "ServerListCtrl.h"
+#include "SourceListCtrl.h"
+#include "SharedFilesCtrl.h"
+#include "DownloadListCtrl.h"
+#include "muuli_wdr.h"
+#include "SharedFilePeersListCtrl.h"
+#ifndef CLIENT_GUI
+#include "PartFileConvertDlg.h"
+#include "PartFileConvert.h"
+#endif
 #endif
 
 #ifndef CLIENT_GUI
-#	include "UploadQueue.h"
-#	include "EMSocket.h"
-#	include "ListenSocket.h"
-#	include "MuleUDPSocket.h"
+#include "UploadQueue.h"
+#include "SharedFileList.h"
+#include "EMSocket.h"
+#include "ListenSocket.h"
+#include "MuleUDPSocket.h"
 #endif
 
 #include <common/MacrosProgramSpecific.h>
@@ -86,877 +90,1169 @@ wxDEFINE_EVENT(MULE_EVT_NOTIFY, wxEvent);
 namespace MuleNotify
 {
 
-	void HandleNotification(const CMuleNotiferBase& ntf)
-	{
-		if (wxThread::IsMain()) {
+void HandleNotification(const CMuleNotiferBase &ntf)
+{
+	if (wxThread::IsMain()) {
 #ifdef AMULE_DAEMON
-			ntf.Notify();
+		ntf.Notify();
 #else
-			if (theApp->amuledlg) {
-				ntf.Notify();
-			}
-#endif
-		} else {
-			CMuleGUIEvent evt(ntf.Clone());
-			wxQueueEvent(wxTheApp, (evt).Clone());
+		if (theApp->amuledlg) {
+			ntf.Notify();
 		}
-	}
-
-
-	void HandleNotificationAlways(const CMuleNotiferBase& ntf)
-	{
+#endif
+	} else {
 		CMuleGUIEvent evt(ntf.Clone());
 		wxQueueEvent(wxTheApp, (evt).Clone());
 	}
+}
 
+void HandleNotificationAlways(const CMuleNotiferBase &ntf)
+{
+	// Tagged so the handler runs it even with no main window: this is the path the socket layer
+	// uses, and amulegui has no window until the EC connection it is carrying has been made.
+	CMuleGUIEvent evt(ntf.Clone(), true);
+	wxQueueEvent(wxTheApp, (evt).Clone());
+}
 
-	void Search_Add_Download(CSearchFile* file, uint8 category)
-	{
-		theApp->downloadqueue->AddSearchToDownload(file, category);
-	}
+void Search_Add_Download(CSearchFile *file, uint8 category)
+{
+	theApp->downloadqueue->AddSearchToDownload(file, category);
+}
 
-
-	void ShowUserCount(wxString NOT_ON_DAEMON(str))
-	{
+void ShowUserCount(wxString NOT_ON_DAEMON(str))
+{
 #ifndef AMULE_DAEMON
-		theApp->amuledlg->ShowUserCount(str);
+	theApp->amuledlg->ShowUserCount(str);
 #endif
-	}
+}
 
-
-	void Search_Update_Progress(uint32 NOT_ON_DAEMON(val))
-	{
+// Fired by the core version check on the monolithic app so the outdated-version popup is driven
+// from the shared engine instead of a GUI-only CVersionCheck. A no-op on the daemon, and never
+// fired in amulegui, which runs its own check.
+//
+// `latest` is by value because MuleNotify stores every argument by value and invokes the handler
+// with it, so a const& parameter would leave that stored member a dangling reference.
+// NOLINTNEXTLINE(performance-unnecessary-value-param)
+void VersionCheckResult(wxString NOT_ON_DAEMON(latest), bool NOT_ON_DAEMON(outdated))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_searchwnd) {
-			if (val == 0xffff) {
-				// Global search ended
-				theApp->amuledlg->m_searchwnd->ResetControls();
-			} else if (val == 0xfffe) {
-				// Kad search ended
-				theApp->amuledlg->m_searchwnd->KadSearchEnd(0);
-			} else {
-				theApp->amuledlg->m_searchwnd->UpdateProgress(val);
-			}
+	if (outdated && theApp->amuledlg) {
+		theApp->amuledlg->ShowVersionAvailable(latest);
+	}
+#endif
+}
+
+void Search_Update_Progress(uint32 NOT_ON_DAEMON(val))
+{
+#ifndef AMULE_DAEMON
+	if (theApp->amuledlg->m_searchwnd) {
+		if (val == 0xffff) {
+			// Global search ended
+			theApp->amuledlg->m_searchwnd->ResetControls();
+		} else if (val == 0xfffe) {
+			// Kad search ended
+			theApp->amuledlg->m_searchwnd->KadSearchEnd(0);
+		} else {
+#ifdef CLIENT_GUI
+			// Remote GUI single-search fallback (old daemon without
+			// multi-search): drive the bar from the scalar value.
+			theApp->amuledlg->m_searchwnd->UpdateProgress(val);
+#else
+			// Monolithic: re-derive the bar from the VISIBLE tab's core lifecycle so a
+			// background search's progress never bleeds onto another tab's bar (val is
+			// the current search's scalar).
+			theApp->amuledlg->m_searchwnd->RefreshVisibleTabProgress();
+#endif
 		}
-#endif
 	}
+#endif
+}
 
-
-	void DownloadCtrlUpdateItem(const void* item)
-	{
+void DownloadCtrlUpdateItem(const void *item, bool NOT_ON_DAEMON(refreshGUI))
+{
 #ifndef CLIENT_GUI
-		// Notify can fire from PartFile load during early OnInit (#268
-		// crash from a wx2.8.12 / pre-ASIO build) and from background
-		// threads during shutdown after `delete ECServerHandler`.
-		// Master's OnInit currently builds ECServerHandler before
-		// LoadMetFiles, so the early-init crash is fixed by ordering;
-		// guard the dereference anyway so future reorders or
-		// shutdown races can't reintroduce the segfault.
-		if (theApp->ECServerHandler && theApp->ECServerHandler->m_ec_notifier) {
-			theApp->ECServerHandler->m_ec_notifier->DownloadFile_SetDirty(static_cast<const CPartFile*>(item));
-		}
+	// Notify can fire from PartFile load during early OnInit and from background threads during
+	// shutdown after `delete ECServerHandler`. OnInit currently builds ECServerHandler before
+	// LoadMetFiles, so the early-init crash (#268) is fixed by ordering; the guard keeps a
+	// future reorder or shutdown race from reintroducing the segfault.
+	if (theApp->ECServerHandler && theApp->ECServerHandler->m_ec_notifier) {
+		theApp->ECServerHandler->m_ec_notifier->DownloadFile_SetDirty(
+			static_cast<const CPartFile *>(item));
+	}
 #endif
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->downloadlistctrl) {
+	if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->downloadlistctrl) {
+		if (refreshGUI) {
 			theApp->amuledlg->m_transferwnd->downloadlistctrl->UpdateItem(item);
+		} else {
+			theApp->amuledlg->m_transferwnd->downloadlistctrl->DeferUpdateItem(item);
 		}
-#endif
 	}
+#endif
+}
 
-
-	void DownloadCtrlDoItemSelectionChanged()
-	{
+void DownloadCtrlDoItemSelectionChanged()
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->downloadlistctrl) {
-			theApp->amuledlg->m_transferwnd->downloadlistctrl->DoItemSelectionChanged();
-		}
-#endif
+	// Checks the dialog itself, unlike its siblings: this one is queued through
+	// DoNotifyAlways(), so the handler runs even with no main window -- the exemption that lets
+	// the socket layer through during connect. Everything else on that path never touches the
+	// GUI, so these two carry the test themselves.
+	if (theApp->amuledlg && theApp->amuledlg->m_transferwnd &&
+		theApp->amuledlg->m_transferwnd->downloadlistctrl) {
+		theApp->amuledlg->m_transferwnd->downloadlistctrl->DoItemSelectionChanged();
 	}
+#endif
+}
 
-
-	void NodesURLChanged(wxString NOT_ON_DAEMON(url))
-	{
+void NodesURLChanged(wxString NOT_ON_DAEMON(url))
+{
 #ifndef AMULE_DAEMON
-		CastByID(IDC_NODESLISTURL, NULL, wxTextCtrl)->SetValue(url);
+	CastByID(IDC_NODESLISTURL, NULL, wxTextCtrl)->SetValue(url);
 #endif
-	}
+}
 
-	void ServersURLChanged(wxString NOT_ON_DAEMON(url))
-	{
+void ServersURLChanged(wxString NOT_ON_DAEMON(url))
+{
 #ifndef AMULE_DAEMON
-		CastByID(IDC_SERVERLISTURL, NULL, wxTextCtrl)->SetValue(url);
+	CastByID(IDC_SERVERLISTURL, NULL, wxTextCtrl)->SetValue(url);
 #endif
-	}
+}
 
-	void ShowGUI()
-	{
+void NetworkRearrange()
+{
 #ifndef AMULE_DAEMON
-		// Triggered from a duplicate-launch RAISE_DIALOG signal (the
-		// running instance picks it up via ED2KLinks polling) and
-		// from MacReopenApp when the user clicks the Dock icon. Cover
-		// every hidden state the main window can be in:
-		//   * Show(false) via the close-button HideOnClose path
-		//   * Iconize(true) via the minimize-to-tray path
-		//   * just behind another app's window
-#ifdef __WXMAC__
-		// If we're still in accessory mode (window was hidden via the
-		// tray), restore the regular Dock icon before the window
-		// comes back, otherwise activate-ignoring-other-apps lands on
-		// a Dock-less app and the focus shift is invisible.
-		mac_set_accessory_mode(false);
-#endif
-		theApp->amuledlg->Show(true);
-		theApp->amuledlg->Iconize(false);
-		theApp->amuledlg->Raise();
-#endif
+	if (theApp->amuledlg) {
+		theApp->amuledlg->DoNetworkRearrange();
 	}
+#endif
+}
 
-	void SourceCtrlUpdateSource(uint32 NOT_ON_DAEMON(source), SourceItemType NOT_ON_DAEMON(type))
-	{
+void ShowGUI()
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->clientlistctrl) {
-			theApp->amuledlg->m_transferwnd->clientlistctrl->UpdateItem(source, type);
-		}
-#endif
+	// Triggered by a duplicate-launch RAISE_DIALOG signal, which the running instance picks up
+	// via ED2KLinks polling. It can arrive before the main window exists: the second launch
+	// only has to beat the first one to building its GUI.
+	if (theApp->amuledlg) {
+		theApp->amuledlg->RestoreMainWindow();
 	}
+#endif
+}
 
-	void SourceCtrlAddSource(CPartFile* NOT_ON_DAEMON(owner), CClientRef NOT_ON_DAEMON(source), SourceItemType NOT_ON_DAEMON(type))
-	{
+void SourceCtrlUpdateSource(uint32 NOT_ON_DAEMON(source), SourceItemType NOT_ON_DAEMON(type))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->clientlistctrl) {
-			theApp->amuledlg->m_transferwnd->clientlistctrl->AddSource(owner, source, type);
-		}
-#endif
+	if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->clientlistctrl) {
+		theApp->amuledlg->m_transferwnd->clientlistctrl->UpdateItem(source, type);
 	}
+#endif
+}
 
-	void SourceCtrlRemoveSource(uint32 NOT_ON_DAEMON(source), const CPartFile* NOT_ON_DAEMON(owner))
-	{
+void SourceCtrlAddSource(
+	CPartFile *NOT_ON_DAEMON(owner), CClientRef NOT_ON_DAEMON(source), SourceItemType NOT_ON_DAEMON(type))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->clientlistctrl) {
-			theApp->amuledlg->m_transferwnd->clientlistctrl->RemoveSource(source, owner);
-		}
-#endif
+	if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->clientlistctrl) {
+		theApp->amuledlg->m_transferwnd->clientlistctrl->AddSource(owner, source, type);
 	}
+#endif
+}
 
-	void SharedCtrlAddClient(CKnownFile* NOT_ON_DAEMON(owner), CClientRef NOT_ON_DAEMON(source), SourceItemType NOT_ON_DAEMON(type))
-	{
+void SourceCtrlRemoveSource(uint32 NOT_ON_DAEMON(source), const CPartFile *NOT_ON_DAEMON(owner))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->peerslistctrl) {
-			theApp->amuledlg->m_sharedfileswnd->peerslistctrl->AddSource(owner, source, type);
-		}
-#endif
+	if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->clientlistctrl) {
+		theApp->amuledlg->m_transferwnd->clientlistctrl->RemoveSource(source, owner);
 	}
+#endif
+}
 
-	void SharedCtrlRefreshClient(uint32 NOT_ON_DAEMON(client), SourceItemType NOT_ON_DAEMON(type))
-	{
+void SharedCtrlAddClient(CKnownFile *NOT_ON_DAEMON(owner),
+	CClientRef NOT_ON_DAEMON(source),
+	SourceItemType NOT_ON_DAEMON(type))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->peerslistctrl) {
-			theApp->amuledlg->m_sharedfileswnd->peerslistctrl->UpdateItem(client, type);
-		}
-#endif
+	if (theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->peerslistctrl) {
+		theApp->amuledlg->m_sharedfileswnd->peerslistctrl->AddSource(owner, source, type);
 	}
+#endif
+}
 
-	void SharedCtrlRemoveClient(uint32 NOT_ON_DAEMON(source), const CKnownFile* NOT_ON_DAEMON(owner))
-	{
+void SharedCtrlRefreshClient(uint32 NOT_ON_DAEMON(client), SourceItemType NOT_ON_DAEMON(type))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->peerslistctrl) {
-			theApp->amuledlg->m_sharedfileswnd->peerslistctrl->RemoveSource(source, owner);
-		}
-#endif
+	if (theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->peerslistctrl) {
+		theApp->amuledlg->m_sharedfileswnd->peerslistctrl->UpdateItem(client, type);
 	}
+#endif
+}
 
-	void ServerRefresh(CServer* NOT_ON_DAEMON(server))
-	{
+void SharedCtrlRemoveClient(uint32 NOT_ON_DAEMON(source), const CKnownFile *NOT_ON_DAEMON(owner))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_serverwnd && theApp->amuledlg->m_serverwnd->serverlistctrl) {
-			theApp->amuledlg->m_serverwnd->serverlistctrl->RefreshServer(server);
-		}
-#endif
+	if (theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->peerslistctrl) {
+		theApp->amuledlg->m_sharedfileswnd->peerslistctrl->RemoveSource(source, owner);
 	}
+#endif
+}
 
-	void ChatUpdateFriend(CFriend * NOT_ON_DAEMON(toupdate))
-	{
+void ServerRefresh(CServer *NOT_ON_DAEMON(server))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_chatwnd) {
-			theApp->amuledlg->m_chatwnd->UpdateFriend(toupdate);
-		}
-#endif
+	if (theApp->amuledlg->m_serverwnd && theApp->amuledlg->m_serverwnd->serverlistctrl) {
+		theApp->amuledlg->m_serverwnd->serverlistctrl->RefreshServer(server);
 	}
+#endif
+}
 
-	void ChatRemoveFriend(CFriend * toremove)
-	{
+void ChatUpdateFriend(CFriend *NOT_ON_DAEMON(toupdate))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_chatwnd) {
-			theApp->amuledlg->m_chatwnd->RemoveFriend(toremove);
-		}
-#endif
-		delete toremove;
+	if (theApp->amuledlg->m_chatwnd) {
+		theApp->amuledlg->m_chatwnd->UpdateFriend(toupdate);
 	}
+#endif
+}
+
+void ChatRemoveFriend(CFriend *toremove)
+{
+#ifndef AMULE_DAEMON
+	if (theApp->amuledlg->m_chatwnd) {
+		theApp->amuledlg->m_chatwnd->RemoveFriend(toremove);
+	}
+#endif
+	delete toremove;
+}
+
+void SharedFilesUpdateItem(CKnownFile *NOT_ON_DAEMON(file))
+{
+#ifndef AMULE_DAEMON
+	if (theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl) {
+		theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->UpdateItem(file);
+	}
+#endif
+}
 
 #ifdef CLIENT_GUI
 
-	void PartFile_Swap_A4AF(CPartFile* file)
-	{
-		theApp->downloadqueue->SendFileCommand(file, EC_OP_PARTFILE_SWAP_A4AF_THIS);
-	}
+void PartFile_Swap_A4AF(CPartFile *file)
+{
+	theApp->downloadqueue->SendFileCommand(file, EC_OP_PARTFILE_SWAP_A4AF_THIS);
+}
 
-	void PartFile_Swap_A4AF_Auto(CPartFile* file)
-	{
-		theApp->downloadqueue->SendFileCommand(file, EC_OP_PARTFILE_SWAP_A4AF_THIS_AUTO);
-	}
+void PartFile_Swap_A4AF_Auto(CPartFile *file)
+{
+	theApp->downloadqueue->SendFileCommand(file, EC_OP_PARTFILE_SWAP_A4AF_THIS_AUTO);
+}
 
-	void PartFile_Swap_A4AF_Others(CPartFile* file)
-	{
-		theApp->downloadqueue->SendFileCommand(file, EC_OP_PARTFILE_SWAP_A4AF_OTHERS);
-	}
+void PartFile_Swap_A4AF_Others(CPartFile *file)
+{
+	theApp->downloadqueue->SendFileCommand(file, EC_OP_PARTFILE_SWAP_A4AF_OTHERS);
+}
 
-	void PartFile_Pause(CPartFile* file)
-	{
-		theApp->downloadqueue->SendFileCommand(file, EC_OP_PARTFILE_PAUSE);
-	}
+void PartFile_Pause(CPartFile *file)
+{
+	theApp->downloadqueue->SendFileCommand(file, EC_OP_PARTFILE_PAUSE);
+}
 
-	void PartFile_Resume(CPartFile* file)
-	{
-		theApp->downloadqueue->SendFileCommand(file, EC_OP_PARTFILE_RESUME);
-	}
+void PartFile_Resume(CPartFile *file)
+{
+	theApp->downloadqueue->SendFileCommand(file, EC_OP_PARTFILE_RESUME);
+}
 
-	void PartFile_Stop(CPartFile* file)
-	{
-		theApp->downloadqueue->SendFileCommand(file, EC_OP_PARTFILE_STOP);
-	}
+void PartFile_Stop(CPartFile *file)
+{
+	theApp->downloadqueue->SendFileCommand(file, EC_OP_PARTFILE_STOP);
+}
 
-	void PartFile_PrioAuto(CPartFile* file, bool val)
-	{
-		theApp->downloadqueue->AutoPrio(file, val);
-	}
+void PartFile_PrioAuto(CPartFile *file, bool val)
+{
+	theApp->downloadqueue->AutoPrio(file, val);
+}
 
-	void PartFile_PrioSet(CPartFile* file, uint8 newDownPriority, bool)
-	{
-		theApp->downloadqueue->Prio(file, newDownPriority);
-	}
+void PartFile_PrioSet(CPartFile *file, uint8 newDownPriority, bool)
+{
+	theApp->downloadqueue->Prio(file, newDownPriority);
+}
 
-	void PartFile_Delete(CPartFile* file)
-	{
-		theApp->downloadqueue->SendFileCommand(file, EC_OP_PARTFILE_DELETE);
-	}
+void PartFile_Delete(CPartFile *file)
+{
+	theApp->downloadqueue->SendFileCommand(file, EC_OP_PARTFILE_DELETE);
+}
 
-	void PartFile_SetCat(CPartFile* file, uint32 val)
-	{
-		theApp->downloadqueue->Category(file, val);
-	}
+void PartFile_SetCat(CPartFile *file, uint32 val)
+{
+	theApp->downloadqueue->Category(file, val);
+}
 
-	void KnownFile_Up_Prio_Set(CKnownFile* file, uint8 val)
-	{
-		theApp->sharedfiles->SetFilePrio(file, val);
-	}
+void KnownFile_Up_Prio_Set(CKnownFile *file, uint8 val)
+{
+	theApp->sharedfiles->SetFilePrio(file, val);
+}
 
-	void KnownFile_Up_Prio_Auto(CKnownFile* file)
-	{
-		theApp->sharedfiles->SetFilePrio(file, PR_AUTO);
-	}
+void KnownFile_Up_Prio_Auto(CKnownFile *file)
+{
+	theApp->sharedfiles->SetFilePrio(file, PR_AUTO);
+}
 
-	void KnownFile_Comment_Set(CKnownFile* file, wxString comment, int8 rating)
-	{
-		theApp->sharedfiles->SetFileCommentRating(file, comment, rating);
-	}
+void KnownFile_Comment_Set(CKnownFile *file, wxString comment, int8 rating)
+{
+	theApp->sharedfiles->SetFileCommentRating(file, comment, rating);
+}
 
-	void Download_Set_Cat_Prio(uint8 cat, uint8 newprio)
-	{
-		// EC has no per-category bulk priority opcode. Mirror the daemon's
-		// CDownloadQueue::SetCatPrio predicate (all files if cat == 0, else
-		// exact category match) and send one EC_OP_PARTFILE_PRIO_SET per
-		// file using the existing per-file helpers. Without this stub being
-		// filled in, amulegui's category-tab right-click priority items
-		// silently no-op'd (#697 sibling of the status case below).
-		std::vector<CPartFile*> targets;
-		for (CDownQueueRem::iterator it = theApp->downloadqueue->begin();
-				it != theApp->downloadqueue->end(); ++it) {
-			CPartFile *file = it->second;
-			if (!cat || file->GetCategory() == cat) {
-				targets.push_back(file);
-			}
-		}
-		for (std::vector<CPartFile*>::iterator it = targets.begin();
-				it != targets.end(); ++it) {
-			if (newprio == PR_AUTO) {
-				theApp->downloadqueue->AutoPrio(*it, true);
-			} else {
-				theApp->downloadqueue->Prio(*it, newprio);
-			}
+void Download_Set_Cat_Prio(uint8 cat, uint8 newprio)
+{
+	// EC has no per-category bulk priority opcode. Mirror the daemon's
+	// CDownloadQueue::SetCatPrio predicate (all files if cat == 0, else exact category match)
+	// and send one EC_OP_PARTFILE_PRIO_SET per file. Unfilled, this stub made amulegui's
+	// category-tab right-click priority items silently no-op.
+	std::vector<CPartFile *> targets;
+	for (CDownQueueRem::iterator it = theApp->downloadqueue->begin(); it != theApp->downloadqueue->end();
+		++it) {
+		CPartFile *file = it->second;
+		if (!cat || file->GetCategory() == cat) {
+			targets.push_back(file);
 		}
 	}
-
-	void Download_Set_Cat_Status(uint8 cat, int newstatus)
-	{
-		// EC has no per-category bulk status opcode. Mirror the daemon's
-		// CDownloadQueue::SetCatStatus: snapshot files that
-		// CheckShowItemInGivenCat() admits for this (cat, AllcatFilter)
-		// pair, then send one per-file EC command. Snapshot first so a
-		// late-arriving EC response can't mutate the queue mid-iteration.
-		// #697: previously empty -- tab-right-click Stop/Pause/Resume/
-		// Cancel silently no-op'd in amulegui (only the remote GUI, not
-		// the monolithic amule, hit this stub).
-		ec_tagname_t cmd = 0;
-		switch (newstatus) {
-			case MP_CANCEL:	cmd = EC_OP_PARTFILE_DELETE;	break;
-			case MP_PAUSE:	cmd = EC_OP_PARTFILE_PAUSE;	break;
-			case MP_STOP:	cmd = EC_OP_PARTFILE_STOP;	break;
-			case MP_RESUME:	cmd = EC_OP_PARTFILE_RESUME;	break;
-			default:	return;
-		}
-		std::vector<CPartFile*> targets;
-		for (CDownQueueRem::iterator it = theApp->downloadqueue->begin();
-				it != theApp->downloadqueue->end(); ++it) {
-			if (it->second->CheckShowItemInGivenCat(cat)) {
-				targets.push_back(it->second);
-			}
-		}
-		for (std::vector<CPartFile*>::iterator it = targets.begin();
-				it != targets.end(); ++it) {
-			theApp->downloadqueue->SendFileCommand(*it, cmd);
+	for (std::vector<CPartFile *>::iterator it = targets.begin(); it != targets.end(); ++it) {
+		if (newprio == PR_AUTO) {
+			theApp->downloadqueue->AutoPrio(*it, true);
+		} else {
+			theApp->downloadqueue->Prio(*it, newprio);
 		}
 	}
+}
 
-	void Upload_Resort_Queue()
-	{
+void Download_Set_Cat_Status(uint8 cat, int newstatus)
+{
+	// EC has no per-category bulk status opcode. Mirror the daemon's
+	// CDownloadQueue::SetCatStatus: snapshot the files CheckShowItemInGivenCat() admits for
+	// this (cat, AllcatFilter) pair, then send one per-file EC command. Snapshot first so a
+	// late-arriving EC response cannot mutate the queue mid-iteration. Unfilled, this stub made
+	// tab-right-click Stop/Pause/Resume/Cancel silently no-op in amulegui.
+	ec_tagname_t cmd = 0;
+	switch (newstatus) {
+	case MP_CANCEL:
+		cmd = EC_OP_PARTFILE_DELETE;
+		break;
+	case MP_PAUSE:
+		cmd = EC_OP_PARTFILE_PAUSE;
+		break;
+	case MP_STOP:
+		cmd = EC_OP_PARTFILE_STOP;
+		break;
+	case MP_RESUME:
+		cmd = EC_OP_PARTFILE_RESUME;
+		break;
+	default:
+		return;
 	}
+	std::vector<CPartFile *> targets;
+	for (CDownQueueRem::iterator it = theApp->downloadqueue->begin(); it != theApp->downloadqueue->end();
+		++it) {
+		if (it->second->CheckShowItemInGivenCat(cat)) {
+			targets.push_back(it->second);
+		}
+	}
+	for (std::vector<CPartFile *>::iterator it = targets.begin(); it != targets.end(); ++it) {
+		theApp->downloadqueue->SendFileCommand(*it, cmd);
+	}
+}
+
+void Upload_Resort_Queue() {}
 
 #else
 
-	void SharedFilesShowFile(CKnownFile* NOT_ON_DAEMON(file))
-	{
+void SharedFilesShowFile(CKnownFile *NOT_ON_DAEMON(file))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl) {
-			theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->ShowFile(file);
-		}
-#endif
+	if (theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl) {
+		theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->ShowFile(file);
 	}
+#endif
+}
 
-	void SharedFilesRemoveFile(CKnownFile* NOT_ON_DAEMON(file))
-	{
+void SharedFilesRemoveFile(CKnownFile *NOT_ON_DAEMON(file))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl) {
-			theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->RemoveFile(file);
-		}
-#endif
+	if (theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl) {
+		theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->RemoveFile(file);
 	}
+#endif
+}
 
-	void SharedFilesRemoveAllFiles()
-	{
+void SharedFilesRemoveAllFiles()
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_sharedfileswnd) {
-			theApp->amuledlg->m_sharedfileswnd->RemoveAllSharedFiles();
-		}
-#endif
+	if (theApp->amuledlg->m_sharedfileswnd) {
+		theApp->amuledlg->m_sharedfileswnd->RemoveAllSharedFiles();
 	}
+#endif
+}
 
-
-	void SharedFilesShowFileList()
-	{
+void SharedFilesShowFileList()
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl) {
-			theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->ShowFileList();
-		}
-#endif
+	if (theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl) {
+		theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->ShowFileList();
 	}
+#endif
+}
 
-
-	void SharedFilesUpdateItem(CKnownFile* NOT_ON_DAEMON(file))
-	{
+void SharedFilesBeginBulkUpdate()
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl) {
-			theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->UpdateItem(file);
-		}
-#endif
+	if (theApp->amuledlg && theApp->amuledlg->m_sharedfileswnd &&
+		theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl) {
+		theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->BeginBulkUpdate();
 	}
+#endif
+}
 
-
-	void SharedFilesBeginBulkUpdate()
-	{
+void SharedFilesEndBulkUpdate()
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg && theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl) {
-			theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->BeginBulkUpdate();
-		}
-#endif
+	if (theApp->amuledlg && theApp->amuledlg->m_sharedfileswnd &&
+		theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl) {
+		theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->EndBulkUpdate();
 	}
+#endif
+}
 
-
-	void SharedFilesEndBulkUpdate()
-	{
+void DownloadCtrlAddFile(CPartFile *file)
+{
+	// See DownloadCtrlUpdateItem above for the rationale; the
+	// notifier can be NULL during init or shutdown.
+	if (theApp->ECServerHandler && theApp->ECServerHandler->m_ec_notifier) {
+		theApp->ECServerHandler->m_ec_notifier->DownloadFile_AddFile(file);
+	}
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg && theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl) {
-			theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->EndBulkUpdate();
-		}
-#endif
+	if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->downloadlistctrl) {
+		theApp->amuledlg->m_transferwnd->downloadlistctrl->AddFile(file);
 	}
+#endif
+}
 
-
-	void DownloadCtrlAddFile(CPartFile* file)
-	{
-		// See DownloadCtrlUpdateItem above for the rationale; the
-		// notifier can be NULL during init or shutdown.
-		if (theApp->ECServerHandler && theApp->ECServerHandler->m_ec_notifier) {
-			theApp->ECServerHandler->m_ec_notifier->DownloadFile_AddFile(file);
-		}
+void DownloadCtrlRemoveFile(CPartFile *file)
+{
+	if (theApp->ECServerHandler && theApp->ECServerHandler->m_ec_notifier) {
+		theApp->ECServerHandler->m_ec_notifier->DownloadFile_RemoveFile(file);
+	}
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->downloadlistctrl ) {
-			theApp->amuledlg->m_transferwnd->downloadlistctrl->AddFile(file);
-		}
-#endif
+	if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->downloadlistctrl) {
+		theApp->amuledlg->m_transferwnd->downloadlistctrl->RemoveFile(file);
 	}
+#endif
+}
 
-	void DownloadCtrlRemoveFile(CPartFile* file)
-	{
-		if (theApp->ECServerHandler && theApp->ECServerHandler->m_ec_notifier) {
-			theApp->ECServerHandler->m_ec_notifier->DownloadFile_RemoveFile(file);
-		}
+void DownloadCtrlSort()
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->downloadlistctrl) {
-			theApp->amuledlg->m_transferwnd->downloadlistctrl->RemoveFile(file);
-		}
-#endif
+	// Checks the dialog itself, unlike its siblings: this one is queued through
+	// DoNotifyAlways(), so the handler runs even with no main window -- the exemption that lets
+	// the socket layer through during connect. Everything else on that path never touches the
+	// GUI, so these two carry the test themselves.
+	if (theApp->amuledlg && theApp->amuledlg->m_transferwnd &&
+		theApp->amuledlg->m_transferwnd->downloadlistctrl) {
+		theApp->amuledlg->m_transferwnd->downloadlistctrl->SortList();
 	}
+#endif
+}
 
-	void DownloadCtrlSort()
-	{
+void ServerAdd(CServer *NOT_ON_DAEMON(server))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->downloadlistctrl) {
-			theApp->amuledlg->m_transferwnd->downloadlistctrl->SortList();
-		}
-#endif
+	if (theApp->amuledlg->m_serverwnd && theApp->amuledlg->m_serverwnd->serverlistctrl) {
+		theApp->amuledlg->m_serverwnd->serverlistctrl->AddServer(server);
 	}
+#endif
+}
 
-	void ServerAdd(CServer* NOT_ON_DAEMON(server))
-	{
+void ServerRemove(CServer *NOT_ON_DAEMON(server))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_serverwnd && theApp->amuledlg->m_serverwnd->serverlistctrl) {
-			theApp->amuledlg->m_serverwnd->serverlistctrl->AddServer(server);
-		}
-#endif
+	if (theApp->amuledlg->m_serverwnd && theApp->amuledlg->m_serverwnd->serverlistctrl) {
+		theApp->amuledlg->m_serverwnd->serverlistctrl->RemoveServer(server);
 	}
+#endif
+}
 
-	void ServerRemove(CServer* NOT_ON_DAEMON(server))
-	{
+void ServerRemoveDead()
+{
+	if (theApp->serverlist) {
+		theApp->serverlist->RemoveDeadServers();
+	}
+}
+
+void ServerRemoveAll()
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_serverwnd && theApp->amuledlg->m_serverwnd->serverlistctrl) {
-			theApp->amuledlg->m_serverwnd->serverlistctrl->RemoveServer(server);
-		}
+	if (theApp->amuledlg->m_serverwnd && theApp->amuledlg->m_serverwnd->serverlistctrl) {
+		theApp->amuledlg->m_serverwnd->serverlistctrl->DeleteAllItems();
+	}
 #endif
-	}
+}
 
-	void ServerRemoveDead()
-	{
-		if (theApp->serverlist) {
-			theApp->serverlist->RemoveDeadServers();
-		}
-	}
-
-	void ServerRemoveAll()
-	{
+void ServerHighlight(CServer *NOT_ON_DAEMON(server), bool NOT_ON_DAEMON(highlight))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_serverwnd && theApp->amuledlg->m_serverwnd->serverlistctrl) {
-			theApp->amuledlg->m_serverwnd->serverlistctrl->DeleteAllItems();
-		}
-#endif
+	if (theApp->amuledlg->m_serverwnd && theApp->amuledlg->m_serverwnd->serverlistctrl) {
+		theApp->amuledlg->m_serverwnd->serverlistctrl->HighlightServer(server, highlight);
 	}
+#endif
+}
 
-	void ServerHighlight(CServer* NOT_ON_DAEMON(server), bool NOT_ON_DAEMON(highlight))
-	{
+void ServerFreeze()
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_serverwnd && theApp->amuledlg->m_serverwnd->serverlistctrl) {
-			theApp->amuledlg->m_serverwnd->serverlistctrl->HighlightServer(server, highlight);
-		}
-#endif
+	if (theApp->amuledlg->m_serverwnd && theApp->amuledlg->m_serverwnd->serverlistctrl) {
+		theApp->amuledlg->m_serverwnd->serverlistctrl->Freeze();
 	}
+#endif
+}
 
-	void ServerFreeze()
-	{
+void ServerThaw()
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_serverwnd && theApp->amuledlg->m_serverwnd->serverlistctrl) {
-			theApp->amuledlg->m_serverwnd->serverlistctrl->Freeze();
-		}
-#endif
+	if (theApp->amuledlg->m_serverwnd && theApp->amuledlg->m_serverwnd->serverlistctrl) {
+		theApp->amuledlg->m_serverwnd->serverlistctrl->Thaw();
+		// A bulk (re)load just finished -- size the columns to their
+		// content once, now that every row is present.
+		theApp->amuledlg->m_serverwnd->serverlistctrl->FitColumnsToContent();
 	}
+#endif
+}
 
-	void ServerThaw()
-	{
+void ServerUpdateED2KInfo()
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_serverwnd && theApp->amuledlg->m_serverwnd->serverlistctrl) {
-			theApp->amuledlg->m_serverwnd->serverlistctrl->Thaw();
-		}
-#endif
+	if (theApp->amuledlg->m_serverwnd) {
+		theApp->amuledlg->m_serverwnd->UpdateED2KInfo();
 	}
+#endif
+}
 
-	void ServerUpdateED2KInfo()
-	{
+void ServerUpdateKadKInfo()
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_serverwnd) {
-			theApp->amuledlg->m_serverwnd->UpdateED2KInfo();
-		}
-#endif
+	if (theApp->amuledlg->m_serverwnd) {
+		theApp->amuledlg->m_serverwnd->UpdateKadInfo();
 	}
+#endif
+}
 
-	void ServerUpdateKadKInfo()
-	{
+void SearchCancel()
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_serverwnd) {
-			theApp->amuledlg->m_serverwnd->UpdateKadInfo();
-		}
-#endif
+	if (theApp->amuledlg->m_searchwnd) {
+		theApp->amuledlg->m_searchwnd->ResetControls();
 	}
+#endif
+}
 
-
-	void SearchCancel()
-	{
+void SearchLocalEnd()
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_searchwnd) {
-			theApp->amuledlg->m_searchwnd->ResetControls();
-		}
-#endif
+	if (theApp->amuledlg->m_searchwnd) {
+		theApp->amuledlg->m_searchwnd->LocalSearchEnd();
 	}
+#endif
+}
 
-	void SearchLocalEnd()
-	{
+void KadSearchEnd(uint32 id)
+{
+	if (!theApp->searchlist || theApp->searchlist->IsShuttingDown()) {
+		return;
+	}
+	theApp->searchlist->SetKadSearchFinished(id);
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_searchwnd) {
-			theApp->amuledlg->m_searchwnd->LocalSearchEnd();
-		}
-#endif
+	if (theApp->amuledlg && theApp->amuledlg->m_searchwnd) {
+		// AllSearch files Kad results under the ed2k tab ID, so the completion
+		// notification must reach that tab, not the Kad search's own ID.
+		theApp->amuledlg->m_searchwnd->KadSearchEnd(theApp->searchlist->GetEffectiveSearchId(id));
 	}
+#endif
+}
 
-	void KadSearchEnd(uint32 NOT_ON_DAEMON(id))
-	{
+void Search_Update_Sources(CSearchFile *result)
+{
+	result->SetDownloadStatus();
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_searchwnd) {
-			theApp->amuledlg->m_searchwnd->KadSearchEnd(id);
-		}
-#endif
-		theApp->searchlist->SetKadSearchFinished();
+	if (theApp->amuledlg && theApp->amuledlg->m_searchwnd) {
+		theApp->amuledlg->m_searchwnd->UpdateResult(result);
 	}
+#endif
+}
 
-	void Search_Update_Sources(CSearchFile* result)
-	{
-		result->SetDownloadStatus();
+void Search_Add_Result(CSearchFile *NOT_ON_DAEMON(result))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg && theApp->amuledlg->m_searchwnd) {
-			theApp->amuledlg->m_searchwnd->UpdateResult(result);
-		}
-#endif
+	if (theApp->amuledlg && theApp->amuledlg->m_searchwnd) {
+		theApp->amuledlg->m_searchwnd->AddResult(result);
 	}
+#endif
+}
 
-	void Search_Add_Result(CSearchFile* NOT_ON_DAEMON(result))
-	{
+void Browse_Status(uint64 NOT_ON_DAEMON(searchID), uint32 NOT_ON_DAEMON(status))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg && theApp->amuledlg->m_searchwnd) {
-			theApp->amuledlg->m_searchwnd->AddResult(result);
-		}
-#endif
+	if (theApp->amuledlg && theApp->amuledlg->m_searchwnd) {
+		theApp->amuledlg->m_searchwnd->SetBrowseStatus((wxUIntPtr)searchID, status);
 	}
+#endif
+}
 
-
-	void ChatConnResult(bool NOT_ON_DAEMON(success), uint64 NOT_ON_DAEMON(id), wxString NOT_ON_DAEMON(message))
-	{
+// `name` is taken by value because the notify functor stores each argument by the handler's
+// parameter type and deep-copies into it, so a const-ref parameter would dangle.
+// NOLINTNEXTLINE(performance-unnecessary-value-param)
+void Chat_SessionRemoved(CChatTarget NOT_ON_DAEMON(gui_id))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_chatwnd) {
-			theApp->amuledlg->m_chatwnd->ConnectionResult(success, message, id);
-		}
-#endif
+	if (theApp->amuledlg && theApp->amuledlg->m_chatwnd) {
+		// EndSessionFromCore, not EndSession: the core has already dropped this session, so
+		// the tab must close WITHOUT its page-closing handler originating a close of its
+		// own -- otherwise a close from one client makes every other client echo a
+		// redundant close back, which the daemon answers EC_OP_FAILED.
+		theApp->amuledlg->m_chatwnd->EndSessionFromCore(gui_id);
 	}
+#endif
+}
 
-	void ChatProcessMsg(uint64 NOT_ON_DAEMON(sender), wxString NOT_ON_DAEMON(message))
-	{
+void Search_Removed(wxUIntPtr NOT_ON_DAEMON(searchID))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_chatwnd) {
-			theApp->amuledlg->m_chatwnd->ProcessMessage(sender, message);
-		}
-#endif
+	if (theApp->amuledlg && theApp->amuledlg->m_searchwnd) {
+		theApp->amuledlg->m_searchwnd->CloseSearchTab(searchID);
 	}
+#endif
+}
 
-
-	void ChatSendCaptcha(wxString NOT_ON_DAEMON(captcha), uint64 NOT_ON_DAEMON(to_id))
-	{
+// MuleNotify stores the notify args by value, so `name` is by value here like every other notify
+// handler taking a string.
+// NOLINTNEXTLINE(performance-unnecessary-value-param)
+void Search_Added(wxUIntPtr NOT_ON_DAEMON(searchID), wxString NOT_ON_DAEMON(name), uint32 NOT_ON_DAEMON(kind))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_chatwnd) {
-			theApp->amuledlg->m_chatwnd->SendMessage(captcha, "", to_id);
-		}
-#endif
+	if (theApp->amuledlg && theApp->amuledlg->m_searchwnd) {
+		theApp->amuledlg->m_searchwnd->OnSearchAdded(searchID, name, kind);
 	}
+#endif
+}
 
-
-	void ShowConnState(long NOT_ON_DAEMON(forceUpdate))
-	{
+void Browse_Started(uint32 NOT_ON_DAEMON(ecid), wxString NOT_ON_DAEMON(name), uint64 NOT_ON_DAEMON(searchID))
+{
 #ifndef AMULE_DAEMON
-		theApp->amuledlg->ShowConnectionState(forceUpdate != 0);
+	if (theApp->amuledlg && theApp->amuledlg->m_searchwnd) {
+		// Reveal only what this user started. The notification carries no such flag and
+		// CMuleNotifier stops at three arguments, but the client it names already knows, so
+		// ask it rather than widen the notifier for one bool. CLIENT_GUI has neither the
+		// lookup nor a path that raises this notification.
+		bool reveal = true;
+#ifndef CLIENT_GUI
+		const CUpDownClient *browsed = theApp->clientlist->FindClientByECID(ecid);
+		reveal = !(browsed && browsed->IsBrowseEcInitiated());
 #endif
+		theApp->amuledlg->m_searchwnd->EnsureBrowseTab(ecid, name, (wxUIntPtr)searchID, reveal);
 	}
+#endif
+}
 
-	void ShowUpdateCatTabTitles()
-	{
+// MuleNotify stores notification arguments by value, so this handler must retain the value
+// signature even though the GUI only reads the string and target.
+// NOLINTBEGIN(performance-unnecessary-value-param)
+void ChatConnResult(
+	bool NOT_ON_DAEMON(success), CChatTarget NOT_ON_DAEMON(id), wxString NOT_ON_DAEMON(message))
+// NOLINTEND(performance-unnecessary-value-param)
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_transferwnd) {
-			theApp->amuledlg->m_transferwnd->UpdateCatTabTitles();
-		}
-#endif
+	if (theApp->amuledlg->m_chatwnd) {
+		theApp->amuledlg->m_chatwnd->ConnectionResult(success, message, id);
 	}
+#endif
+}
 
-	void CategoryAdded()
-	{
+// Keep value parameters for MuleNotify's queued argument storage.
+// NOLINTNEXTLINE(performance-unnecessary-value-param)
+void ChatRekeySession(CChatTarget NOT_ON_DAEMON(old_id), CChatTarget NOT_ON_DAEMON(new_id))
+{
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_transferwnd) {
-			theApp->amuledlg->m_transferwnd->
-				AddCategory(theApp->glob_prefs->GetCategory(
-					theApp->glob_prefs->GetCatCount()-1));
-		}
-#endif
+	if (theApp->amuledlg->m_chatwnd) {
+		theApp->amuledlg->m_chatwnd->RekeySession(old_id, new_id);
 	}
+#endif
+}
 
-	void CategoryUpdate(uint32 NOT_ON_DAEMON(cat))
-	{
+// MuleNotify stores the notify args by value, so a `const wxString &` param would dangle -- keep
+// it by value like every other notify handler.
+// NOLINTNEXTLINE(performance-unnecessary-value-param)
+void ChatProcessMsg(CChatTarget sender, wxString message)
+{
+	// No EC relay here any more: CUpDownClient::ProcessChatMessage records the message in the
+	// core store before this notify fires, and every EC client reads it from there. The built-
+	// in GUI below still handles its own local display.
 #ifndef AMULE_DAEMON
-		if (theApp->amuledlg->m_transferwnd) {
-			theApp->amuledlg->m_transferwnd->UpdateCategory(cat);
-			theApp->amuledlg->m_transferwnd->downloadlistctrl->Refresh();
-			theApp->amuledlg->m_searchwnd->UpdateCatChoice();
-		}
-#endif
+	if (theApp->amuledlg->m_chatwnd) {
+		theApp->amuledlg->m_chatwnd->ProcessMessage(sender, message);
 	}
+#endif
+}
 
-	void CategoryDelete(uint32 cat)
-	{
+void ShowConnState(long)
+{
+#ifndef AMULE_DAEMON
+	theApp->amuledlg->ShowConnectionState();
+#endif
+}
+
+void ShowUpdateCatTabTitles()
+{
+#ifndef AMULE_DAEMON
+	if (theApp->amuledlg->m_transferwnd) {
+		theApp->amuledlg->m_transferwnd->UpdateCatTabTitles();
+	}
+#endif
+}
+
+void CategoryAdded()
+{
+#ifndef AMULE_DAEMON
+	if (theApp->amuledlg->m_transferwnd) {
+		theApp->amuledlg->m_transferwnd->AddCategory(
+			theApp->glob_prefs->GetCategory(theApp->glob_prefs->GetCatCount() - 1));
+	}
+#endif
+}
+
+void CategoryUpdate(uint32 NOT_ON_DAEMON(cat))
+{
+#ifndef AMULE_DAEMON
+	if (theApp->amuledlg->m_transferwnd) {
+		theApp->amuledlg->m_transferwnd->UpdateCategory(cat);
+		theApp->amuledlg->m_transferwnd->downloadlistctrl->Refresh();
+		theApp->amuledlg->m_searchwnd->UpdateCatChoice();
+	}
+#endif
+}
+
+void CategoryDelete(uint32 cat)
+{
 #ifdef AMULE_DAEMON
-		if (cat > 0) {
-			theApp->downloadqueue->ResetCatParts(cat);
-			theApp->glob_prefs->RemoveCat(cat);
-			if ( theApp->glob_prefs->GetCatCount() == 1 ) {
-				thePrefs::SetAllcatFilter( acfAll );
-			}
-			theApp->glob_prefs->SaveCats();
+	if (cat > 0) {
+		theApp->downloadqueue->ResetCatParts(cat);
+		theApp->glob_prefs->RemoveCat(cat);
+		if (theApp->glob_prefs->GetCatCount() == 1) {
+			thePrefs::SetAllcatFilter(acfAll);
 		}
+		theApp->glob_prefs->SaveCats();
+	}
 #else
-		if (theApp->amuledlg->m_transferwnd) {
-			theApp->amuledlg->m_transferwnd->RemoveCategory(cat);
-		}
+	if (theApp->amuledlg->m_transferwnd) {
+		theApp->amuledlg->m_transferwnd->RemoveCategory(cat);
+	}
 #endif
-	}
+}
 
-
-	void PartFile_Swap_A4AF(CPartFile* file)
-	{
-		if ((file->GetStatus(false) == PS_READY || file->GetStatus(false) == PS_EMPTY)) {
-			CPartFile::SourceSet::const_iterator it = file->GetA4AFList().begin();
-			for ( ; it != file->GetA4AFList().end(); ) {
-				it++->SwapToAnotherFile(true, false, false, file);
-			}
+void PartFile_Swap_A4AF(CPartFile *file)
+{
+	if ((file->GetStatus(false) == PS_READY || file->GetStatus(false) == PS_EMPTY)) {
+		CPartFile::SourceSet::const_iterator it = file->GetA4AFList().begin();
+		for (; it != file->GetA4AFList().end();) {
+			it++->SwapToAnotherFile(true, false, false, file);
 		}
 	}
+}
 
-	void PartFile_Swap_A4AF_Auto(CPartFile* file)
-	{
-		file->SetA4AFAuto(!file->IsA4AFAuto());
-	}
+void PartFile_Swap_A4AF_Auto(CPartFile *file)
+{
+	file->SetA4AFAuto(!file->IsA4AFAuto());
+}
 
-	void PartFile_Swap_A4AF_Others(CPartFile* file)
-	{
-		if ((file->GetStatus(false) == PS_READY) || (file->GetStatus(false) == PS_EMPTY)) {
-			CPartFile::SourceSet::const_iterator it = file->GetSourceList().begin();
-			for( ; it != file->GetSourceList().end(); ) {
-				it++->SwapToAnotherFile(false, false, false, NULL);
-			}
+void PartFile_Swap_A4AF_Others(CPartFile *file)
+{
+	if ((file->GetStatus(false) == PS_READY) || (file->GetStatus(false) == PS_EMPTY)) {
+		CPartFile::SourceSet::const_iterator it = file->GetSourceList().begin();
+		for (; it != file->GetSourceList().end();) {
+			it++->SwapToAnotherFile(false, false, false, NULL);
 		}
 	}
+}
 
-	void PartFile_Pause(CPartFile* file)
-	{
-		file->PauseFile();
-		file->SavePartFile();
-	}
+void PartFile_Pause(CPartFile *file)
+{
+	file->PauseFile();
+	file->SavePartFile();
+}
 
-	void PartFile_Resume(CPartFile* file)
-	{
-		file->ResumeFile();
-		file->SavePartFile();
-	}
+void PartFile_Resume(CPartFile *file)
+{
+	file->ResumeFile();
+	file->SavePartFile();
+}
 
-	void PartFile_Stop(CPartFile* file)
-	{
-		file->StopFile();
-		file->SavePartFile();
-	}
+void PartFile_Stop(CPartFile *file)
+{
+	file->StopFile();
+	file->SavePartFile();
+}
 
-	void PartFile_PrioAuto(CPartFile* file, bool val)
-	{
-		file->SetAutoDownPriority(val);
-	}
+void PartFile_PrioAuto(CPartFile *file, bool val)
+{
+	file->SetAutoDownPriority(val);
+}
 
-	void PartFile_PrioSet(CPartFile* file, uint8 newDownPriority, bool bSave)
-	{
-		file->SetDownPriority(newDownPriority, bSave);
-	}
+void PartFile_PrioSet(CPartFile *file, uint8 newDownPriority, bool bSave)
+{
+	file->SetDownPriority(newDownPriority, bSave);
+}
 
-	void PartFile_Delete(CPartFile* file)
-	{
-		file->Delete();
-	}
+void PartFile_Delete(CPartFile *file)
+{
+	file->Delete();
+}
 
-	void PartFile_SetCat(CPartFile* file, uint32 val)
-	{
-		file->SetCategory(val);
-	}
+void PartFile_SetCat(CPartFile *file, uint32 val)
+{
+	file->SetCategory(val);
+}
 
+void KnownFile_Up_Prio_Set(CKnownFile *file, uint8 val)
+{
+	file->SetAutoUpPriority(false);
+	file->SetUpPriority(val);
+}
 
-	void KnownFile_Up_Prio_Set(CKnownFile* file, uint8 val)
-	{
-		file->SetAutoUpPriority(false);
-		file->SetUpPriority(val);
-	}
+void KnownFile_Up_Prio_Auto(CKnownFile *file)
+{
+	file->SetAutoUpPriority(true);
+	file->UpdateAutoUpPriority();
+}
 
-	void KnownFile_Up_Prio_Auto(CKnownFile* file)
-	{
-		file->SetAutoUpPriority(true);
-		file->UpdateAutoUpPriority();
-	}
+void KnownFile_Comment_Set(CKnownFile *file, wxString comment, int8 rating)
+{
+	file->SetFileCommentRating(comment, rating);
+	SharedFilesUpdateItem(file);
+}
 
-	void KnownFile_Comment_Set(CKnownFile* file, wxString comment, int8 rating)
-	{
-		file->SetFileCommentRating(comment, rating);
-		SharedFilesUpdateItem(file);
-	}
+void Download_Set_Cat_Prio(uint8 cat, uint8 newprio)
+{
+	theApp->downloadqueue->SetCatPrio(cat, newprio);
+}
 
+void Download_Set_Cat_Status(uint8 cat, int newstatus)
+{
+	theApp->downloadqueue->SetCatStatus(cat, newstatus);
+}
 
-	void Download_Set_Cat_Prio(uint8 cat, uint8 newprio)
-	{
-		theApp->downloadqueue->SetCatPrio(cat, newprio);
-	}
+void Upload_Resort_Queue()
+{
+	theApp->uploadqueue->ResortQueue();
+}
 
-	void Download_Set_Cat_Status(uint8 cat, int newstatus)
-	{
-		theApp->downloadqueue->SetCatStatus(cat, newstatus);
-	}
+void IPFilter_Reload()
+{
+	theApp->ipfilter->Reload();
+}
 
-	void Upload_Resort_Queue()
-	{
-		theApp->uploadqueue->ResortQueue();
-	}
+void IPFilter_Update(wxString url)
+{
+	theApp->ipfilter->Update(url);
+}
 
-	void IPFilter_Reload()
-	{
-		theApp->ipfilter->Reload();
-	}
-
-	void IPFilter_Update(wxString url)
-	{
-		theApp->ipfilter->Update(url);
-	}
-
-	void Client_Delete(CClientRef client)
-	{
-		client.Safe_Delete();
-	}
+void Client_Delete(CClientRef client)
+{
+	client.Safe_Delete();
+}
 
 #ifndef AMULE_DAEMON
-	void ConvertUpdateProgress(float percent, wxString text, wxString header)
-	{
-		CPartFileConvertDlg::UpdateProgress(percent, text, header);
+void ConvertUpdateProgress(float percent, wxString text, wxString header)
+{
+	CPartFileConvertDlg::UpdateProgress(percent, text, header);
+}
+
+void ConvertUpdateJobInfo(ConvertInfo info)
+{
+	CPartFileConvertDlg::UpdateJobInfo(info);
+}
+
+void ConvertRemoveJobInfo(unsigned id)
+{
+	CPartFileConvertDlg::RemoveJobInfo(id);
+}
+
+void ConvertClearInfos()
+{
+	CPartFileConvertDlg::ClearInfo();
+}
+
+void ConvertRemoveJob(unsigned id)
+{
+	CPartFileConvert::RemoveJob(id);
+}
+
+void ConvertRetryJob(unsigned id)
+{
+	CPartFileConvert::RetryJob(id);
+}
+
+void ConvertReaddAllJobs()
+{
+	CPartFileConvert::ReaddAllJobs();
+}
+#endif // #ifndef AMULE_DAEMON
+
+#endif // #ifndef CLIENT_GUI
+
+CDownloadTarget Download_Target(const CPartFile *file)
+{
+	CDownloadTarget target{ file->GetFileHash(), file->ECID() };
+#ifdef CLIENT_GUI
+	target.generation = theApp->downloadqueue->CommandGeneration();
+#endif
+	return target;
+}
+
+// Values must be copied into MuleNotify's queued functor.
+// NOLINTBEGIN(performance-unnecessary-value-param)
+void Download_Execute(CDownloadTarget target, DownloadCommand command)
+// NOLINTEND(performance-unnecessary-value-param)
+{
+#ifdef CLIENT_GUI
+	const uint64 generation = theApp->downloadqueue->CommandGeneration();
+	const bool connected = theApp->downloadqueue->CommandsEnabled();
+#else
+	const uint64 generation = 0;
+	const bool connected = true;
+#endif
+	const bool applied = ApplyDownloadCommand(
+		target,
+		command,
+		[](const CDownloadTarget &selected) -> CPartFile * {
+#ifdef CLIENT_GUI
+			auto it = theApp->downloadqueue->find(selected.ecid);
+			return it == theApp->downloadqueue->end() ? nullptr : it->second;
+#else
+			return theApp->downloadqueue->GetFileByID(selected.hash);
+#endif
+		},
+		[&target](CPartFile *file, DownloadCommand action) {
+#ifdef CLIENT_GUI
+			ec_tagname_t op = EC_OP_PARTFILE_PAUSE;
+			switch (action) {
+			case DownloadCommand::Pause:
+				op = EC_OP_PARTFILE_PAUSE;
+				break;
+			case DownloadCommand::Resume:
+				op = EC_OP_PARTFILE_RESUME;
+				break;
+			case DownloadCommand::Stop:
+				op = EC_OP_PARTFILE_STOP;
+				break;
+			case DownloadCommand::Cancel:
+				op = EC_OP_PARTFILE_DELETE;
+				break;
+			}
+			theApp->downloadqueue->SendFileCommand(file, op, target.ecid);
+#else
+			(void)target;
+			switch (action) {
+			case DownloadCommand::Pause:
+				PartFile_Pause(file);
+				break;
+			case DownloadCommand::Resume:
+				PartFile_Resume(file);
+				break;
+			case DownloadCommand::Stop:
+				PartFile_Stop(file);
+				break;
+			case DownloadCommand::Cancel:
+				PartFile_Delete(file);
+				break;
+			}
+#endif
+		},
+		generation,
+		connected);
+	if (!applied) {
+		AddLogLineN(_("The selected download has changed. Refresh and try again."));
+	}
+}
+
+// MuleNotify stores notification arguments by value; a reference would not match the queued
+// callback signature.
+// NOLINTBEGIN(performance-unnecessary-value-param)
+void ChatSendCaptcha(
+	wxString NOT_ON_DAEMON(captcha), CChatTarget NOT_ON_DAEMON(to_id), uint32 NOT_ON_DAEMON(challengeId))
+// NOLINTEND(performance-unnecessary-value-param)
+{
+#ifndef AMULE_DAEMON
+	if (theApp->amuledlg->m_chatwnd) {
+		theApp->amuledlg->m_chatwnd->SendMessage(captcha, "", to_id, challengeId);
+	}
+#endif
+}
+
+#ifndef AMULE_DAEMON
+void CompletedFiles_DeleteFromDisk(const std::vector<CKnownFile *> &files, wxWindow *parent)
+{
+	if (files.empty()) {
+		return;
 	}
 
-	void ConvertUpdateJobInfo(ConvertInfo info)
+#ifdef CLIENT_GUI
+	if (!theApp->sharedfiles->CanDeleteFileFromDisk()) {
+		wxMessageBox(_("The connected core does not support deleting complete files from disk."),
+			_("Delete from disk"),
+			wxOK | wxICON_ERROR,
+			parent);
+		return;
+	}
+#endif
+
+	// Keep values across the modal event loop, not file pointers: a share rescan or
+	// known-file pruning can replace or destroy a selected record while it is open.
+	struct Selection
 	{
-		CPartFileConvertDlg::UpdateJobInfo(info);
+		CMD4Hash hash;
+		uint32 ecid;
+		CPath name;
+		CPath fullpath;
+		wxString directory;
+	};
+	std::vector<Selection> selected;
+	selected.reserve(files.size());
+	for (const CKnownFile *file : files) {
+		selected.push_back({ file->GetFileHash(),
+			file->ECID(),
+			file->GetFileName(),
+			file->GetFilePath().JoinPaths(file->GetFileName()),
+			file->GetFilePath().GetPrintable() });
 	}
 
-	void ConvertRemoveJobInfo(unsigned id)
-	{
-		CPartFileConvertDlg::RemoveJobInfo(id);
+	wxString question;
+	if (files.size() == 1) {
+		question = CFormat(_("Are you sure you want to delete '%s' from disk?\n\n"
+				     "File: %s\n\n"
+				     "The file is deleted and no longer shared. "
+				     "This cannot be undone.")) %
+			   selected.front().name.GetPrintable() % selected.front().fullpath.GetPrintable();
+	} else {
+		wxString listing;
+		const size_t shown = files.size() < 10 ? files.size() : 10;
+		for (size_t i = 0; i < shown; i++) {
+			listing += selected[i].fullpath.GetPrintable() + "\n";
+		}
+		if (files.size() > shown) {
+			listing += CFormat(_("... and %i more")) % static_cast<int>(files.size() - shown);
+		}
+		question = CFormat(_("Are you sure you want to delete the selected %i files from disk?\n\n"
+				     "%s\n"
+				     "The files are deleted and no longer shared. "
+				     "This cannot be undone.")) %
+			   static_cast<int>(files.size()) % listing;
 	}
 
-	void ConvertClearInfos()
-	{
-		CPartFileConvertDlg::ClearInfo();
+	if (wxMessageBox(
+		    question, _("Delete from disk"), wxICON_QUESTION | wxYES_NO | wxNO_DEFAULT, parent) !=
+		wxYES) {
+		return;
 	}
 
-	void ConvertRemoveJob(unsigned id)
-	{
-		CPartFileConvert::RemoveJob(id);
+#ifdef CLIENT_GUI
+	for (const Selection &selection : selected) {
+		theApp->sharedfiles->DeleteFileFromDisk(
+			selection.hash, selection.ecid, selection.directory, selection.name.GetPrintable());
+	}
+#else
+	std::vector<Selection> failed;
+	for (const Selection &selection : selected) {
+		wxString error;
+		if (theApp->sharedfiles->DeleteFileFromDisk(selection.hash,
+			    selection.ecid,
+			    selection.directory,
+			    selection.name.GetPrintable(),
+			    error) == CSharedFileList::DeleteFileResult::Failed) {
+			failed.push_back(selection);
+		}
+	}
+	if (failed.empty()) {
+		return;
 	}
 
-	void ConvertRetryJob(unsigned id)
-	{
-		CPartFileConvert::RetryJob(id);
+	wxString listing;
+	for (const Selection &selection : failed) {
+		listing += selection.fullpath.GetPrintable() + "\n";
 	}
-
-	void ConvertReaddAllJobs()
-	{
-		CPartFileConvert::ReaddAllJobs();
+	const wxString failure =
+		CFormat(_("Could not delete these files from disk:\n\n%s\n"
+			  "Remove them from shares and the completed transfer list anyway?\n\n"
+			  "Yes: stop sharing and remove the list entries. A later share scan may "
+			  "share the files again.\n"
+			  "No: keep the files shared and listed.")) %
+		listing;
+	if (wxMessageBox(failure, _("Delete from disk"), wxICON_WARNING | wxYES_NO | wxNO_DEFAULT, parent) !=
+		wxYES) {
+		return;
 	}
-#endif	// #ifndef AMULE_DAEMON
+	for (const Selection &selection : failed) {
+		wxString error;
+		(void)theApp->sharedfiles->DeleteFileFromDisk(selection.hash,
+			selection.ecid,
+			selection.directory,
+			selection.name.GetPrintable(),
+			error,
+			true);
+	}
+#endif
+}
+#endif
 
-#endif	// #ifndef CLIENT_GUI
-
-
-// Broadcast called from every CKnownFile destruction site BEFORE
-// the `delete file`. Subscribers MUST only compare the file pointer
-// by value (==) to entries they already hold — never dereference it.
-// By the time a subscriber on the main thread processes this event
-// the bytes pointed at by `file` may already have been recycled.
+// Broadcast from every CKnownFile destruction site BEFORE the `delete file`. Subscribers MUST only
+// compare the file pointer by value, never dereference it: by the time a subscriber on the main
+// thread processes this event, the bytes pointed at may already have been recycled.
 //
-// Defined outside the CLIENT_GUI / non-CLIENT_GUI split so the same
-// function compiles into both `amule` and `amulegui`. The branches
-// inside select the right subscriber set per target.
+// Defined outside the CLIENT_GUI split so the same function compiles into both `amule` and
+// `amulegui`; the branches inside select the subscriber set.
 //
-// Sites that fire this:
-//   - CPartFile::Delete()                  (user cancel)
-//   - CKnownFileList::PruneDuplicates       (TTL eviction)
-//   - CKnownFileList::~CKnownFileList       (shutdown / via Clear())
-//   - CSharedFileList::Reload()             (rebuild)
-//   - CKnownFilesRem::DeleteItem            (amulegui EC_TAG_FILE_REMOVED)
-void KnownFileBeingDestroyed(CKnownFile* file)
+// Fired by CPartFile::Delete(), CKnownFileList::PruneDuplicates, ~CKnownFileList,
+// CSharedFileList::Reload() and CKnownFilesRem::DeleteItem.
+void KnownFileBeingDestroyed(CKnownFile *file)
 {
 #ifndef AMULE_DAEMON
 	// GUI subscribers (linked into `amule` and `amulegui`).
 	if (theApp->amuledlg) {
-		// #1: CGenericClientListCtrl in the transfer window's
-		// downloads pane caches selected files in m_knownfiles;
-		// stale entries crash on the next selection change
+		// #1: CGenericClientListCtrl in the transfer window's downloads pane caches
+		// selected files in m_knownfiles; stale entries crash on the next selection change
 		// (issue #755).
-		if (theApp->amuledlg->m_transferwnd
-			&& theApp->amuledlg->m_transferwnd->clientlistctrl) {
-			theApp->amuledlg->m_transferwnd->clientlistctrl
-				->RemoveKnownFile(file);
+		if (theApp->amuledlg->m_transferwnd && theApp->amuledlg->m_transferwnd->clientlistctrl) {
+			theApp->amuledlg->m_transferwnd->clientlistctrl->RemoveKnownFile(file);
 		}
 		// #2: CGenericClientListCtrl in the shared-files pane
 		// caches selected files the same way.
-		if (theApp->amuledlg->m_sharedfileswnd
-			&& theApp->amuledlg->m_sharedfileswnd->peerslistctrl) {
-			theApp->amuledlg->m_sharedfileswnd->peerslistctrl
-				->RemoveKnownFile(file);
+		if (theApp->amuledlg->m_sharedfileswnd && theApp->amuledlg->m_sharedfileswnd->peerslistctrl) {
+			theApp->amuledlg->m_sharedfileswnd->peerslistctrl->RemoveKnownFile(file);
 		}
-		// #3, #4, #5: open modal dialogs that captured the file
-		// pointer at construction time (CommentDialog,
-		// CommentDialogLst, FileDetailDialog). Each class keeps
-		// its own static registry of live instances so the
-		// broadcast can iterate without needing a friend.
+		// #3, #4, #5: open modal dialogs that captured the file pointer at construction
+		// (CommentDialog, CommentDialogLst, FileDetailDialog). Each keeps its own static
+		// registry of live instances, so the broadcast can iterate without needing a
+		// friend.
 		CCommentDialog::DropReferencesTo(file);
 		CCommentDialogLst::DropReferencesTo(file);
 		CFileDetailDialog::DropReferencesTo(file);
 	}
 #endif
 #ifdef CLIENT_GUI
-	// Remote-GUI subscriber: null CUpDownClient::m_uploadingfile /
-	// m_reqfile on every client that points at this file (the #748
-	// crash flow). Pointer-value comparison only.
+	// Remote-GUI subscriber: null CUpDownClient::m_uploadingfile / m_reqfile on every client
+	// that points at this file (the #748 crash flow). Pointer-value comparison only.
 	if (theApp->clientlist) {
 		theApp->clientlist->DropReferencesTo(file);
 	}
 #endif
 #ifndef CLIENT_GUI
-	// Daemon-side subscribers — drop pending requests/writes naming
-	// this file. Both lists are kept by background-thread machinery
-	// and would otherwise leave dangling pointers after the file is
-	// freed (see audit table in the PR description).
-	//
-	// #5: AICH static recovery-request list. Strip-by-pointer; the
-	// existing RequestAICHRecovery() guard at SHAHashSet.cpp:990 can
-	// be spoofed by allocator reuse, which this prevents.
+	// Daemon-side subscribers: drop pending requests and writes naming this file. Both lists
+	// are kept by background-thread machinery and would otherwise leave dangling pointers. #5
+	// is the AICH static recovery-request list: strip by pointer, since the existing
+	// RequestAICHRecovery() guard can be spoofed by allocator reuse.
 	CAICHHashSet::DropReferencesTo(file);
 	// #8: pending writes the CPartFileWriteThread hasn't drained yet.
 	// Without this, ~CPartFile would race the write loop.
@@ -966,5 +1262,21 @@ void KnownFileBeingDestroyed(CKnownFile* file)
 #endif
 }
 
+void SearchFileBeingDestroyed(CSearchFile *file)
+{
+#ifndef AMULE_DAEMON
+	// GUI subscribers: a comments dialog opened on a search result must drop the pointer before
+	// the result is freed, since a new search or list rebuild deletes CSearchFile objects while
+	// a modal Kad-notes lookup may still be open.
+	CCommentDialogLst::DropReferencesTo(file);
+	// The search models hold arriving results between the notification and the idle that
+	// flushes them, and nothing unlinks a child from its parent's list, so this is the only
+	// signal that one of those pointers has stopped being one.
+	CSearchListModel::DropReferencesTo(file);
+#else
+	(void)file;
+#endif
 }
+
+} // namespace MuleNotify
 // File_checked_for_headers

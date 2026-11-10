@@ -1,0 +1,164 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
+//
+
+#include <muleunit/test.h>
+
+#include <vector>
+
+#include "UploadQueueAddressPolicy.h"
+
+using namespace muleunit;
+
+DECLARE_SIMPLE(UploadQueueAddressPolicy)
+
+TEST(UploadQueueAddressPolicy, MatchesNativeIPv6Exactly)
+{
+	const auto peer = CNetworkAddress::FromString("2001:db8::1");
+	ASSERT_TRUE(UploadQueueAddressPolicy::Matches(peer, peer));
+	ASSERT_FALSE(UploadQueueAddressPolicy::Matches(peer, CNetworkAddress::FromString("2001:db8::2")));
+}
+
+TEST(UploadQueueAddressPolicy, MatchesMappedIPv4AsCanonicalIPv4)
+{
+	const auto mapped = CNetworkAddress::FromString("::ffff:192.0.2.7");
+	const auto plain = CNetworkAddress::FromString("192.0.2.7");
+	ASSERT_TRUE(UploadQueueAddressPolicy::Matches(mapped, plain));
+}
+
+TEST(UploadQueueAddressPolicy, MatchesRateLimitScopeWithinIpv6Prefix)
+{
+	ASSERT_TRUE(UploadQueueAddressPolicy::MatchesRateLimitScope(
+		CNetworkAddress::FromString("2001:db8:1:2::1"),
+		CNetworkAddress::FromString("2001:db8:1:2::ffff")));
+	ASSERT_FALSE(UploadQueueAddressPolicy::MatchesRateLimitScope(
+		CNetworkAddress::FromString("2001:db8:1:2::1"),
+		CNetworkAddress::FromString("2001:db8:1:3::1")));
+}
+
+TEST(UploadQueueAddressPolicy, RejectsAbsentAndUnspecifiedAddresses)
+{
+	const CNetworkAddress absent;
+	const auto unspecified = CNetworkAddress::FromString("::");
+	const auto peer = CNetworkAddress::FromString("2001:db8::1");
+
+	ASSERT_FALSE(UploadQueueAddressPolicy::Matches(absent, peer));
+	ASSERT_FALSE(UploadQueueAddressPolicy::Matches(unspecified, peer));
+	ASSERT_FALSE(UploadQueueAddressPolicy::Matches(peer, absent));
+
+	// The cases the guard exists for. Two addresses that name nobody are not the same
+	// peer, and without these the assertions above pass on plain inequality alone:
+	// removing the guard leaves every one of them true and the test still green.
+	ASSERT_FALSE(UploadQueueAddressPolicy::Matches(absent, absent));
+	ASSERT_FALSE(UploadQueueAddressPolicy::Matches(unspecified, unspecified));
+	ASSERT_FALSE(UploadQueueAddressPolicy::MatchesRateLimitScope(absent, absent));
+	ASSERT_FALSE(UploadQueueAddressPolicy::MatchesRateLimitScope(unspecified, unspecified));
+	ASSERT_FALSE(UploadQueueAddressPolicy::IsMatchable(absent));
+	ASSERT_FALSE(UploadQueueAddressPolicy::IsMatchable(unspecified));
+}
+
+// A /64 means "one subscriber" only where one was delegated. Link-local addresses all sit
+// under fe80::/64 and NAT64 hosts under one /96, so counting those together would hand a
+// whole LAN, or a whole translated site, the budget of a single customer.
+TEST(UploadQueueAddressPolicy, RateLimitScopeAggregatesOnlyDelegatedPrefixes)
+{
+	ASSERT_FALSE(UploadQueueAddressPolicy::MatchesRateLimitScope(
+		CNetworkAddress::FromString("fe80::1"), CNetworkAddress::FromString("fe80::2")));
+	ASSERT_FALSE(UploadQueueAddressPolicy::MatchesRateLimitScope(
+		CNetworkAddress::FromString("64:ff9b::1"), CNetworkAddress::FromString("64:ff9b::2")));
+	ASSERT_TRUE(UploadQueueAddressPolicy::MatchesRateLimitScope(
+		CNetworkAddress::FromString("fe80::1"), CNetworkAddress::FromString("fe80::1")));
+
+	// Unchanged where it is the point: rotating inside a delegated /64 still counts as one.
+	ASSERT_TRUE(UploadQueueAddressPolicy::MatchesRateLimitScope(
+		CNetworkAddress::FromString("2001:db8:1:2::1"),
+		CNetworkAddress::FromString("2001:db8:1:2::dead:beef")));
+}
+
+namespace
+{
+bool HasRoom(const char *candidate,
+	const std::vector<CNetworkAddress> &uploading,
+	unsigned limit = UploadQueueAddressPolicy::MaxUploadSlotsPerScope)
+{
+	return UploadQueueAddressPolicy::UploadSlotsInScope(CNetworkAddress::FromString(candidate),
+		       uploading,
+		       [](const CNetworkAddress &address) -> const CNetworkAddress & { return address; }) <
+	       limit;
+}
+} // namespace
+
+// One host rotating user hashes over several ports must not collect a slot per hash.
+TEST(UploadQueueAddressPolicy, CapsUploadSlotsPerScope)
+{
+	static_assert(UploadQueueAddressPolicy::MaxUploadSlotsPerScope == 2);
+	const auto host = CNetworkAddress::FromString("192.0.2.7");
+	const auto other = CNetworkAddress::FromString("192.0.2.8");
+
+	ASSERT_TRUE(HasRoom("192.0.2.7", {}));
+	ASSERT_TRUE(HasRoom("192.0.2.7", { host, other }));
+	ASSERT_FALSE(HasRoom("192.0.2.7", { host, other, host }));
+	ASSERT_FALSE(HasRoom("::ffff:192.0.2.7", { host, host }));
+	ASSERT_TRUE(HasRoom("192.0.2.8", { host, host, other }));
+}
+
+TEST(UploadQueueAddressPolicy, CapsUploadSlotsPerIpv6Prefix)
+{
+	const std::vector<CNetworkAddress> uploading = { CNetworkAddress::FromString("2001:db8:1:2::1"),
+		CNetworkAddress::FromString("2001:db8:1:2::2") };
+
+	ASSERT_FALSE(HasRoom("2001:db8:1:2::3", uploading));
+	ASSERT_TRUE(HasRoom("2001:db8:1:3::1", uploading));
+	// Link-local is not a delegated prefix, so each address is its own scope.
+	ASSERT_TRUE(HasRoom("fe80::3",
+		{ CNetworkAddress::FromString("fe80::1"), CNetworkAddress::FromString("fe80::2") }));
+}
+
+TEST(UploadQueueAddressPolicy, UploadSlotCapIgnoresAddresslessPeers)
+{
+	const CNetworkAddress absent;
+	ASSERT_TRUE(HasRoom("::", { CNetworkAddress::FromString("::"), CNetworkAddress::FromString("::") }));
+	ASSERT_EQUALS(0u,
+		UploadQueueAddressPolicy::UploadSlotsInScope(absent,
+			std::vector<CNetworkAddress>{ absent, absent },
+			[](const CNetworkAddress &address) -> const CNetworkAddress & { return address; }));
+}
+
+// Spare capacity is nearly unlimited on a fast line with unlimited upload, so it needs a bound too.
+TEST(UploadQueueAddressPolicy, HardCapBoundsSpareSlotsPerScope)
+{
+	constexpr unsigned hard = UploadQueueAddressPolicy::HardMaxUploadSlotsPerScope;
+	static_assert(hard == 10);
+	const auto host = CNetworkAddress::FromString("192.0.2.7");
+	std::vector<CNetworkAddress> uploading(hard - 1, host);
+
+	ASSERT_TRUE(HasRoom("192.0.2.7", uploading, hard));
+	uploading.push_back(host);
+	ASSERT_FALSE(HasRoom("192.0.2.7", uploading, hard));
+	ASSERT_FALSE(HasRoom("::ffff:192.0.2.7", uploading, hard));
+	ASSERT_TRUE(HasRoom("192.0.2.8", uploading, hard));
+
+	const std::vector<CNetworkAddress> prefix(hard, CNetworkAddress::FromString("2001:db8:1:2::1"));
+	ASSERT_FALSE(HasRoom("2001:db8:1:2::3", prefix, hard));
+	ASSERT_TRUE(HasRoom("2001:db8:1:3::1", prefix, hard));
+}

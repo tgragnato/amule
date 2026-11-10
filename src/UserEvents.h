@@ -25,88 +25,81 @@
 #ifndef USEREVENTS_H
 #define USEREVENTS_H
 
-#include <wx/intl.h>		// Needed for wxTRANSLATE
+#include <wx/intl.h> // Needed for wxTRANSLATE
 
 #define ATTR(x) __attribute__((x))
 
-/* Each event will use 5 IDs:
-   - the panel that shows the prefs for this event
-   - the 'Core command enabled' checkbox
-   - the 'Core command' textctrl
-   - the 'GUI command enabled' checkbox
-   - the 'GUI command' textctrl
-*/
-#define USEREVENTS_IDS_PER_EVENT	5
+/* Each event uses 5 IDs: the panel showing its prefs, the 'Core command enabled' checkbox, the
+   'Core command' textctrl, the 'GUI command enabled' checkbox and the 'GUI command' textctrl. */
+#define USEREVENTS_IDS_PER_EVENT 5
 
-const int USEREVENTS_FIRST_ID	=	11500;	/* Some safe GUI ID to start from */
+const int USEREVENTS_FIRST_ID = 11500; /* Some safe GUI ID to start from */
+
+// EC does not carry GetFullName(): the remote proxy stores a .part.met basename.
+// Supply no path rather than executing a local command with that misleading value.
+#ifdef CLIENT_GUI
+#define USEREVENTS_COMPLETED_FILE_PATH(object) wxEmptyString
+#else
+#define USEREVENTS_COMPLETED_FILE_PATH(object) static_cast<const CPartFile *>(object)->GetFullName().GetRaw()
+#endif
 
 /**
  * Macro listing all the events.
  *
- * This huge macro is expanded 5 times in the sources, each time producing
- * different code. If we decide to get rid of the macro either because of coding style
- * decision, or someone finds a compiler that doesn't support this big macro, we
- * have to maintain these five places in sync. They are:
- * - one in PrefsUnifiedDlg.cpp (EVENT_LIST, PrefsUnifiedDlg::PrefsUnifiedDlg())
- * - one in this header (CUserEvents::EventType)
- * - two in UserEvents.cpp (static struct EventList[]; CUserEvent::ExecuteCommand())
+ * Expanded 5 times in the sources, each producing different code. Dropping the macro -- on style
+ * grounds, or because a compiler cannot cope with one this big -- means keeping those five places
+ * in sync by hand: one in PrefsUnifiedDlg.cpp (EVENT_LIST, PrefsUnifiedDlg::PrefsUnifiedDlg()), one
+ * in this header (CUserEvents::EventType), and two in UserEvents.cpp (static struct EventList[];
+ * CUserEvent::ExecuteCommand()).
  */
 #define USEREVENTS_EVENTLIST() \
-	USEREVENTS_EVENT(DownloadCompleted, wxTRANSLATE("Download completed"), \
-		USEREVENTS_REPLACE_VAR( \
-			"FILE", \
-			wxTRANSLATE("The full path to the file."), \
-			static_cast<const CPartFile*>(object)->GetFullName().GetRaw() ) \
-		USEREVENTS_REPLACE_VAR( \
-			"NAME", \
+	USEREVENTS_EVENT(DownloadCompleted, \
+		wxTRANSLATE("Download completed"), \
+		USEREVENTS_REPLACE_VAR("FILE", \
+			wxTRANSLATE("The full path to the file (empty in remote GUI mode)."), \
+			USEREVENTS_COMPLETED_FILE_PATH(object)) USEREVENTS_REPLACE_VAR("NAME", \
 			wxTRANSLATE("The name of the file without path component."), \
-			static_cast<const CPartFile*>(object)->GetFileName().GetRaw() ) \
+			static_cast<const CPartFile *>(object)->GetFileName().GetRaw()) \
+			USEREVENTS_REPLACE_VAR("HASH", \
+				wxTRANSLATE("The eD2k hash of the file."), \
+				static_cast<const CPartFile *>(object)->GetFileHash().Encode()) \
+				USEREVENTS_REPLACE_VAR("SIZE", \
+					wxTRANSLATE("The size of the file in bytes."), \
+					(CFormat("%llu") % \
+						static_cast<const CPartFile *>(object)->GetFileSize()) \
+						.GetString()) USEREVENTS_REPLACE_VAR("DLACTIVETIME", \
+					wxTRANSLATE("Cumulative download activity time."), \
+					CastSecondsToHM( \
+						static_cast<const CPartFile *>(object)->GetDlActiveTime()))) \
+	USEREVENTS_EVENT(NewChatSession, \
+		wxTRANSLATE("New chat session started"), \
 		USEREVENTS_REPLACE_VAR( \
-			"HASH", \
-			wxTRANSLATE("The eD2k hash of the file."), \
-			static_cast<const CPartFile*>(object)->GetFileHash().Encode() ) \
-		USEREVENTS_REPLACE_VAR( \
-			"SIZE", \
-			wxTRANSLATE("The size of the file in bytes."), \
-			(CFormat("%llu") % static_cast<const CPartFile*>(object)->GetFileSize()).GetString() ) \
-		USEREVENTS_REPLACE_VAR( \
-			"DLACTIVETIME", \
-			wxTRANSLATE("Cumulative download activity time."), \
-			CastSecondsToHM(static_cast<const CPartFile*>(object)->GetDlActiveTime()) ) \
-	) \
-	USEREVENTS_EVENT(NewChatSession, wxTRANSLATE("New chat session started"), \
-		USEREVENTS_REPLACE_VAR( \
-			"SENDER", \
-			wxTRANSLATE("Message sender."), \
-			*static_cast<const wxString*>(object) ) \
-	) \
-	USEREVENTS_EVENT(OutOfDiskSpace, wxTRANSLATE("Out of space"), \
-		USEREVENTS_REPLACE_VAR( \
-			"PARTITION", \
+			"SENDER", wxTRANSLATE("Message sender."), *static_cast<const wxString *>(object))) \
+	USEREVENTS_EVENT(OutOfDiskSpace, \
+		wxTRANSLATE("Out of space"), \
+		USEREVENTS_REPLACE_VAR("PARTITION", \
 			wxTRANSLATE("Disk partition."), \
-			wxString(static_cast<const wxChar*>(object)) ) \
-	) \
-	USEREVENTS_EVENT(ErrorOnCompletion, wxTRANSLATE("Error on completion"), \
-		USEREVENTS_REPLACE_VAR( \
-			"FILE", \
+			wxString(static_cast<const wxChar *>(object)))) \
+	USEREVENTS_EVENT(ErrorOnCompletion, \
+		wxTRANSLATE("Error on completion"), \
+		USEREVENTS_REPLACE_VAR("FILE", \
 			wxTRANSLATE("The full path to the file."), \
-			static_cast<const CPartFile*>(object)->GetFullName().GetRaw() ) \
-	)
+			static_cast<const CPartFile *>(object)->GetFullName().GetRaw()))
 
-
-#define USEREVENTS_EVENT(ID, NAME, VARS)	ID,
+#define USEREVENTS_EVENT(ID, NAME, VARS) ID,
 
 /**
- * Class to handle userspace events.
- *
- * These events that we publish to the user and let him
- * specify a command to be run when one of these events occur.
+ * Handles userspace events: events published to the user, who can specify a command to run when one
+ * occurs.
  */
-class CUserEvents {
+class CUserEvents
+{
 	friend class CPreferences;
- public:
+
+public:
 	//! Event list
-	enum EventType {
+	enum EventType
+	{
 		USEREVENTS_EVENTLIST()
 		/* This macro expands to the following list of user event types:
 		   DownloadCompleted, NewChatSession, OutOfDiskSpace, ErrorOnCompletion */
@@ -115,46 +108,40 @@ class CUserEvents {
 	/**
 	 * Process a user event.
 	 *
-	 * Notes on the 'object' argument: this should be a pointer to
-	 * an object instance, from which all of the replacement texts
-	 * can be generated.
-	 *
-	 * Unfortunately this approach does not provide any type-safety,
-	 * a list of string pairs (key, replacement) would be the best.
-	 * However, this would need either expanding the macro at all of
-	 * the places where CUserEvents::ProcessEvent is called from, or
-	 * creating lists of parameters for each event, etc = more lists
-	 * to keep in sync manually.
+	 * `object` should be a pointer to an object instance from which every replacement text can
+	 * be generated. That is not type-safe; a list of (key, replacement) string pairs would be
+	 * better, but it would mean either expanding the macro at every CUserEvents::ProcessEvent
+	 * call site or creating a parameter list per event -- more lists to keep in sync by hand.
 	 */
-	static void		ProcessEvent(enum EventType event, const void* object);
+	static void ProcessEvent(enum EventType event, const void *object);
 
 	/**
-	 * Returns the number of defined user events.
+	 * The number of defined user events.
 	 */
-	static unsigned int	GetCount() ATTR(__const__);
+	static unsigned int GetCount() ATTR(__const__);
 
 	/**
-	 * Returns the human-readable name of the event.
+	 * The human-readable name of the event.
 	 */
-	static const wxString&	GetDisplayName(enum EventType event) ATTR(__pure__);
+	static const wxString &GetDisplayName(enum EventType event) ATTR(__pure__);
 
 	/**
-	 * Checks whether the core command is enabled.
+	 * Whether the core command is enabled.
 	 */
-	static bool		IsCoreCommandEnabled(enum EventType event) ATTR(__pure__);
+	static bool IsCoreCommandEnabled(enum EventType event) ATTR(__pure__);
 
 	/**
-	 * Checks whether the GUI command is enabled.
+	 * Whether the GUI command is enabled.
 	 */
-	static bool		IsGUICommandEnabled(enum EventType event) ATTR(__pure__);
+	static bool IsGUICommandEnabled(enum EventType event) ATTR(__pure__);
 
- private:
+private:
 	// functions for CPreferences
-	static const wxString&	GetKey(const unsigned int event) ATTR(__pure__);
-	static bool&		GetCoreEnableVar(const unsigned int event) ATTR(__pure__);
-	static wxString&	GetCoreCommandVar(const unsigned int event) ATTR(__pure__);
-	static bool&		GetGUIEnableVar(const unsigned int event) ATTR(__pure__);
-	static wxString&	GetGUICommandVar(const unsigned int event) ATTR(__pure__);
+	static const wxString &GetKey(const unsigned int event) ATTR(__pure__);
+	static bool &GetCoreEnableVar(const unsigned int event) ATTR(__pure__);
+	static wxString &GetCoreCommandVar(const unsigned int event) ATTR(__pure__);
+	static bool &GetGUIEnableVar(const unsigned int event) ATTR(__pure__);
+	static wxString &GetGUICommandVar(const unsigned int event) ATTR(__pure__);
 };
 
 #undef USEREVENTS_EVENT

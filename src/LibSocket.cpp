@@ -23,4 +23,12 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
+// Intentional single-translation-unit include of the Asio implementation.
+// NOLINTNEXTLINE(bugprone-suspicious-include)
 #include "LibSocketAsio.cpp"
+
+std::unique_ptr<IStreamTransport> CLibSocket::DetachTransport()
+{
+	m_transportReadEventPending.store(false, std::memory_order_release);
+	return std::move(m_transport);
+}

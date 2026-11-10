@@ -1,14 +1,12 @@
-// Regression tests for issue #699: amuleweb crashes when the shared-file list
-// exceeds 65535 entries.
+// Regression tests for issue #699: amuleweb crashes when the shared-file list exceeds 65535
+// entries.
 //
-// array_push_back() scanned integer keys in a loop bounded by `i < 0xffff`.
-// With 91k shared files the bound is hit, the function returns null, and the
-// caller crashes on the immediate dereference.  The underlying PHP_ARRAY_TYPE
-// uses std::map (unbounded), so the 0xffff cap is purely artificial.
+// array_push_back() scanned integer keys in a loop bounded by `i < 0xffff`. With 91k shared files
+// the bound is hit, the function returns null, and the caller crashes on the immediate dereference.
+// The underlying PHP_ARRAY_TYPE uses std::map (unbounded), so the 0xffff cap is purely artificial.
 //
-// These tests exercise array_push_back() in isolation, compiled against
-// php_syntree.cpp with PHP_STANDALONE_EN so no WebServer/EC/wx-GUI headers
-// are pulled in.
+// These exercise array_push_back() in isolation, compiled against php_syntree.cpp with
+// PHP_STANDALONE_EN so no WebServer/EC/wx-GUI headers are pulled in.
 
 #include <muleunit/test.h>
 
@@ -41,17 +39,17 @@ TEST(PhpArray, PushBackWithinOldLimit)
 
 	for (int i = 0; i < 200; i++) {
 		PHP_VAR_NODE *slot = array_push_back(&arr);
-		ASSERT_TRUE_M(slot != nullptr,
-			wxString::Format(wxT("array_push_back returned null at i=%d"), i));
+		ASSERT_TRUE_M(
+			slot != nullptr, wxString::Format(wxT("array_push_back returned null at i=%d"), i));
 		slot->value.type = PHP_VAL_OBJECT;
 	}
 
 	value_value_free(&arr);
 }
 
-// Boundary: entry 65536 (index 65535) was the first to fail with the old code.
-// The loop condition `i < 0xffff` (i.e. i < 65535) prevented it from running
-// when push_next_hint == 65535, so the function returned null.
+// Boundary: entry 65536 (index 65535) was the first to fail with the old code. The loop condition
+// `i < 0xffff` prevented it from running when push_next_hint == 65535, so the function returned
+// null.
 TEST(PhpArray, PushBackAtOldBoundary)
 {
 	PHP_VALUE_NODE arr;
@@ -61,8 +59,8 @@ TEST(PhpArray, PushBackAtOldBoundary)
 	const int N = 65536; // one past the old 0xffff limit
 	for (int i = 0; i < N; i++) {
 		PHP_VAR_NODE *slot = array_push_back(&arr);
-		ASSERT_TRUE_M(slot != nullptr,
-			wxString::Format(wxT("array_push_back returned null at i=%d"), i));
+		ASSERT_TRUE_M(
+			slot != nullptr, wxString::Format(wxT("array_push_back returned null at i=%d"), i));
 		slot->value.type = PHP_VAL_OBJECT;
 	}
 
@@ -79,8 +77,8 @@ TEST(PhpArray, PushBackBeyondOldLimit)
 	const int N = 92000;
 	for (int i = 0; i < N; i++) {
 		PHP_VAR_NODE *slot = array_push_back(&arr);
-		ASSERT_TRUE_M(slot != nullptr,
-			wxString::Format(wxT("array_push_back returned null at i=%d"), i));
+		ASSERT_TRUE_M(
+			slot != nullptr, wxString::Format(wxT("array_push_back returned null at i=%d"), i));
 		slot->value.type = PHP_VAL_OBJECT;
 	}
 

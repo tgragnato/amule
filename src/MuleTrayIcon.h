@@ -40,11 +40,12 @@ enum TaskbarNotifier
 	TBN_NEWVERSION
 };
 
-#include "Types.h"	// Needed for uint32
+#include "Types.h" // Needed for uint32
 
 class wxString;
 
-enum {
+enum
+{
 	TRAY_ICON_DISCONNECTED,
 	TRAY_ICON_LOWID,
 	TRAY_ICON_HIGHID
@@ -52,36 +53,32 @@ enum {
 
 // Backend selection:
 //
-// Linux with libayatana-appindicator3 → SNI (StatusNotifierItem)
-//   backend that talks D-Bus directly. This is what GNOME Shell (with
-//   the AppIndicators extension Ubuntu ships by default), KDE Plasma,
-//   Sway/wlroots, and every other modern desktop actually consume.
+// Linux wxGTK3 with libayatana-appindicator3 -> SNI (StatusNotifierItem) backend talking D-Bus directly.
+// This is what GNOME Shell (with the AppIndicators extension Ubuntu ships by default), KDE Plasma,
+// Sway/wlroots and every other modern desktop actually consume.
 //
-// Everywhere else (Windows, macOS, Linux build without the dep) →
-//   wxTaskBarIcon, which on those platforms hits a working native API
-//   (Win32 NOTIFYICONDATA, NSStatusItem). On Linux without the dep
-//   wxTaskBarIcon falls through to the legacy GtkStatusIcon API which
-//   GNOME 3.26+ silently dropped — distros really should ship the dep.
+// Everywhere else (Windows, macOS, Linux build without the dep) -> wxTaskBarIcon, which on those
+// platforms hits a working native API (Win32 NOTIFYICONDATA, NSStatusItem). On Linux without the
+// dep it falls through to the legacy GtkStatusIcon API that GNOME 3.26+ silently dropped -- distros
+// really should ship the dep.
 #ifdef WITH_LIBAYATANA_APPINDICATOR
 struct _AppIndicator;
 struct _GtkWidget;
 typedef struct _AppIndicator AppIndicator;
 typedef struct _GtkWidget GtkWidget;
 #else
-#include <wx/taskbar.h>
-#include <wx/icon.h>
-#include <wx/dcmemory.h>
+#include "NativeTrayIcon.h"
+#include <wx/bmpbndl.h>
+#include <wx/colour.h>
 class wxMenu;
 #endif
 
-
 /**
- * The mule tray icon class is responsible for drawing the mule systray icon
- * and reacting to the user input on it.
+ * Draws the mule systray icon and reacts to user input on it.
  */
 class CMuleTrayIcon
 #ifndef WITH_LIBAYATANA_APPINDICATOR
-	: public wxTaskBarIcon
+: public MuleTrayIconBase
 #endif
 {
 public:
@@ -91,65 +88,74 @@ public:
 	/**
 	 * Set the Tray icon.
 	 * @param Icon  TRAY_ICON_HIGHID / LOWID / DISCONNECTED
-	 * @param percent  download-speed bar percentage (legacy backend only;
-	 *                 ignored by the SNI backend, which switches between
-	 *                 three static state icons instead)
+	 * @param percent  download-speed bar percentage. Legacy backend only; the SNI backend
+	 * switches
+	 *                 between three static state icons instead.
 	 */
 	void SetTrayIcon(int Icon, uint32 percent);
 
 	/**
 	 * Set the Tray tooltip.
 	 */
-	void SetTrayToolTip(const wxString& Tip);
+	void SetTrayToolTip(const wxString &Tip);
 
-	// Action handlers — invoked by the GTK menu (Ayatana backend) or by
+	/**
+	 * Hides or shows the icon while keeping it, see CamuleDlg::HideSystray(). After showing,
+	 * the next SetTrayIcon() sets the icon again.
+	 */
+	void SetVisible(bool visible);
+
+	// Action handlers -- invoked by the GTK menu (Ayatana backend) or by
 	// the wxMenu event table (wxTaskBarIcon backend).
 	void DoConnectDisconnect();
 	void DoShowHide();
-	// Deterministic non-toggling variants used by the SNI menu on
-	// Wayland, where window-iconize state isn't reliably detectable
-	// so a single toggle would mislabel itself when the user clicks
-	// the OS minimize button.
+	// Deterministic non-toggling variants used by the SNI menu on Wayland, where window-iconize
+	// state is not reliably detectable, so a single toggle would mislabel itself when the user
+	// clicks the OS minimize button.
 	void DoShow();
 	void DoHide();
 	void DoExit();
-	void DoSetUploadLimit(long kBytesPerSec);   // UNLIMITED for no cap
+	void DoSetUploadLimit(long kBytesPerSec); // UNLIMITED for no cap
 	void DoSetDownloadLimit(long kBytesPerSec);
 
-#ifdef WITH_LIBAYATANA_APPINDICATOR
-	// SNI menus are built once and held; callers re-invoke this to
-	// refresh the "Show aMule"/"Hide aMule" label after the main
-	// window's visibility changes outside the tray click path
-	// (e.g. close-button HideOnClose, minimize-to-tray).
+#ifdef __WXGTK__
+	// SNI menus (libayatana, or wx 3.2.12+ built with AppIndicator support) are built once and
+	// held; callers re-invoke this to refresh the "Show aMule"/"Hide aMule" label after the main
+	// window's visibility changes outside the tray click path (close-button HideOnClose,
+	// minimize-to-tray).
 	void RebuildMenu();
+#endif
+#ifndef WITH_LIBAYATANA_APPINDICATOR
+	// Force a new bundle on the next statistics tick, even while idle.
+	void InvalidateForDPIChange() { Old_Icon = -1; }
 #endif
 
 private:
-
 #ifdef WITH_LIBAYATANA_APPINDICATOR
-	AppIndicator* m_indicator;
-	GtkWidget*    m_menu;
-	int           m_lastIconState;
+	AppIndicator *m_indicator;
+	GtkWidget *m_menu;
+	int m_lastIconState;
 #else
-	virtual wxMenu* CreatePopupMenu();
+	virtual wxMenu *CreatePopupMenu();
 	void UpdateTray();
 
-	void SwitchShow(wxTaskBarIconEvent&);
-	void SetUploadSpeed(wxCommandEvent&);
-	void SetDownloadSpeed(wxCommandEvent&);
-	void ServerConnection(wxCommandEvent&);
-	void ShowHide(wxCommandEvent&);
-	void Close(wxCommandEvent&);
+	void SwitchShow(wxTaskBarIconEvent &);
+	void SetUploadSpeed(wxCommandEvent &);
+	void SetDownloadSpeed(wxCommandEvent &);
+	void ServerConnection(wxCommandEvent &);
+	void ShowHide(wxCommandEvent &);
+	void Close(wxCommandEvent &);
 
 	int Old_Icon;
-	int Old_SpeedSize;
+	uint32 Old_Percent;
+	wxColour Old_BarColour;
+	bool m_visible;
 
-	int Disconnected_Icon_size;
-	int LowId_Icon_size;
-	int HighId_Icon_size;
+	// The unmodified artwork for each state, indexed by TRAY_ICON_*, loaded once. SetTrayIcon()
+	// wraps one of these in a bundle that draws the speed bar at the requested pixel size.
+	wxBitmapBundle BaseImage[3];
 
-	wxIcon CurrentIcon;
-	wxMemoryDC IconWithSpeed;
+	wxBitmapBundle CurrentIcon;
 	wxString CurrentTip;
 
 	wxDECLARE_EVENT_TABLE();
@@ -158,5 +164,5 @@ private:
 
 #endif // DAEMON
 
-#endif //MULETRAYICON_H
+#endif // MULETRAYICON_H
 // File_checked_for_headers

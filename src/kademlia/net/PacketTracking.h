@@ -27,6 +27,7 @@
 #ifndef KADEMLIA_NET_PACKETTRACKING_H
 #define KADEMLIA_NET_PACKETTRACKING_H
 
+#include <cstddef>
 #include <map>
 #include <list>
 #include "../utils/UInt128.h"
@@ -35,26 +36,32 @@
 namespace Kademlia
 {
 
-struct TrackPackets_Struct {
+struct TrackPackets_Struct
+{
 	uint32_t ip;
 	uint64_t inserted;
-	uint8_t  opcode;
+	uint8_t opcode;
 };
 
-struct TrackChallenge_Struct {
-	uint32_t	ip;
-	uint64_t	inserted;
-	uint8_t		opcode;
-	CUInt128	contactID;
-	CUInt128	challenge;
+struct TrackChallenge_Struct
+{
+	uint32_t ip;
+	uint64_t inserted;
+	uint8_t opcode;
+	CUInt128 contactID;
+	CUInt128 challenge;
 };
 
-struct TrackPacketsIn_Struct {
-	struct TrackedRequestIn_Struct {
+struct TrackPacketsIn_Struct
+{
+	struct TrackedRequestIn_Struct
+	{
 		uint32_t m_count;
+		uint32_t m_verifiedCount;
+		uint64_t m_verifiedFirstAdded;
 		uint64_t m_firstAdded;
-		uint8_t	 m_opcode;
-		bool	 m_dbgLogged;
+		uint8_t m_opcode;
+		bool m_dbgLogged;
 	};
 
 	TrackPacketsIn_Struct()
@@ -65,34 +72,45 @@ struct TrackPacketsIn_Struct {
 
 	uint32_t m_ip;
 	uint64_t m_lastExpire;
-	typedef std::list<TrackedRequestIn_Struct>	TrackedRequestList;
-	TrackedRequestList	m_trackedRequests;
+	typedef std::list<TrackedRequestIn_Struct> TrackedRequestList;
+	TrackedRequestList m_trackedRequests;
 };
 
 class CPacketTracking
 {
-      public:
-	CPacketTracking() noexcept { lastTrackInCleanup = 0; }
+public:
+	enum class IncomingPacket
+	{
+		Allowed,
+		Drop,
+		MassiveFlood
+	};
+
+	CPacketTracking()
+	: lastTrackInCleanup(0)
+	{
+	}
 	virtual ~CPacketTracking();
 
-      protected:
+protected:
 	void AddTrackedOutPacket(uint32_t ip, uint8_t opcode);
 	bool IsOnOutTrackList(uint32_t ip, uint8_t opcode, bool dontRemove = false);
-	bool InTrackListIsAllowedPacket(uint32_t ip, uint8_t opcode, bool validReceiverkey);
+	IncomingPacket InTrackListIsAllowedPacket(uint32_t ip, uint8_t opcode, bool validReceiverKey);
 	void InTrackListCleanup();
-	void AddLegacyChallenge(const CUInt128& contactID, const CUInt128& challengeID, uint32_t ip, uint8_t opcode);
-	bool IsLegacyChallenge(const CUInt128& challengeID, uint32_t ip, uint8_t opcode, CUInt128& contactID);
+	void AddLegacyChallenge(
+		const CUInt128 &contactID, const CUInt128 &challengeID, uint32_t ip, uint8_t opcode);
+	bool IsLegacyChallenge(const CUInt128 &challengeID, uint32_t ip, uint8_t opcode, CUInt128 &contactID);
 	bool HasActiveLegacyChallenge(uint32_t ip) const;
 
-      private:
+private:
 	static bool IsTrackedOutListRequestPacket(uint8_t opcode) noexcept;
-	typedef std::list<TrackPackets_Struct>		TrackedPacketList;
-	typedef std::list<TrackChallenge_Struct>	TrackChallengeList;
-	typedef std::map<uint32_t, TrackPacketsIn_Struct*>	TrackedPacketInMap;
-	TrackedPacketList	listTrackedRequests;
-	TrackChallengeList	listChallengeRequests;
-	TrackedPacketInMap	m_mapTrackPacketsIn;
-	uint64_t		lastTrackInCleanup;
+	typedef std::list<TrackPackets_Struct> TrackedPacketList;
+	typedef std::list<TrackChallenge_Struct> TrackChallengeList;
+	typedef std::map<uint32_t, TrackPacketsIn_Struct *> TrackedPacketInMap;
+	TrackedPacketList listTrackedRequests;
+	TrackChallengeList listChallengeRequests;
+	TrackedPacketInMap m_mapTrackPacketsIn;
+	uint64_t lastTrackInCleanup;
 };
 
 } // namespace Kademlia

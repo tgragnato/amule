@@ -3,7 +3,13 @@
 #include <common/Path.h>
 #include <common/StringFunctions.h>
 
+#include "TestScratchDir.h"
+
 #include <wx/filename.h>
+
+#ifndef __WXMSW__
+#include <unistd.h> // symlink() for the containment test
+#endif
 
 using namespace muleunit;
 
@@ -25,9 +31,9 @@ struct STestStr
 
 const STestStr g_fromFSTests[] = {
 	// From filesystem
-	{ true, wxConvFileName->cMB2WC("\xe1\x62\x63"), "\xe1\x62\x63" },
-	{ true, wxConvFileName->cMB2WC("\xe6\xf8\xe5"), "\xe6\xf8\xe5" },
-	{ true, wxConvFileName->cMB2WC("\xd8\xa7\xd9\x84\xd8\xb9"), "\u0627\u0644\u0639" },
+	{ true, wxConvFile.cMB2WC("\xe1\x62\x63"), "\xe1\x62\x63" },
+	{ true, wxConvFile.cMB2WC("\xe6\xf8\xe5"), "\xe6\xf8\xe5" },
+	{ true, wxConvFile.cMB2WC("\xd8\xa7\xd9\x84\xd8\xb9"), "\u0627\u0644\u0639" },
 
 	// From User
 	{ false, "\u0627\u0644\u0639", "\u0627\u0644\u0639" }
@@ -45,7 +51,7 @@ wxString GetExpectedString(const wxString& src)
 	static UsesEncoding encoding = UE_Unknown;
 
 	if (encoding == UE_Unknown) {
-		wxCharBuffer fn = wxConvFileName->cWC2MB("\u0627\u0644\u0639");
+		wxCharBuffer fn = wxConvFile.cWC2MB("\u0627\u0644\u0639");
 
 		if (fn) {
 			encoding = UE_NonBroken;
@@ -54,10 +60,10 @@ wxString GetExpectedString(const wxString& src)
 		}
 	}
 
-	if ((encoding == UE_Broken) && !wxConvFileName->cWC2MB(src)) {
+	if ((encoding == UE_Broken) && !wxConvFile.cWC2MB(src)) {
 		// See CPath::CPath for rationale ...
 		wxCharBuffer fn = wxConvUTF8.cWC2MB(src);
-		return wxConvFileName->cMB2WC(fn);
+		return wxConvFile.cMB2WC(fn);
 	} else {
 		return src;
 	}
@@ -65,11 +71,10 @@ wxString GetExpectedString(const wxString& src)
 */
 #endif
 
-wxString StringFrom(const CPath& prt)
+wxString StringFrom(const CPath &prt)
 {
 	return prt.GetPrintable();
 }
-
 
 DECLARE_SIMPLE(GenericPathFunctions)
 
@@ -91,7 +96,6 @@ TEST(GenericPathFunctions, JoinPaths)
 	}
 }
 
-
 DECLARE_SIMPLE(CPath)
 
 TEST(CPath, DefaultConstructor)
@@ -109,7 +113,6 @@ TEST(CPath, DefaultConstructor)
 	ASSERT_EQUALS(CPath(), tmp.GetPath());
 	ASSERT_EQUALS(CPath(), tmp.GetFullName());
 }
-
 
 TEST(CPath, PathConstructor)
 {
@@ -146,10 +149,9 @@ TEST(CPath, PathConstructor)
 #endif
 }
 
-
 TEST(CPath, CopyConstructor)
 {
-	const char* tmpPath = "foobar.tgz";
+	const char *tmpPath = "foobar.tgz";
 
 	{
 		CPath a(tmpPath);
@@ -180,11 +182,10 @@ TEST(CPath, CopyConstructor)
 	}
 }
 
-
 TEST(CPath, Operators)
 {
-	const char* tmpPath1 = "foobar.tgz";
-	const char* tmpPath2 = "barfoo.tar";
+	const char *tmpPath1 = "foobar.tgz";
+	const char *tmpPath2 = "barfoo.tar";
 
 	{
 		CPath a, b;
@@ -237,7 +238,6 @@ TEST(CPath, Operators)
 	// TODO: Less than
 }
 
-
 /** Return the path normalized for the current platform. */
 CPath Norm(wxString str)
 {
@@ -245,7 +245,6 @@ CPath Norm(wxString str)
 
 	return CPath(str);
 }
-
 
 TEST(CPath, JoinPaths)
 {
@@ -270,7 +269,6 @@ TEST(CPath, JoinPaths)
 	ASSERT_EQUALS(expected2, CPath().JoinPaths(expected2));
 }
 
-
 TEST(CPath, StartsWith)
 {
 	const CPath test = Norm("/home/amule/");
@@ -292,7 +290,6 @@ TEST(CPath, StartsWith)
 	ASSERT_FALSE(test.StartsWith(Norm("/home/amule/foo")));
 }
 
-
 TEST(CPath, IsSameDir)
 {
 	ASSERT_TRUE(Norm("/root").IsSameDir(Norm("/root")));
@@ -306,6 +303,72 @@ TEST(CPath, IsSameDir)
 	ASSERT_FALSE(Norm("/root").IsSameDir(Norm("/home")));
 }
 
+TEST(CPath, GetDirKeyMatchesIsSameDir)
+{
+	// CSharedFileList groups directories by GetDirKey() instead of comparing every pair with
+	// IsSameDir() (issue #898). That is only valid while the two agree, so assert the
+	// equivalence directly rather than the key's contents, which are platform-dependent by
+	// design.
+	const wxString paths[] = {
+		"/root",
+		"/root/",
+		"/root//",
+		"/home",
+		"/home/",
+		"/home/amule",
+		"/home/amule/",
+		"/home/./amule",
+		"/home/amule/../amule",
+		"/home/other/../amule",
+		// Case variants: the same directory on Windows, different ones elsewhere. Asserting
+		// the equivalence rather than the key's value covers both without a platform #ifdef
+		// -- and it is the case where a hand-rolled key would diverge from IsSameDir(),
+		// because the folding lives inside wxPATH_NORM_CASE.
+		"/Home/AMule",
+		"/HOME/AMULE/",
+		"/ROOT",
+	};
+	const size_t count = sizeof(paths) / sizeof(paths[0]);
+
+	for (size_t i = 0; i < count; ++i) {
+		for (size_t j = 0; j < count; ++j) {
+			const CPath a = Norm(paths[i]);
+			const CPath b = Norm(paths[j]);
+			ASSERT_EQUALS(a.IsSameDir(b), a.GetDirKey() == b.GetDirKey());
+		}
+	}
+}
+
+TEST(CPath, GetDirKeyGroupsEqualDirs)
+{
+	// The property the grouping actually relies on: paths the old pairwise walk would have put
+	// together produce one key, and different directories produce different ones.
+	ASSERT_EQUALS(Norm("/root").GetDirKey(), Norm("/root/").GetDirKey());
+	ASSERT_EQUALS(Norm("/home/amule").GetDirKey(), Norm("/home/amule/").GetDirKey());
+	ASSERT_EQUALS(Norm("/home/amule").GetDirKey(), Norm("/home/./amule").GetDirKey());
+	ASSERT_EQUALS(Norm("/home/amule").GetDirKey(), Norm("/home/other/../amule").GetDirKey());
+
+	ASSERT_TRUE(Norm("/root").GetDirKey() != Norm("/home").GetDirKey());
+	ASSERT_TRUE(Norm("/home/amule").GetDirKey() != Norm("/home/amulf").GetDirKey());
+}
+
+TEST(CPath, IsSameAsUnchangedByKeyExtraction)
+{
+	// NormalizedKey() was lifted out of IsSameAs() (issue #898). Both branches it kept are
+	// asserted here so the extraction cannot quietly change either: bare filenames still
+	// compare through PATHCMP, and anything with a separator still normalises both sides.
+	ASSERT_TRUE(CPath("foobar.tgz") == CPath("foobar.tgz"));
+	ASSERT_TRUE(CPath("foobar.tgz") != CPath("barfoo.tar"));
+
+	ASSERT_TRUE(Norm("/home/amule/x.dat") == Norm("/home/amule/x.dat"));
+	ASSERT_TRUE(Norm("/home/amule/x.dat") == Norm("/home/./amule/x.dat"));
+	ASSERT_TRUE(Norm("/home/amule/x.dat") == Norm("/home/other/../amule/x.dat"));
+	ASSERT_TRUE(Norm("/home/amule/x.dat") != Norm("/home/amule/y.dat"));
+
+	// A bare name against a path: the fast path does not apply, and both
+	// sides go through normalisation, as before the extraction.
+	ASSERT_TRUE(CPath("x.dat") != Norm("/home/amule/x.dat"));
+}
 
 TEST(CPath, GetPath_FullName)
 {
@@ -341,8 +404,34 @@ TEST(CPath, GetPath_FullName)
 		ASSERT_EQUALS(CPath(), path.GetPath());
 		ASSERT_EQUALS(Norm("mule.ext"), path.GetFullName());
 	}
-}
 
+#ifdef __WXMSW__
+	{
+		const CPath path("C:\\mule\\file.bin");
+
+		ASSERT_EQUALS(CPath("C:\\mule"), path.GetPath());
+		ASSERT_EQUALS(CPath("file.bin"), path.GetFullName());
+	}
+
+	// A UNC volume takes no ':' (#2377).
+	{
+		const CPath path("\\\\nas\\share\\mule\\file.bin");
+
+		ASSERT_EQUALS(CPath("\\\\nas\\share\\mule"), path.GetPath());
+		ASSERT_EQUALS(CPath("file.bin"), path.GetFullName());
+		ASSERT_EQUALS(path, path.GetPath().JoinPaths(path.GetFullName()));
+	}
+
+	// Nor does an extended-length one.
+	{
+		const CPath path("\\\\?\\C:\\mule\\file.bin");
+
+		ASSERT_EQUALS(CPath("\\\\?\\C:\\mule"), path.GetPath());
+		ASSERT_EQUALS(CPath("file.bin"), path.GetFullName());
+		ASSERT_EQUALS(path, path.GetPath().JoinPaths(path.GetFullName()));
+	}
+#endif
+}
 
 TEST(CPath, Cleanup)
 {
@@ -354,7 +443,6 @@ TEST(CPath, Cleanup)
 	ASSERT_EQUALS(Norm(" abc def "), initial.Cleanup(true, true));
 }
 
-
 TEST(CPath, AddPostFix)
 {
 	ASSERT_EQUALS(Norm("/foo_1.bar"), Norm("/foo.bar").AddPostfix("_1"));
@@ -362,7 +450,6 @@ TEST(CPath, AddPostFix)
 	ASSERT_EQUALS(Norm("/.bar_1"), Norm("/.bar").AddPostfix("_1"));
 	ASSERT_EQUALS(Norm("/_1"), Norm("/").AddPostfix("_1"));
 }
-
 
 TEST(CPath, Extensions)
 {
@@ -408,4 +495,125 @@ TEST(CPath, TruncatePath)
 	ASSERT_EQUALS("tr[...]", testPath.TruncatePath(7, true));
 	ASSERT_EQUALS("t[...]", testPath.TruncatePath(6, true));
 	ASSERT_EQUALS("", testPath.TruncatePath(5, true));
+}
+
+TEST(CPath, UnivRoundTrip)
+{
+	// ToUniv()/FromUniv() stores the filesystem bytes verbatim and is the one representation
+	// guaranteed to reproduce the path. The display form is not: on macOS wxConvFileName
+	// normalises to NFD, so GetPrintable() hands back a different byte sequence for the same
+	// characters, and a CPath rebuilt from it is a different path to any filesystem that
+	// compares bytes -- a Linux daemon's, or an SMB/NFS mount. Anything carrying a path through
+	// another medium (a config file, a list control's cells) therefore has to move this pair
+	// around rather than what it displayed.
+	const wxString inputs[] = {
+		"/tmp/plain",
+		// Precomposed U+00F6, which is what NFD decomposes.
+		wxString::FromUTF8("/tmp/M\xC3\xB6t"),
+		// CJK has no decomposition, so normalisation leaves it alone.
+		wxString::FromUTF8("/tmp/\xE9\x9F\xB3\xE6\xA5\xBD"),
+		// Not valid UTF-8: the mangled-name case the raw/printable split
+		// exists for in the first place.
+		wxString::From8BitData("/tmp/M\xF6t"),
+	};
+
+	for (const wxString &input : inputs) {
+		const CPath path(input);
+		ASSERT_EQUALS(path.GetRaw(), CPath::FromUniv(CPath::ToUniv(path)).GetRaw());
+	}
+}
+
+TEST(CPath, IsBareFileName)
+{
+	// Plain file names are accepted.
+	ASSERT_TRUE(CPath(wxT("file")).IsBareFileName());
+	ASSERT_TRUE(CPath(wxT("file.ext")).IsBareFileName());
+	ASSERT_TRUE(CPath(wxT("a file.name.ext")).IsBareFileName());
+
+	// Anything with a directory component is rejected -- this is the path-traversal guard for
+	// externally-supplied names (CWE-22): "../" must never be joinable onto a trusted directory.
+	ASSERT_FALSE(CPath(wxT("../file")).IsBareFileName());
+	ASSERT_FALSE(CPath(wxT("a/b")).IsBareFileName());
+	ASSERT_FALSE(CPath(wxT("a/../b")).IsBareFileName());
+	ASSERT_FALSE(CPath(wxT("sub/file")).IsBareFileName());
+	ASSERT_FALSE(CPath(wxT("/etc/passwd")).IsBareFileName());
+
+	// The directory entries and the empty/invalid path are not file names.
+	ASSERT_FALSE(CPath(wxT("..")).IsBareFileName());
+	ASSERT_FALSE(CPath(wxT(".")).IsBareFileName());
+	ASSERT_FALSE(CPath().IsBareFileName());
+}
+
+TEST(CPath, IsContainedIn)
+{
+	// Build a real directory tree in a unique temp workspace: the containment test resolves ".."
+	// and symlinks against the filesystem, so it needs actual directories.
+	const wxString sep = wxFileName::GetPathSeparator();
+	const TestScratchDir scratch(wxT("amule-roots"));
+	const wxString ws = scratch.WxPath();
+	const wxString data = ws + sep + wxT("data");
+	const wxString database = ws + sep + wxT("database");
+	const wxString outside = ws + sep + wxT("outside");
+	wxFileName::Mkdir(data, 0700, wxPATH_MKDIR_FULL);
+	wxFileName::Mkdir(database, 0700, wxPATH_MKDIR_FULL);
+	wxFileName::Mkdir(outside, 0700, wxPATH_MKDIR_FULL);
+
+	const CPath root(data);
+
+	// Equal to the root, and descendants (whether or not they exist yet), are contained.
+	ASSERT_TRUE(CPath(data).IsContainedIn(root));
+	ASSERT_TRUE(CPath(data + sep + wxT("sub")).IsContainedIn(root));                // not yet created
+	ASSERT_TRUE(CPath(data + sep + wxT("a") + sep + wxT("b")).IsContainedIn(root)); // deeper, not created
+
+	// A sibling that merely shares a name prefix is NOT contained (whole-component compare).
+	ASSERT_FALSE(CPath(database).IsContainedIn(root));
+
+	// "../" escapes are rejected once resolved, as is an unrelated folder.
+	ASSERT_FALSE(CPath(data + sep + wxT("..") + sep + wxT("database")).IsContainedIn(root));
+	ASSERT_FALSE(CPath(data + sep + wxT("..")).IsContainedIn(root));
+	ASSERT_FALSE(CPath(outside).IsContainedIn(root));
+
+#ifndef __WXMSW__
+	// A symlink inside the root that points outside it is rejected (symlinks are resolved).
+	const wxString link = data + sep + wxT("link");
+	ASSERT_TRUE(symlink(outside.fn_str(), link.fn_str()) == 0);
+	ASSERT_FALSE(CPath(link).IsContainedIn(root));
+	// A symlink followed by "..": lexically "<root>/link/../escape" cancels to "<root>/escape"
+	// (inside the root) while the kernel resolves the link first and lands at "<ws>/escape",
+	// outside it. Refused outright because of the ".." component -- the exact bypass that a
+	// lexical "collapse .. then resolve" check let through.
+	ASSERT_FALSE(CPath(link + sep + wxT("..") + sep + wxT("escape")).IsContainedIn(root));
+	// A symlink that stays inside the root is still contained.
+	wxFileName::Mkdir(data + sep + wxT("sub2"), 0700, wxPATH_MKDIR_FULL);
+	const wxString inlink = data + sep + wxT("inlink");
+	ASSERT_TRUE(symlink((data + sep + wxT("sub2")).fn_str(), inlink.fn_str()) == 0);
+	ASSERT_TRUE(CPath(inlink).IsContainedIn(root));
+#endif
+}
+
+TEST(CPath, CanonicalForContainmentStripsTrailingSeparator)
+{
+	// The stored canonical path must round-trip what a client sent (/.../x, not /.../x/), so it
+	// carries no trailing separator -- except a bare root, which is not a usable path without one.
+	const wxString sep = wxFileName::GetPathSeparator();
+	const wxString seps = wxFileName::GetPathSeparators();
+	const TestScratchDir scratch(wxT("amule-canon"));
+	const wxString ws = scratch.WxPath();
+	const wxString sub = ws + sep + wxT("x");
+	wxFileName::Mkdir(sub, 0700, wxPATH_MKDIR_FULL);
+
+	const wxString canon = CPath(sub).CanonicalForContainment().GetRaw();
+	ASSERT_FALSE(canon.IsEmpty());
+	ASSERT_FALSE(seps.Contains(canon.Last()));
+	ASSERT_TRUE(canon.EndsWith(wxT("x")));
+
+	// A not-yet-created descendant is stored the same way (no trailing separator).
+	const wxString canonChild = CPath(sub + sep + wxT("notyet")).CanonicalForContainment().GetRaw();
+	ASSERT_FALSE(seps.Contains(canonChild.Last()));
+	ASSERT_TRUE(canonChild.EndsWith(wxT("notyet")));
+
+#ifndef __WXMSW__
+	// A bare root keeps its separator.
+	ASSERT_EQUALS(sep, CPath(sep).CanonicalForContainment().GetRaw());
+#endif
 }

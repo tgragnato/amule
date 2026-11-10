@@ -27,75 +27,78 @@
 #include <wx/intl.h>
 #include <wx/dataobj.h>
 #include <wx/clipbrd.h>
+#include <wx/settings.h>
 
 /**
- * These are the IDs used to identify the different menu-items.
+ * IDs identifying the different menu items.
  *
- * Please note that I make use of predefined wxIDs for the first two, but not
- * for Paste. This is because wxMenu poses some restrictions on what can be
- * done with items using those IDs, and by default, Paste is enabled even if
- * there's nothing to paste!
+ * The first two use predefined wxIDs, but Paste does not: wxMenu restricts what can be done with
+ * items using those IDs, and by default Paste is enabled even when there is nothing to paste.
  */
 enum CMTC_Events
 {
 	//! Cut text, uses provided ID
-	CMTCE_Cut	= wxID_CUT,
+	CMTCE_Cut = wxID_CUT,
 	//! Copy text, uses provided ID
-	CMTCE_Copy	= wxID_COPY,
+	CMTCE_Copy = wxID_COPY,
 	//! Paste text, uses custom ID
-	CMTCE_Paste = wxID_HIGHEST + 666,	// Random satanic ID
-	//! Clear text, uses custom ID
+	CMTCE_Paste = wxID_HIGHEST + 666, // Random satanic ID
+					  //! Clear text, uses custom ID
 	CMTCE_Clear,
 	//! Select All text, uses custom ID
 	CMTCE_SelAll
 };
 
-
 wxBEGIN_EVENT_TABLE(CMuleTextCtrl, wxTextCtrl)
 #ifndef __WXGTK__
-	EVT_RIGHT_DOWN	(CMuleTextCtrl::OnRightDown)
+	EVT_RIGHT_DOWN(CMuleTextCtrl::OnRightDown)
 
-	EVT_MENU	(CMTCE_Paste,	CMuleTextCtrl::OnPaste)
-	EVT_MENU	(CMTCE_Clear,	CMuleTextCtrl::OnClear)
-	EVT_MENU	(CMTCE_SelAll,	CMuleTextCtrl::OnSelAll)
+	EVT_MENU(CMTCE_Paste, CMuleTextCtrl::OnPaste)
+	EVT_MENU(CMTCE_Clear, CMuleTextCtrl::OnClear)
+	EVT_MENU(CMTCE_SelAll, CMuleTextCtrl::OnSelAll)
 #endif
+	EVT_SET_FOCUS(CMuleTextCtrl::OnSetFocus)
+	EVT_KILL_FOCUS(CMuleTextCtrl::OnKillFocus)
 wxEND_EVENT_TABLE()
 
-
-CMuleTextCtrl::CMuleTextCtrl(wxWindow* parent, wxWindowID id, const wxString& value, const wxPoint& pos, const wxSize& size, long style, const wxValidator& validator, const wxString& name)
- :  wxTextCtrl( parent, id, value, pos, size, style, validator, name)
+CMuleTextCtrl::CMuleTextCtrl(wxWindow *parent,
+	wxWindowID id,
+	const wxString &value,
+	const wxPoint &pos,
+	const wxSize &size,
+	long style,
+	const wxValidator &validator,
+	const wxString &name)
+: wxTextCtrl(parent, id, value, pos, size, style, validator, name)
 {
 }
 
-
-void CMuleTextCtrl::OnRightDown( wxMouseEvent& evt )
+void CMuleTextCtrl::OnRightDown(wxMouseEvent &evt)
 {
 	// If this control doesn't have focus, then set it
-	if ( FindFocus() != this )
+	if (FindFocus() != this)
 		SetFocus();
 
 	wxMenu popup_menu;
 
-	popup_menu.Append( CMTCE_Cut, _("Cut") );
-	popup_menu.Append( CMTCE_Copy, _("Copy") );
-	popup_menu.Append( CMTCE_Paste, _("Paste") );
-	popup_menu.Append( CMTCE_Clear, _("Clear") );
+	popup_menu.Append(CMTCE_Cut, _("Cut"));
+	popup_menu.Append(CMTCE_Copy, _("Copy"));
+	popup_menu.Append(CMTCE_Paste, _("Paste"));
+	popup_menu.Append(CMTCE_Clear, _("Clear"));
 
 	popup_menu.AppendSeparator();
 
-	popup_menu.Append( CMTCE_SelAll, _("Select All") );
+	popup_menu.Append(CMTCE_SelAll, _("Select All"));
 
-
-	// wxMenu will automatically enable/disable the Cut and Copy items,
-	// however, were are a little more pricky about the Paste item than they
-	// are, so we enable/disable it on our own, depending on whenever or not
-	// there's actually something to paste
+	// wxMenu enables and disables the Cut and Copy items automatically, but we are pickier
+	// about Paste than it is, so we drive that one ourselves from whether there is actually
+	// something to paste.
 	bool canpaste = false;
-	if ( CanPaste() ) {
-		if ( wxTheClipboard->Open() ) {
-			if ( wxTheClipboard->IsSupported( wxDF_TEXT ) ) {
+	if (CanPaste()) {
+		if (wxTheClipboard->Open()) {
+			if (wxTheClipboard->IsSupported(wxDF_TEXT)) {
 				wxTextDataObject data;
-				wxTheClipboard->GetData( data );
+				wxTheClipboard->GetData(data);
 
 				canpaste = !data.GetText().IsEmpty();
 			}
@@ -103,39 +106,34 @@ void CMuleTextCtrl::OnRightDown( wxMouseEvent& evt )
 		}
 	}
 
+	popup_menu.Enable(CMTCE_Paste, canpaste);
+	popup_menu.Enable(CMTCE_Clear, IsEditable() && !GetValue().IsEmpty());
 
-	popup_menu.Enable( CMTCE_Paste,		canpaste );
-	popup_menu.Enable( CMTCE_Clear,		IsEditable() && !GetValue().IsEmpty() );
-
-	PopupMenu( &popup_menu, evt.GetX(), evt.GetY() );
+	PopupMenu(&popup_menu, evt.GetX(), evt.GetY());
 }
 
-
-void CMuleTextCtrl::OnPaste( wxCommandEvent& WXUNUSED(evt) )
+void CMuleTextCtrl::OnPaste(wxCommandEvent &WXUNUSED(evt))
 {
 	Paste();
 }
 
-
-void CMuleTextCtrl::OnSelAll( wxCommandEvent& WXUNUSED(evt) )
+void CMuleTextCtrl::OnSelAll(wxCommandEvent &WXUNUSED(evt))
 {
 	// Move the pointer to the front
-	SetInsertionPoint( 0 );
+	SetInsertionPoint(0);
 
 	// Selects everything
-	SetSelection( -1, -1 );
+	SetSelection(-1, -1);
 }
 
-
-void CMuleTextCtrl::OnClear( wxCommandEvent& WXUNUSED(evt) )
+void CMuleTextCtrl::OnClear(wxCommandEvent &WXUNUSED(evt))
 {
 	Clear();
 }
 
-
 #ifdef __WXMAC__
-//#warning Remove this when wxMAC has been fixed.
-// https://sourceforge.net/tracker/?func=detail&atid=109863&aid=1189859&group_id=9863
+// #warning Remove this when wxMAC has been fixed.
+//  https://sourceforge.net/tracker/?func=detail&atid=109863&aid=1189859&group_id=9863
 void CMuleTextCtrl::Clear()
 {
 	if (IsMultiLine()) {
@@ -147,5 +145,53 @@ void CMuleTextCtrl::Clear()
 	}
 }
 #endif
+
+void CMuleTextCtrl::SetPlaceholder(const wxString &hint)
+{
+	m_placeholder = hint;
+	m_normalColour = GetForegroundColour();
+	m_hasPlaceholder = true;
+	if (FindFocus() != this && IsEmpty()) {
+		ApplyPlaceholder();
+	}
+}
+
+void CMuleTextCtrl::RefreshPlaceholder()
+{
+	if (m_hasPlaceholder && !m_showingPlaceholder && FindFocus() != this && IsEmpty()) {
+		ApplyPlaceholder();
+	}
+}
+
+void CMuleTextCtrl::ApplyPlaceholder()
+{
+	m_showingPlaceholder = true;
+	SetForegroundColour(wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
+	// ChangeValue() (not SetValue()) so no EVT_TEXT fires for the hint.
+	ChangeValue(m_placeholder);
+}
+
+void CMuleTextCtrl::RemovePlaceholder()
+{
+	m_showingPlaceholder = false;
+	ChangeValue(wxEmptyString);
+	SetForegroundColour(m_normalColour);
+}
+
+void CMuleTextCtrl::OnSetFocus(wxFocusEvent &evt)
+{
+	if (m_showingPlaceholder) {
+		RemovePlaceholder();
+	}
+	evt.Skip();
+}
+
+void CMuleTextCtrl::OnKillFocus(wxFocusEvent &evt)
+{
+	if (m_hasPlaceholder && !m_showingPlaceholder && IsEmpty()) {
+		ApplyPlaceholder();
+	}
+	evt.Skip();
+}
 
 // File_checked_for_headers

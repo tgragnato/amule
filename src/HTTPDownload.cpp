@@ -23,7 +23,6 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
 #include <wx/filename.h>
 #include <wx/webrequest.h>
 
@@ -31,19 +30,21 @@
 #include <curl/curl.h>
 #endif
 
-#include "HTTPDownload.h"				// Interface declarations
-#include <common/StringFunctions.h>		// Needed for unicode2char
-#include "OtherFunctions.h"				// Needed for CastChild
-#include "Logger.h"						// Needed for AddLogLine*
-#include <common/Format.h>				// Needed for CFormat
-#include "InternalEvents.h"				// Needed for CMuleInternalEvent
+#include "HTTPDownload.h"           // Interface declarations
+#include "DownloadUrl.h"            // Needed for DownloadUrlForLog, DownloadErrorForLog
+#include "HttpUrl.h"                // Needed for IsHttpUrl
+#include <common/StringFunctions.h> // Needed for unicode2char
+#include "OtherFunctions.h"         // Needed for CastChild
+#include "Logger.h"                 // Needed for AddLogLine*
+#include <common/Format.h>          // Needed for CFormat
+#include "InternalEvents.h"         // Needed for CMuleInternalEvent
 #include "Preferences.h"
 #include "Proxy.h"
-
+#include "LibSocket.h" // BindRawSocketToInterface for the curl bind hook
 
 #ifndef AMULE_DAEMON
-#include "inetdownload.h"	// Needed for inetDownload
-#include "muuli_wdr.h"		// Needed for ID_CANCEL
+#include "inetdownload.h" // Needed for inetDownload
+#include "muuli_wdr.h"    // Needed for ID_CANCEL: Let it here or will fail on win32
 #include "MuleGifCtrl.h"
 
 typedef wxGauge wxGaugeControl;
@@ -54,9 +55,13 @@ wxDECLARE_EVENT(wxEVT_HTTP_SHUTDOWN, wxEvent);
 class CHTTPDownloadDialog : public wxDialog
 {
 public:
-	CHTTPDownloadDialog(CHTTPDownloadThread* owner)
-	  : wxDialog(wxTheApp->GetTopWindow(), -1, _("Downloading..."),
-			wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxSYSTEM_MENU)
+	CHTTPDownloadDialog(CHTTPDownloadThread *owner)
+	: wxDialog(wxTheApp->GetTopWindow(),
+		  -1,
+		  _("Downloading..."),
+		  wxDefaultPosition,
+		  wxDefaultSize,
+		  wxDEFAULT_DIALOG_STYLE)
 	{
 		downloadDlg(this, true)->Show(this, true);
 
@@ -64,21 +69,20 @@ public:
 		m_progressbar->SetRange(100);
 
 		m_ani = CastChild(ID_ANIMATE, MuleGifCtrl);
-		m_ani->LoadData((const char*)inetDownload, sizeof(inetDownload));
+		m_ani->LoadData((const char *)inetDownload, sizeof(inetDownload));
 		m_ani->Start();
 
 		m_owner = owner;
 	}
 
-	~CHTTPDownloadDialog() {
-		StopDownload();
-	}
+	~CHTTPDownloadDialog() { StopDownload(); }
 
-	void UpdateGauge(int total, int current) {
-		CFormat label( "( %s / %s )" );
+	void UpdateGauge(int total, int current)
+	{
+		CFormat label("( %s / %s )");
 
 		const int safeCurrent = (current > 0) ? current : 0;
-		const int safeTotal   = (total   > 0) ? total   : 0;
+		const int safeTotal = (total > 0) ? total : 0;
 
 		label % CastItoXBytes(safeCurrent);
 		if (safeTotal > 0) {
@@ -89,10 +93,9 @@ public:
 
 		CastChild(IDC_DOWNLOADSIZE, wxStaticText)->SetLabel(label.GetString());
 
-		// Only touch the gauge when we know the total. Without a known total
-		// we leave the gauge at its previous (valid) state — better than
-		// risking m_gaugePos > m_rangeMax, which trips an assertion in
-		// wxGauge::DoSetGauge on wxGTK (./src/gtk/gauge.cpp:90).
+		// Only touch the gauge when we know the total. Without one we leave the gauge at
+		// its previous valid state -- better than risking m_gaugePos > m_rangeMax, which
+		// trips an assertion in wxGauge::DoSetGauge on wxGTK (./src/gtk/gauge.cpp:90).
 		if (safeTotal > 0) {
 			if (safeTotal != m_progressbar->GetRange()) {
 				m_progressbar->SetRange(safeTotal);
@@ -105,12 +108,11 @@ public:
 	}
 
 private:
-	// Unlink from the request owner and cancel it. Fire-and-forget: the
-	// owner will self-destroy when wxWebRequest reports State_Cancelled
-	// on the main loop. We must NOT delete the owner here — doing so
-	// while a request is in flight leaves the wxWebRequest backend
-	// calling into a dead sink.
-	void StopDownload() {
+	// Unlink from the request owner and cancel it. Fire-and-forget: the owner self-destroys
+	// when wxWebRequest reports State_Cancelled on the main loop. Deleting it here, with a
+	// request in flight, would leave the wxWebRequest backend calling into a dead sink.
+	void StopDownload()
+	{
 		if (m_owner) {
 			m_owner->DetachCompanion();
 			m_owner->Stop();
@@ -118,32 +120,31 @@ private:
 		}
 	}
 
-	void OnBtnCancel(wxCommandEvent& WXUNUSED(evt)) {
+	void OnBtnCancel(wxCommandEvent &WXUNUSED(evt))
+	{
 		AddLogLineN(_("HTTP download cancelled"));
 		Show(false);
 		StopDownload();
 	}
 
-	void OnProgress(CMuleInternalEvent& evt) {
-		UpdateGauge(evt.GetExtraLong(), evt.GetInt());
-	}
+	void OnProgress(CMuleInternalEvent &evt) { UpdateGauge(evt.GetExtraInt64(), evt.GetInt()); }
 
-	void OnShutdown(CMuleInternalEvent& WXUNUSED(evt)) {
-		// The thread is about to self-destroy — drop our raw pointer now
-		// so our own dtor (which runs later via wxPendingDelete) does not
-		// touch a freed CHTTPDownloadThread via StopDownload().
+	void OnShutdown(CMuleInternalEvent &WXUNUSED(evt))
+	{
+		// The thread is about to self-destroy -- drop our raw pointer now so our own dtor,
+		// which runs later via wxPendingDelete, does not touch a freed CHTTPDownloadThread
+		// via StopDownload().
 		m_owner = NULL;
 		Show(false);
 		Destroy();
 	}
 
-	CHTTPDownloadThread*	m_owner;	// not owned
-	MuleGifCtrl*		m_ani;
-	wxGaugeControl*		m_progressbar;
+	CHTTPDownloadThread *m_owner; // not owned
+	MuleGifCtrl *m_ani;
+	wxGaugeControl *m_progressbar;
 
 	wxDECLARE_EVENT_TABLE();
 };
-
 
 wxBEGIN_EVENT_TABLE(CHTTPDownloadDialog, wxDialog)
 	EVT_BUTTON(ID_HTTPCANCEL, CHTTPDownloadDialog::OnBtnCancel)
@@ -155,62 +156,259 @@ wxDEFINE_EVENT(wxEVT_HTTP_PROGRESS, wxEvent);
 wxDEFINE_EVENT(wxEVT_HTTP_SHUTDOWN, wxEvent);
 #endif
 
-
-// Apply the current proxy prefs to the shared wxWebSession.
+// Apply the current proxy prefs to the given wxWebSession.
 //
-// wxWebProxy / wxWebSession::SetProxy are wx 3.3+ only. On wx 3.2 there is
-// no programmatic way to set a proxy on wxWebRequest, so we rely on the
-// backend defaults: on Linux wxWebRequest is backed by libcurl, which
-// honours the standard http_proxy / https_proxy / all_proxy environment
-// variables. Users of the aMule Proxy pref on wx 3.2 are no worse off than
-// with the legacy wxHTTP::SetProxyMode(bool) path, which only toggled a
-// boolean and never actually consumed the host / port / auth fields either.
+// wxWebProxy / wxWebSession::SetProxy are wx 3.3+ only. On wx 3.2 there is no programmatic way to
+// set a proxy on wxWebRequest, so we rely on the backend defaults: libcurl honours http_proxy /
+// https_proxy / all_proxy. That leaves wx 3.2 users no worse off than the legacy
+// wxHTTP::SetProxyMode(bool) path, which only toggled a boolean and never consumed the host / port
+// / auth fields.
 //
-// SOCKS proxies are intentionally skipped even when SetProxy is available:
-// wx 3.3's wxWebProxy is HTTP-only. A libcurl backend would be required if
-// SOCKS support mattered — that is out of scope for this fix.
-static void ApplyProxyToDefaultSession()
+// SOCKS proxies are skipped even where SetProxy is available: wx 3.3's wxWebProxy is HTTP-only.
+static void ApplyProxyToSession(wxWebSession &session)
 {
 #if wxCHECK_VERSION(3, 3, 0)
-	wxWebSession& session = wxWebSession::GetDefault();
-	const CProxyData* pd = thePrefs::GetProxyData();
+	const CProxyData *pd = thePrefs::GetProxyData();
 	if (!pd || !pd->m_proxyEnable || pd->m_proxyType == PROXY_NONE) {
-		session.SetProxy(wxWebProxy::FromURL(wxString()));   // clear
+		session.SetProxy(wxWebProxy::FromURL(wxString())); // clear
 		return;
 	}
 	if (pd->m_proxyType != PROXY_HTTP) {
-		AddDebugLogLineN(logHTTP, "wxWebRequest: SOCKS proxies are not supported; startup HTTP will be made direct.");
+		AddDebugLogLineN(logHTTP,
+			"wxWebRequest: SOCKS proxies are not supported; startup HTTP will be made direct.");
 		session.SetProxy(wxWebProxy::FromURL(wxString()));
 		return;
 	}
 	wxString url;
 	if (pd->m_enablePassword && !pd->m_userName.IsEmpty()) {
-		url = CFormat("http://%s:%s@%s:%u")
-			% pd->m_userName % pd->m_password
-			% pd->m_proxyHostName % pd->m_proxyPort;
+		url = CFormat("http://%s:%s@%s:%u") % pd->m_userName % pd->m_password % pd->m_proxyHostName %
+		      pd->m_proxyPort;
 	} else {
-		url = CFormat("http://%s:%u")
-			% pd->m_proxyHostName % pd->m_proxyPort;
+		url = CFormat("http://%s:%u") % pd->m_proxyHostName % pd->m_proxyPort;
 	}
 	session.SetProxy(wxWebProxy::FromURL(url));
+#else
+	(void)session;
 #endif
 }
 
+// HTTP-on-curl is what lets us bind egress to an interface (via the sockopt hook below). Selected
+// on Linux and macOS but deliberately NOT on Windows:
+//
+//   Linux  : curl is already the default backend.
+//   macOS  : the default is the native URLSession backend, whose handle is not a CURL*, so curl is
+//            requested explicitly to get a bindable handle.
+//   Windows: the wxMSW libcurl backend is broken -- a forced curl request never progresses and
+//            hangs. WinHTTP works but has no interface-bind API, so HTTP stays on WinHTTP there
+//            and is not bound.
+//
+// P2P traffic is bound on all platforms regardless; only the Windows HTTP side-channels are left
+// unbound.
+#if wxUSE_WEBREQUEST_CURL
+#define AMULE_HTTP_CURL_BIND 1
+#endif
 
-CHTTPDownloadThread::CHTTPDownloadThread(const wxString& url, const wxString& filename, const wxString& oldfilename, HTTP_Download_File file_id,
-										bool showDialog, bool checkDownloadNewer)
-	: m_url(url),
-	  m_tempfile(filename),
-	  m_result(-1),
-	  m_response(0),
-	  m_error(0),
-	  m_file_id(file_id),
-	  m_companion(NULL),
-	  m_finishPosted(false)
+// Returns the session aMule HTTP should use, and reports through `isCurlBackend` whether it is
+// libcurl-backed. The caller may only treat wxWebRequest::GetNativeHandle() as a CURL* when curl
+// actually served the request: wxUSE_WEBREQUEST_CURL says only that curl is AVAILABLE, not that it
+// BACKS the default session. On macOS that default is NSURLSession, whose native handle is an
+// NSURLSessionTask*, and calling curl_easy_setopt() on it corrupts the Obj-C object and crashes on
+// startup (#601).
+static wxWebSession &GetAmuleWebSession(bool &isCurlBackend)
+{
+	isCurlBackend = false;
+#ifdef AMULE_HTTP_CURL_BIND
+	// Switch to the curl backend only when an interface is actually bound -- curl is just the
+	// means to make HTTP bindable. Forcing it otherwise would change the HTTP stack for users
+	// who do not use this feature, including macOS's native URLSession with its own TLS and
+	// proxy handling.
+	if (!thePrefs::GetNetworkInterface().IsEmpty() &&
+		wxWebSession::IsBackendAvailable(wxWebSessionBackendCURL)) {
+		// Proxy applied here, at construction, and never again -- see the note on the
+		// default session below. Function-local statics are initialised once and thread-
+		// safely, which matters because requests are created from CHTTPDownloadThread as
+		// well as the main thread.
+		static wxWebSession curlSession = [] {
+			wxWebSession session = wxWebSession::New(wxWebSessionBackendCURL);
+			ApplyProxyToSession(session);
+			return session;
+		}();
+		if (curlSession.IsOpened()) {
+			isCurlBackend = true;
+			return curlSession;
+		}
+	}
+	// Default session. AMULE_HTTP_CURL_BIND already excludes Windows (WinHTTP), so the default
+	// backend here is curl on Linux and other *nix but NSURLSession on macOS -- only the former
+	// hands back a CURL* from GetNativeHandle().
+#ifndef __WXOSX__
+	isCurlBackend = true;
+#endif
+#endif
+	// Once per session, not once per request. WinHTTP builds its session handle on the first request
+	// and wx asserts if SetProxy() is called after that:
+	//
+	//   webrequest_winhttp.cpp:SetProxy: assert '!m_handle' failed.
+	//
+	// aMule makes several HTTP requests per session, so applying the proxy on each one meant every
+	// request after the first raised a modal assert during startup. The cost is that a proxy
+	// preference change takes effect on the next run rather than the next request, which is all the
+	// WinHTTP backend allows anyway.
+	static const bool defaultSessionProxyApplied = [] {
+		ApplyProxyToSession(wxWebSession::GetDefault());
+		return true;
+	}();
+	(void)defaultSessionProxyApplied;
+
+	return wxWebSession::GetDefault();
+}
+
+#if defined(AMULE_HAVE_LIBCURL) && defined(AMULE_HTTP_CURL_BIND)
+// libcurl invokes this on the freshly-created socket, before connect(). Bind it to the configured
+// interface using aMule's own per-platform logic (the same SO_BINDTODEVICE / IP_BOUND_IF path the
+// P2P sockets use), so HTTP cannot leak past a bound interface. See amule-org/amule#173.
+extern "C" int amuleHttpSockoptCallback(void *, curl_socket_t curlfd, curlsocktype)
+{
+	const wxString &iface = thePrefs::GetNetworkInterface();
+	if (!iface.IsEmpty() && !BindRawSocketToInterface(static_cast<uintptr_t>(curlfd), iface)) {
+		// Failing the request is what keeps it off the default route.
+		return CURL_SOCKOPT_ERROR;
+	}
+	return CURL_SOCKOPT_OK;
+}
+#endif
+
+bool CanBindHttpToInterface()
+{
+#if defined(AMULE_HAVE_LIBCURL) && defined(AMULE_HTTP_CURL_BIND)
+	return wxWebSession::IsBackendAvailable(wxWebSessionBackendCURL);
+#else
+	return false;
+#endif
+}
+
+// Tune the libcurl handle backing an HTTP request: CURLOPT_NOSIGNAL so the synchronous-resolver
+// fallback does not raise SIGALRM in this multi-threaded process, CURLOPT_CONNECTTIMEOUT_MS so the
+// connect phase gives up after 30 s instead of the full OS resolver timeout, and
+// CURLOPT_SOCKOPTFUNCTION to bind egress when an interface is configured. Only call this when curl
+// actually backs the request (see GetAmuleWebSession).
+static void CustomizeCurlRequest(wxWebRequest &request)
+{
+#if defined(AMULE_HAVE_LIBCURL) && defined(AMULE_HTTP_CURL_BIND)
+	if (CURL *curl = static_cast<CURL *>(request.GetNativeHandle())) {
+		curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+		curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 30000L);
+		// Stall guard: abort a transfer that averages under 1 byte/s for 60 s once
+		// connected. CURLOPT_CONNECTTIMEOUT only covers the connect phase, so without this
+		// a server that accepts the connection and then stops sending leaves a pending
+		// request forever -- which matters most for the unattended periodic version check.
+		// A total CURLOPT_TIMEOUT is avoided on purpose so large but legitimately slow
+		// downloads are not capped.
+		curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+		curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);
+		if (!thePrefs::GetNetworkInterface().IsEmpty()) {
+			curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, amuleHttpSockoptCallback);
+		}
+		// IsHttpUrl already gates the request URL; this also holds for redirects.
+#if LIBCURL_VERSION_NUM >= 0x075500
+		curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
+		curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+#else
+		curl_easy_setopt(curl, CURLOPT_PROTOCOLS, (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+		curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+#endif
+	}
+#else
+	(void)request;
+#endif
+}
+
+// Single entry point for all aMule HTTP: curl-backed session, proxy and interface bind, so every
+// HTTP channel is consistent and honours the bind-to-interface preference.
+wxWebRequest CreateAmuleWebRequest(wxEvtHandler *handler, const wxString &url)
+{
+	if (!IsHttpUrl(url)) {
+		AddLogLineC(
+			CFormat(_("Refusing to download %s: only http and https URLs are supported.")) % url);
+		return wxWebRequest();
+	}
+	bool isCurlBackend = false;
+	// The proxy is applied when the session is first handed out, not here:
+	// setting it per request asserts on WinHTTP once a request has been made.
+	wxWebSession &session = GetAmuleWebSession(isCurlBackend);
+	wxWebRequest request = session.CreateRequest(handler, url);
+	if (request.IsOk() && isCurlBackend) {
+		CustomizeCurlRequest(request);
+	}
+	return request;
+}
+
+// A response body this large is not a list or database aMule fetches; it matches the unpacker's
+// own limit.
+static const wxFileOffset MAX_HTTP_DOWNLOAD_SIZE = 256 * 1024 * 1024;
+static const int HTTP_SIZE_CHECK_MS = 250;
+
+CHttpSizeGuard::CHttpSizeGuard()
+: m_limit(0)
+, m_timer(this)
+{
+	Bind(wxEVT_TIMER, &CHttpSizeGuard::OnTimer, this);
+}
+
+void CHttpSizeGuard::Start(const wxWebRequest &request, wxFileOffset limit, std::function<void()> onExceeded)
+{
+	m_request = request;
+	m_limit = limit;
+	m_onExceeded = std::move(onExceeded);
+	m_timer.Start(HTTP_SIZE_CHECK_MS);
+}
+
+void CHttpSizeGuard::Stop()
+{
+	m_timer.Stop();
+}
+
+bool CHttpSizeGuard::Exceeded() const
+{
+	return m_request.IsOk() && m_limit > 0 &&
+	       (m_request.GetBytesReceived() > m_limit || m_request.GetBytesExpectedToReceive() > m_limit);
+}
+
+void CHttpSizeGuard::OnTimer(wxTimerEvent &WXUNUSED(evt))
+{
+	if (Exceeded()) {
+		m_timer.Stop();
+		m_request.Cancel();
+		// WinHTTP may never report State_Cancelled for this, so the owner finishes now.
+		m_onExceeded();
+	}
+}
+
+static void LogDownloadTooLarge(const wxString &url, wxFileOffset limit)
+{
+	AddLogLineC(CFormat(_("HTTP download of %s stopped: it is larger than %u MiB.")) %
+		    DownloadUrlForLog(url) % (unsigned)(limit / (1024 * 1024)));
+}
+
+CHTTPDownloadThread::CHTTPDownloadThread(const wxString &url,
+	const wxString &filename,
+	const wxString &oldfilename,
+	HTTP_Download_File file_id,
+	bool showDialog,
+	bool checkDownloadNewer)
+: m_url(url)
+, m_tempfile(filename)
+, m_result(-1)
+, m_response(0)
+, m_error(0)
+, m_file_id(file_id)
+, m_companion(NULL)
+, m_finishPosted(false)
+, m_deleteScheduled(false)
 {
 	if (showDialog) {
 #ifndef AMULE_DAEMON
-		CHTTPDownloadDialog* dialog = new CHTTPDownloadDialog(this);
+		CHTTPDownloadDialog *dialog = new CHTTPDownloadDialog(this);
 		dialog->Show(true);
 		m_companion = dialog;
 #endif
@@ -221,7 +419,9 @@ CHTTPDownloadThread::CHTTPDownloadThread(const wxString& url, const wxString& fi
 	if (checkDownloadNewer && thePrefs::GetLastHTTPDownloadURL(file_id) == url) {
 		wxFileName origFile(oldfilename);
 		if (origFile.FileExists()) {
-			AddDebugLogLineN(logHTTP, CFormat("URL %s matches and file %s exists, only download if newer") % url % oldfilename);
+			AddDebugLogLineN(logHTTP,
+				CFormat("URL %s matches and file %s exists, only download if newer") %
+					DownloadUrlForLog(url) % oldfilename);
 			m_lastmodified = origFile.GetModificationTime();
 		}
 	}
@@ -231,7 +431,7 @@ CHTTPDownloadThread::CHTTPDownloadThread(const wxString& url, const wxString& fi
 		s_allThreads.insert(this);
 	}
 
-	AddDebugLogLineN(logHTTP, CFormat("HTTP download started: %s") % m_url);
+	AddDebugLogLineN(logHTTP, CFormat("HTTP download started: %s") % DownloadUrlForLog(m_url));
 
 	if (m_url.IsEmpty()) {
 		AddLogLineC(_("The URL to download can't be empty"));
@@ -239,36 +439,20 @@ CHTTPDownloadThread::CHTTPDownloadThread(const wxString& url, const wxString& fi
 		return;
 	}
 
-	ApplyProxyToDefaultSession();
-
-	m_request = wxWebSession::GetDefault().CreateRequest(this, m_url);
+	// Curl-backed session, proxy and interface bind, all in one place. The threaded-resolver
+	// caveat still applies: the CONNECTTIMEOUT set inside bounds the visible delay before
+	// Failed fires, but not the cleanup-time pthread_join on libcurl's threaded resolver.
+	m_request = CreateAmuleWebRequest(this, m_url);
 	if (!m_request.IsOk()) {
-		AddLogLineC(CFormat(_("Failed to create HTTP request for %s")) % m_url);
+		AddLogLineC(CFormat(_("Failed to create HTTP request for %s")) % DownloadUrlForLog(m_url));
 		FinishAndDestroy(HTTP_Error);
 		return;
 	}
 
-#if defined(AMULE_HAVE_LIBCURL) && wxUSE_WEBREQUEST_CURL
-	// When wx was built with the libcurl backend AND we found <curl/curl.h>
-	// at configure time, set CURLOPT_NOSIGNAL so the synchronous-resolver
-	// fallback doesn't raise SIGALRM in this multi-threaded process, and
-	// CURLOPT_CONNECTTIMEOUT_MS so the connect phase (incl. DNS) gives up
-	// after 30 s instead of waiting the full OS resolver timeout (~5 min).
-	// This does NOT close the cleanup-time pthread_join hang on libcurl's
-	// threaded resolver — that's bounded by the OS DNS timeout regardless
-	// — but it bounds the visible delay before the Failed event fires.
-	if (CURL* curl = static_cast<CURL*>(m_request.GetNativeHandle())) {
-		curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-		curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 30000L);
-	}
-#endif
-
-	// Storage_File: wx streams the response body to an internal temp file
-	// and hands us the path on completion. We then rename it to the
-	// caller-supplied m_tempfile. Redirects (incl. HTTP→HTTPS) are
-	// followed by wx transparently — the whole recursive GetInputStream()
-	// redirect handler of the legacy code path is gone, which is the
-	// actual fix for the upstream startup crash (amule-project/amule#455).
+	// Storage_File: wx streams the response body to an internal temp file and hands us the path
+	// on completion, which we then rename to m_tempfile. Redirects, including HTTP to HTTPS,
+	// are followed transparently, so the legacy recursive GetInputStream() redirect handler is
+	// gone -- the actual fix for the upstream startup crash.
 	m_request.SetStorage(wxWebRequest::Storage_File);
 
 	if (m_lastmodified.IsValid()) {
@@ -278,124 +462,150 @@ CHTTPDownloadThread::CHTTPDownloadThread(const wxString& url, const wxString& fi
 
 	Bind(wxEVT_WEBREQUEST_STATE, &CHTTPDownloadThread::OnStateEvent, this);
 	m_request.Start();
+	m_sizeGuard.Start(m_request, MAX_HTTP_DOWNLOAD_SIZE, [this] {
+		LogDownloadTooLarge(m_url, MAX_HTTP_DOWNLOAD_SIZE);
+		// Not destroyed yet: wx may still post a terminal state to this handler.
+		Finish(HTTP_Error);
+	});
 }
-
 
 // Format the given date to a RFC-2616 compliant HTTP date.
 // Example: Thu, 14 Jan 2010 15:40:23 GMT
-wxString CHTTPDownloadThread::FormatDateHTTP(const wxDateTime& date)
+wxString CHTTPDownloadThread::FormatDateHTTP(const wxDateTime &date)
 {
-	static const wxChar* s_months[] = { L"Jan", L"Feb", L"Mar", L"Apr", L"May", L"Jun", L"Jul", L"Aug", L"Sep", L"Oct", L"Nov", L"Dec" };
-	static const wxChar* s_dow[] = { L"Sun", L"Mon", L"Tue", L"Wed", L"Thu", L"Fri", L"Sat" };
+	static const wxChar *s_months[] = {
+		L"Jan", L"Feb", L"Mar", L"Apr", L"May", L"Jun", L"Jul", L"Aug", L"Sep", L"Oct", L"Nov", L"Dec"
+	};
+	static const wxChar *s_dow[] = { L"Sun", L"Mon", L"Tue", L"Wed", L"Thu", L"Fri", L"Sat" };
 
-	return CFormat("%s, %02d %s %d %02d:%02d:%02d GMT") % s_dow[date.GetWeekDay(wxDateTime::UTC)] % date.GetDay(wxDateTime::UTC) % s_months[date.GetMonth(wxDateTime::UTC)] % date.GetYear(wxDateTime::UTC) % date.GetHour(wxDateTime::UTC) % date.GetMinute(wxDateTime::UTC) % date.GetSecond(wxDateTime::UTC);
+	return CFormat("%s, %02d %s %d %02d:%02d:%02d GMT") % s_dow[date.GetWeekDay(wxDateTime::UTC)] %
+	       date.GetDay(wxDateTime::UTC) % s_months[date.GetMonth(wxDateTime::UTC)] %
+	       date.GetYear(wxDateTime::UTC) % date.GetHour(wxDateTime::UTC) %
+	       date.GetMinute(wxDateTime::UTC) % date.GetSecond(wxDateTime::UTC);
 }
 
-
-void CHTTPDownloadThread::OnStateEvent(wxWebRequestEvent& evt)
+void CHTTPDownloadThread::OnStateEvent(wxWebRequestEvent &evt)
 {
+	if (m_finishPosted) {
+		// Already finished by the size guard; free us once wx is done with the request.
+		if (evt.GetState() != wxWebRequest::State_Active) {
+			ScheduleDelete();
+		}
+		return;
+	}
+
 	switch (evt.GetState()) {
-		case wxWebRequest::State_Active: {
-			// Periodic progress notification during the download.
-			if (m_companion) {
+	case wxWebRequest::State_Active: {
+		// Periodic progress notification during the download.
+		if (m_companion) {
 #ifndef AMULE_DAEMON
-				// GetBytesExpectedToReceive() returns wxInvalidOffset (-1)
-				// when the server omits Content-Length. Forwarding -1 into
-				// the dialog ends up in wxGauge::SetRange(-1), which flips
-				// m_rangeMax invalid and trips an assertion on the next
-				// repaint (./src/gtk/gauge.cpp:90). Clamp to 0 here so the
-				// dialog treats it as "unknown" (skips the range + value
-				// update) until a real total shows up.
-				wxFileOffset expected = m_request.GetBytesExpectedToReceive();
-				CMuleInternalEvent prog(wxEVT_HTTP_PROGRESS);
-				prog.SetInt((int)m_request.GetBytesReceived());
-				prog.SetExtraLong((long)(expected > 0 ? expected : 0));
-				wxQueueEvent(m_companion, (prog).Clone());
+			// GetBytesExpectedToReceive() returns wxInvalidOffset (-1) when the server
+			// omits Content-Length, and forwarding -1 reaches wxGauge::SetRange(-1),
+			// which flips m_rangeMax invalid and asserts on the next repaint. Clamp to
+			// 0 so the dialog treats it as "unknown".
+			wxFileOffset expected = m_request.GetBytesExpectedToReceive();
+			CMuleInternalEvent prog(wxEVT_HTTP_PROGRESS);
+			prog.SetInt((int)m_request.GetBytesReceived());
+			prog.SetExtraInt64(expected > 0 ? expected : 0);
+			wxQueueEvent(m_companion, (prog).Clone());
 #endif
-			}
-			break;
 		}
+		break;
+	}
 
-		case wxWebRequest::State_Completed: {
-			wxWebResponse response = evt.GetResponse();
-			m_response = response.IsOk() ? response.GetStatus() : 0;
-			m_error    = 0;
+	case wxWebRequest::State_Completed: {
+		const wxWebResponse &response = evt.GetResponse();
+		m_response = response.IsOk() ? response.GetStatus() : 0;
+		m_error = 0;
 
-			AddDebugLogLineN(logHTTP, CFormat("HTTP response %d for %s") % m_response % m_url);
+		AddDebugLogLineN(
+			logHTTP, CFormat("HTTP response %d for %s") % m_response % DownloadUrlForLog(m_url));
 
-			if (m_response == 304) {
-				// Not Modified — nothing to write.
-				AddDebugLogLineN(logHTTP, "Skipped download because requested file is not newer.");
-				FinishAndDestroy(HTTP_Skipped);
-			} else if (m_response >= 200 && m_response < 300) {
-				// Success. wx wrote the body to its own temp file; move it
-				// to the caller-supplied m_tempfile. A plain rename may
-				// fail across filesystems (wx's temp dir vs the aMule
-				// config dir), so fall back to copy + delete.
-				const wxString wxTmp = response.GetDataFile();
-				if (wxTmp.IsEmpty() || !wxFileExists(wxTmp)) {
-					AddLogLineC(CFormat(_("HTTP download: empty response body for %s")) % m_url);
-					FinishAndDestroy(HTTP_Error);
-					break;
-				}
-				if (wxFileExists(m_tempfile)) {
-					wxRemoveFile(m_tempfile);
-				}
-				bool moved = wxRenameFile(wxTmp, m_tempfile);
-				if (!moved) {
-					moved = wxCopyFile(wxTmp, m_tempfile) && wxRemoveFile(wxTmp);
-				}
-				if (!moved) {
-					AddLogLineC(CFormat(_("Could not move downloaded file to %s")) % m_tempfile);
-					FinishAndDestroy(HTTP_Error);
-					break;
-				}
-				AddLogLineN(CFormat(_("Downloaded %s (%llu bytes)"))
-					% m_url % (unsigned long long)m_request.GetBytesReceived());
-				thePrefs::SetLastHTTPDownloadURL(m_file_id, m_url);
-				FinishAndDestroy(HTTP_Success);
-			} else {
-				AddLogLineC(CFormat(_("The URL %s returned: %i")) % m_url % m_response);
+		if (m_response == 304) {
+			// Not Modified -- nothing to write.
+			AddDebugLogLineN(logHTTP, "Skipped download because requested file is not newer.");
+			FinishAndDestroy(HTTP_Skipped);
+		} else if (m_sizeGuard.Exceeded()) {
+			// Finished between two size checks.
+			LogDownloadTooLarge(m_url, MAX_HTTP_DOWNLOAD_SIZE);
+			FinishAndDestroy(HTTP_Error);
+		} else if (m_response >= 200 && m_response < 300) {
+			// Success. wx wrote the body to its own temp file; move it to the caller-
+			// supplied m_tempfile. A plain rename may fail across filesystems, so fall
+			// back to copy + delete.
+			const wxString wxTmp = response.GetDataFile();
+			if (wxTmp.IsEmpty() || !wxFileExists(wxTmp)) {
+				AddLogLineC(CFormat(_("HTTP download: empty response body for %s")) %
+					    DownloadUrlForLog(m_url));
 				FinishAndDestroy(HTTP_Error);
+				break;
 			}
-			break;
-		}
-
-		case wxWebRequest::State_Failed: {
-			AddLogLineC(CFormat(_("HTTP download failed for %s: %s"))
-				% m_url % evt.GetErrorDescription());
+			if (wxFileExists(m_tempfile)) {
+				wxRemoveFile(m_tempfile);
+			}
+			bool moved = wxRenameFile(wxTmp, m_tempfile);
+			if (!moved) {
+				moved = wxCopyFile(wxTmp, m_tempfile) && wxRemoveFile(wxTmp);
+			}
+			if (!moved) {
+				AddLogLineC(CFormat(_("Could not move downloaded file to %s")) % m_tempfile);
+				FinishAndDestroy(HTTP_Error);
+				break;
+			}
+			AddLogLineN(CFormat(_("Downloaded %s (%llu bytes)")) % DownloadUrlForLog(m_url) %
+				    (unsigned long long)m_request.GetBytesReceived());
+			thePrefs::SetLastHTTPDownloadURL(m_file_id, m_url);
+			FinishAndDestroy(HTTP_Success);
+		} else {
+			AddLogLineC(CFormat(_("The URL %s returned: %i")) % DownloadUrlForLog(m_url) %
+				    m_response);
 			FinishAndDestroy(HTTP_Error);
-			break;
 		}
+		break;
+	}
 
-		case wxWebRequest::State_Cancelled: {
-			AddDebugLogLineN(logHTTP, CFormat("HTTP download cancelled: %s") % m_url);
-			FinishAndDestroy(HTTP_Error);
-			break;
-		}
+	// Keep the backend reason while hiding request and redirect URL credentials.
+	case wxWebRequest::State_Failed: {
+		AddLogLineC(CFormat(_("HTTP download failed for %s: %s")) % DownloadUrlForLog(m_url) %
+			    DownloadErrorForLog(evt.GetErrorDescription()));
+		FinishAndDestroy(HTTP_Error);
+		break;
+	}
 
-		case wxWebRequest::State_Unauthorized:
-			// We have no credentials to provide interactively; treat as
-			// a failure so the dispatcher reports an error to the user.
-			AddLogLineC(CFormat(_("HTTP 401 Unauthorized for %s")) % m_url);
-			m_request.Cancel();
-			FinishAndDestroy(HTTP_Error);
-			break;
+	case wxWebRequest::State_Cancelled: {
+		AddDebugLogLineN(logHTTP, CFormat("HTTP download cancelled: %s") % DownloadUrlForLog(m_url));
+		FinishAndDestroy(HTTP_Cancelled);
+		break;
+	}
 
-		case wxWebRequest::State_Idle:
-			// Initial state before Start(); nothing to do.
-			break;
+	case wxWebRequest::State_Unauthorized:
+		// We have no credentials to provide interactively; treat as
+		// a failure so the dispatcher reports an error to the user.
+		AddLogLineC(CFormat(_("HTTP 401 Unauthorized for %s")) % DownloadUrlForLog(m_url));
+		m_request.Cancel();
+		FinishAndDestroy(HTTP_Error);
+		break;
+
+	case wxWebRequest::State_Idle:
+		// Initial state before Start(); nothing to do.
+		break;
 	}
 }
 
-
 void CHTTPDownloadThread::FinishAndDestroy(int result)
+{
+	Finish(result);
+	ScheduleDelete();
+}
+
+void CHTTPDownloadThread::Finish(int result)
 {
 	if (m_finishPosted) {
 		return;
 	}
 	m_finishPosted = true;
 	m_result = result;
+	m_sizeGuard.Stop();
 
 	// Clean the caller's temp file on failure so we don't leave stale
 	// half-written content around. Legacy path did the same.
@@ -414,7 +624,7 @@ void CHTTPDownloadThread::FinishAndDestroy(int result)
 	// feature-specific handler (ipfilter, serverlist, kad, ...) runs.
 	CMuleInternalEvent evt(wxEVT_CORE_FINISHED_HTTP_DOWNLOAD);
 	evt.SetInt((int)m_file_id);
-	evt.SetExtraLong((long)m_result);
+	evt.SetExtraInt64(m_result);
 	wxQueueEvent(wxTheApp, (evt).Clone());
 
 	{
@@ -423,34 +633,37 @@ void CHTTPDownloadThread::FinishAndDestroy(int result)
 	}
 
 	AddDebugLogLineN(logHTTP, "HTTP download ended");
-
-	// Schedule our own destruction after the current event returns to
-	// the main loop. Must not be `delete this` — wxWebRequest may still
-	// be unwinding state after handing us the terminal event.
-	CallAfter([this]{ delete this; });
 }
 
+void CHTTPDownloadThread::ScheduleDelete()
+{
+	if (m_deleteScheduled) {
+		return;
+	}
+	m_deleteScheduled = true;
+	// Schedule our own destruction after the current event returns to the main loop. Must not
+	// be `delete this` -- wxWebRequest may still be unwinding state after handing us the
+	// terminal event.
+	CallAfter([this] { delete this; });
+}
 
 void CHTTPDownloadThread::DetachCompanion()
 {
 	m_companion = NULL;
 }
 
-
 void CHTTPDownloadThread::Stop()
 {
 	if (m_request.IsOk() && !m_finishPosted) {
-		// Fire-and-forget: wxWebRequest will schedule a State_Cancelled
-		// event on the main loop. Our OnStateEvent will run
-		// FinishAndDestroy at that point.
+		// Fire-and-forget: wxWebRequest will schedule a State_Cancelled event on the main
+		// loop, and our OnStateEvent will run FinishAndDestroy then.
 		m_request.Cancel();
 	} else if (!m_finishPosted) {
 		// Request never got off the ground (e.g. invalid URL, or Stop()
 		// called before Start() had a chance). Finish synchronously.
-		FinishAndDestroy(HTTP_Error);
+		FinishAndDestroy(HTTP_Cancelled);
 	}
 }
-
 
 void CHTTPDownloadThread::StopAll()
 {
@@ -463,7 +676,6 @@ void CHTTPDownloadThread::StopAll()
 		(*it)->Stop();
 	}
 }
-
 
 CHTTPDownloadThread::ThreadSet CHTTPDownloadThread::s_allThreads;
 wxMutex CHTTPDownloadThread::s_allThreadsMutex;

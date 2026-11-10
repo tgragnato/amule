@@ -1,0 +1,379 @@
+#!/usr/bin/env bash
+#
+# amuleapi 33-known-clients — GET /known_clients.
+#
+# /clients answers "who am I connected to right now", keyed by ECID.
+# This route answers "who have I ever exchanged data with", keyed by the
+# peer's user hash and read from the daemon's credit store, so it
+# survives the daemon process any ECID belonged to.
+#
+# What is asserted here:
+#
+#   * the envelope is the standard list shape — a `known_clients` array
+#     plus `total` / `offset` / `limit` — and paginates through the
+#     shared helpers, not a private implementation,
+#   * `limit` is clamped and a bad `limit` / `offset` / `order` is a 400,
+#     same contract as every other list endpoint,
+#   * every `sort` key the endpoint advertises is accepted and an
+#     unknown one is a 400,
+#   * each record carries the fields that are always recorded (user_hash,
+#     the totals, last_seen_at, connected) and omits — rather than empties —
+#     the ones a pre-metadata record has no value for,
+#   * `user_hash` is a 32-char lowercase MD4, so it correlates with
+#     /clients `user_hash` directly,
+#   * the store is maintained rather than re-read: a connected peer's row
+#     tracks the live client state, and a peer met since the first request
+#     is added rather than waiting for a refetch,
+#   * the response is cacheable (ETag) and honours If-None-Match,
+#   * HEAD returns headers with no body,
+#   * non-safe methods are 405.
+#
+# Note on an empty store: a fresh regtest daemon has met no peers, so
+# `total` is legitimately 0 and the per-record assertions skip
+# themselves rather than fail. Point the daemon at a config dir with a
+# populated clients.met to exercise them.
+#
+# Usage:
+#   amuleapi --config-dir=/tmp/amuleapi-regtest &
+#   ./33-known-clients.sh
+#
+# Exits 0 on success, 1 on any failed assertion, 2 on bring-up error.
+
+set -u
+set -o pipefail
+
+# _curl sends "${AUTH[@]}"; empty until the login below.
+CURL_AUTO_AUTH=1
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+
+AUTH=()
+
+_preflight
+
+echo "amuleapi 33-known-clients @ $HOST"
+
+# --- 0. Log in. ----------------------------------------------------
+TOKEN=$(_login "$ADMIN_PASS")
+[ -n "$TOKEN" ] \
+	|| _die "could not log in for known-clients tests"
+AUTH=(-H "Authorization: Bearer $TOKEN")
+
+# --- 1. The envelope. ---------------------------------------------
+_curl "$API/known_clients"
+_assert_status 200 "GET /known_clients"
+
+if [ "$(_jq 'has("known_clients")')" = "true" ]; then
+	_pass "envelope has a known_clients array"
+else
+	_fail "envelope" "no known_clients key in: ${CURL_BODY:0:200}"
+fi
+
+for k in total offset limit; do
+	if [ "$(_jq "has(\"$k\")")" = "true" ]; then
+		_pass "envelope has $k"
+	else
+		_fail "envelope" "missing pagination key: $k"
+	fi
+done
+
+TOTAL=$(_jq '.total')
+echo "        (store holds $TOTAL record(s))"
+
+# --- 1b. credit_ratio comes from the core (issue #1474). ----------
+# The credit modifier rides the credit-store payload now, so a front-end renders
+# it instead of re-deriving the formula from the two totals. Number or null on
+# every row, never absent, and inside the [1,10] the core clamps it to. Read-only,
+# so it is safe here rather than at the end of the file.
+_curl "$API/known_clients?limit=50"
+if [ "$(_jq '.known_clients | length')" -gt 0 ]; then
+	if [ "$(_jq '.known_clients | all(.[]; has("credit_ratio")
+			and ((.credit_ratio | type) == "number" or .credit_ratio == null))')" = "true" ]; then
+		_pass "/known_clients rows carry credit_ratio (number or null)"
+	else
+		_fail "known_clients credit_ratio" \
+			"a record is missing credit_ratio or it is neither number nor null"
+	fi
+	if [ "$(_jq '.known_clients | all(.[]; .credit_ratio == null
+			or (.credit_ratio >= 1 and .credit_ratio <= 10))')" = "true" ]; then
+		_pass "credit_ratio stays inside the core's [1,10] clamp"
+	else
+		_fail "known_clients credit_ratio range" \
+			"a record reports a modifier the core could not have produced"
+	fi
+else
+	_skip "credit_ratio shape check (credit store is empty)"
+fi
+
+# --- 2. Pagination, through the shared helpers. -------------------
+_curl "$API/known_clients?limit=1"
+_assert_status 200 "GET /known_clients?limit=1"
+N=$(_jq '.known_clients | length')
+if [ "${N:-0}" -le 1 ]; then
+	_pass "limit=1 returns at most one record (got ${N:-0})"
+else
+	_fail "limit=1" "returned $N records"
+fi
+
+_curl "$API/known_clients?limit=1&offset=99999999"
+_assert_status 200 "GET /known_clients with a far offset"
+N=$(_jq '.known_clients | length')
+if [ "${N:-1}" -eq 0 ]; then
+	_pass "an offset past the end returns an empty page, not an error"
+else
+	_fail "far offset" "expected 0 records, got $N"
+fi
+
+for bad in "limit=abc" "limit=99999999999" "offset=-1" "order=sideways"; do
+	_curl "$API/known_clients?$bad"
+	_assert_status 400 "GET /known_clients?$bad is rejected"
+done
+
+# --- 3. Sort keys. -------------------------------------------------
+for key in name software first_seen_at last_seen_at session_count uploaded_bytes_total downloaded_bytes_total; do
+	_curl "$API/known_clients?sort=$key&limit=1"
+	_assert_status 200 "sort=$key is accepted"
+done
+_curl "$API/known_clients?sort=nonsense"
+_assert_status 400 "an unknown sort key is rejected"
+
+_curl "$API/known_clients?sort=last_seen_at&order=desc&limit=1"
+_assert_status 200 "sort=last_seen_at&order=desc is accepted"
+
+# --- 4. Record shape. ----------------------------------------------
+if [ "${TOTAL:-0}" -gt 0 ]; then
+	_curl "$API/known_clients?limit=1"
+
+	for k in user_hash uploaded_bytes_total downloaded_bytes_total last_seen_at connected; do
+		if [ "$(_jq ".known_clients[0] | has(\"$k\")")" = "true" ]; then
+			_pass "record always carries $k"
+		else
+			_fail "record shape" "missing always-present key: $k"
+		fi
+	done
+
+	HASH=$(_jq '.known_clients[0].user_hash')
+	if echo "$HASH" | grep -qE '^[0-9a-f]{32}$'; then
+		_pass "user_hash is a 32-char lowercase MD4 ($HASH)"
+	else
+		_fail "user_hash" "expected 32 lowercase hex chars, got: ${HASH:-<none>}"
+	fi
+
+	# boolean, or null on a daemon that does not report peer connectivity.
+	# The `online` key must be absent, not merely shadowed: a client
+	# reading it would silently see undefined rather than a boolean.
+	if [ "$(_jq '.known_clients[0].online | type')" = "null" ]; then
+		_pass "known_clients emits no online key"
+	else
+		_fail "known_clients online" "an online key is present"
+	fi
+	ONLINE_TYPE=$(_jq '.known_clients[0].connected | type')
+	if [ "$ONLINE_TYPE" = "boolean" ] || [ "$ONLINE_TYPE" = "null" ]; then
+		_pass "connected is a boolean or null"
+	else
+		_fail "connected" "expected boolean or null, got: $ONLINE_TYPE"
+	fi
+
+	# Optional fields are omitted, never emitted empty: a record written
+	# before the daemon kept per-peer metadata has no name at all, and a
+	# consumer must be able to tell that from "recorded as empty".
+	EMPTY_NAMES=$(_jq '[.known_clients[] | select(has("name") and .name == "")] | length')
+	if [ "${EMPTY_NAMES:-0}" -eq 0 ]; then
+		_pass "no record carries an empty name (absent means unrecorded)"
+	else
+		_fail "optional fields" "$EMPTY_NAMES record(s) have name == \"\""
+	fi
+
+	# first_seen_at and session_count travel together — both come from the same
+	# metadata block, so one without the other means a decode bug.
+	MISMATCH=$(_jq '[.known_clients[] | select(has("first_seen_at") != has("session_count"))] | length')
+	if [ "${MISMATCH:-0}" -eq 0 ]; then
+		_pass "first_seen_at and session_count are present or absent together"
+	else
+		_fail "metadata pairing" "$MISMATCH record(s) have one without the other"
+	fi
+else
+	_skip "record-shape assertions (the store is empty)"
+fi
+
+# --- 4b. The store is maintained, not re-read. ---------------------
+# It is fetched once and kept current by the refresher, so a connected peer's
+# totals move between polls without any refetch. A peer that is NOT connected
+# cannot change, so nothing is expected to move for it.
+#
+# Not compared against /clients: the lifetime totals live on the refresher's
+# snapshot but are not part of the /clients JSON, so there is nothing there to
+# compare with. Movement over time is the observable that matters anyway.
+# Sorted, for the same reason as the row check below: an unsorted page of a
+# large store contains no online records at all, and the check would skip
+# itself forever while looking like it had run.
+_curl "$API/known_clients?sort=last_seen_at&order=desc&limit=500"
+ACTIVE_HASH=$(_jq '[.known_clients[] | select(.connected)][0].user_hash')
+if [ -n "$ACTIVE_HASH" ] && [ "$ACTIVE_HASH" != "null" ]; then
+	BEFORE=$(_jq "[.known_clients[] | select(.user_hash == \"$ACTIVE_HASH\")][0]
+		| .downloaded_bytes_total + .uploaded_bytes_total")
+	sleep 4
+	_curl "$API/known_clients?sort=last_seen_at&order=desc&limit=500"
+	AFTER=$(_jq "[.known_clients[] | select(.user_hash == \"$ACTIVE_HASH\")][0]
+		| .downloaded_bytes_total + .uploaded_bytes_total")
+	if [ "${AFTER:-0}" -gt "${BEFORE:-0}" ]; then
+		_pass "a connected peer's totals move without a refetch ($BEFORE -> $AFTER)"
+	else
+		# An online but idle peer is legitimately static, and cannot be told
+		# apart from a stale cache here. Only a moving one proves the patch.
+		_skip "live-total check (the online peer is not transferring)"
+	fi
+else
+	_skip "live-total check (no peer is connected)"
+fi
+
+# --- 4c. Every connected peer has a row. ---------------------------
+# The store is fetched once, so a peer met afterwards can only be present if
+# the refresher added it. Any live peer carrying a user hash must therefore
+# appear here -- if it does not, the maintenance has stopped and the endpoint
+# is quietly serving a frozen snapshot.
+#
+# Sorted by last_seen_at descending and read one page: a connected peer is last
+# seen *now*, so the online records are the newest in the store and cannot be
+# pushed off the first page by anything else. `limit` is clamped to 500 by the
+# shared parser, which is well above MaxConnections -- asking for the whole
+# store instead would silently return only the first 500 records and look like
+# a maintenance failure.
+#
+# The empty and all-zero hashes are excluded, matching what
+# ReconcileKnownClientsLocked() skips: the all-zero one is the placeholder a peer
+# reports before sending its real hash, and folding those in would collapse
+# every unidentified peer into one fabricated record. So is a peer with no name
+# yet: Kad and source exchange hand over a hash before the hello does.
+LIVE_CLIENTS_JSON=$(curl -s --max-time 10 "${AUTH[@]}" "$API/clients?limit=500")
+LIVE_TOTAL=$(printf '%s' "$LIVE_CLIENTS_JSON" | jq -r '.clients | length' 2>/dev/null)
+LIVE_HASHES=$(printf '%s' "$LIVE_CLIENTS_JSON" \
+	| jq -r '.clients[] | select((.name // "") != "") | .user_hash // empty
+		| select(. != "" and (test("^0+$") | not))' | sort -u)
+if [ -n "$LIVE_HASHES" ]; then
+	_curl "$API/known_clients?sort=last_seen_at&order=desc&limit=500"
+	MISSING=0
+	CHECKED=0
+	for h in $LIVE_HASHES; do
+		CHECKED=$((CHECKED+1))
+		FOUND=$(_jq "[.known_clients[] | select(.user_hash == \"$h\")] | length")
+		[ "${FOUND:-0}" -eq 0 ] && MISSING=$((MISSING+1))
+	done
+	if [ "$MISSING" -eq 0 ]; then
+		_pass "every connected peer has a known-clients row ($CHECKED checked)"
+	else
+		_fail "maintenance" "$MISSING of $CHECKED connected peer(s) have no row" \
+			"the refresher is not folding live peers into the store"
+	fi
+
+	# And they are flagged as connected, not merely present.
+	ONLINE_N=$(_jq '[.known_clients[] | select(.connected)] | length')
+	if [ "${ONLINE_N:-0}" -gt 0 ]; then
+		_pass "connected peers are flagged connected ($ONLINE_N)"
+	else
+		_fail "connected flag" "no record is flagged connected while peers are connected"
+	fi
+elif [ "${LIVE_TOTAL:-0}" -gt 0 ]; then
+	# Connected, but nothing to look up: every peer is still on the
+	# placeholder hash the filter above drops. Saying "no peer is
+	# connected" here would describe the opposite of what happened, and
+	# this is exactly the population the filter exists for.
+	_skip "per-peer row check ($LIVE_TOTAL peer(s) connected, none identified yet)"
+else
+	_skip "per-peer row check (no peer is connected)"
+fi
+
+# --- 5. Caching. ---------------------------------------------------
+_curl "$API/known_clients?limit=1"
+ETAG=$(_header etag)
+if [ -n "$ETAG" ]; then
+	_pass "response carries an ETag"
+	_curl -H "If-None-Match: $ETAG" "$API/known_clients?limit=1"
+	_assert_status 304 "If-None-Match on the same ETag is a 304"
+else
+	_fail "caching" "no ETag on /known_clients"
+fi
+
+# --- 6. HEAD and method rejection. ---------------------------------
+_curl -I "$API/known_clients"
+_assert_status 200 "HEAD /known_clients"
+
+for m in POST PUT DELETE PATCH; do
+	_curl -X "$m" "$API/known_clients"
+	_assert_status 405 "$m /known_clients is rejected"
+done
+
+# --- online means reachable, not "has a live row". -------------------
+#
+# The daemon holds a client object from the first contact ATTEMPT, so a peer
+# it is still trying to reach -- or can never reach -- has a /clients row.
+# `connected` is the peer's real connection state, not the mere presence of
+# that row, so every record that
+# claims online must have a live counterpart that also says connected.
+#
+# Appended at the end: both requests are reads, but a new section in the
+# middle shifts the daemon state the later sections were written against.
+# The two lists come from separate requests, so a peer that disconnects
+# between them is a legitimate mismatch rather than a broken invariant.
+# Re-read both and require the SAME hash to still be inconsistent before
+# failing: a real defect persists, a race does not.
+_cross_check_online() {
+	_curl "$API/known_clients?limit=200"
+	local online_hashes connected_hashes h missing=""
+	online_hashes=$(printf '%s' "$CURL_BODY" \
+		| jq -r '[.known_clients[] | select(.connected == true) | .user_hash] | .[]')
+	[ -z "$online_hashes" ] && { echo "__NONE__"; return; }
+	_curl "$API/clients?limit=1000"
+	# Flattened to one space-separated line: the membership test below is a
+	# `case` glob looking for " $h ", and jq -r emits one hash per LINE, so a
+	# newline-separated list matched nothing and reported every online hash
+	# as missing. It passed only when exactly one hash was connected, which
+	# is what made the failure look intermittent.
+	connected_hashes=$(printf '%s' "$CURL_BODY" \
+		| jq -r '[.clients[] | select(.connected == true) | .user_hash] | .[]' | tr '\n' ' ')
+	for h in $online_hashes; do
+		case " $connected_hashes " in
+		*" $h "*) ;;
+		*) missing="$missing $h" ;;
+		esac
+	done
+	echo "$missing"
+}
+# Sample repeatedly and intersect. The two lists come from separate
+# requests, so a peer that disconnects between them is inconsistent for that
+# sample alone and says nothing about the invariant. A hash inconsistent in
+# EVERY sample is not a disconnect in flight, and that is the defect this
+# exists to catch: a record claiming online with no connected peer behind
+# it. The loop exits on the first clean sample, so it costs nothing when the
+# lists agree, which is the normal case.
+PERSISTENT=""
+for i in $(seq 1 8); do
+	SAMPLE=$(_cross_check_online)
+	[ "$SAMPLE" = "__NONE__" ] && { PERSISTENT="__NONE__"; break; }
+	if [ -z "$SAMPLE" ]; then
+		PERSISTENT=""
+		break
+	fi
+	if [ "$i" = "1" ]; then
+		PERSISTENT="$SAMPLE"
+	else
+		KEEP=""
+		for h in $PERSISTENT; do
+			case " $SAMPLE " in
+			*" $h "*) KEEP="$KEEP $h" ;;
+			esac
+		done
+		PERSISTENT="$KEEP"
+		[ -z "$PERSISTENT" ] && break
+	fi
+	sleep 1
+done
+if [ "$PERSISTENT" = "__NONE__" ]; then
+	_skip "no known client is connected; cannot cross-check against /clients"
+elif [ -z "$PERSISTENT" ]; then
+	_pass "every connected known client has a connected /clients counterpart"
+else
+	_fail "known_clients connected" \
+		"no connected /clients row for:$PERSISTENT (in every one of 8 samples)"
+fi
+
+_summary

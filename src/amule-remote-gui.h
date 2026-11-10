@@ -25,23 +25,29 @@
 #ifndef AMULE_REMOTE_GUI_H
 #define AMULE_REMOTE_GUI_H
 
-
-#include <deque>				// std::deque for CStatGraphRem rolling-average windows
-#include <functional>				// std::function for the CSharedFilesRem
-								// Reload(yieldCb) shim — matches the daemon-side
-								// signature added in PrefsUnifiedDlg's commit path.
-#include <ec/cpp/RemoteConnect.h>		// Needed for CRemoteConnect
-
+#include "RemoteDownloadEvents.h"
+#include "SearchEd2kSlot.h"
+#include "SearchStartRequests.h"
+#include <set>
+#include <functional>             // std::function for the CSharedFilesRem
+#include <memory>                 // std::unique_ptr for CPreferencesRem
+#include <vector>                 // std::vector for CChatMsgHandlerRem's tracked sessions
+				  // Reload(yieldCb) shim -- matches the daemon-side
+				  // signature added in PrefsUnifiedDlg's commit path.
+#include <ec/cpp/RemoteConnect.h> // Needed for CRemoteConnect
 
 #include "Statistics.h"
 #include "Preferences.h"
 #include "Statistics.h"
 #include "RLE.h"
-#include "SearchList.h"			// Needed for CSearchFile
-#include "kademlia/utils/UInt128.h"	// Needed for CUInt128
+#include "ChatSessionStore.h" // Needed for CChatPeer
+#include "SearchForm.h"
+#include "SearchList.h"             // Needed for CSearchFile
+#include "kademlia/utils/UInt128.h" // Needed for CUInt128
 
 class CED2KFileLink;
 class CServer;
+class CAbstractFile;
 class CKnownFile;
 class CSearchFile;
 class CPartFile;
@@ -54,73 +60,107 @@ class wxTimer;
 class wxTimerEvent;
 
 #include <wx/dialog.h>
+#include <wx/datetime.h> // Needed for wxDateTime (ED2K/Kad "Connected since")
 
-class CEConnectDlg : public wxDialog {
+class CEConnectDlg : public wxDialog
+{
 	wxString host;
 	int port;
 
 	wxString pwd_hash;
-	wxString login, passwd;
+	wxString passwd;
 	bool m_save_user_pass;
 	bool m_force_zlib;
 
 	wxDECLARE_EVENT_TABLE();
+
 public:
 	CEConnectDlg();
 
-	void OnOK(wxCommandEvent& event);
+	void OnOK(wxCommandEvent &event);
 
 	wxString Host() { return host; }
 	int Port() { return port; }
 
-	wxString Login() { return login; }
 	wxString PassHash();
 	bool SaveUserPass() { return m_save_user_pass; }
 	bool ForceZlib() { return m_force_zlib; }
 };
 
 wxDECLARE_EVENT(wxEVT_EC_INIT_DONE, wxEvent);
-class wxECInitDoneEvent : public wxEvent {
+class wxECInitDoneEvent : public wxEvent
+{
 public:
-	wxECInitDoneEvent() : wxEvent(-1, wxEVT_EC_INIT_DONE)
+	wxECInitDoneEvent()
+	: wxEvent(-1, wxEVT_EC_INIT_DONE)
 	{
 	}
 
-	wxEvent *Clone(void) const
-	{
-		return new wxECInitDoneEvent(*this);
-	}
+	wxEvent *Clone(void) const { return new wxECInitDoneEvent(*this); }
 };
 
-class CPreferencesRem : public CPreferences, public CECPacketHandlerBase {
+class CPreferencesRem : public CPreferences, public CECPacketHandlerBase
+{
 	CRemoteConnect *m_conn;
 	uint32 m_exchange_send_selected_prefs;
 	uint32 m_exchange_recv_selected_prefs;
+	//! The core's preferences as last received or sent, the base SendChangesToRemote diffs against.
+	std::unique_ptr<CECPacket> m_remoteState;
+	// Reply handlers share the counter so reconnect/teardown can discard them safely.
+	std::shared_ptr<unsigned> m_pendingNetworkWrites = std::make_shared<unsigned>(0);
+	bool m_liveNetworkPreferences = false;
 
 	virtual void HandlePacket(const CECPacket *packet);
+	void RememberRemoteState();
+
 public:
 	CPreferencesRem(CRemoteConnect *);
 
-	bool CreateCategory(Category_Struct *& category, const wxString& name, const CPath& path,
-						const wxString& comment, uint32 color, uint8 prio);
-	bool UpdateCategory(uint8 cat, const wxString& name, const CPath& path,
-						const wxString& comment, uint32 color, uint8 prio);
+	bool CreateCategory(Category_Struct *&category,
+		const wxString &name,
+		const CPath &path,
+		const wxString &comment,
+		uint32 color,
+		uint8 prio);
+	bool UpdateCategory(uint8 cat,
+		const wxString &name,
+		const CPath &path,
+		const wxString &comment,
+		uint32 color,
+		uint8 prio);
 
-	void RemoveCat(uint8 cat);
+	//! Sends EC_OP_DELETE_CATEGORY and always answers false: the daemon owns the list, so
+	//! CCatDeleteHandler commits only once it agrees. size_t to match the base it hides.
+	bool RequestRemoveCat(size_t cat);
 
 	bool LoadRemote();
-	void SendToRemote();
+
+	// Other EC clients change the core's preferences too, so never send the whole local copy:
+	// refresh it before it is shown, and send only what the user changed.
+	void RefreshFromRemote(std::function<void()> then = nullptr);
+	void ApplyRefresh(const CECPacket *packet);
+	void UpdateNetworks(bool ed2kEnabled, bool kadEnabled);
+	bool SupportsLiveNetworkPreferences() const { return m_liveNetworkPreferences; }
+	void SetLiveNetworkPreferencesSupported(bool supported) { m_liveNetworkPreferences = supported; }
+	void SendChangesToRemote(bool includeECPassword = false);
+	//! Sends one preferences category holding only the given tags.
+	void SendPartialToRemote(const CECTag &category);
+
+	// Shared-directory roots. Unlike the rest of the preferences these are a variable-length
+	// list whose apply rewrites files and triggers a rescan, so they ride their own ops
+	// rather than the prefs packet. The replies go to a dedicated handler; results land in
+	// this object's shareddir_*_list members, which outlive the Preferences dialog.
+	void LoadSharedDirsRemote();
+	void SendSharedDirsToRemote();
 };
 
-//
-// T - type if item in container
-// I - type of id of item
-// G - type of tag used to create/update items
-//
-template <class T, class I, class G = CECTag>
-class CRemoteContainer : public CECPacketHandlerBase {
+// T - type of item in the container; I - type of the item's id; G - type of tag used to
+// create/update items.
+template <class T, class I, class G = CECTag> class CRemoteContainer : public CECPacketHandlerBase
+{
 protected:
-	enum {
+	enum
+	{
 		IDLE,            // no request in the air
 		STATUS_REQ_SENT, // sent request for item status
 		FULL_REQ_SENT    // sent request for full info
@@ -142,57 +182,63 @@ protected:
 
 	virtual void HandlePacket(const CECPacket *packet)
 	{
-		switch(this->m_state) {
-			case IDLE: wxFAIL; break; // not expecting anything
-			case STATUS_REQ_SENT:
-				// if derived class choose not to proceed, return - but with good status
-				this->m_state = IDLE;
-				if ( this->Phase1Done(packet) ) {
-					if (this->m_inc_tags) {
-						// Incremental tags: new items always carry full info.
-						ProcessUpdate(packet, NULL, m_full_req_tag);
-					} else {
-						// Non-incremental tags: we might get partial info on new items.
-						// Collect all this items in a tag, and then request full info about them.
-						CECPacket req_full(this->m_full_req_cmd);
+		switch (this->m_state) {
+		case IDLE:
+			wxFAIL;
+			break; // not expecting anything
+		case STATUS_REQ_SENT:
+			// if derived class choose not to proceed, return - but with good status
+			this->m_state = IDLE;
+			if (this->Phase1Done(packet)) {
+				if (this->m_inc_tags) {
+					// Incremental tags: new items always carry full info.
+					ProcessUpdate(packet, NULL, m_full_req_tag);
+				} else {
+					// Non-incremental tags: we might get partial info on new
+					// items. Collect them in a tag, then request full info.
+					CECPacket req_full(this->m_full_req_cmd);
 
-						ProcessUpdate(packet, &req_full, m_full_req_tag);
+					ProcessUpdate(packet, &req_full, m_full_req_tag);
 
-						// Phase 3: request full info about files we don't have yet
-						if ( req_full.HasChildTags() ) {
-							m_conn->SendRequest(this, &req_full);
-							this->m_state = FULL_REQ_SENT;
-						}
+					// Phase 3: request full info about files we don't have yet
+					if (req_full.HasChildTags()) {
+						m_conn->SendRequest(this, &req_full);
+						this->m_state = FULL_REQ_SENT;
 					}
 				}
-				break;
-			case FULL_REQ_SENT:
-				ProcessFull(packet);
-				m_state = IDLE;
-				break;
+			}
+			break;
+		case FULL_REQ_SENT:
+			ProcessFull(packet);
+			m_state = IDLE;
+			break;
 		}
 	}
+
 public:
 	CRemoteContainer(CRemoteConnect *conn, bool inc_tags)
-		: m_state(IDLE),
-		  m_conn(conn),
-		  m_item_count(0),
-		  m_inc_tags(inc_tags),
-		  m_full_req_cmd(0),
-		  m_full_req_tag(0)
-	{}
+	: m_state(IDLE)
+	, m_conn(conn)
+	, m_item_count(0)
+	, m_inc_tags(inc_tags)
+	, m_full_req_cmd(0)
+	, m_full_req_tag(0)
+	{
+	}
 
-	virtual ~CRemoteContainer()
-	{}
+	virtual ~CRemoteContainer() {}
+
+	// A reconnect flushed the request FIFO (CRemoteConnect::DiscardRequestQueue): the
+	// status/full reply this container was waiting for is gone, so rewind the request SM to
+	// IDLE. Otherwise DoRequery()/FullReload() see a non-IDLE state and refuse to re-request,
+	// leaving the list frozen after reconnect.
+	virtual void AbortPendingRequest() { m_state = IDLE; }
 
 	typedef typename std::list<T *>::iterator iterator;
 	iterator begin() { return m_items.begin(); }
 	iterator end() { return m_items.end(); }
 
-	uint32 GetCount()
-	{
-		return m_item_count;
-	}
+	uint32 GetCount() { return m_item_count; }
 
 	void AddItem(T *item)
 	{
@@ -214,38 +260,35 @@ public:
 		m_item_count = 0;
 	}
 
-	//
-	// Flush & reload
-	//
-	/*
-	We usually don't keep outdated code as comments, but this blocking implementation
-	shows the overall procedure well. It had to be scattered for the event driven implementation.
-
-	bool FullReload(int cmd)
+	/**
+	 * Drops every item, one at a time through the normal removal path.
+	 *
+	 * Not Flush(): that empties the indices and leaks the objects, and anything else
+	 * still holding a raw pointer to one of them never hears about it. RemoveItem() ->
+	 * DeleteItem() is the path that tears a live item down properly -- the destroy
+	 * broadcast that makes clients and list controls drop their references, removal from
+	 * the views, then the delete.
+	 *
+	 * For use when everything keyed by ECID has stopped meaning anything, which is what
+	 * a reconnect to a restarted daemon amounts to.
+	 */
+	void ResetForNewSession()
 	{
-		CECPacket req(cmd);
-		CScopedPtr<const CECPacket> reply(this->m_conn->SendRecvPacket(&req));
-		if ( !reply.get() ) {
-			return false;
+		for (iterator it = begin(); it != end();) {
+			iterator it2 = it++;
+			RemoveItem(it2);
 		}
-		for(typename std::list<T *>::iterator j = this->m_items.begin(); j != this->m_items.end(); j++) {
-			this->DeleteItem(*j);
-		}
-
-		Flush();
-
-		ProcessFull(reply.get());
-
-		return true;
 	}
-	*/
+
+	// Flush & reload
 	void FullReload(int cmd)
 	{
-		if ( this->m_state != IDLE ) {
+		if (this->m_state != IDLE) {
 			return;
 		}
 
-		for(typename std::list<T *>::iterator j = this->m_items.begin(); j != this->m_items.end(); ++j) {
+		for (typename std::list<T *>::iterator j = this->m_items.begin(); j != this->m_items.end();
+			++j) {
 			this->DeleteItem(*j);
 		}
 
@@ -257,13 +300,11 @@ public:
 		this->m_full_req_cmd = cmd;
 	}
 
-	//
-	// Following are like basically same code as in webserver. Eventually it must
-	// be same class
-	//
+	// Following is basically the same code as in webserver. Eventually it must be the same
+	// class.
 	void DoRequery(int cmd, int tag)
 	{
-		if ( this->m_state != IDLE ) {
+		if (this->m_state != IDLE) {
 			return;
 		}
 		CECPacket req_sts(cmd, m_inc_tags ? EC_DETAIL_INC_UPDATE : EC_DETAIL_UPDATE);
@@ -272,46 +313,6 @@ public:
 		this->m_full_req_cmd = cmd;
 		this->m_full_req_tag = tag;
 	}
-	/*
-	We usually don't keep outdated code as comments, but this blocking implementation
-	shows the overall procedure well. It had to be scattered for the event driven implementation.
-
-	bool DoRequery(int cmd, int tag)
-	{
-		CECPacket req_sts(cmd, m_inc_tags ? EC_DETAIL_INC_UPDATE : EC_DETAIL_UPDATE);
-
-		//
-		// Phase 1: request status
-		CScopedPtr<const CECPacket> reply(this->m_conn->SendRecvPacket(&req_sts));
-		if ( !reply.get() ) {
-			return false;
-		}
-
-		if ( !this->Phase1Done(reply.get()) ) {
-			// if derived class choose not to proceed, return - but with good status
-			return true;
-		}
-		//
-		// Phase 2: update status, mark new files for subsequent query
-		CECPacket req_full(cmd);
-
-		ProcessUpdate(reply.get(), &req_full, tag);
-
-		reply.reset();
-
-		if ( !m_inc_tags ) {
-			// Phase 3: request full info about files we don't have yet
-			if ( req_full.GetTagCount() ) {
-				reply.reset(this->m_conn->SendRecvPacket(&req_full));
-				if ( !reply.get() ) {
-					return false;
-				}
-				ProcessFull(reply.get());
-			}
-		}
-		return true;
-	}
-	*/
 
 	void ProcessFull(const CECPacket *reply)
 	{
@@ -322,7 +323,7 @@ public:
 		}
 	}
 
-	void RemoveItem(iterator & it)
+	void RemoveItem(iterator &it)
 	{
 		I item_id = GetItemID(*it);
 		// reduce count
@@ -341,12 +342,12 @@ public:
 		std::set<I> core_files;
 		for (CECPacket::const_iterator it = reply->begin(); it != reply->end(); ++it) {
 			const G *tag = static_cast<const G *>(&*it);
-			if ( tag->GetTagName() != req_type ) {
+			if (tag->GetTagName() != req_type) {
 				continue;
 			}
 
 			core_files.insert(tag->ID());
-			if ( m_items_hash.count(tag->ID()) ) {
+			if (m_items_hash.count(tag->ID())) {
 				// Item already known: update it
 				T *item = m_items_hash[tag->ID()];
 				ProcessItemUpdate(tag, item);
@@ -363,36 +364,24 @@ public:
 				}
 			}
 		}
-		for(iterator it = begin(); it != end();) {
+		for (iterator it = begin(); it != end();) {
 			iterator it2 = it++;
-			if ( core_files.count(GetItemID(*it2)) == 0 ) {
+			if (core_files.count(GetItemID(*it2)) == 0) {
 				RemoveItem(it2);
 			}
 		}
 	}
 
-	virtual T *CreateItem(const G *)
-	{
-		return 0;
-	}
-	virtual void DeleteItem(T *)
-	{
-	}
-	virtual I GetItemID(T *)
-	{
-		return I();
-	}
-	virtual void ProcessItemUpdate(const G *, T *)
-	{
-	}
+	virtual T *CreateItem(const G *) { return 0; }
+	virtual void DeleteItem(T *) {}
+	virtual I GetItemID(T *) { return I(); }
+	virtual void ProcessItemUpdate(const G *, T *) {}
 
-	virtual bool Phase1Done(const CECPacket *)
-	{
-		return true;
-	}
+	virtual bool Phase1Done(const CECPacket *) { return true; }
 };
 
-class CServerConnectRem {
+class CServerConnectRem
+{
 	CRemoteConnect *m_Conn;
 	uint32 m_ID;
 
@@ -409,21 +398,38 @@ public:
 	uint32 GetClientID() { return m_ID; }
 	CServer *GetCurrentServer() { return m_CurrServer; }
 
-	//
 	// Actions
-	//
-	void ConnectToServer(CServer* server);
+	void ConnectToServer(CServer *server);
 	void ConnectToAnyServer();
 	void StopConnectionTry();
 	void Disconnect();
 };
 
-class CServerListRem : public CRemoteContainer<CServer, uint32, CEC_Server_Tag> {
+class CServerListRem : public CRemoteContainer<CServer, uint32, CEC_Server_Tag>
+{
 	uint32 m_TotalUser, m_TotalFile;
 
+	/**
+	 * The server list has been sized to its contents once.
+	 *
+	 * The core fits its columns when a bulk (re)load finishes, via Notify_ServerThaw()
+	 * from CServerList -- a path the remote GUI never takes, since its list arrives over
+	 * EC instead. Without this the columns kept their compiled-in defaults forever in
+	 * amulegui, and the narrow ones (Port and Ping default to 25px) could not fit their
+	 * own headers.
+	 *
+	 * One-shot on purpose: refitting on every update would undo a width the user had
+	 * dragged, and nothing distinguishes "still default" from "chosen".
+	 */
+	bool m_columnsFitted = false;
+
 	virtual void HandlePacket(const CECPacket *packet);
+
 public:
 	CServerListRem(CRemoteConnect *);
+	// Public because the base declares it so, and the update loop calls it
+	// through a CServerListRem reference. See m_columnsFitted.
+	virtual void ProcessUpdate(const CECTag *reply, CECPacket *full_req, int req_type);
 	void GetUserFileStatus(uint32 &total_user, uint32 &total_file)
 	{
 		total_user = m_TotalUser;
@@ -432,130 +438,186 @@ public:
 
 	void UpdateUserFileStatus(CServer *server);
 
-	CServer* GetServerByAddress(const wxString& address, uint16 port) const;
-	CServer* GetServerByIPTCP(uint32 nIP, uint16 nPort) const;
+	CServer *GetServerByAddress(const wxString &address, uint16 port) const;
+	CServer *GetServerByIPTCP(uint32 nIP, uint16 nPort) const;
 
-	//
 	// Actions
-	//
-	void RemoveServer(CServer* server);
+	void RemoveServer(CServer *server);
 	void UpdateServerMetFromURL(wxString url);
-	void SetStaticServer(CServer* server, bool isStatic);
-	void SetServerPrio(CServer* server, uint32 prio);
-	void SaveServerMet() {}	// not needed here
-	void FilterServers() {}	// not needed here
+	void SetStaticServer(CServer *server, bool isStatic);
+	void SetServerPrio(CServer *server, uint32 prio);
+	void SaveServerMet() {} // not needed here
+	void FilterServers() {} // not needed here
 
-	//
 	// template
-	//
 	CServer *CreateItem(const CEC_Server_Tag *);
 	void DeleteItem(CServer *);
 	uint32 GetItemID(CServer *);
 	void ProcessItemUpdate(const CEC_Server_Tag *, CServer *);
 };
 
-class CUpDownClientListRem : public CRemoteContainer<CClientRef, uint32, CEC_UpDownClient_Tag> {
+class CUpDownClientListRem : public CRemoteContainer<CClientRef, uint32, CEC_UpDownClient_Tag>
+{
 public:
 	CUpDownClientListRem(CRemoteConnect *);
 
-	void FilterQueues() {}	// not needed here
-	//
+	void FilterQueues() {} // not needed here
 	// template
-	//
 	CClientRef *CreateItem(const CEC_UpDownClient_Tag *);
 	void DeleteItem(CClientRef *);
 	uint32 GetItemID(CClientRef *);
 	void ProcessItemUpdate(const CEC_UpDownClient_Tag *, CClientRef *);
 
-	// Null out CUpDownClient::m_uploadingfile / m_reqfile on every
-	// client still pointing at `file`. Called by the broadcast
-	// handler MuleNotify::KnownFileBeingDestroyed before a
-	// CKnownFile is freed, so the dangling pointers don't get
-	// dereffed by a later CUpDownClientListRem::DeleteItem (the
-	// #748 / #755 UAF family). Pointer-value comparison only.
+	// Null out CUpDownClient::m_uploadingfile / m_reqfile on every client still pointing at
+	// `file`. Called by the broadcast handler MuleNotify::KnownFileBeingDestroyed before a
+	// CKnownFile is freed, so the dangling pointers are not dereffed by a later DeleteItem.
+	// Pointer-value comparison only.
 	void DropReferencesTo(const CKnownFile *file);
 };
 
-class CDownQueueRem : public std::map<uint32, CPartFile*> {
+class CDownQueueRem : public std::map<uint32, CPartFile *>
+{
 	CRemoteConnect *m_conn;
+	uint64 m_commandGeneration = 0;
+	bool m_commandsEnabled = true;
+
 public:
-	CDownQueueRem(CRemoteConnect * conn) { m_conn = conn; }
+	CDownQueueRem(CRemoteConnect *conn) { m_conn = conn; }
 
-	CPartFile* GetFileByID(uint32 id);
+	uint64 CommandGeneration() const { return m_commandGeneration; }
+	bool CommandsEnabled() const { return m_commandsEnabled; }
+	void InvalidateCommands()
+	{
+		++m_commandGeneration;
+		m_commandsEnabled = false;
+	}
+	void EnableCommands()
+	{
+		++m_commandGeneration;
+		m_commandsEnabled = true;
+	}
 
-	//
+	CPartFile *GetFileByID(uint32 id);
+
 	// User actions
-	//
 	void Prio(CPartFile *file, uint8 prio);
 	void AutoPrio(CPartFile *file, bool flag);
 	void Category(CPartFile *file, uint8 cat);
 
-	void SendFileCommand(CPartFile *file, ec_tagname_t cmd);
-	//
+	void SendFileCommand(CPartFile *file, ec_tagname_t cmd, uint32 expectedId = 0);
 	// Actions
-	//
 	void StopUDPRequests() {}
-	void AddFileLinkToDownload(CED2KFileLink*, uint8);
+	void AddFileLinkToDownload(CED2KFileLink *, uint8);
 	bool AddLink(const wxString &link, uint8 category = 0);
-	void AddLinks(const wxArrayString& links, uint8 category = 0);
+	void AddLinks(const wxArrayString &links, uint8 category = 0);
 	void UnsetCompletedFilesExist();
 	void ResetCatParts(int cat);
-	void AddSearchToDownload(CSearchFile* toadd, uint8 category);
-	void ClearCompleted(const ListOfUInts32 & ecids);
+	void AddSearchToDownload(CSearchFile *toadd, uint8 category);
+	void ClearCompleted(const ListOfUInts32 &ecids);
 };
 
-class CSharedFilesRem  : public std::map<uint32, CKnownFile*> {
+class CSharedFilesRem : public std::map<uint32, CKnownFile *>
+{
 	CRemoteConnect *m_conn;
+
 public:
-	CSharedFilesRem(CRemoteConnect * conn);
+	CSharedFilesRem(CRemoteConnect *conn);
 
 	CKnownFile *GetFileByID(uint32 id);
 
 	void SetFilePrio(CKnownFile *file, uint8 prio);
 
-	//
 	// Actions
-	//
 	void Reload(bool sendtoserver = true, bool firstload = false);
-	bool RenameFile(CKnownFile* file, const CPath& newName);
-	void SetFileCommentRating(CKnownFile* file, const wxString& newComment, int8 newRating);
-	void CopyFileList(std::vector<CKnownFile*>& out_list) const;
+	bool RenameFile(CKnownFile *file, const CPath &newName);
+	bool CanDeleteFileFromDisk() const;
+	void DeleteFileFromDisk(
+		const CMD4Hash &hash, uint32 ecid, const wxString &directory, const wxString &name);
+	void SetFileCommentRating(CKnownFile *file, const wxString &newComment, int8 newRating);
+	void VerifyLocalData(const CKnownFile *file) const;
 
-	// Remote-side shim for the daemon's cancellable-progress Reload
-	// added in the shared-dirs deferred-apply flow. The actual file
-	// walk happens on amuled; here we just fall through to the
-	// existing EC-driven Reload(sendtoserver=true) and ignore the
-	// progress callback. Returns true (never "cancelled") because
-	// the local-thread part of the operation is essentially instant.
-	bool Reload(std::function<bool(size_t)> /* yieldCb */) {
+	// Mirrors CSharedFileList's signature so the one call site in CSharedFilesCtrl compiles
+	// for both binaries -- muleappgui is built once and carries no build-variant defines, so
+	// the split has to live in the type of theApp->sharedfiles rather than in an #ifdef at
+	// the call site. Returns true when the request was SENT, not when anything was probed:
+	// the daemon decides eligibility and reports the outcome in its own log.
+	bool RefreshMediaMetadata(const CMD4Hash &hash);
+	unsigned RefreshMediaMetadata(const std::vector<CMD4Hash> &hashes);
+	void SearchKadNotes(CAbstractFile *file);
+	void CopyFileList(std::vector<CKnownFile *> &out_list) const;
+
+	// Remote-side shim for the daemon's cancellable-progress Reload. The file walk happens on
+	// amuled; here we fall through to the existing EC-driven Reload(sendtoserver=true) and
+	// ignore the progress callback. Returns true -- never "cancelled" -- because the
+	// local-thread part is essentially instant.
+	bool Reload(std::function<bool(size_t)> /* yieldCb */)
+	{
 		Reload();
 		return true;
 	}
 
-	// Remote-side no-op. The actual watcher lives on amuled and is
-	// driven there by the EC-synced AutoRescanSharedDirs pref; on the
-	// GUI side there is nothing to enable/disable locally.
+	// Remote-side shim for the daemon's deferred-reload request. On the daemon this defers
+	// the walk to the next Process() tick so an EC handler need not block on it; here
+	// Reload() only posts EC_OP_SHAREDFILES_RELOAD and returns, so it is already the
+	// non-blocking thing RequestReload() exists to provide.
+	void RequestReload() { Reload(); }
+
+	// Always false on the remote side: there is no local walk to owe. When a category change
+	// reaches CPreferencesRem it goes out over EC, and amuled schedules its own reload; the
+	// GUI must not also run or announce one.
+	bool IsReloadPending() const { return false; }
+
+	// Remote-side no-op. The actual watcher lives on amuled and is driven there
+	// by the EC-synced AutoRescanSharedDirs pref.
 	void EnableDirectoryWatcher(bool /* enable */) {}
 };
 
-class CKnownFilesRem : public CRemoteContainer<CKnownFile, uint32, CEC_SharedFile_Tag> {
-	CKnownFile * CreateKnownFile(const CEC_SharedFile_Tag *tag, CKnownFile *file = NULL);
-	CPartFile  * CreatePartFile(const CEC_PartFile_Tag *tag);
+class CKnownFilesRem : public CRemoteContainer<CKnownFile, uint32, CEC_SharedFile_Tag>
+{
+	CKnownFile *CreateKnownFile(const CEC_SharedFile_Tag *tag, CKnownFile *file = NULL);
+	CPartFile *CreatePartFile(const CEC_PartFile_Tag *tag);
 
-	bool m_initialUpdate;	// improved handling for first data transfer
+	CRemoteDownloadEvents m_downloadEvents;
+
+	bool m_initialUpdate; // improved handling for first data transfer
+
+	// Set once by the app on a reconnect. A reconnected partial-update server sends a full
+	// snapshot but never re-emits FILE_REMOVED for files deleted while we were disconnected,
+	// so ProcessUpdate() forces a single prune-by-absence against that snapshot, then clears
+	// this.
+	bool m_reconnectReconcile = false;
+
+	// One-shot for the part-status length mismatch warning: the check sits in a per-file loop
+	// that covers the whole library on every poll, and the condition it reports is
+	// library-wide when it happens at all.
+	bool m_loggedPartStatusMismatch = false;
+
 public:
-	CKnownFilesRem(CRemoteConnect * conn);
+	CKnownFilesRem(CRemoteConnect *conn);
 
 	CKnownFile *FindKnownFileByID(uint32 id) { return GetByID(id); }
+
+	// Arm the one-shot reconcile prune for the next full update (reconnect)
+	// and reset every reused file's differential decoders (see the .cpp).
+	void ArmReconnectReconcile();
+
+	/**
+	 * Throw away every file and start again from the next poll, for a reconnect where
+	 * the ECIDs we hold have stopped meaning anything. Re-arms the cold-boot path so the
+	 * repopulate goes through ShowFileList()'s batching rather than one sort per row.
+	 */
+	void ResetForNewDaemonSession();
 
 	uint16 requested;
 	uint32 transferred;
 	uint16 accepted;
 
-	//
 	// template
-	//
-	CKnownFile *CreateItem(const CEC_SharedFile_Tag *) { wxFAIL; return NULL; }	// unused, required by template
+	CKnownFile *CreateItem(const CEC_SharedFile_Tag *)
+	{
+		wxFAIL;
+		return NULL;
+	} // unused, required by template
 	void DeleteItem(CKnownFile *);
 	uint32 GetItemID(CKnownFile *);
 	void ProcessItemUpdate(const CEC_SharedFile_Tag *, CKnownFile *);
@@ -565,137 +627,398 @@ public:
 	void ProcessItemUpdatePartfile(const CEC_PartFile_Tag *, CPartFile *);
 };
 
-class CIPFilterRem {
+class CIPFilterRem
+{
 	CRemoteConnect *m_conn;
+
 public:
 	CIPFilterRem(CRemoteConnect *conn);
 
-	//
 	// Actions
-	//
 	void Reload();
 	void Update(wxString strURL = "");
 	bool IsReady() const { return true; }
 };
 
-class CSearchListRem : public CRemoteContainer<CSearchFile, uint32, CEC_SearchFile_Tag> {
-	virtual void HandlePacket(const CECPacket *);
+class CSearchListRem : public CRemoteContainer<CSearchFile, uint32, CEC_SearchFile_Tag>,
+		       public CSearchResultIndex
+{
+	virtual void HandlePacket(const CECPacket *) override;
+
+	// Partial-update union poll: delete a result only when the daemon says so
+	// (EC_TAG_FILE_REMOVED), instead of the base class's "anything missing from this reply is
+	// gone" sweep.
+	//
+	// Absence-implies-deletion forced the daemon to re-send every result of every open search
+	// on every poll just to say "still here" -- with two finished searches and ~900 results
+	// that measured 12 KB per poll, of which none carried a single changed field. With
+	// removal made explicit the daemon can skip an unchanged result entirely, and an idle
+	// search costs nothing. Falls back to the base implementation against a daemon that did
+	// not echo EC_TAG_CAN_PARTIAL_UPDATE, which still relies on absence.
+	virtual void ProcessUpdate(const CECTag *reply, CECPacket *full_req, int req_type) override;
+
 public:
 	CSearchListRem(CRemoteConnect *);
 
-	int m_curr_search;
-	typedef std::map<wxUIntPtr, CSearchResultList> ResultMap;
-	ResultMap m_results;
+	// Forms come only from the daemon, never from the reusable/running request cache.
+	const CSearchForm *GetSearchForm(wxUIntPtr id) const
+	{
+		return m_searchForms.Get(static_cast<uint32>(id));
+	}
+	uint64_t GetSearchFormSession() const { return m_searchForms.GetSession(); }
+	void ResetForNewSession()
+	{
+		m_searchForms.Clear();
+		m_needSearchListRequery = true;
+		CRemoteContainer<CSearchFile, uint32, CEC_SearchFile_Tag>::ResetForNewSession();
+	}
 
-	const CSearchResultList& GetSearchResults(wxUIntPtr nSearchID);
+	// Reachability fix (#641): true when OnPollTimer should ask amuled what searches it
+	// currently holds (EC_OP_SEARCH_LIST) on its next poll. Starts true so a freshly
+	// (re)connected client discovers every search once up front; CreateItem sets it again
+	// whenever a result arrives for a search ID with no local tab, which is the only signal
+	// that amuled is holding a search this client does not know about yet. Cleared by
+	// OnPollTimer right after sending the request, so steady state costs nothing.
+	bool m_needSearchListRequery;
+
+	// Search and browse requests keep their optimistic IDs and cancellation intent
+	// until the daemon returns a real ID. Discovery waits for START and CLOSE
+	// acknowledgments so a stale list cannot duplicate a pending or deleted tab.
+	CSearchStartRequests m_pendingSearchStarts;
+	void AbortPendingRequest() override;
+
+	// A separate FIFO callback identifies close acknowledgments even on older
+	// daemons whose generic MISC_DATA reply carries no identifying tags.
+	class CloseReplyHandler : public CECPacketHandlerBase
+	{
+	public:
+		explicit CloseReplyHandler(CSearchListRem &owner)
+		: m_owner(owner)
+		{
+		}
+		void HandlePacket(const CECPacket *) override
+		{
+			m_owner.m_pendingSearchStarts.FinishClose();
+			m_owner.m_needSearchListRequery = true;
+		}
+		void AbortPendingRequest() override { m_owner.AbortPendingRequest(); }
+
+	private:
+		CSearchListRem &m_owner;
+	};
+	CloseReplyHandler m_closeReplyHandler{ *this };
+	CSearchEd2kSlot m_ed2kSlot;
+	CSearchFormCache m_searchForms;
+
+	// Most-recently-started search ID (0 = none). uint32 so it correctly holds a
+	// daemon-allocated Kad ID (top half of the range); as a signed int those wrapped negative
+	// and corrupted the STOP/remap round-trip.
+	uint32 m_curr_search;
+	// Daemon IDs of the currently open searches (one per tab). Polled individually for
+	// progress so each tab's lifecycle ("!", progress bar) is tracked independently.
+	// Populated on remap, removed on tab close.
+	std::set<uint32> m_activeSearches;
+	// Only searches with active Kad work are cached. The value distinguishes a
+	// standalone Kad search (true) from the Kad component of AllSearch (false).
+	// Finished searches have no entry, even while their result tabs remain open.
+	std::map<uint32, bool> m_runningKadSearches;
+
+	// The result index (ResultMap / m_results) and GetSearchResults() live in
+	// CSearchResultIndex, shared with the monolithic search list. Results here are owned by
+	// the CRemoteContainer, so the index only borrows pointers.
+
 	void RemoveResults(wxUIntPtr nSearchID);
-	const CSearchResultList& GetSearchResults(wxUIntPtr nSearchID) const;
-	//
 	// Actions
-	//
 
-	wxString StartNewSearch(uint32* nSearchID, SearchType search_type,
-		const CSearchList::CSearchParams& params);
+	wxString StartNewSearch(
+		uint32 *nSearchID, SearchType search_type, const CSearchList::CSearchParams &params);
 
 	void StopSearch(bool globalOnly = false);
 
-	// Stub for monolithic CSearchList API parity.  amulegui has no
-	// direct Kad layer access; an EC opcode for "search-more" is a
-	// follow-up PR.  Until then these always return false, which keeps
-	// the SearchDlg "More" button disabled in remote-GUI mode.
-	bool IsKadSearch(uint32_t /*searchID*/) const { return false; }
-	bool RequestMoreResults(uint32_t /*searchID*/) { return false; }
+	// Multi-search: stop one search by ID; andClose also frees its results on the daemon (tab
+	// close). Falls back to a parameterless stop on a legacy daemon. andClose defaults to
+	// false so the shared search dialog can stop the selected tab without closing it
+	// (CSearchList's single-arg overload matches the same call).
+	void StopSearchById(wxUIntPtr searchID, bool andClose = false);
 
-	//
+	// Multi-search: remap the optimistic local tab ID to the daemon-allocated
+	// ID once the START reply echoes the correlation token.
+	void RemapSearch(uint32 localID, uint32 daemonID, bool ed2kActive = true);
+
+	// Reachability fix (#641): a direct one-off EC_OP_SEARCH_LIST request, bypassing
+	// DoRequery's single-request-in-flight state machine on purpose. HandlePacket answers
+	// EC_OP_SEARCH_LIST in its own branch (below) and never reaches the base class's
+	// STATUS_REQ_SENT -> IDLE transition, so routing this through DoRequery wedges m_state
+	// permanently and silently drops every later DoRequery(EC_OP_SEARCH_RESULTS, ...) call --
+	// exactly the mirror of Phase1Done's EC_OP_SEARCH_PROGRESS requests just below.
+	void RequestSearchList();
+
+	// Decode one search's progress and apply it to that search's tab. `src` is either the
+	// whole EC_OP_SEARCH_PROGRESS reply (a per-id poll, where the progress tags sit at the
+	// top level) or one child entry of the union form (every open search in a single reply).
+	// Both shapes carry an identical tag set -- the daemon emits them from one function -- so
+	// there is exactly one decode here rather than one per shape.
+	void ApplySearchProgress(const CECTag *src);
+
+	// Monolithic CSearchList API parity over EC. IsKadSearch identifies a running
+	// standalone Kad search; HasKadComponent also includes AllSearch's Kad work.
+	// Both read the activity cache populated by progress replies. RequestMoreResults
+	// sends EC_OP_SEARCH_REQUEST_MORE for the daemon to widen that search.
+	bool IsKadSearch(uint32_t searchID) const;
+	bool HasKadComponent(uint32_t searchID) const;
+	bool HasEd2kComponent(uint32_t searchID) const
+	{
+		// Legacy scalar progress uses 0 for both waiting and idle. Only a
+		// per-search lifecycle can support a reliable interruption warning.
+		return m_conn->ServerSupportsMultiSearch() && m_ed2kSlot.IsActive(searchID);
+	}
+	bool RequestMoreResults(uint32_t searchID);
+
 	// template
-	//
-	CSearchFile *CreateItem(const CEC_SearchFile_Tag *);
-	void DeleteItem(CSearchFile *);
-	uint32 GetItemID(CSearchFile *);
-	void ProcessItemUpdate(const CEC_SearchFile_Tag *, CSearchFile *);
-	bool Phase1Done(const CECPacket *);
+	CSearchFile *CreateItem(const CEC_SearchFile_Tag *) override;
+	void DeleteItem(CSearchFile *) override;
+	uint32 GetItemID(CSearchFile *) override;
+	void ProcessItemUpdate(const CEC_SearchFile_Tag *, CSearchFile *) override;
+	bool Phase1Done(const CECPacket *) override;
 };
 
-class CFriendListRem : public CRemoteContainer<CFriend, uint32, CEC_Friend_Tag> {
+class CFriendListRem : public CRemoteContainer<CFriend, uint32, CEC_Friend_Tag>
+{
 	virtual void HandlePacket(const CECPacket *);
+
 public:
 	CFriendListRem(CRemoteConnect *);
 
-	void		AddFriend(const CClientRef& toadd);
-	void		AddFriend(const CMD4Hash& userhash, uint32 lastUsedIP, uint32 lastUsedPort, const wxString& name);
-	void		RemoveFriend(CFriend* toremove);
-	void		RequestSharedFileList(CFriend* Friend);
-	void		RequestSharedFileList(CClientRef& client);
-	void		SetFriendSlot(CFriend* Friend, bool new_state);
+	void AddFriend(const CClientRef &toadd);
+	void AddFriend(
+		const CMD4Hash &userhash, uint32 lastUsedIP, uint32 lastUsedPort, const wxString &name);
+	void RemoveFriend(CFriend *toremove);
 
-	//
+	// The same batch API CFriendList exposes, so shared GUI code can bracket a bulk operation
+	// without knowing which build it is in. Nothing to defer here: the daemon owns
+	// emfriends.met and each change is one EC packet.
+	void BeginBatch() {}
+	void EndBatch() {}
+	void RequestSharedFileList(CFriend *Friend);
+	void RequestSharedFileList(CClientRef &client);
+	void SetFriendSlot(CFriend *Friend, bool new_state);
+
+	/**
+	 * The friend with this identity, or NULL.
+	 *
+	 * Same contract as CFriendList::LookupFriend(): a hash matches a hashed friend, an
+	 * address matches one entered by address, and the list is left untouched. Reads the
+	 * container the daemon has already synced here, so it costs no EC round-trip. There
+	 * is deliberately no adopting counterpart to CFriendList::FindFriend(): the list this
+	 * build holds is a copy and the daemon owns the file.
+	 */
+	CFriend *LookupFriend(const CMD4Hash &userhash, uint32 dwIP, uint16 nPort) const;
+
 	// template
-	//
 	CFriend *CreateItem(const CEC_Friend_Tag *);
 	void DeleteItem(CFriend *);
 	uint32 GetItemID(CFriend *);
 	void ProcessItemUpdate(const CEC_Friend_Tag *, CFriend *);
 };
 
-class CStatsUpdaterRem : public CECPacketHandlerBase {
+class CStatsUpdaterRem : public CECPacketHandlerBase
+{
 	virtual void HandlePacket(const CECPacket *);
+
 public:
-	CStatsUpdaterRem() {}
+	explicit CStatsUpdaterRem(bool distributionRequested = false)
+	: m_distributionRequested(distributionRequested)
+	{
+	}
+
+private:
+	bool m_distributionRequested;
 };
 
-class CStatTreeRem : public CECPacketHandlerBase {
+// Server-message log mirror. amuled accumulates ed2k server messages in
+// CamuleApp::server_msg and serves them as one EC_TAG_STRING tag on EC_OP_GET_SERVERINFO.
+// We poll periodically while the network/servers tab is visible, keep the last-seen
+// snapshot in m_seenSoFar, and feed only the new tail through
+// CamuleDlg::AddServerMessageLine so the GUI text control behaves the same as the
+// monolithic build (append-only, no scroll reset). EC_OP_CLEAR_SERVERINFO is used on the
+// Reset button.
+class CServerInfoHandlerRem : public CECPacketHandlerBase
+{
+public:
+	wxString m_seenSoFar;
+	virtual void HandlePacket(const CECPacket *);
+};
+
+// Polls the daemon's chat session store (EC_OP_GET_CHAT_SESSIONS -> EC_OP_CHAT_SESSIONS):
+// one roundtrip returns every session plus the messages newer than our cursor, so an idle
+// connection costs one small packet.
+//
+// Holds two pieces of client state. `m_cursor` is the resume position -- the highest
+// message id we hold -- which the poll sends so the daemon replies with only what is new;
+// it starts at 0, and that first reply is history replay rather than live arrivals.
+// `m_sessions` is the set we currently show tabs for, so a session missing from a reply
+// can be recognised as closed elsewhere and its tab dropped without echoing a close back.
+class CChatMsgHandlerRem : public CECPacketHandlerBase
+{
+public:
+	virtual void HandlePacket(const CECPacket *);
+	void ResetForNewSession();
+	void ResetCaptchaPresentation() { m_presentedCaptchas.clear(); }
+
+	//! Resume cursor for the next poll; 0 until the first reply lands.
+	uint32 Cursor() const { return m_cursor; }
+	const std::set<uint32> &PresentedCaptchas() const { return m_presentedCaptchas; }
+
+private:
+	uint32 m_cursor = 0;
+	std::vector<CChatPeer> m_sessions;
+	std::set<uint32> m_presentedCaptchas;
+};
+
+class CStatTreeRem : public CECPacketHandlerBase
+{
 	virtual void HandlePacket(const CECPacket *);
 	CRemoteConnect *m_conn;
+
 public:
-	CStatTreeRem(CRemoteConnect * conn) { m_conn = conn; }
+	CStatTreeRem(CRemoteConnect *conn) { m_conn = conn; }
 	void DoRequery();
 };
 
-// Async EC poller that pulls the rolling-window graph history from the
-// daemon and feeds CStatisticsDlg / CKadDlg via the same UpdateStatGraphs
-// pipeline monolithic amule uses.
-class CStatGraphRem : public CECPacketHandlerBase {
+// Async EC poller that pulls the rolling-window graph history from the daemon and feeds
+// CStatisticsDlg / CKadDlg via the same UpdateStatGraphs pipeline monolithic amule uses.
+class CStatGraphRem : public CECPacketHandlerBase
+{
 	virtual void HandlePacket(const CECPacket *);
 	CRemoteConnect *m_conn;
 	// Last timestamp the daemon reported; sent back on the next request
 	// so the response only carries points the GUI hasn't seen yet.
 	double m_lastTimestamp;
+	// Seconds between points, as asked for by the request this reply answers. Timestamps are
+	// not on the wire, so HandlePacket steps back from m_lastTimestamp at this spacing to
+	// place the points; keeping the value the request used means a preference change
+	// mid-flight cannot mislabel the reply already in the air.
+	double m_sScale;
+	// Points this daemon says it can answer with per resolution range, from
+	// EC_TAG_STATSGRAPH_DEPTH. Starts at what daemons predating that tag were built with,
+	// since their silence is indistinguishable from having that much -- asking for more would
+	// get records repeated, and with no timestamps on the wire they would be drawn as real
+	// samples.
+	uint16 m_nDaemonDepth;
 
-	// Per-metric sliding window of recent samples — feeds the
-	// "Running average" line on each COScopeCtrl. Mirrors monolithic
-	// amule's CPreciseRateCounter with count_average=true: simple
-	// mean of the last N one-second samples, where N is
-	// GetStatsAverageMinutes()*60. Session average is pulled from
-	// EC_TAG_STATSGRAPH_SESSION_* (set by the daemon) so no local
-	// integral is needed.
-	std::deque<float> m_winDl;
-	std::deque<float> m_winUp;
-	std::deque<float> m_winKad;
 public:
-	// Peak connection count seen so far. CLIENT_GUI doesn't get the
-	// daemon's CStatTreeItemMaxValue accessor, so we track it locally
-	// off the connection samples we already unpack for the graphs.
+	// Peak connection count seen so far. CLIENT_GUI does not get the daemon's
+	// CStatTreeItemMaxValue accessor, so we track it locally off the connection samples we
+	// already unpack for the graphs.
 	uint32 m_peakConnections;
+
 public:
-	CStatGraphRem(CRemoteConnect * conn)
-		: m_conn(conn), m_lastTimestamp(0.0), m_peakConnections(0) {}
+	CStatGraphRem(CRemoteConnect *conn)
+	: m_conn(conn)
+	, m_lastTimestamp(0.0)
+	, m_sScale(1.0)
+	, m_nDaemonDepth(560)
+	, m_peakConnections(0)
+	{
+	}
 	void DoRequery();
 };
 
-class CListenSocketRem {
+class CListenSocketRem
+{
 	uint32 m_peak_connections;
+
 public:
 	uint32 GetPeakConnections() { return m_peak_connections; }
 };
 
-class CamuleRemoteGuiApp : public wxApp, public CamuleGuiBase, public CamuleAppCommon {
-	wxTimer*	poll_timer;
-	// Watchdog on the initial EC connect attempt. Started when the user
-	// clicks OK on the connection dialog; fires if no OnECConnection
-	// event has arrived within the timeout, so a wrong host / firewalled
-	// daemon doesn't leave amulegui "not responding" indefinitely with
-	// no visible window while TCP SYN silently times out over minutes.
-	wxTimer*	connect_timeout_timer;
+// Tick of the remote GUI's poll timer. The handler alternates between two steps -- the
+// stats request, then the active page's data -- so either comes round every two ticks,
+// i.e. ~1 s. Requests are incremental updates against the daemon's value maps, so a
+// shorter tick costs a near-empty reply when nothing moved rather than a proportionally
+// larger one.
+//
+// The round-robin is what keeps at most one step's worth of requests on the wire per tick,
+// and it pauses rather than skips under back-pressure: the fifo-full early return happens
+// before the switch, so the step index does not advance and the cycle resumes where it
+// stopped instead of firing everything that came due while the link was stalled.
+#define EC_POLL_INTERVAL_MS 500
+
+// How long the remote GUI waits for a reply before deciding the EC connection is dead.
+// Generous on purpose: a healthy link answers in single-digit milliseconds, and the poll
+// cycle is ~1 s, so 30 s cannot be reached by a merely busy daemon -- only by one that has
+// stopped answering entirely.
+#define EC_REPLY_TIMEOUT_MS 30000
+
+class CamuleRemoteGuiApp : public wxApp, public CamuleGuiBase, public CamuleAppCommon
+{
+	wxTimer *poll_timer;
+	// Watchdog on the initial EC connect attempt. Started when the user clicks OK on the
+	// connection dialog; fires if no OnECConnection event has arrived within the timeout, so
+	// a wrong host / firewalled daemon does not leave amulegui "not responding" indefinitely
+	// with no visible window while TCP SYN silently times out over minutes.
+	wxTimer *connect_timeout_timer;
+
+	// --- Statistics-tree poll cadence ---
+	// The tree is fetched on a timer of its own (thePrefs::GetStatsInterval(), 30 s by
+	// default) rather than on every poll, because it is the one EC request here that is a
+	// full snapshot instead of a delta.
+	//
+	// m_statsTreePolled says whether that has happened yet *on this connection*. Without it
+	// the elapsed-time test alone is false on the first tick -- nothing has elapsed yet -- so
+	// a freshly started amulegui showed an empty Statistics tree for a whole interval, and a
+	// reconnect kept showing the previous daemon's tree for the remainder of one.
+	// ResetStatsTreePoll() clears it wherever a connection begins.
+	bool m_statsTreePolled = false;
+	uint32 m_msPrevStatsTree = 0;
+
+	// Called wherever a connection begins, so the next poll fetches the tree straight away
+	// instead of waiting out an interval that measures time spent on a connection that is no
+	// longer the current one.
+	void ResetStatsTreePoll()
+	{
+		m_statsTreePolled = false;
+		m_msPrevStatsTree = 0;
+	}
+
+	// --- Reconnect-after-loss (issue #444) ---
+	// When the EC connection drops after startup (e.g. the machine slept), amulegui no longer
+	// exits: it freezes the UI behind a modal dialog and retries every 5 s until the
+	// connection is restored (then reconciles all state against the fresh server snapshot in
+	// place) or the user aborts. EC connection params are captured in Startup() so a reconnect
+	// can be attempted without the (destroyed) connection dialog. Set once ShutDown() has
+	// actually run, so a shutdown postponed out of a modal dialog's event loop is resumed
+	// exactly once.
+	bool m_tornDown = false;
+
+	bool m_reconnecting = false;
+	int m_reconnectAttempt = 0;
+	int m_reconnectCountdown = 0;
+	wxTimer *m_reconnectTimer = nullptr;
+	class CReconnectDialog *m_reconnectDlg = nullptr;
+	wxString m_ecHost;
+	int m_ecPort = 0;
+	wxString m_ecPass;
+	// EC_TAG_SESSION_ID of the daemon process we last connected to, so a reconnect can tell
+	// "the socket dropped" from "the daemon restarted". 0 until the first successful connect,
+	// and against a daemon too old to send it -- either way the reconnect path treats it as
+	// "can't tell".
+	uint64 m_ecSessionId = 0;
+	void BeginReconnect();
+	void AttemptReconnect();
+	void ScheduleNextReconnect();
+	void OnReconnectTimer(wxTimerEvent &evt);
+	/// Put the modal reconnect dialog up, reflecting whatever the retry loop
+	/// is doing right now, and act on how it ends.
+	void ShowReconnectDialog();
+	/// Tear the reconnect down and act on its outcome: wxID_OK resumes polling, anything
+	/// else is the user aborting. Runs whether or not a dialog was ever shown --
+	/// reconnecting behind a minimised window finishes without one.
+	void FinishReconnect(int result);
+	// Push the connected core's version and endpoint to the status bar. Called on first
+	// connect and again after every reconnect: a reconnect may have reached a daemon that was
+	// upgraded and restarted meanwhile, so the version on screen can go stale.
+	void UpdateCoreVersionIndicator();
 
 	virtual int InitGui(bool geometry_enable, wxString &geometry_string);
 
@@ -703,37 +1026,83 @@ class CamuleRemoteGuiApp : public wxApp, public CamuleGuiBase, public CamuleAppC
 
 	int OnExit();
 
+	// Catch alternate quit paths (macOS Dock right-click -> Quit) so the ShutDown + OnExit
+	// cleanup (list-control SaveSettings, wxConfig flush) runs even when wx skips OnExit.
+	// Mirrors CamuleGuiApp (amule-gui.cpp).
+	void OnEndSession(wxCloseEvent &evt);
+	void OnQueryEndSession(wxCloseEvent &evt);
+
 #if wxUSE_ON_FATAL_EXCEPTION
-	// Print a libbfd/addr2line-resolved backtrace on fatal signal.
-	// Mirrors CamuleApp::OnFatalException so amulegui crashes (#692)
-	// produce the same symbolicated trace amule(d) already emit.
+	// Print a libbfd/addr2line-resolved backtrace on fatal signal. Mirrors
+	// CamuleApp::OnFatalException so amulegui crashes (#692) produce the same symbolicated
+	// trace amule(d) already emit.
 	void OnFatalException();
 #endif
 
-	void OnPollTimer(wxTimerEvent& evt);
-	void OnConnectTimeout(wxTimerEvent& evt);
+	// Likewise for assertions, which until now amulegui alone dropped: the wxWidgets dialog
+	// was the only record, so anything that aborted before it could be read left nothing
+	// behind, and remotelogfile showed a clean session. Compiled unconditionally for the
+	// reason CamuleApp's copy is: distro wx packages keep wxDEBUG_LEVEL=1, so release builds
+	// assert too.
+	//
+	// No `override` keyword, deliberately: nothing else in this class carries one, and
+	// -Werror=inconsistent-missing-override then demands it on all eight of the others.
+	void OnAssertFailure(
+		const wxChar *file, int line, const wxChar *func, const wxChar *cond, const wxChar *msg);
 
-	void OnECConnection(wxEvent& event);
-	void OnECInitDone(wxEvent& event);
-	void OnNotifyEvent(CMuleGUIEvent& evt);
-	void OnFinishedHTTPDownload(CMuleInternalEvent& event);
+#ifdef __WXMAC__
+	// Restore the main window when the user clicks the Dock icon while no window is visible.
+	// Mirrors CamuleGuiApp; both hand off to CamuleDlg::RestoreMainWindow().
+	virtual void MacReopenApp();
+
+	// Finder "Open With" / double-click on a .emulecollection, and ed2k:// / magnet: clicks.
+	// Both queue into the ED2KLinks file rather than touching downloadqueue, which here does
+	// not exist until the EC connection is up -- Startup() drains the file once that happens.
+	// Mirrors CamuleGuiApp (amule-gui.cpp); see the notes there on which handler actually
+	// receives the URL event.
+	virtual void MacOpenFiles(const wxArrayString &fileNames);
+	virtual void MacOpenURL(const wxString &url);
+#endif
+
+	void OnPollTimer(wxTimerEvent &evt);
+	void OnConnectTimeout(wxTimerEvent &evt);
+
+	void OnECConnection(wxEvent &event);
+	void OnECInitDone(wxEvent &event);
+	void OnNotifyEvent(CMuleGUIEvent &evt);
+	void OnFinishedHTTPDownload(CMuleInternalEvent &event);
 
 	CStatsUpdaterRem m_stats_updater;
-public:
+	// Preserve the request's opt-in intent even if visibility changes before its reply.
+	CStatsUpdaterRem m_kadDistributionUpdater{ true };
+	CServerInfoHandlerRem m_serverinfo_handler;
+	CChatMsgHandlerRem m_chatmsg_handler;
 
+public:
+	void RequestKadContactDistribution();
+	// Called only after the daemon acknowledges a password change.
+	void CommitECPasswordChange(const wxString &digest);
 	void Startup();
+
+	/// The main window came back from the taskbar/tray. If a reconnect has been running
+	/// quietly behind it, this is the moment to show the dialog -- the user can see the
+	/// frozen window now, so they should be told why and given the Abort button. No-op
+	/// otherwise.
+	void OnMainWindowRestored();
 
 	bool ShowConnectionDialog();
 
-	// Tear down and recreate the EC client socket so a fresh
-	// ConnectToCore can run after a failed attempt left m_connect's
-	// auth state half-initialised. Called on retry from
+	// Tear down and recreate the EC client socket so a fresh ConnectToCore can run after a
+	// failed attempt left m_connect's auth state half-initialised. Called on retry from
 	// ShowConnectionDialog / OnECConnection / OnConnectTimeout.
 	void ResetEcConnect();
 
 	class CRemoteConnect *m_connect;
 
-	CEConnectDlg *dialog;
+	// Must be null before the first ShowConnectionDialog(), which lazily creates it (if
+	// (!dialog) ...) and reuses it across retries. Left uninitialized it is read as garbage on
+	// the startup path -- harmless on Clang/ARM (landed null) but a segfault on GCC/x64.
+	CEConnectDlg *dialog = nullptr;
 
 	bool CopyTextToClipboard(wxString strText);
 
@@ -741,9 +1110,14 @@ public:
 
 	void ShutDown(wxCloseEvent &evt);
 
+	// Tear down and leave the main loop. Safe to call with a modal dialog open: ShutDown()
+	// postpones itself until that dialog's event loop has been unwound, and Quit() is re-run
+	// from there.
+	void Quit();
+
 	CPreferencesRem *glob_prefs;
 
-	CAsioService*	m_AsioService;
+	CAsioService *m_AsioService;
 
 	//
 	// Provide access to core data thru EC
@@ -757,8 +1131,8 @@ public:
 	CSearchListRem *searchlist;
 	CFriendListRem *friendlist;
 	CListenSocketRem *listensocket;
-	CStatTreeRem * stattree;
-	CStatGraphRem * statgraphs;
+	CStatTreeRem *stattree;
+	CStatGraphRem *statgraphs;
 
 	CStatistics *m_statistics;
 
@@ -770,41 +1144,54 @@ public:
 	wxString GetServerLog(bool reset = false);
 
 	void AddServerMessageLine(wxString &msg);
-	void AddRemoteLogLine(const wxString& line);
+	void AddRemoteLogLine(const wxString &line);
+	// Bracket a stats poll's worth of AddRemoteLogLine() calls so the log
+	// view repaints/scrolls once for the batch, not per line (issue #445).
+	void BeginRemoteLogBatch();
+	void EndRemoteLogBatch();
 
-	void SetOSFiles(wxString ) { /* onlinesig is created on remote side */ }
+	void SetOSFiles(wxString) { /* onlinesig is created on remote side */ }
 
 	bool IsConnected() const { return IsConnectedED2K() || IsConnectedKad(); }
 	bool IsFirewalled() const;
 	bool IsConnectedED2K() const;
 	bool IsConnectedKad() const
 	{
-		return ((m_ConnState & CONNECTED_KAD_OK)
-				|| (m_ConnState & CONNECTED_KAD_FIREWALLED));
+		return ((m_ConnState & CONNECTED_KAD_OK) || (m_ConnState & CONNECTED_KAD_FIREWALLED));
 	}
 	bool IsFirewalledKad() const { return (m_ConnState & CONNECTED_KAD_FIREWALLED) != 0; }
 
-	bool IsKadRunning() const { return ((m_ConnState & CONNECTED_KAD_OK)
-				|| (m_ConnState & CONNECTED_KAD_FIREWALLED)
-				|| (m_ConnState & CONNECTED_KAD_NOT)); }
+	// Same accessor names as CamuleApp (src/amule.h) so the shared GUI source files
+	// (ServerWnd.cpp) can call theApp->GetED2KConnectedSince() unconditionally instead of
+	// #ifndef CLIENT_GUI-gating the row out of amulegui (amule-org/amule#174). Populated from
+	// EC_TAG_CONNSTATE's optional sub-tags in CServerConnectRem::HandlePacket.
+	const wxDateTime &GetED2KConnectedSince() const { return m_ed2kConnectedSince; }
+	const wxDateTime &GetKadConnectedSince() const { return m_kadConnectedSince; }
+
+	bool IsKadRunning() const
+	{
+		return ((m_ConnState & CONNECTED_KAD_OK) || (m_ConnState & CONNECTED_KAD_FIREWALLED) ||
+			(m_ConnState & CONNECTED_KAD_NOT));
+	}
 
 	// Check Kad state (UDP)
-	bool IsFirewalledKadUDP() const		{ return theStats::IsFirewalledKadUDP(); }
-	bool IsKadRunningInLanMode() const	{ return theStats::IsKadRunningInLanMode(); }
+	bool IsFirewalledKadUDP() const { return theStats::IsFirewalledKadUDP(); }
+	bool IsKadRunningInLanMode() const { return theStats::IsKadRunningInLanMode(); }
 	// Kad stats
-	uint32 GetKadUsers() const			{ return theStats::GetKadUsers(); }
-	uint32 GetKadFiles() const			{ return theStats::GetKadFiles(); }
-	uint32 GetKadIndexedSources() const	{ return theStats::GetKadIndexedSources(); }
-	uint32 GetKadIndexedKeywords() const{ return theStats::GetKadIndexedKeywords(); }
-	uint32 GetKadIndexedNotes() const	{ return theStats::GetKadIndexedNotes(); }
-	uint32 GetKadIndexedLoad() const	{ return theStats::GetKadIndexedLoad(); }
-	const CUInt128&	GetKadID() const	{ return m_kadID; }
+	uint32 GetKadUsers() const { return theStats::GetKadUsers(); }
+	uint32 GetKadFiles() const { return theStats::GetKadFiles(); }
+	uint32 GetKadIndexedSources() const { return theStats::GetKadIndexedSources(); }
+	uint32 GetKadIndexedKeywords() const { return theStats::GetKadIndexedKeywords(); }
+	uint32 GetKadIndexedNotes() const { return theStats::GetKadIndexedNotes(); }
+	uint32 GetKadIndexedLoad() const { return theStats::GetKadIndexedLoad(); }
+	bool IsKadIndexReady() const { return theStats::IsKadIndexReady(); }
+	const CUInt128 &GetKadID() const { return m_kadID; }
 	// True IP of machine
-	uint32 GetKadIPAddress() const		{ return theStats::GetKadIPAddress(); }
+	uint32 GetKadIPAddress() const { return theStats::GetKadIPAddress(); }
 	// Buddy status
-	uint8	GetBuddyStatus() const		{ return theStats::GetBuddyStatus(); }
-	uint32	GetBuddyIP() const			{ return theStats::GetBuddyIP(); }
-	uint32	GetBuddyPort() const		{ return theStats::GetBuddyPort(); }
+	uint8 GetBuddyStatus() const { return theStats::GetBuddyStatus(); }
+	uint32 GetBuddyIP() const { return theStats::GetBuddyIP(); }
+	uint32 GetBuddyPort() const { return theStats::GetBuddyPort(); }
 
 	void StartKad();
 	void StopKad();
@@ -812,7 +1199,7 @@ public:
 	/** Bootstraps kad from the specified IP (must be in hostorder). */
 	void BootstrapKad(uint32 ip, uint16 port);
 	/** Updates the nodes.dat file from the specified url. */
-	void UpdateNotesDat(const wxString& str);
+	void UpdateNotesDat(const wxString &str);
 
 	void DisconnectED2K();
 
@@ -824,12 +1211,16 @@ public:
 
 	uint8 m_ConnState;
 	uint32 m_clientID;
+	// Set by CServerConnectRem::HandlePacket(); see the
+	// GetED2KConnectedSince()/GetKadConnectedSince() accessors above.
+	wxDateTime m_ed2kConnectedSince;
+	wxDateTime m_kadConnectedSince;
 
-	wxLocale	m_locale;
+	wxLocale m_locale;
 	// This KnownFile collects all currently uploading clients for display in the upload list control
-	CKnownFile * m_allUploadingKnownFile;
+	CKnownFile *m_allUploadingKnownFile;
 
-	CUInt128	m_kadID;
+	CUInt128 m_kadID;
 
 	wxDECLARE_EVENT_TABLE();
 };

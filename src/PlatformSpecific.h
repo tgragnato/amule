@@ -28,117 +28,92 @@
 #include <common/Path.h>
 #include "Types.h"
 
-
-namespace PlatformSpecific {
-
-
-/**
- * Create sparse file.
- *
- * This function will create the named file sparse if possible.
- *
- * @param name The file to be created (sparse if possible).
- * @param size The desired size of the file.
- * @return true, if creating the file succeeded, false otherwise.
- */
-bool CreateSparseFile(const CPath& name, uint64_t size);
-
+namespace PlatformSpecific
+{
 
 /**
- * Returns the max number of connections the current OS can handle.
- *
- * Currently anything but windows will return the default value (-1);
+ * Creates @a name, sparse if the platform allows it, of @a size bytes. Returns whether the file was
+ * created.
  */
-inline int GetMaxConnections() { return -1; }
-
+bool CreateSparseFile(const CPath &name, uint64_t size);
 
 /**
- * File system types returned by GetFilesystemType
+ * The max number of connections the current OS can handle. Anything but Windows returns the default
+ * value (-1).
  */
-enum EFSType {
-	fsFAT,		//! File Allocation Table
-	fsNTFS,		//! New Technology File System
-	fsHFS,		//! Hierarchical File System
-	fsHPFS,		//! High Performance File System
-	fsMINIX,	//! Minix file system
-	fsOther		//! Unknown, other
+inline int GetMaxConnections()
+{
+	return -1;
+}
+#endif
+
+/**
+ * File system types returned by GetFilesystemType.
+ */
+enum EFSType
+{
+	fsFAT,   //! File Allocation Table
+	fsNTFS,  //! New Technology File System
+	fsHFS,   //! Hierarchical File System
+	fsHPFS,  //! High Performance File System
+	fsMINIX, //! Minix file system
+	fsOther  //! Unknown, other
 };
 
 /**
- * Find out the filesystem type of the given path.
- *
- * @param path The path for which the filesystem type should be checked.
- * @return The filesystem type of the given path.
- *
- * This function returns fsOther on unknown or network file systems (because the
- * real filesystem type cannot be determined).
+ * The filesystem type of @a path, or fsOther for an unknown or network file system, whose real type
+ * cannot be determined.
  */
-EFSType GetFilesystemType(const CPath& path);
+EFSType GetFilesystemType(const CPath &path);
 
-
-/**
- * Checks if the filesystem can handle special chars.
- *
- * @param path The path for which the file system should be checked.
- * @return true if the underlying filesystem can handle special chars.
- *
- * This function checks if the file system of the given path can handle
- * special chars e.g. ':' in file names. This function will always return
- * false on MSW, since Windows cannot handle those characters on any file system.
- *
- * Based on http://en.wikipedia.org/wiki/Comparison_of_file_systems
- */
 // Other filesystem types may be added
-inline bool CanFSHandleSpecialChars(const CPath& path)
+inline bool CanFSHandleSpecialChars(const CPath &path)
 {
 	switch (GetFilesystemType(path)) {
-		case fsFAT:
-		case fsNTFS:
-		case fsHFS:
-			return false;
-		default:
-			return true;
-	}
-}
-
-
-/**
- * Check if the filesystem can handle large files.
- *
- * @param path The path for which the filesystem should be checked.
- * @return true if the underlying filesystem can handle large files.
- *
- * This function checks if the file system of the given path can handle
- * large files (>4GB).
- *
- * Based on http://en.wikipedia.org/wiki/Comparison_of_file_systems
- */
-inline bool CanFSHandleLargeFiles(const CPath& path)
-{
-	switch (GetFilesystemType(path)) {
-		case fsFAT:
-		case fsHFS:
-		case fsHPFS:
-		case fsMINIX:
-			return false;
-		default:
-			return true;
+	case fsFAT:
+	case fsNTFS:
+	case fsHFS:
+		return false;
+	default:
+		return true;
 	}
 }
 
 /**
- * Disable / enable computer's energy saving "standby" mode.
- *
+ * True if the filesystem at @a path can handle large files (>4GB). Based on
+ * http://en.wikipedia.org/wiki/Comparison_of_file_systems
  */
-#if defined __WXMAC__
-	#define PLATFORMSPECIFIC_CAN_PREVENT_SLEEP_MODE 1
+inline bool CanFSHandleLargeFiles(const CPath &path)
+{
+	switch (GetFilesystemType(path)) {
+	case fsFAT:
+	case fsHFS:
+	case fsHPFS:
+	case fsMINIX:
+		return false;
+	default:
+		return true;
+	}
+}
+
+/**
+ * Disable or enable the computer's energy-saving "standby" mode.
+ */
+#if defined __WXMAC__ || (defined(__linux__) && defined(HAVE_GIO))
+#define PLATFORMSPECIFIC_CAN_PREVENT_SLEEP_MODE 1
 #else
-	#define PLATFORMSPECIFIC_CAN_PREVENT_SLEEP_MODE 0
+#define PLATFORMSPECIFIC_CAN_PREVENT_SLEEP_MODE 0
 #endif
 
-void PreventSleepMode();
+// On Linux these requests are asynchronous; shutdown must cancel and join them.
+void PreventSleepMode(bool whileRunning = false);
 void AllowSleepMode();
+// Cancel outstanding inhibition work, release resources and join the Linux worker
+// before application teardown. No further inhibition requests are accepted afterwards.
+void ShutdownSleepInhibition();
+#if defined(AMULE_SLEEP_INHIBITION_TEST)
+// Call before the first request. Production builds keep the 30-second interval.
+void SetSleepInhibitionRetryIntervalForTesting(unsigned seconds);
+#endif /* PLATFORMSPECIFIC_H */
 
 }; /* namespace PlatformSpecific */
-
-#endif /* PLATFORMSPECIFIC_H */

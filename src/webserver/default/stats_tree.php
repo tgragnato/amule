@@ -1,5 +1,4 @@
-<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
-"http://www.w3.org/TR/html4/loose.dtd">
+<!doctype html>
 <html>
 <head>
 <title>aMule control panel</title>
@@ -13,7 +12,6 @@
 <style type="text/css">
 .trigger{
 	cursor: pointer;
-	cursor: hand;
 	font-family: Tahoma;
 	font-size: small;
 }
@@ -23,7 +21,6 @@
 	font-family: Tahoma;
 	font-size: small;
 }
-<!--
 body {
 	margin-left: 0px;
 	margin-top: 0px;
@@ -31,7 +28,6 @@ body {
 	margin-bottom: 0px;
 	background-color: #ffffff;
 }
--->
 </style>
 </head>
 <script language="JavaScript" type="text/JavaScript">
@@ -57,7 +53,7 @@ function swapFolder(img){
 }
 
 </script>
-<body onLoad="showBranch('br_Stats');swapFolder('fl_Stats')">
+<body>
 <?php
 
 function print_ident($i)
@@ -71,22 +67,22 @@ function print_ident($i)
 function print_item($it, $ident)
 {
 	print_ident($ident);
-	echo "<img src=\"tree-leaf.gif\">", $it, "<br>\n";
+	echo "<img src=\"tree-leaf.gif\">", htmlspecialchars($it), "<br>\n";
 }
 
 function print_folder($key, &$arr, $ident)
 {
 	print_ident($ident);
 	echo "<span class=\"trigger\" onClick=\"showBranch('br_",
-		$key, "');swapFolder('fl_", $key, "')\">\n";
+		htmlspecialchars($key), "');swapFolder('fl_", htmlspecialchars($key), "')\">\n";
 	print_ident($ident+1);
-	echo "<img src=\"tree-open.gif\" border=\"0\" id=\"fl_", $key, "\">\n";
+	echo "<img src=\"tree-open.gif\" id=\"fl_", htmlspecialchars($key), "\">\n";
 	print_ident($ident+1);
-	echo $key, "<br>\n";
+	echo htmlspecialchars($key), "<br>\n";
 	print_ident($ident);
 	echo "</span>\n";
 	print_ident($ident);
-	echo "<span class=\"branch\" id=\"br_", $key, "\">\n";
+	echo "<span class=\"branch\" id=\"br_", htmlspecialchars($key), "\">\n";
 
 	foreach ($arr as $k => $v) {
 		if ( count(&$v) ) {

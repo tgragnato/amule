@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <defs>
+    <linearGradient id="shackle" gradientUnits="userSpaceOnUse" x1="4.5" y1="1.5" x2="11.5" y2="6.5">
+      <stop offset="0" stop-color="#918a3c"/>
+      <stop offset="0.45" stop-color="#4c4522"/>
+      <stop offset="1" stop-color="#0d0906"/>
+    </linearGradient>
+    <linearGradient id="body" gradientUnits="userSpaceOnUse" x1="8" y1="6.9" x2="8" y2="15.5">
+      <stop offset="0" stop-color="#c9b933"/>
+      <stop offset="0.14" stop-color="#f4eb6d"/>
+      <stop offset="0.32" stop-color="#feff2b"/>
+      <stop offset="0.62" stop-color="#f2e800"/>
+      <stop offset="0.85" stop-color="#a89c00"/>
+      <stop offset="1" stop-color="#6a6000"/>
+    </linearGradient>
+    <linearGradient id="rim" gradientUnits="userSpaceOnUse" x1="3" y1="7" x2="14" y2="15.5">
+      <stop offset="0" stop-color="#8d8620"/>
+      <stop offset="0.55" stop-color="#4f4a08"/>
+      <stop offset="1" stop-color="#151004"/>
+    </linearGradient>
+  </defs>
+  <path d="M5 7.4 V4.6 A3 3 0 0 1 11 4.6 V7.4" fill="none" stroke="url(#shackle)" stroke-width="1.8"/>
+  <path d="M5.7 4.5 A2.3 2.3 0 0 1 8.1 2.3" fill="none" stroke="#d8d3b2" stroke-width="0.5" stroke-linecap="round" opacity="0.9"/>
+  <rect x="2.4" y="6.9" width="11.2" height="8.6" rx="1.7" fill="url(#body)" stroke="url(#rim)" stroke-width="0.8"/>
+  <line x1="4.2" y1="8.4" x2="11.8" y2="8.4" stroke="#fffcea" stroke-width="1.1" stroke-linecap="round" opacity="0.95"/>
+  <line x1="3.6" y1="10.6" x2="12.4" y2="10.6" stroke="#8a8300" stroke-width="0.9" stroke-linecap="round"/>
+  <line x1="3.6" y1="12.6" x2="12.4" y2="12.6" stroke="#8a8300" stroke-width="0.9" stroke-linecap="round"/>
+</svg>

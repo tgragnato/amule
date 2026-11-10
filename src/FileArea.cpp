@@ -23,29 +23,46 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
 #include "config.h"
 
 #ifdef HAVE_ERRNO_H
 #include <errno.h>
+#include <stdint.h> // uintptr_t for pointer arithmetic in the
+		    // SIGBUS handler -- `unsigned long` is 4 bytes on
+		    // LLP64 and would silently truncate pointers.
 #endif
 
 #ifdef HAVE_SIGNAL_H
 #include <signal.h>
 #endif
 
-#include "FileArea.h"		// Interface declarations.
-#include "FileAutoClose.h"	// Needed for CFileAutoClose
+#include "FileArea.h"      // Interface declarations.
+#include "FileAutoClose.h" // Needed for CFileAutoClose
 
-#ifndef ENABLE_MMAP
-#	define ENABLE_MMAP	0
-#endif
+#include <atomic> // std::atomic<bool> for the cross-thread MMapEnabled toggle
+#include <memory>
 
-#if ENABLE_MMAP && defined(HAVE_MMAP) && defined(HAVE_SYSCONF) && (defined(HAVE__SC_PAGESIZE) || defined(HAVE__SC_PAGE_SIZE))
-#	define USE_MMAP
-#endif
+// MMAP_SUPPORTED is set by cmake only when the whole mmap file-I/O path is available on this
+// platform (mmap / munmap / sysconf / _SC_PAGESIZE / sigaction). It gates the code below, the
+// preferences checkbox and the EC tag; whether mmap is actually USED is the runtime MMapEnabled
+// preference, which defaults to off.
 
-#ifdef USE_MMAP
+// Runtime switch for the mmap path. Written from the main thread when the preference changes, read
+// from the block-receive and upload-I/O threads at ReadAt()/StartWriteAt() time. A plain atomic
+// bool suffices: the decision is captured per CFileArea in m_mmap_buffer, so a concurrent flip only
+// changes the mode of SUBSEQUENT operations.
+//
+// The store uses release and the loads acquire, so the SIGSEGV/SIGBUS handler installed inside
+// SetMMapEnabled(true) is guaranteed visible to any I/O thread that observes the flag as enabled --
+// the handler is always up before the first faultable map.
+static std::atomic<bool> s_mmapEnabled{ false };
+
+bool CFileArea::GetMMapEnabled()
+{
+	return s_mmapEnabled.load(std::memory_order_acquire);
+}
+
+#ifdef MMAP_SUPPORTED
 
 #include <sys/mman.h>
 
@@ -55,16 +72,17 @@ static const long gs_pageSize = sysconf(_SC_PAGESIZE);
 static const long gs_pageSize = sysconf(_SC_PAGE_SIZE);
 #endif
 
-#endif /* USE_MMAP */
+#endif /* MMAP_SUPPORTED */
 
-#if !defined(HAVE_SIGACTION) || !defined(SA_SIGINFO) || !defined(USE_MMAP) || defined(__UCLIBC__)
+#if !defined(HAVE_SIGACTION) || !defined(SA_SIGINFO) || !defined(MMAP_SUPPORTED) || defined(__UCLIBC__)
 
 class CFileAreaSigHandler
 {
 public:
 	static void Init() {};
-	static void Add(CFileArea&) {};
-	static void Remove(CFileArea&) {};
+	static void Add(CFileArea &) {};
+	static void Remove(CFileArea &) {};
+
 private:
 	CFileAreaSigHandler() {};
 };
@@ -75,8 +93,9 @@ class CFileAreaSigHandler
 {
 public:
 	static void Init();
-	static void Add(CFileArea& area);
-	static void Remove(CFileArea& area);
+	static void Add(CFileArea &area);
+	static void Remove(CFileArea &area);
+
 private:
 	CFileAreaSigHandler() {};
 	static wxMutex mutex;
@@ -86,9 +105,9 @@ private:
 	static void Handler(int sig, siginfo_t *info, void *ctx);
 };
 
-wxMutex          CFileAreaSigHandler::mutex;
-CFileArea *      CFileAreaSigHandler::first;
-bool             CFileAreaSigHandler::initialized = false;
+wxMutex CFileAreaSigHandler::mutex;
+CFileArea *CFileAreaSigHandler::first;
+bool CFileAreaSigHandler::initialized = false;
 struct sigaction CFileAreaSigHandler::old_segv;
 struct sigaction CFileAreaSigHandler::old_bus;
 
@@ -97,9 +116,7 @@ struct sigaction CFileAreaSigHandler::old_bus;
 #define MAP_ANONYMOUS MAP_ANON
 #endif
 
-// Handle signals.
-// The idea is to replace faulted memory with zeroes and mark
-// the error in proper CFileArea
+// Handle signals: replace faulted memory with zeroes and mark the error in the proper CFileArea.
 void CFileAreaSigHandler::Handler(int sig, siginfo_t *info, void *ctx)
 {
 	CFileArea *cur;
@@ -108,7 +125,8 @@ void CFileAreaSigHandler::Handler(int sig, siginfo_t *info, void *ctx)
 		wxMutexLocker lock(mutex);
 		cur = first;
 		while (cur) {
-			if (cur->m_mmap_buffer && info->si_addr >= cur->m_mmap_buffer && info->si_addr < cur->m_mmap_buffer + cur->m_length)
+			if (cur->m_mmap_buffer && info->si_addr >= cur->m_mmap_buffer &&
+				info->si_addr < cur->m_mmap_buffer + cur->m_length)
 				break;
 			cur = cur->m_next;
 		}
@@ -117,13 +135,18 @@ void CFileAreaSigHandler::Handler(int sig, siginfo_t *info, void *ctx)
 	// mark error if found
 	if (cur && gs_pageSize > 0) {
 		cur->m_error = true;
-		char *start_addr = ((char *) info->si_addr) - (((unsigned long) info->si_addr) % gs_pageSize);
-		if (mmap(start_addr, gs_pageSize, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) != MAP_FAILED)
+		char *start_addr = ((char *)info->si_addr) - (((uintptr_t)info->si_addr) % gs_pageSize);
+		if (mmap(start_addr,
+			    gs_pageSize,
+			    PROT_READ | PROT_WRITE,
+			    MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS,
+			    -1,
+			    0) != MAP_FAILED)
 			return;
 	}
 
 	// call old handler
-	struct sigaction* sa = (sig == SIGSEGV) ? &old_segv : &old_bus;
+	struct sigaction *sa = (sig == SIGSEGV) ? &old_segv : &old_bus;
 	if (sa->sa_flags & SA_SIGINFO)
 		sa->sa_sigaction(sig, info, ctx);
 	else if (sa->sa_handler == SIG_DFL || sa->sa_handler == SIG_IGN)
@@ -139,16 +162,13 @@ void CFileAreaSigHandler::Init()
 	if (initialized)
 		return;
 
-	// Set our new signal handler.
-	// Note that we safe old handlers (probably wx ones) in order
-	// to be able to call them if signal not handled as desired.
-	// These handler will be removed by wx code when wx will restore
-	// old ones
+	// Save the old handlers (probably wx's) so they can be called when a signal is
+	// not handled as desired here. wx removes these when it restores its own.
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
 	sigemptyset(&sa.sa_mask);
 	sa.sa_sigaction = Handler;
-	sa.sa_flags = SA_NODEFER|SA_SIGINFO;
+	sa.sa_flags = SA_NODEFER | SA_SIGINFO;
 	if (sigaction(SIGSEGV, &sa, &old_segv))
 		return;
 	if (sigaction(SIGBUS, &sa, &old_bus)) {
@@ -158,14 +178,14 @@ void CFileAreaSigHandler::Init()
 	initialized = true;
 }
 
-void CFileAreaSigHandler::Add(CFileArea& area)
+void CFileAreaSigHandler::Add(CFileArea &area)
 {
 	wxMutexLocker lock(mutex);
 	area.m_next = first;
 	first = &area;
 }
 
-void CFileAreaSigHandler::Remove(CFileArea& area)
+void CFileAreaSigHandler::Remove(CFileArea &area)
 {
 	wxMutexLocker lock(mutex);
 	CFileArea **cur = &first;
@@ -180,12 +200,29 @@ void CFileAreaSigHandler::Remove(CFileArea& area)
 }
 #endif
 
-CFileArea::CFileArea()
-	: m_buffer(NULL), m_mmap_buffer(NULL), m_length(0), m_next(NULL), m_file(NULL), m_error(false)
+void CFileArea::SetMMapEnabled(bool enabled)
 {
-	CFileAreaSigHandler::Init();
+	// Install the SIGSEGV/SIGBUS recovery handler once, when mmap is first turned on, rather
+	// than per read/write, which would take a mutex on every block. Off builds -- and runs that
+	// never enable mmap -- never touch the signal-handler chain, keeping them clear of
+	// sanitizers and crash reporters. Init() is idempotent, and a no-op without MMAP_SUPPORTED.
+	// The install happens-before the release store, so a thread that later sees the flag set
+	// has the handler.
+	if (enabled) {
+		CFileAreaSigHandler::Init();
+	}
+	s_mmapEnabled.store(enabled, std::memory_order_release);
 }
 
+CFileArea::CFileArea()
+: m_buffer(NULL)
+, m_mmap_buffer(NULL)
+, m_length(0)
+, m_next(NULL)
+, m_file(NULL)
+, m_error(false)
+{
+}
 
 CFileArea::~CFileArea()
 {
@@ -195,14 +232,12 @@ CFileArea::~CFileArea()
 
 bool CFileArea::Close()
 {
-	if (m_buffer != NULL && m_mmap_buffer == NULL)
-	{
+	if (m_buffer != NULL && m_mmap_buffer == NULL) {
 		delete[] m_buffer;
 		m_buffer = NULL;
 	}
-#ifdef USE_MMAP
-	if (m_mmap_buffer)
-	{
+#ifdef MMAP_SUPPORTED
+	if (m_mmap_buffer) {
 		munmap(m_mmap_buffer, m_length);
 		// remove from list
 		CFileAreaSigHandler::Remove(*this);
@@ -217,20 +252,27 @@ bool CFileArea::Close()
 	return true;
 }
 
-
-void CFileArea::ReadAt(CFileAutoClose& file, uint64 offset, size_t count)
+void CFileArea::ReadAt(CFileAutoClose &file, uint64 offset, size_t count)
 {
 	Close();
 
-#ifdef USE_MMAP
+#ifdef MMAP_SUPPORTED
 	uint64 offEnd = offset + count;
-	if (gs_pageSize > 0 && offEnd < 0x100000000ull) {
-		uint64 offStart = offset & (~((uint64)gs_pageSize-1));
+	// The 4 GiB cap only matters where off_t (the mmap offset argument) is 32 bits: there a
+	// region ending at or after 4 GiB would truncate the offset and map the wrong bytes (forum
+	// 16444). Where off_t is 64 bits -- every modern aMule build (_FILE_OFFSET_BITS=64) -- mmap
+	// handles large offsets natively (verified against >4 GiB part files), so the cap is
+	// skipped and large files get mmap for their whole length. sizeof() folds at compile time,
+	// so this is free on 64-bit.
+	if (s_mmapEnabled.load(std::memory_order_acquire) && gs_pageSize > 0 &&
+		(sizeof(off_t) >= 8 || offEnd < 0x100000000ull)) {
+		uint64 offStart = offset & (~((uint64)gs_pageSize - 1));
 		m_length = offEnd - offStart;
 		void *p = mmap(NULL, m_length, PROT_READ, MAP_SHARED, file.fd(), offStart);
 		if (p != MAP_FAILED) {
-			m_file = &file;
-			m_mmap_buffer = (uint8_t*) p;
+			// No m_file: a read mapping needs no fd once made, and the area can outlive file.
+			file.Unlock();
+			m_mmap_buffer = (uint8_t *)p;
 			m_buffer = m_mmap_buffer + (offset - offStart);
 
 			// add to list to catch errors correctly
@@ -244,20 +286,21 @@ void CFileArea::ReadAt(CFileAutoClose& file, uint64 offset, size_t count)
 	file.ReadAt(m_buffer, offset, count);
 }
 
-#ifdef USE_MMAP
-void CFileArea::StartWriteAt(CFileAutoClose& file, uint64 offset, size_t count)
+#ifdef MMAP_SUPPORTED
+void CFileArea::StartWriteAt(CFileAutoClose &file, uint64 offset, size_t count)
 {
 	Close();
 
 	uint64 offEnd = offset + count;
-	if (file.GetLength() >= offEnd && gs_pageSize > 0 && offEnd < 0x100000000ull) {
-		uint64 offStart = offset & (~((uint64)gs_pageSize-1));
+	// 4 GiB cap only applies with a 32-bit off_t -- see ReadAt() above.
+	if (s_mmapEnabled.load(std::memory_order_acquire) && file.GetLength() >= offEnd && gs_pageSize > 0 &&
+		(sizeof(off_t) >= 8 || offEnd < 0x100000000ull)) {
+		uint64 offStart = offset & (~((uint64)gs_pageSize - 1));
 		m_length = offEnd - offStart;
-		void *p = mmap(NULL, m_length, PROT_READ|PROT_WRITE, MAP_SHARED, file.fd(), offStart);
-		if (p != MAP_FAILED)
-		{
+		void *p = mmap(NULL, m_length, PROT_READ | PROT_WRITE, MAP_SHARED, file.fd(), offStart);
+		if (p != MAP_FAILED) {
 			m_file = &file;
-			m_mmap_buffer = (uint8_t*) p;
+			m_mmap_buffer = (uint8_t *)p;
 			m_buffer = m_mmap_buffer + (offset - offStart);
 
 			// add to list to catch errors correctly
@@ -269,30 +312,57 @@ void CFileArea::StartWriteAt(CFileAutoClose& file, uint64 offset, size_t count)
 	m_buffer = new uint8_t[count];
 }
 #else
-void CFileArea::StartWriteAt(CFileAutoClose&, uint64, size_t count)
+void CFileArea::StartWriteAt(CFileAutoClose &, uint64, size_t count)
 {
 	Close();
 	m_buffer = new uint8_t[count];
 }
 #endif
 
-
-bool CFileArea::FlushAt(CFileAutoClose& file, uint64 offset, size_t count)
+void CFileArea::FlushAt(CFileAutoClose &file, uint64 offset, size_t count)
 {
-	if (!m_buffer)
-		return false;
+	if (m_buffer == nullptr) {
+		throw CIOFailureException("Cannot flush an uninitialized file area.");
+	}
 
-#ifdef USE_MMAP
-	if (m_mmap_buffer) {
-		if (msync(m_mmap_buffer, m_length, MS_SYNC))
-			return false;
+#ifdef MMAP_SUPPORTED
+	if (m_mmap_buffer != nullptr) {
+		if (msync(m_mmap_buffer, m_length, MS_SYNC) != 0) {
+			const CIOFailureException failure(
+				wxString("Failed to flush mapped file: ") + wxSysErrorMsg());
+			// Failed writeback can leave clean pages, so another msync may succeed
+			// without writing anything. Preserve just the requested bytes before
+			// unmapping; the caller's retry must write them again through WriteAt.
+			auto buffer = std::make_unique<uint8_t[]>(count);
+			memcpy(buffer.get(), m_buffer, count);
+			// A page that can no longer be read raises SIGBUS during the copy: the
+			// handler maps zeros and sets m_error. Clear it, or ~CFileArea would throw
+			// and terminate. The zeroed range then fails the part's hash check.
+			m_error = false;
+			Close();
+			m_buffer = buffer.release();
+			throw failure;
+		}
 		Close();
-		return true;
+		return;
 	}
 #endif
 	file.WriteAt(m_buffer, offset, count);
 	Close();
-	return true;
+}
+
+void CFileArea::Prefault()
+{
+#ifdef MMAP_SUPPORTED
+	if (m_mmap_buffer == nullptr || gs_pageSize <= 0) {
+		return;
+	}
+	// The mapping starts on a page boundary, so one read per page faults in all of it.
+	const volatile uint8_t *pages = m_mmap_buffer;
+	for (size_t off = 0; off < m_length; off += static_cast<size_t>(gs_pageSize)) {
+		(void)pages[off];
+	}
+#endif
 }
 
 void CFileArea::CheckError()
@@ -302,4 +372,3 @@ void CFileArea::CheckError()
 	if (err)
 		throw CIOFailureException("Read error, failed to read from file.");
 }
-

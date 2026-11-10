@@ -26,8 +26,9 @@
 #ifndef SHAREDFILESWND_H
 #define SHAREDFILESWND_H
 
-#include <wx/panel.h>		// Needed for wxPanel
+#include <memory>
 
+#include <wx/panel.h> // Needed for wxPanel
 
 class CKnownFile;
 class CSharedFilesCtrl;
@@ -35,103 +36,111 @@ class CSharedFilePeersListCtrl;
 class wxListEvent;
 class wxGauge;
 class wxSplitterEvent;
-class wxRadioBox;
+class CClientListSplitter;
+class wxRadioButton;
 
 /**
- * This class represents the window containing the list of shared files.
+ * The window holding the list of shared files.
  */
 class CSharedFilesWnd : public wxPanel
 {
 public:
-	/**
-	 * Constructor.
-	 */
-	CSharedFilesWnd(wxWindow* pParent = NULL);
+	CSharedFilesWnd(wxWindow *pParent = NULL);
 
-	/**
-	 * Destructor.
-	 */
 	~CSharedFilesWnd();
 
-
 	/**
-	 * This function updates the statistics of the selected items.
-	 *
-	 * Call this function when an item has been selected, or when a
-	 * selected item changes. It
+	 * Updates the statistics of the selected items. Call after an item is selected, or when a
+	 * selected item changes.
 	 */
 	void SelectionUpdated();
 
+	/**
+	 * Refreshes only the stat bars/labels for the current selection. Cheap (it walks just the
+	 * selected rows), so it runs on every selection change regardless of the client-show mode;
+	 * SelectionUpdated() calls it and also rebuilds the client list.
+	 */
+	void UpdateSelectionStats();
 
 	/**
-	 * Deletes all files and updates widget
+	 * Deletes all files and updates the widget.
 	 */
 	void RemoveAllSharedFiles();
 
 	/**
-	 * Call this function before displaying the dialog.
-	 *
-	 * This functions does a few tasks to ensure that the dialog is looking the right way.
+	 * Call before displaying the dialog: makes it look the right way.
 	 */
-	void	Prepare();
+	void Prepare();
 
 	//! Pointer to the widget containing the list of shared files.
-	CSharedFilesCtrl* sharedfilesctrl;
+	CSharedFilesCtrl *sharedfilesctrl;
 
 	//! Pointer to the list of clients.
-	CSharedFilePeersListCtrl*	peerslistctrl;
+	CSharedFilePeersListCtrl *peerslistctrl;
 
 	//! Contains the current (or last if the clientlist is hidden) position of the splitter.
 	int m_splitter;
+
 private:
 	/**
-	 * Event-handler for reloading the list of shared files.
+	 * Event handler: reload the list of shared files.
 	 */
 	void OnBtnReloadShared(wxCommandEvent &evt);
 
-	/**
-	 * Event-handler for showing details about a shared file(s).
-	 */
-	void OnItemSelectionChanged(wxListEvent& evt);
+	/** Live text-filter box changed: push the new text to the shared list. */
+	void OnFilterChanged(wxCommandEvent &evt);
 
 	/**
-	 * Event-handler for the list-toggle button.
+	 * Event handler: show details about the selected shared file(s).
 	 */
-	void OnToggleClientList( wxCommandEvent& event );
+	void OnItemSelectionChanged(wxListEvent &evt);
 
 	/**
-	 * Event-handler for changes in the sash divider position.
+	 * Event handler: the list-toggle button.
 	 */
-	void OnSashPositionChanging(wxSplitterEvent& evt);
+	void OnToggleClientList(wxCommandEvent &event);
 
 	/**
-	 * Event-handler for changes in the clients mode radio box.
+	 * Event handler: the sash divider moved.
 	 */
-	void OnSelectClientsMode( wxCommandEvent& WXUNUSED(evt) );
+	void OnSashPositionChanging(wxSplitterEvent &evt);
+
+	/**
+	 * Event handler: the clients mode radio box changed.
+	 */
+	void OnSelectClientsMode(wxCommandEvent &WXUNUSED(evt));
 
 	//! Pointer to the gauge used for showing requests ratio.
-	wxGauge* m_bar_requests;
+	wxGauge *m_bar_requests;
 	//! Pointer to the gauge used for showing accepted-requests ratio.
-	wxGauge* m_bar_accepted;
+	wxGauge *m_bar_accepted;
 	//! Pointer to the gauge used for showing the transferred ratio.
-	wxGauge* m_bar_transfer;
-	//! Pointer to the radio box selecting the client mode.
-	wxRadioBox* m_radioClientMode;
+	wxGauge *m_bar_transfer;
+	//! Radio buttons selecting which clients are shown (replaces the old
+	//! wxRadioBox; see sharedfilesTopDlg in muuli_wdr.cpp).
+	wxRadioButton *m_radioShowAll;
+	wxRadioButton *m_radioShowSelected;
+	wxRadioButton *m_radioShowUploading;
 	//! Flag if window has been prepared
-	bool	m_prepared;
-	//! Minimum position of splitter bar
-	static const int s_splitterMin = 90;
+	bool m_prepared;
+	//! Collapse, restore and sash dragging of the client list.
+	std::unique_ptr<CClientListSplitter> m_clientListSplitter;
 
 	/**
-	 * Mode which clients are shown
+	 * Which clients are shown.
 	 */
-	enum EClientShow {
+	enum EClientShow
+	{
 		ClientShowAll = 0,
 		ClientShowSelected,
 		ClientShowUploading
 	};
 	EClientShow m_clientShow;
 
+	//! Read the mode currently picked by the radio buttons.
+	EClientShow GetClientShowMode() const;
+	//! Check the radio button matching the given mode.
+	void SetClientShowMode(EClientShow mode);
 
 	wxDECLARE_EVENT_TABLE();
 };

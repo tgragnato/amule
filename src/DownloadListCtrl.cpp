@@ -23,585 +23,843 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include "DownloadListCtrl.h"	// Interface declarations
+#include "DownloadListCtrl.h" // Interface declarations
 
-#include <protocol/ed2k/ClientSoftware.h>
+#include "MenuIcons.h"
+
+#include <common/Format.h> // Needed for CFormat
 #include <common/MenuIDs.h>
 
-#include <common/Format.h>	// Needed for CFormat
-#include "amule.h"		// Needed for theApp
-#include "amuleDlg.h"		// Needed for CamuleDlg
-#include "BarShader.h"		// Needed for CBarShader
-#include "CommentDialogLst.h"	// Needed for CCommentDialogLst
-#include "DataToText.h"		// Needed for PriorityToStr
+#include "amule.h"            // Needed for theApp
+#include "amuleDlg.h"         // Needed for CamuleDlg
+#include "CommentDialog.h"    // Needed for CCommentDialog
+#include "CommentDialogLst.h" // Needed for CCommentDialogLst
+#include "DataToText.h"       // Needed for PriorityToStr
 #include "DownloadQueue.h"
-#include "FileDetailDialog.h"	// Needed for CFileDetailDialog
-#include "GuiEvents.h"		// Needed for CoreNotify_*
+#include "FileDetailDialog.h" // Needed for CFileDetailDialog
+#include "FileRenameDialog.h" // Needed for AskNewFileName
+#include "FileLaunch.h"       // Needed for FileLaunch::Open / Reveal
+#include "GuiEvents.h"        // Needed for CoreNotify_*, Notify_DownloadCtrlDoItemSelectionChanged
 #include "Logger.h"
-#include "muuli_wdr.h"		// Needed for ID_DLOADLIST
-#include "PartFile.h"		// Needed for CPartFile
+#include "MuleBarRenderer.h" // Needed for CBarFillSpec, CBarFillSpan, CMuleBarRenderer
+#include "PartBarLegendUI.h" // Needed for partbar::SourceAvailabilityColour, ToMuleColour
+#include "PartFile.h"        // Needed for CPartFile
 #include "Preferences.h"
-#include "SharedFileList.h"	// Needed for CSharedFileList
-#include "TerminationProcess.h"	// Needed for CTerminationProcess
-#include "TransferWnd.h"
+#include "SharedFileList.h" // Needed for CSharedFileList
 #include "SourceListCtrl.h"
+#include "Statistics.h" // Needed for theStats (free space), FREE_SPACE_UNKNOWN
+#include "TransferWnd.h"
+#include "muuli_wdr.h"      // Needed for ID_DLOADLIST
+#include "OtherFunctions.h" // Needed for FormatLocalDateTime
 
-class CPartFile;
-
-
-struct FileCtrlItem_Struct
+namespace
 {
-	FileCtrlItem_Struct()
-		: dwUpdated(0),
-		  status(NULL),
-		  m_fileValue(NULL)
-	{ }
+// Colours for the chunk/gap bar; matches every value DrawFileStatusBar used.
+const CMuleColour crHave(104, 104, 104);
+const CMuleColour crFlatHave(0, 0, 0);
 
-	~FileCtrlItem_Struct() {
-		delete status;
+const CMuleColour crPending(255, 208, 0);
+const CMuleColour crFlatPending(255, 255, 100);
+
+const CMuleColour crProgress(0, 224, 0);
+const CMuleColour crFlatProgress(0, 150, 0);
+
+const CMuleColour crMissing(255, 0, 0);
+
+/**
+ * Draws the Progress column: the chunk/gap bar, via the base class, plus two things Shared Files'
+ * bar never needed -- a completed-progress overlay strip and a live percentage label. Neither
+ * CGenericClientListCtrl bar draws text or a strip, so this stays a Downloads-only subclass rather
+ * than growing CBarFillSpec for everyone.
+ */
+class CDownloadBarRenderer : public CMuleBarRenderer
+{
+public:
+	bool Render(wxRect cell, wxDC *dc, int state) override
+	{
+		// Gates the whole cell -- bar, strip and percent text alike -- exactly
+		// as the pre-port ColumnProgress case did.
+		if (!thePrefs::ShowProgBar()) {
+			return true;
+		}
+		CMuleBarRenderer::Render(cell, dc, state);
+		DrawOverlay(cell, dc);
+		return true;
 	}
-
-	CPartFile* GetFile() const {
-		return m_fileValue;
-	}
-
-	void SetContents(CPartFile* file) {
-		m_fileValue = file;
-	}
-
-	uint64		dwUpdated;
-	wxBitmap*	status;
 
 private:
-	CPartFile*			m_fileValue;
+	void DrawOverlay(wxRect cell, wxDC *dc) const
+	{
+		CPartFile *file = reinterpret_cast<CPartFile *>(GetSpec().GetIdentity());
+		if (!file || file->GetFileSize() == 0) {
+			return;
+		}
+
+		const bool bFlat = thePrefs::UseFlatBar();
+		const wxRect barRect = InsetForBar(cell, bFlat);
+
+		// The completed-progress strip only makes sense for a file still assembling from
+		// gaps and pending blocks: DrawFileStatusBar's completed and hashing branches
+		// already fill the bar solid, and while hashing that fill tracks hashed bytes
+		// rather than completed ones.
+		const bool showStrip = !file->IsCompleted() && file->GetStatus() != PS_COMPLETING &&
+				       file->GetHashingProgress() == 0;
+		if (showStrip && barRect.GetWidth() > 0) {
+			const int width = static_cast<int>((static_cast<double>(barRect.GetWidth()) /
+								   static_cast<double>(file->GetFileSize())) *
+							   static_cast<double>(file->GetCompletedSize()));
+			if (bFlat) {
+				// Deliberately no outline: master drew this strip into a fresh
+				// wxMemoryDC, whose default black pen gave it one incidentally.
+				// Transparent is the deterministic choice; wxBLACK_PEN would
+				// reproduce the old look.
+				dc->SetPen(*wxTRANSPARENT_PEN);
+				dc->SetBrush(crFlatProgress.GetBrush());
+				dc->DrawRectangle(barRect.x, barRect.y, width, 3);
+			} else {
+				dc->SetPen(*wxBLACK_PEN);
+				dc->DrawLine(barRect.x, barRect.y + 0, barRect.x + width, barRect.y + 0);
+				dc->DrawLine(barRect.x, barRect.y + 2, barRect.x + width, barRect.y + 2);
+				dc->SetPen(*(wxThePenList->FindOrCreatePen(crProgress, 1, wxPENSTYLE_SOLID)));
+				dc->DrawLine(barRect.x, barRect.y + 1, barRect.x + width, barRect.y + 1);
+			}
+		}
+
+		if (!thePrefs::ShowPercent()) {
+			return;
+		}
+		const uint16 hashingProgress = file->GetHashingProgress();
+		double percent = hashingProgress == 0 ? file->GetPercentCompleted()
+						      : 100.0 * hashingProgress * PARTSIZE /
+								static_cast<double>(file->GetFileSize());
+		if (file->IsCompleted()) {
+			percent = 100.0;
+		} else if (percent > 99.9) {
+			percent = 99.9;
+		}
+		const wxString buffer = CFormat("%.1f%%") % percent;
+		const int middlex = (2 * cell.GetX() + cell.GetWidth()) >> 1;
+		const int middley = (2 * cell.GetY() + cell.GetHeight()) >> 1;
+		wxCoord textwidth;
+		wxCoord textheight;
+		dc->GetTextExtent(buffer, &textwidth, &textheight);
+		const wxColour oldColour = dc->GetTextForeground();
+		const int x = middlex - (textwidth >> 1);
+		const int y = middley - (textheight >> 1);
+		// Outline white text so it stays readable on light fills.
+		if (hashingProgress == 0) {
+			dc->SetTextForeground(*wxBLACK);
+			const int offset = GetView()->FromDIP(1);
+			dc->DrawText(buffer, x - offset, y);
+			dc->DrawText(buffer, x + offset, y);
+			dc->DrawText(buffer, x, y - offset);
+			dc->DrawText(buffer, x, y + offset);
+		}
+		dc->SetTextForeground(hashingProgress == 0 ? *wxWHITE : *wxBLACK);
+		dc->DrawText(buffer, x, y);
+		dc->SetTextForeground(oldColour);
+	}
 };
+} // namespace
 
-#define m_ImageList theApp->amuledlg->m_imagelist
+wxBEGIN_EVENT_TABLE(CDownloadListCtrl, CMuleVirtualDataViewCtrl)
+	EVT_DATAVIEW_ITEM_ACTIVATED(wxID_ANY, CDownloadListCtrl::OnItemActivated)
+	EVT_DATAVIEW_ITEM_CONTEXT_MENU(wxID_ANY, CDownloadListCtrl::OnItemRightClicked)
+	EVT_DATAVIEW_SELECTION_CHANGED(wxID_ANY, CDownloadListCtrl::OnSelectionChanged)
 
-enum ColumnEnum {
-	ColumnPart = 0,
-	ColumnFileName,
-	ColumnSize,
-	ColumnTransferred,
-	ColumnCompleted,
-	ColumnSpeed,
-	ColumnProgress,
-	ColumnSources,
-	ColumnPriority,
-	ColumnStatus,
-	ColumnTimeRemaining,
-	ColumnLastSeenComplete,
-	ColumnLastReception,
-	ColumnNumberOfColumns
-};
+	EVT_MENU(MP_CANCEL, CDownloadListCtrl::OnCancelFile)
 
-wxBEGIN_EVENT_TABLE(CDownloadListCtrl, CMuleListCtrl)
-	EVT_LIST_ITEM_ACTIVATED(ID_DLOADLIST,	CDownloadListCtrl::OnItemActivated)
-	EVT_LIST_ITEM_RIGHT_CLICK(ID_DLOADLIST, CDownloadListCtrl::OnMouseRightClick)
-	EVT_LIST_ITEM_MIDDLE_CLICK(ID_DLOADLIST, CDownloadListCtrl::OnMouseMiddleClick)
-	EVT_LIST_ITEM_SELECTED(ID_DLOADLIST, CDownloadListCtrl::OnItemSelectionChanged)
-	EVT_LIST_ITEM_DESELECTED(ID_DLOADLIST, CDownloadListCtrl::OnItemSelectionChanged)
+	EVT_MENU(MP_PAUSE, CDownloadListCtrl::OnSetStatus)
+	EVT_MENU(MP_STOP, CDownloadListCtrl::OnSetStatus)
+	EVT_MENU(MP_RESUME, CDownloadListCtrl::OnSetStatus)
 
-	EVT_CHAR( CDownloadListCtrl::OnKeyPressed )
+	EVT_MENU(MP_PRIOLOW, CDownloadListCtrl::OnSetPriority)
+	EVT_MENU(MP_PRIONORMAL, CDownloadListCtrl::OnSetPriority)
+	EVT_MENU(MP_PRIOHIGH, CDownloadListCtrl::OnSetPriority)
+	EVT_MENU(MP_PRIOAUTO, CDownloadListCtrl::OnSetPriority)
 
-	EVT_MENU( MP_CANCEL,			CDownloadListCtrl::OnCancelFile )
+	EVT_MENU(MP_SWAP_A4AF_TO_THIS, CDownloadListCtrl::OnSwapSources)
+	EVT_MENU(MP_SWAP_A4AF_TO_THIS_AUTO, CDownloadListCtrl::OnSwapSources)
+	EVT_MENU(MP_SWAP_A4AF_TO_ANY_OTHER, CDownloadListCtrl::OnSwapSources)
 
-	EVT_MENU( MP_PAUSE,			CDownloadListCtrl::OnSetStatus )
-	EVT_MENU( MP_STOP,			CDownloadListCtrl::OnSetStatus )
-	EVT_MENU( MP_RESUME,			CDownloadListCtrl::OnSetStatus )
+	EVT_MENU_RANGE(MP_ASSIGNCAT, MP_ASSIGNCAT + 99, CDownloadListCtrl::OnSetCategory)
 
-	EVT_MENU( MP_PRIOLOW,			CDownloadListCtrl::OnSetPriority )
-	EVT_MENU( MP_PRIONORMAL,		CDownloadListCtrl::OnSetPriority )
-	EVT_MENU( MP_PRIOHIGH,			CDownloadListCtrl::OnSetPriority )
-	EVT_MENU( MP_PRIOAUTO,			CDownloadListCtrl::OnSetPriority )
+	EVT_MENU(MP_CLEARCOMPLETED, CDownloadListCtrl::OnClearCompleted)
 
-	EVT_MENU( MP_SWAP_A4AF_TO_THIS,		CDownloadListCtrl::OnSwapSources )
-	EVT_MENU( MP_SWAP_A4AF_TO_THIS_AUTO,	CDownloadListCtrl::OnSwapSources )
-	EVT_MENU( MP_SWAP_A4AF_TO_ANY_OTHER,	CDownloadListCtrl::OnSwapSources )
+	EVT_MENU(MP_DELETEFROMDISK, CDownloadListCtrl::OnDeleteFromDisk)
 
-	EVT_MENU_RANGE( MP_ASSIGNCAT, MP_ASSIGNCAT + 99, CDownloadListCtrl::OnSetCategory )
+	EVT_MENU(MP_GETMAGNETLINK, CDownloadListCtrl::OnGetLink)
+	EVT_MENU(MP_GETED2KLINK, CDownloadListCtrl::OnGetLink)
+	EVT_MENU(MP_RAZORSTATS, CDownloadListCtrl::OnRazorStatsCheck)
 
-	EVT_MENU( MP_CLEARCOMPLETED,		CDownloadListCtrl::OnClearCompleted )
+	EVT_MENU(MP_METINFO, CDownloadListCtrl::OnViewFileInfo)
+	EVT_MENU(MP_VIEW, CDownloadListCtrl::OnPreviewFile)
+	EVT_MENU(MP_SHOWINFOLDER, CDownloadListCtrl::OnShowInFolder)
+	EVT_MENU(MP_VIEWFILECOMMENTS, CDownloadListCtrl::OnViewFileComments)
+	EVT_MENU(MP_CMT, CDownloadListCtrl::OnEditComment)
 
-	EVT_MENU( MP_GETMAGNETLINK,		CDownloadListCtrl::OnGetLink )
-	EVT_MENU( MP_GETED2KLINK,		CDownloadListCtrl::OnGetLink )
-
-	EVT_MENU( MP_METINFO,			CDownloadListCtrl::OnViewFileInfo )
-	EVT_MENU( MP_VIEW,			CDownloadListCtrl::OnPreviewFile )
-	EVT_MENU( MP_VIEWFILECOMMENTS,		CDownloadListCtrl::OnViewFileComments )
-
-	EVT_MENU( MP_WS,			CDownloadListCtrl::OnGetFeedback )
-
+	EVT_MENU(MP_WS, CDownloadListCtrl::OnGetFeedback)
 wxEND_EVENT_TABLE()
 
-//! This listtype is used when gathering the selected items.
-typedef std::list<FileCtrlItem_Struct*>	ItemList;
-
-CDownloadListCtrl::CDownloadListCtrl(
-	wxWindow *parent, wxWindowID winid, const wxPoint& pos, const wxSize& size,
-	long style, const wxValidator& validator, const wxString& name )
-:
-CMuleListCtrl( parent, winid, pos, size, style | wxLC_OWNERDRAW, validator, name )
+CDownloadListCtrl::CDownloadListCtrl(wxWindow *parent,
+	wxWindowID winid,
+	const wxPoint &pos,
+	const wxSize &size,
+	long style,
+	const wxString &name)
+: CMuleVirtualDataViewCtrl(parent, winid, pos, size, style, name)
 {
-	// Setting the sorter function.
-	SetSortFunc( SortProc );
+	const int flags = wxDATAVIEW_COL_RESIZABLE | wxDATAVIEW_COL_SORTABLE;
+	AddTextColumn(_("Part"), COLUMN_DL_PART, "a", 30, wxALIGN_LEFT, flags);
+	AddIconTextColumn(_("File Name"), COLUMN_DL_NAME, "N", 260, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Size"), COLUMN_DL_SIZE, "Z", 60, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Transferred"), COLUMN_DL_TRANSFERRED, "T", 65, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Completed"), COLUMN_DL_COMPLETED, "C", 65, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Speed"), COLUMN_DL_SPEED, "S", 65, wxALIGN_LEFT, flags);
+	AddBarColumn(_("Progress"), COLUMN_DL_PROGRESS, "P", 170, flags, new CDownloadBarRenderer());
+	AddTextColumn(_("Sources"), COLUMN_DL_SOURCES, "u", 50, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Priority"), COLUMN_DL_PRIORITY, "p", 55, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Status"), COLUMN_DL_STATUS, "s", 70, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Time Remaining"), COLUMN_DL_TIMEREMAINING, "r", 110, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Last Seen Complete"), COLUMN_DL_LASTSEENCOMPLETE, "c", 220, wxALIGN_LEFT, flags);
+	AddTextColumn(_("Last Reception"), COLUMN_DL_LASTRECEPTION, "R", 220, wxALIGN_LEFT, flags);
 
-	// Set the table-name (for loading and saving preferences).
-	SetTableName( "Download" );
+	AppendSpacerColumn(COLUMN_DL_SPACER);
+	AssociateVirtualModel();
 
-	m_menu = NULL;
+	// Default sort is by name, ascending; LoadColumnSettings() replaces it
+	// when the config has something saved.
+	ApplySorting(COLUMN_DL_NAME, 0);
 
-	m_hilightBrush  = CMuleColour(wxSYS_COLOUR_HIGHLIGHT)/*.Blend(125)*/.GetBrush();
+	// The part number only names the file's .part.met in the temp dir, which File Details already
+	// shows. Listed in the header menu, hidden until asked for -- the width above is what it gets
+	// when enabled. Set before LoadColumnSettings() so anything the user saved wins.
+	SetColumnHidden(COLUMN_DL_PART, true, 0);
 
-	m_hilightUnfocusBrush = CMuleColour(CMuleColour::GetUnfocusedHighlight()).GetBrush();
-
-	InsertColumn( ColumnPart,			_("Part"),					wxLIST_FORMAT_LEFT,  30, "a" );
-	InsertColumn( ColumnFileName,		_("File Name"),				wxLIST_FORMAT_LEFT, 260, "N" );
-	InsertColumn( ColumnSize,			_("Size"),					wxLIST_FORMAT_LEFT,  60, "Z" );
-	InsertColumn( ColumnTransferred,	_("Transferred"),			wxLIST_FORMAT_LEFT,  65, "T" );
-	InsertColumn( ColumnCompleted,		_("Completed"),				wxLIST_FORMAT_LEFT,  65, "C" );
-	InsertColumn( ColumnSpeed,			_("Speed"),					wxLIST_FORMAT_LEFT,  65, "S" );
-	InsertColumn( ColumnProgress,		_("Progress"),				wxLIST_FORMAT_LEFT, 170, "P" );
-	InsertColumn( ColumnSources,		_("Sources"),				wxLIST_FORMAT_LEFT,  50, "u" );
-	InsertColumn( ColumnPriority,		_("Priority"),				wxLIST_FORMAT_LEFT,  55, "p" );
-	InsertColumn( ColumnStatus,			_("Status"),				wxLIST_FORMAT_LEFT,  70, "s" );
-	InsertColumn( ColumnTimeRemaining,  _("Time Remaining"),		wxLIST_FORMAT_LEFT, 110, "r" );
-	InsertColumn( ColumnLastSeenComplete, _("Last Seen Complete"),	wxLIST_FORMAT_LEFT, 220, "c" );
-	InsertColumn( ColumnLastReception,	_("Last Reception"),		wxLIST_FORMAT_LEFT, 220, "R" );
-
-	m_category = 0;
-	m_filecount = 0;
-	m_ItemSelectionChangePending = false;
-	LoadSettings();
-
-	//m_ready = true;
+	m_columnStore.SetTableName("Download");
+	LoadColumnSettings();
+	InitColumnState();
 }
 
-// This is the order the columns had before extendable list-control settings save/load code was introduced.
-// Don't touch when inserting new columns!
 wxString CDownloadListCtrl::GetOldColumnOrder() const
 {
 	return "N,Z,T,C,S,P,u,p,s,r,c,R";
 }
 
-CDownloadListCtrl::~CDownloadListCtrl()
+wxString CDownloadListCtrl::GetRowLabel(const wxDataViewItem &item) const
 {
-	while ( !m_ListItems.empty() ) {
-		delete m_ListItems.begin()->second;
-		m_ListItems.erase( m_ListItems.begin() );
+	// Column 0 is the part number here, not the name -- unlike every other ported list, so the
+	// base's "column 0 is the label" default would make type-to-select match part numbers.
+	const wxUIntPtr data = ItemAt(GetModelRow(item));
+	if (!data) {
+		return wxEmptyString;
 	}
+	return GetItemColumnText(data, COLUMN_DL_NAME);
 }
 
-void CDownloadListCtrl::AddFile( CPartFile* file )
+CDownloadListCtrl::~CDownloadListCtrl() = default;
+
+void CDownloadListCtrl::AddFile(CPartFile *file, bool deferView)
 {
-	wxASSERT( file );
+	wxASSERT(file);
 
-	// Avoid duplicate entries of files
-	if ( m_ListItems.find( file ) == m_ListItems.end() ) {
-		FileCtrlItem_Struct* newitem = new FileCtrlItem_Struct;
-		newitem->SetContents(file);
+	if (m_files.insert(file).second) {
+		// During a bulk load (remote GUI first sync) the caller defers the display: showing
+		// and above all re-sorting the list on every one of thousands of files is O(n^2)
+		// and freezes the GUI (issue #414). ShowFileList() shows and sorts the whole list
+		// once afterwards.
+		if (deferView) {
+			return;
+		}
 
-		m_ListItems.insert( ListItemsPair( file, newitem ) );
-
-		// Check if the new file is visible in the current category
-		if ( file->CheckShowItemInGivenCat( m_category ) ) {
-			ShowFile( file, true );
+		if (IsVisibleInCat(file, m_category)) {
+			ShowFile(file, true);
 			if (file->IsCompleted()) {
 				CastByID(ID_BTNCLRCOMPL, GetParent(), wxButton)->Enable(true);
 			}
-			SortList();
-		}
-	}
-}
-
-void CDownloadListCtrl::RemoveFile( CPartFile* file )
-{
-	wxASSERT( file );
-
-	// Ensure that any list-entries are removed
-	ShowFile( file, false );
-
-	// Find the associated list-item
-	ListItems::iterator it = m_ListItems.find( file );
-
-	if ( it != m_ListItems.end() ) {
-		delete it->second;
-
-		m_ListItems.erase( it );
-	}
-}
-
-
-void CDownloadListCtrl::UpdateItem(const void* toupdate)
-{
-	// Retrieve all entries matching the source
-	ListIteratorPair rangeIt = m_ListItems.equal_range( toupdate );
-
-	// Visible lines, default to all because not all platforms
-	// support the GetVisibleLines function
-	long first = 0, last = GetItemCount();
-
-	// Get visible lines if we need them
-	if ( rangeIt.first != rangeIt.second ) {
-		GetVisibleLines( &first, &last );
-	}
-
-	for ( ListItems::iterator it = rangeIt.first; it != rangeIt.second; ++it ) {
-		FileCtrlItem_Struct* item = it->second;
-
-		long index = FindItem( -1, reinterpret_cast<wxUIntPtr>(item) );
-
-		// Determine if the file should be shown in the current category
-
-		CPartFile* file = item->GetFile();
-
-		bool show = file->CheckShowItemInGivenCat( m_category );
-
-		if ( index > -1 ) {
-			if ( show ) {
-				item->dwUpdated = 0;
-
-				// Only update visible lines
-				if ( index >= first && index <= last) {
-					RefreshItem( index );
-				}
-			} else {
-				// Item should no longer be shown in
-				// the current category
-				ShowFile( file, false );
-			}
-		} else if ( show ) {
-			// Item has been hidden but new status means
-			// that it should it should be shown in the
-			// current category
-			ShowFile( file, true );
-		}
-
-		if (file->IsCompleted() && show) {
-			CastByID(ID_BTNCLRCOMPL, GetParent(), wxButton)->Enable(true);
-		}
-	}
-}
-
-
-void CDownloadListCtrl::ShowFile( CPartFile* file, bool show )
-{
-	wxASSERT( file );
-
-	ListItems::iterator it = m_ListItems.find( file );
-
-	if ( it != m_ListItems.end() ) {
-		FileCtrlItem_Struct* item = it->second;
-
-		if ( show ) {
-			// Check if the file is already being displayed
-			long index = FindItem( -1, reinterpret_cast<wxUIntPtr>(item) );
-			if ( index == -1 ) {
-				long newitem = InsertItem( GetItemCount(), "" );
-
-				SetItemPtrData( newitem, reinterpret_cast<wxUIntPtr>(item) );
-
-				wxListItem myitem;
-				myitem.m_itemId = newitem;
-				myitem.SetBackgroundColour( GetBackgroundColour() );
-
-				SetItem(myitem);
-
-				RefreshItem( newitem );
-
-				ShowFilesCount( 1 );
-			}
-		} else {
-			// Try to find the file and remove it
-			long index = FindItem( -1, reinterpret_cast<wxUIntPtr>(item) );
-			if ( index > -1 ) {
-				DeleteItem( index );
-				ShowFilesCount( -1 );
+			// During a batch update (a reconnect resync, issue #444) the row is still
+			// appended, but the per-item sort is deferred to EndBatchUpdate()'s single
+			// SortList(), keeping a large add O(n log n).
+			if (!m_batchUpdate) {
+				SortList();
 			}
 		}
 	}
 }
 
-void CDownloadListCtrl::ChangeCategory( int newCategory )
+void CDownloadListCtrl::BeginBatchUpdate()
 {
+	// Coalesce a burst of AddFile()/UpdateItem() calls into a single repaint and suppress the
+	// per-item SortList; EndBatchUpdate() sorts once. Used when reconciling the list against a
+	// fresh snapshot after a reconnect (issue #444).
+	Freeze();
+	// Same reason as CSharedFilesCtrl::BeginBatchUpdate(): rows land unsorted and
+	// EndBatchUpdate() sorts once, while a live sort key makes macOS re-compare the whole list
+	// on every inserted row. See SuspendHeaderSort().
+	SuspendHeaderSort();
+	m_batchUpdate = true;
+}
+
+void CDownloadListCtrl::EndBatchUpdate(bool doSort)
+{
+	m_batchUpdate = false;
+	// A poll that only updated rows in place (no new files) leaves the sort
+	// order untouched, so skip the O(n log n) SortList entirely (issue #615).
+	if (doSort) {
+		SortList();
+	}
+	RestoreHeaderSort();
+	Thaw();
+}
+
+void CDownloadListCtrl::RebuildVisibleList()
+{
+	// Batch counterpart to AddFile()'s per-item path: drop the visible rows and re-append every
+	// model item that passes the current category + text filter, then sort once. Mirrors
+	// CSharedFilesCtrl::ShowFileList().
 	Freeze();
 
+	const std::vector<wxUIntPtr> selected = GetSelectedItemData();
+
+	ClearItemData();
+
 	bool hasCompletedDownloads = false;
+	int shown = 0;
+	uint64 totalSize = 0;
 
-	// remove all displayed files with a different cat and show the correct ones
-	for (ListItems::const_iterator it = m_ListItems.begin(); it != m_ListItems.end(); ++it) {
-
-		CPartFile* file =  it->second->GetFile();
-
-		bool curVisibility = file->CheckShowItemInGivenCat( m_category );
-		bool newVisibility = file->CheckShowItemInGivenCat( newCategory );
-
-		if (newVisibility && file->IsCompleted()) {
+	for (CPartFile *file : m_files) {
+		if (!IsVisibleInCat(file, m_category)) {
+			continue;
+		}
+		AppendItemData(reinterpret_cast<wxUIntPtr>(file));
+		++shown;
+		totalSize += file->GetFileSize();
+		if (file->IsCompleted()) {
 			hasCompletedDownloads = true;
 		}
-
-		// Check if the visibility of the file has changed. However, if the
-		// current category is the default (0) category, then we can't use
-		// curVisiblity to see if the visibility has changed but instead
-		// have to let ShowFile() check if the file is or isn't on the list.
-		if ( curVisibility != newVisibility || !newCategory ) {
-			ShowFile( file, newVisibility );
-		}
 	}
+
+	FinishBulkLoad();
+	SetSelectedItemData(selected);
 
 	CastByID(ID_BTNCLRCOMPL, GetParent(), wxButton)->Enable(hasCompletedDownloads);
+	SetFilesCount(shown);
+	SetTotalSize(totalSize);
 
 	Thaw();
-
-	m_category = newCategory;
 }
 
-
-uint8 CDownloadListCtrl::GetCategory() const
+void CDownloadListCtrl::ShowFileList()
 {
-	return m_category;
+	// Used after a deferred bulk load (remote GUI first sync), where the
+	// model is populated but no rows are shown yet.
+	RebuildVisibleList();
 }
 
-
-/**
- * Helper-function: This function is used to gather selected items.
- *
- * @param list A pointer to the list to gather items from.
- * @return A list containing the selected items.
- */
-static ItemList GetSelectedItems( CDownloadListCtrl* list)
+void CDownloadListCtrl::RemoveFile(CPartFile *file)
 {
-	ItemList results;
+	wxASSERT(file);
 
-	long index = list->GetNextItem( -1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED );
+	// Order matters: ShowFile() early-returns once `file` is no longer in m_files, so the erase
+	// has to come after it -- swapped, the row would stay in the model holding a pointer the
+	// caller is about to free.
+	ShowFile(file, false);
+	m_files.erase(file);
+	m_pendingUpdates.erase(file);
+}
 
-	while ( index > -1 ) {
-		FileCtrlItem_Struct* item = reinterpret_cast<FileCtrlItem_Struct*>(list->GetItemData( index ));
-		results.push_back( item );
-
-		index = list->GetNextItem( index, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED );
+void CDownloadListCtrl::DeferUpdateItem(const void *item)
+{
+	CPartFile *file = const_cast<CPartFile *>(static_cast<const CPartFile *>(item));
+	if (m_files.find(file) != m_files.end()) {
+		m_pendingUpdates.insert(file);
 	}
-
-	return results;
 }
 
-
-void CDownloadListCtrl::OnCancelFile(wxCommandEvent& WXUNUSED(event))
+void CDownloadListCtrl::RefreshLiveItems()
 {
-	ItemList files = ::GetSelectedItems(this);
-	for (ItemList::iterator it = files.begin(); it != files.end(); ) {
-		ItemList::iterator it1 = it++;
-		CPartFile* file = (*it1)->GetFile();
-		if (file) {
-			switch (file->GetStatus()) {
-				case PS_WAITING_FOR_HASH:
-				case PS_HASHING:
-				case PS_COMPLETING:
-				case PS_COMPLETE:
-					files.erase(it1);
-					break;
-			}
-		}
-	}
-	if (!files.empty()) {
-		wxString question;
-		if (files.size() == 1) {
-			question = _("Are you sure that you wish to delete the selected file?");
+	for (auto it = m_pendingUpdates.begin(); it != m_pendingUpdates.end();) {
+		CPartFile *file = *it;
+		UpdateItem(file);
+		// Keep active rows on this GUI cadence even if the next core notification
+		// falls just after the timer. Idle rows need no extra periodic repaint.
+		if (file->GetTransferingSrcCount() || file->GetDisplayDownloadRate()) {
+			++it;
 		} else {
-			question = _("Are you sure that you wish to delete the selected files?");
-		}
-		if (wxMessageBox( question, _("Cancel"), wxICON_QUESTION | wxYES_NO | wxNO_DEFAULT, this) == wxYES) {
-			for (ItemList::iterator it = files.begin(); it != files.end(); ++it) {
-				CPartFile* file = (*it)->GetFile();
-				if (file) {
-					CoreNotify_PartFile_Delete(file);
-				}
-			}
+			it = m_pendingUpdates.erase(it);
 		}
 	}
 }
 
+void CDownloadListCtrl::UpdateItem(const void *toupdate)
+{
+	CPartFile *file = const_cast<CPartFile *>(static_cast<const CPartFile *>(toupdate));
+	if (m_files.find(file) == m_files.end()) {
+		return;
+	}
 
-void CDownloadListCtrl::OnSetPriority( wxCommandEvent& event )
+	const wxUIntPtr data = reinterpret_cast<wxUIntPtr>(file);
+	const bool show = IsVisibleInCat(file, m_category);
+
+	if (HasItemData(data)) {
+		if (show) {
+			// Repaints the row and, if sorted by a live column, schedules the
+			// throttled+idle-gated re-sort.
+			RefreshItemData(data);
+		} else {
+			// No longer shown in the current category.
+			ShowFile(file, false);
+		}
+	} else if (show) {
+		// Was hidden, but its new status means it belongs in the current
+		// category now.
+		ShowFile(file, true);
+	}
+
+	if (file->IsCompleted() && show) {
+		CastByID(ID_BTNCLRCOMPL, GetParent(), wxButton)->Enable(true);
+	}
+}
+
+void CDownloadListCtrl::ShowFile(CPartFile *file, bool show)
+{
+	wxASSERT(file);
+	if (m_files.find(file) == m_files.end()) {
+		return;
+	}
+
+	const wxUIntPtr data = reinterpret_cast<wxUIntPtr>(file);
+	if (show) {
+		// Add the row unless it is already being displayed. Appended at the
+		// end (unsorted); the caller sorts once afterwards.
+		if (!HasItemData(data)) {
+			AppendItemDataNow(data);
+			ShowFilesCount(1);
+			SetTotalSize(m_shownSize + file->GetFileSize());
+		}
+	} else {
+		if (HasItemData(data)) {
+			RemoveItemData(data);
+			ShowFilesCount(-1);
+			SetTotalSize(m_shownSize - file->GetFileSize());
+		}
+	}
+}
+
+void CDownloadListCtrl::ChangeCategory(int newCategory)
+{
+	// Same one-pass rebuild as the text filter: hiding the rows of the old category
+	// individually paid an O(n) row-index rebuild per removal, so switching category on a large
+	// queue froze the GUI just like filtering did (issue #669).
+	m_category = newCategory;
+	RebuildVisibleList();
+}
+
+bool CDownloadListCtrl::IsVisibleInCat(CPartFile *file, int category) const
+{
+	return file->CheckShowItemInGivenCat(category) && MatchesFilter(file->GetFileName().GetPrintable());
+}
+
+void CDownloadListCtrl::RebuildFilteredView()
+{
+	// Filter hook from CMuleVirtualDataViewCtrl: m_files always holds every
+	// download, so the visible set is rebuilt from it in one pass.
+	RebuildVisibleList();
+}
+
+void CDownloadListCtrl::OnItemRightClicked(wxDataViewEvent &event)
+{
+	if (event.GetItem().IsOk()) {
+		wxDataViewItemArray selection;
+		GetSelections(selection);
+		if (selection.Index(event.GetItem()) == wxNOT_FOUND) {
+			UnselectAll();
+			Select(event.GetItem());
+		}
+	}
+
+	const std::vector<wxUIntPtr> selected = GetSelectedItemData();
+	if (selected.empty()) {
+		return;
+	}
+	// Bound re-checked by the handlers that use it (OnPreviewFile, OnShowInFolder): PopupMenu
+	// runs a nested event loop, so the queue can mutate while the menu is open.
+	m_menuItem = selected.front();
+	CPartFile *file = reinterpret_cast<CPartFile *>(m_menuItem);
+
+	delete m_menu;
+	m_menu = new wxMenu(_("Downloads"));
+
+	wxMenu *priomenu = new wxMenu();
+	priomenu->AppendCheckItem(MP_PRIOLOW, _("Low"));
+	priomenu->AppendCheckItem(MP_PRIONORMAL, _("Normal"));
+	priomenu->AppendCheckItem(MP_PRIOHIGH, _("High"));
+	priomenu->AppendCheckItem(MP_PRIOAUTO, _("Auto"));
+
+	m_menu->Append(MP_MENU_PRIO, _("Priority"), priomenu);
+	AppendMenuIcon(m_menu, MP_CANCEL, _("Cancel"), MenuIcon::Cancel);
+	AppendMenuIcon(m_menu, MP_STOP, _("&Stop"), MenuIcon::Stop);
+	AppendMenuIcon(m_menu, MP_PAUSE, _("&Pause"), MenuIcon::Pause);
+	AppendMenuIcon(m_menu, MP_RESUME, _("&Resume"), MenuIcon::Resume);
+	AppendMenuIcon(m_menu, MP_CLEARCOMPLETED, _("C&lear completed"), MenuIcon::ClearCompleted);
+	m_menu->Append(MP_DELETEFROMDISK, _("Delete file from &disk"));
+	m_menu->AppendSeparator();
+	wxMenu *extendedmenu = new wxMenu();
+	extendedmenu->Append(MP_SWAP_A4AF_TO_THIS, _("Swap every A4AF to this file now"));
+	extendedmenu->AppendCheckItem(MP_SWAP_A4AF_TO_THIS_AUTO, _("Swap every A4AF to this file (Auto)"));
+	extendedmenu->AppendSeparator();
+	extendedmenu->Append(MP_SWAP_A4AF_TO_ANY_OTHER, _("Swap every A4AF to any other file now"));
+	m_menu->Append(MP_MENU_EXTD, _("Extended Options"), extendedmenu);
+	m_menu->AppendSeparator();
+
+	AppendMenuIcon(m_menu, MP_VIEW, _("Preview"), MenuIcon::Preview);
+	AppendMenuIcon(m_menu, MP_SHOWINFOLDER, _("Show in file manager"), MenuIcon::Folder);
+	AppendMenuIcon(m_menu, MP_METINFO, _("Show file &details"), MenuIcon::Info);
+	AppendMenuIcon(m_menu, MP_VIEWFILECOMMENTS, _("Show all comments"), MenuIcon::Comments);
+	AppendMenuIcon(m_menu, MP_CMT, CCommentDialog::MenuLabel(*file), MenuIcon::Comments);
+	m_menu->Enable(MP_CMT, selected.size() == 1 && CCommentDialog::CanEdit(*file));
+	m_menu->AppendSeparator();
+	AppendMenuIcon(m_menu, MP_GETMAGNETLINK, _("Copy magnet URI to clipboard"), MenuIcon::Link);
+	AppendMenuIcon(m_menu, MP_GETED2KLINK, _("Copy eD2k &link to clipboard"), MenuIcon::Link);
+	m_menu->Append(MP_WS, _("Copy feedback to clipboard"));
+	m_menu->AppendSeparator();
+
+	// Same entry the search list offers, on the same gate: a partfile's hash is the completed
+	// file's and is known from the link, so the lookup works before a single byte has arrived.
+	// Hidden rather than greyed when no stats server is configured, because an empty preference
+	// means the feature is off rather than unavailable for this row.
+	const wxString &statsServer = thePrefs::GetStatsServerName();
+	if (!statsServer.IsEmpty()) {
+		m_menu->Append(MP_RAZORSTATS, CFormat(_("Get %s for this file")) % statsServer);
+		m_menu->AppendSeparator();
+	}
+
+	wxMenu *cats = new wxMenu(_("Category"));
+	if (theApp->glob_prefs->GetCatCount() > 1) {
+		for (uint32 i = 0; i < theApp->glob_prefs->GetCatCount(); i++) {
+			if (i == 0) {
+				cats->Append(MP_ASSIGNCAT, _("unassign"));
+			} else {
+				cats->Append(MP_ASSIGNCAT + static_cast<int>(i),
+					theApp->glob_prefs->GetCategory(i)->title);
+			}
+		}
+	}
+	m_menu->Append(MP_MENU_CATS, _("Assign to category"), cats);
+	m_menu->Enable(MP_MENU_CATS, (theApp->glob_prefs->GetCatCount() > 1));
+
+	bool canStop;
+	bool canPause;
+	bool canCancel;
+	bool fileResumable;
+	if (file->GetStatus(true) != PS_ALLOCATING) {
+		const uint8_t fileStatus = file->GetStatus();
+		canStop = (fileStatus != PS_ERROR) && (fileStatus != PS_COMPLETE) &&
+			  (file->IsStopped() != true);
+		canPause = (file->GetStatus() != PS_PAUSED) && canStop;
+		fileResumable = (fileStatus == PS_PAUSED) || (fileStatus == PS_ERROR) ||
+				(fileStatus == PS_INSUFFICIENT);
+		canCancel = fileStatus != PS_COMPLETE;
+	} else {
+		canStop = canPause = canCancel = fileResumable = false;
+	}
+
+	m_menu->Enable(MP_CANCEL, canCancel);
+	m_menu->Enable(MP_PAUSE, canPause);
+	m_menu->Enable(MP_STOP, canStop);
+	m_menu->Enable(MP_RESUME, fileResumable);
+	m_menu->Enable(MP_CLEARCOMPLETED, CastByID(ID_BTNCLRCOMPL, GetParent(), wxButton)->IsEnabled());
+	m_menu->Enable(
+		MP_DELETEFROMDISK, file->IsCompleted() && theApp->sharedfiles->CanDeleteFileFromDisk());
+
+	wxString view;
+	if (file->IsPartFile()) {
+		view = CFormat("%s [%s]") % _("Preview") % file->GetPartMetFileName().RemoveExt();
+	} else {
+		view = _("&Open the file");
+	}
+	m_menu->SetLabel(MP_VIEW, view);
+	const bool previewable = file->IsPartFile() ? file->PreviewAvailable() : true;
+	bool canOpen = false;
+	bool canReveal = false;
+	FileLaunch::GetAvailability(file, canOpen, canReveal);
+	m_menu->Enable(MP_VIEW, previewable && canOpen);
+	m_menu->Enable(MP_SHOWINFOLDER, canReveal);
+
+	FileRatingList ratingList;
+	file->GetShownRatingAndComments(ratingList);
+	// Enable when there are source comments to show, or when Kad is connected so the dialog's
+	// "Get from Kad" lookup can retrieve community notes (#434) even for a file that has no
+	// per-source comments yet.
+	m_menu->Enable(MP_VIEWFILECOMMENTS, !ratingList.empty() || theApp->IsConnectedKad());
+
+	m_menu->Check(MP_SWAP_A4AF_TO_THIS_AUTO, file->IsA4AFAuto());
+
+	int priority = file->IsAutoDownPriority() ? PR_AUTO : file->GetDownPriority();
+	priomenu->Check(MP_PRIOHIGH, priority == PR_HIGH);
+	priomenu->Check(MP_PRIONORMAL, priority == PR_NORMAL);
+	priomenu->Check(MP_PRIOLOW, priority == PR_LOW);
+	priomenu->Check(MP_PRIOAUTO, priority == PR_AUTO);
+
+	m_menu->Enable(MP_MENU_EXTD, canPause);
+
+	PopupMenu(m_menu, event.GetPosition());
+
+	delete m_menu;
+	m_menu = nullptr;
+}
+
+void CDownloadListCtrl::OnCancelFile(wxCommandEvent &WXUNUSED(event))
+{
+	std::vector<CDownloadTarget> files;
+	for (wxUIntPtr data : GetSelectedItemData()) {
+		const CPartFile *file = reinterpret_cast<CPartFile *>(data);
+		if (CanCancelDownload(file->GetStatus())) {
+			files.push_back(MuleNotify::Download_Target(file));
+		}
+	}
+	if (files.empty()) {
+		return;
+	}
+
+	const wxString question =
+		files.size() == 1 ? wxString(_("Are you sure that you wish to delete the selected file?"))
+				  : wxString(_("Are you sure that you wish to delete the selected files?"));
+	if (wxMessageBox(question, _("Cancel"), wxICON_QUESTION | wxYES_NO | wxNO_DEFAULT, this) == wxYES) {
+		for (const CDownloadTarget &target : files) {
+			MuleNotify::DoNotify(&MuleNotify::Download_Execute, target, DownloadCommand::Cancel);
+		}
+	}
+}
+
+void CDownloadListCtrl::OnDeleteFromDisk(wxCommandEvent &WXUNUSED(event))
+{
+	// Finished rows only: an in-progress part file is cancelled with Cancel, which also
+	// removes its bytes. A completed row has no Cancel, so deleting from disk goes here.
+	std::vector<CKnownFile *> files;
+	for (wxUIntPtr data : GetSelectedItemData()) {
+		CPartFile *file = reinterpret_cast<CPartFile *>(data);
+		if (file->IsCompleted()) {
+			files.push_back(file);
+		}
+	}
+	MuleNotify::CompletedFiles_DeleteFromDisk(files, this);
+}
+
+void CDownloadListCtrl::OnSetPriority(wxCommandEvent &event)
 {
 	int priority = 0;
-	switch ( event.GetId() ) {
-		case MP_PRIOLOW:	priority = PR_LOW;	break;
-		case MP_PRIONORMAL:	priority = PR_NORMAL;	break;
-		case MP_PRIOHIGH:	priority = PR_HIGH;	break;
-		case MP_PRIOAUTO:	priority = PR_AUTO;	break;
-		default:
-			wxFAIL;
+	switch (event.GetId()) {
+	case MP_PRIOLOW:
+		priority = PR_LOW;
+		break;
+	case MP_PRIONORMAL:
+		priority = PR_NORMAL;
+		break;
+	case MP_PRIOHIGH:
+		priority = PR_HIGH;
+		break;
+	case MP_PRIOAUTO:
+		priority = PR_AUTO;
+		break;
+	default:
+		wxFAIL;
 	}
 
-	ItemList files = ::GetSelectedItems( this );
-
-	for ( ItemList::iterator it = files.begin(); it != files.end(); ++it ) {
-		CPartFile* file = (*it)->GetFile();
-
-		if ( priority == PR_AUTO ) {
-			CoreNotify_PartFile_PrioAuto( file, true );
+	for (wxUIntPtr data : GetSelectedItemData()) {
+		CPartFile *file = reinterpret_cast<CPartFile *>(data);
+		if (priority == PR_AUTO) {
+			CoreNotify_PartFile_PrioAuto(file, true);
 		} else {
-			CoreNotify_PartFile_PrioAuto( file, false );
-
-			CoreNotify_PartFile_PrioSet( file, priority, true );
+			CoreNotify_PartFile_PrioAuto(file, false);
+			CoreNotify_PartFile_PrioSet(file, priority, true);
 		}
 	}
 }
 
-
-void CDownloadListCtrl::OnSwapSources( wxCommandEvent& event )
+void CDownloadListCtrl::OnSwapSources(wxCommandEvent &event)
 {
-	ItemList files = ::GetSelectedItems( this );
-
-	for ( ItemList::iterator it = files.begin(); it != files.end(); ++it ) {
-		CPartFile* file = (*it)->GetFile();
-
-		switch ( event.GetId() ) {
-			case MP_SWAP_A4AF_TO_THIS:
-				CoreNotify_PartFile_Swap_A4AF( file );
-				break;
-
-			case MP_SWAP_A4AF_TO_THIS_AUTO:
-				CoreNotify_PartFile_Swap_A4AF_Auto( file );
-				break;
-
-			case MP_SWAP_A4AF_TO_ANY_OTHER:
-				CoreNotify_PartFile_Swap_A4AF_Others( file );
-				break;
+	for (wxUIntPtr data : GetSelectedItemData()) {
+		CPartFile *file = reinterpret_cast<CPartFile *>(data);
+		switch (event.GetId()) {
+		case MP_SWAP_A4AF_TO_THIS:
+			CoreNotify_PartFile_Swap_A4AF(file);
+			break;
+		case MP_SWAP_A4AF_TO_THIS_AUTO:
+			CoreNotify_PartFile_Swap_A4AF_Auto(file);
+			break;
+		case MP_SWAP_A4AF_TO_ANY_OTHER:
+			CoreNotify_PartFile_Swap_A4AF_Others(file);
+			break;
 		}
 	}
 }
 
-
-void CDownloadListCtrl::OnSetCategory( wxCommandEvent& event )
+void CDownloadListCtrl::OnSetCategory(wxCommandEvent &event)
 {
-	ItemList files = ::GetSelectedItems( this );
-
-	for ( ItemList::iterator it = files.begin(); it != files.end(); ++it ) {
-		CoreNotify_PartFile_SetCat( (*it)->GetFile(), event.GetId() - MP_ASSIGNCAT );
-		ShowFile((*it)->GetFile(), false);
+	for (wxUIntPtr data : GetSelectedItemData()) {
+		CPartFile *file = reinterpret_cast<CPartFile *>(data);
+		CoreNotify_PartFile_SetCat(file, event.GetId() - MP_ASSIGNCAT);
+		ShowFile(file, false);
 	}
-	wxListEvent ev;
-	OnItemSelectionChanged(ev);	// clear clients that may have been shown
+	DoItemSelectionChanged(); // clear clients that may have been shown
 
-	ChangeCategory( m_category );	// This only updates the visibility of the clear completed button
+	ChangeCategory(m_category); // This only updates the visibility of the clear completed button
 	theApp->amuledlg->m_transferwnd->UpdateCatTabTitles();
 }
 
-
-void CDownloadListCtrl::OnSetStatus( wxCommandEvent& event )
+void CDownloadListCtrl::OnSetStatus(wxCommandEvent &event)
 {
-	ItemList files = ::GetSelectedItems( this );
+	DownloadCommand command;
+	switch (event.GetId()) {
+	case MP_PAUSE:
+		command = DownloadCommand::Pause;
+		break;
+	case MP_RESUME:
+		command = DownloadCommand::Resume;
+		break;
+	case MP_STOP:
+		command = DownloadCommand::Stop;
+		break;
+	default:
+		return;
+	}
 
-	for ( ItemList::iterator it = files.begin(); it != files.end(); ++it ) {
-		CPartFile* file = (*it)->GetFile();
-
-		switch ( event.GetId() ) {
-			case MP_PAUSE:
-				CoreNotify_PartFile_Pause( file );
-				break;
-
-			case MP_RESUME:
-				CoreNotify_PartFile_Resume( file );
-				break;
-
-			case MP_STOP:
-				CoreNotify_PartFile_Stop( file );
-				break;
-		}
+	std::vector<CDownloadTarget> selected;
+	for (wxUIntPtr data : GetSelectedItemData()) {
+		const CPartFile *file = reinterpret_cast<CPartFile *>(data);
+		selected.push_back(MuleNotify::Download_Target(file));
+	}
+	for (const CDownloadTarget &target : selected) {
+		MuleNotify::DoNotify(&MuleNotify::Download_Execute, target, command);
 	}
 }
 
-
-void CDownloadListCtrl::OnClearCompleted( wxCommandEvent& WXUNUSED(event) )
+void CDownloadListCtrl::OnClearCompleted(wxCommandEvent &WXUNUSED(event))
 {
 	ClearCompleted();
 }
 
-
-void CDownloadListCtrl::OnGetLink(wxCommandEvent& event)
+void CDownloadListCtrl::OnGetLink(wxCommandEvent &event)
 {
-	ItemList files = ::GetSelectedItems( this );
-
 	wxString URIs;
-
-	for ( ItemList::iterator it = files.begin(); it != files.end(); ++it ) {
-		CPartFile* file = (*it)->GetFile();
-
-		if ( event.GetId() == MP_GETED2KLINK ) {
-			URIs += theApp->CreateED2kLink( file ) + "\n";
+	for (wxUIntPtr data : GetSelectedItemData()) {
+		CPartFile *file = reinterpret_cast<CPartFile *>(data);
+		if (event.GetId() == MP_GETED2KLINK) {
+			URIs += theApp->CreateED2kLink(file) + "\n";
 		} else {
-			URIs += theApp->CreateMagnetLink( file ) + "\n";
+			URIs += theApp->CreateMagnetLink(file) + "\n";
 		}
 	}
-
-	if ( !URIs.IsEmpty() ) {
-		theApp->CopyTextToClipboard( URIs.BeforeLast('\n') );
+	if (!URIs.IsEmpty()) {
+		theApp->CopyTextToClipboard(URIs.BeforeLast('\n'));
 	}
 }
 
-
-void CDownloadListCtrl::OnGetFeedback(wxCommandEvent& WXUNUSED(event))
+void CDownloadListCtrl::OnGetFeedback(wxCommandEvent &WXUNUSED(event))
 {
 	wxString feed;
-	ItemList files = ::GetSelectedItems( this );
-
-	for (ItemList::iterator it = files.begin(); it != files.end(); ++it) {
+	for (wxUIntPtr data : GetSelectedItemData()) {
 		if (feed.IsEmpty()) {
-			feed = CFormat(_("Feedback from: %s (%s)\n\n")) % thePrefs::GetUserNick() % theApp->GetFullMuleVersion();
+			feed = CFormat(_("Feedback from: %s (%s)\n\n")) % thePrefs::GetUserNick() %
+			       theApp->GetFullMuleVersion();
 		} else {
 			feed += "\n";
 		}
-		feed += (*it)->GetFile()->GetFeedback();
+		feed += reinterpret_cast<CPartFile *>(data)->GetFeedback();
 	}
-
 	if (!feed.IsEmpty()) {
 		theApp->CopyTextToClipboard(feed);
 	}
 }
 
-void CDownloadListCtrl::OnViewFileInfo( wxCommandEvent& WXUNUSED(event) )
+void CDownloadListCtrl::OnViewFileInfo(wxCommandEvent &WXUNUSED(event))
 {
-	long index = GetNextItem( -1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED );
-
-	if (index >= 0) {
-		ShowFileDetailDialog(index);
+	const std::vector<wxUIntPtr> selected = GetSelectedItemData();
+	if (!selected.empty()) {
+		ShowFileDetailDialog(RowOfData(selected.front()));
 	}
 }
 
-
-void CDownloadListCtrl::OnViewFileComments( wxCommandEvent& WXUNUSED(event) )
+void CDownloadListCtrl::OnViewFileComments(wxCommandEvent &WXUNUSED(event))
 {
-	ItemList files = ::GetSelectedItems( this );
-
-	if ( files.size() == 1 ) {
-		CCommentDialogLst dialog( this, files.front()->GetFile() );
+	const std::vector<wxUIntPtr> selected = GetSelectedItemData();
+	if (selected.size() == 1) {
+		CCommentDialogLst dialog(this, reinterpret_cast<CPartFile *>(selected.front()));
 		dialog.ShowModal();
 	}
 }
 
-void CDownloadListCtrl::OnPreviewFile( wxCommandEvent& WXUNUSED(event) )
+void CDownloadListCtrl::OnEditComment(wxCommandEvent &WXUNUSED(event))
 {
-	ItemList files = ::GetSelectedItems( this );
-
-	if ( files.size() == 1 ) {
-		PreviewFile(files.front()->GetFile());
+	// PopupMenu runs a nested event loop: the clicked file may have been removed.
+	if (m_menuItem != 0 && HasItemData(m_menuItem)) {
+		CPartFile *file = reinterpret_cast<CPartFile *>(m_menuItem);
+		if (CCommentDialog::CanEdit(*file)) {
+			CCommentDialog dialog(this, file);
+			dialog.ShowModal();
+		}
 	}
 }
 
-void CDownloadListCtrl::OnItemActivated( wxListEvent& evt )
+void CDownloadListCtrl::OnPreviewFile(wxCommandEvent &WXUNUSED(event))
 {
-	CPartFile* file = reinterpret_cast<FileCtrlItem_Struct*>(GetItemData(evt.GetIndex()))->GetFile();
-
-	if ((!file->IsPartFile() || file->IsCompleted()) && file->PreviewAvailable()) {
-		PreviewFile( file );
+	// The clicked row, matching how the menu's enabled state was decided. With several rows
+	// selected, taking the selection would act on a different file than the one the entry was
+	// enabled for.
+	if (m_menuItem != 0 && HasItemData(m_menuItem)) {
+		FileLaunch::Open(reinterpret_cast<CPartFile *>(m_menuItem), this);
 	}
 }
 
-void CDownloadListCtrl::OnItemSelectionChanged( wxListEvent& )
+void CDownloadListCtrl::OnShowInFolder(wxCommandEvent &WXUNUSED(event))
 {
-	if (!m_ItemSelectionChangePending && !IsSorting()) {
+	if (m_menuItem != 0 && HasItemData(m_menuItem)) {
+		FileLaunch::Reveal(reinterpret_cast<CPartFile *>(m_menuItem), this);
+	}
+}
+
+void CDownloadListCtrl::OnRazorStatsCheck(wxCommandEvent &WXUNUSED(event))
+{
+	// Bound re-checked for the reason OnShowInFolder gives: PopupMenu runs a
+	// nested event loop, so the queue can drop the row while the menu is open.
+	if (m_menuItem == 0 || !HasItemData(m_menuItem)) {
+		return;
+	}
+	const CPartFile *file = reinterpret_cast<CPartFile *>(m_menuItem);
+	theApp->amuledlg->LaunchUrl(thePrefs::GetStatsServerURL() + file->GetFileHash().Encode());
+}
+
+void CDownloadListCtrl::OnItemActivated(wxDataViewEvent &event)
+{
+	if (!event.GetItem().IsOk()) {
+		return;
+	}
+	// Read the row straight off the event, the way GetRowLabel() does: touching the selection
+	// here would discard the user's multi-selection, and firing EVT_DATAVIEW_SELECTION_CHANGED
+	// as a side effect of a double-click would rebuild the sources panel for no reason.
+	const long row = GetModelRow(event.GetItem());
+	const wxUIntPtr data = ItemAt(row);
+	if (!data) {
+		return;
+	}
+	CPartFile *file = reinterpret_cast<CPartFile *>(data);
+
+	// One rule for both file tables: a completed file opens whatever type it is, an unfinished
+	// one only once enough of the media is on disk to play -- the classic eMule gesture, and
+	// what the menu's Preview entry offers for the same row. IsPartFile() is exactly "not
+	// complete", so finishing a download never narrows what a double-click does to it. Anything
+	// else opens the file-details modal.
+	if ((!file->IsPartFile() || file->PreviewAvailable()) && FileLaunch::CanOpen(file)) {
+		FileLaunch::Open(file, this);
+	} else {
+		ShowFileDetailDialog(row);
+	}
+}
+
+void CDownloadListCtrl::OnSelectionChanged(wxDataViewEvent &WXUNUSED(event))
+{
+	if (!m_ItemSelectionChangePending) {
 		m_ItemSelectionChangePending = true;
 		Notify_DownloadCtrlDoItemSelectionChanged();
 	}
@@ -611,653 +869,379 @@ void CDownloadListCtrl::DoItemSelectionChanged()
 {
 	m_ItemSelectionChangePending = false;
 	CKnownFileVector filesVector;
-	filesVector.reserve(GetSelectedItemCount());
-
-	long index = GetNextItem( -1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED );
-
-	while ( index > -1 ) {
-		CPartFile* file = reinterpret_cast<FileCtrlItem_Struct*>(GetItemData( index ))->GetFile();
+	const std::vector<wxUIntPtr> selected = GetSelectedItemData();
+	filesVector.reserve(selected.size());
+	for (wxUIntPtr data : selected) {
+		CPartFile *file = reinterpret_cast<CPartFile *>(data);
 		if (file->IsPartFile()) {
 			filesVector.push_back(file);
 		}
-		index = GetNextItem( index, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED );
 	}
-
 	std::sort(filesVector.begin(), filesVector.end());
 	theApp->amuledlg->m_transferwnd->clientlistctrl->ShowSources(filesVector);
 }
 
-void CDownloadListCtrl::OnMouseRightClick(wxListEvent& evt)
+void CDownloadListCtrl::ShowFileDetailDialog(long row)
 {
-	long index = CheckSelection(evt);
-	if (index < 0) {
+	if (row < 0) {
 		return;
 	}
-
-	delete m_menu;
-	m_menu = NULL;
-
-	FileCtrlItem_Struct* item = reinterpret_cast<FileCtrlItem_Struct*>(GetItemData( index ));
-	m_menu = new wxMenu( _("Downloads") );
-
-	wxMenu* priomenu = new wxMenu();
-	priomenu->AppendCheckItem(MP_PRIOLOW, _("Low"));
-	priomenu->AppendCheckItem(MP_PRIONORMAL, _("Normal"));
-	priomenu->AppendCheckItem(MP_PRIOHIGH, _("High"));
-	priomenu->AppendCheckItem(MP_PRIOAUTO, _("Auto"));
-
-	m_menu->Append(MP_MENU_PRIO, _("Priority"), priomenu);
-	m_menu->Append(MP_CANCEL, _("Cancel"));
-	m_menu->Append(MP_STOP, _("&Stop"));
-	m_menu->Append(MP_PAUSE, _("&Pause"));
-	m_menu->Append(MP_RESUME, _("&Resume"));
-	m_menu->Append(MP_CLEARCOMPLETED, _("C&lear completed"));
-	//-----------------------------------------------------
-	m_menu->AppendSeparator();
-	//-----------------------------------------------------
-	wxMenu* extendedmenu = new wxMenu();
-	extendedmenu->Append(MP_SWAP_A4AF_TO_THIS,
-		_("Swap every A4AF to this file now"));
-	extendedmenu->AppendCheckItem(MP_SWAP_A4AF_TO_THIS_AUTO,
-		_("Swap every A4AF to this file (Auto)"));
-	//-----------------------------------------------------
-	extendedmenu->AppendSeparator();
-	//-----------------------------------------------------
-	extendedmenu->Append(MP_SWAP_A4AF_TO_ANY_OTHER,
-		_("Swap every A4AF to any other file now"));
-	//-----------------------------------------------------
-	m_menu->Append(MP_MENU_EXTD,
-		_("Extended Options"), extendedmenu);
-	//-----------------------------------------------------
-	m_menu->AppendSeparator();
-	//-----------------------------------------------------
-
-	m_menu->Append(MP_VIEW, _("Preview"));
-	m_menu->Append(MP_METINFO, _("Show file &details"));
-	m_menu->Append(MP_VIEWFILECOMMENTS, _("Show all comments"));
-	//-----------------------------------------------------
-	m_menu->AppendSeparator();
-	//-----------------------------------------------------
-	m_menu->Append(MP_GETMAGNETLINK,
-		_("Copy magnet URI to clipboard"));
-	m_menu->Append(MP_GETED2KLINK,
-		_("Copy eD2k &link to clipboard"));
-	m_menu->Append(MP_WS,
-		_("Copy feedback to clipboard"));
-	//-----------------------------------------------------
-	m_menu->AppendSeparator();
-	//-----------------------------------------------------
-	// Add dynamic entries
-	wxMenu *cats = new wxMenu(_("Category"));
-	if (theApp->glob_prefs->GetCatCount() > 1) {
-		for (uint32 i = 0; i < theApp->glob_prefs->GetCatCount(); i++) {
-			if ( i == 0 ) {
-				cats->Append( MP_ASSIGNCAT, _("unassign") );
-			} else {
-				cats->Append( MP_ASSIGNCAT + i,
-					theApp->glob_prefs->GetCategory(i)->title );
-			}
-		}
-	}
-	m_menu->Append(MP_MENU_CATS, _("Assign to category"), cats);
-	m_menu->Enable(MP_MENU_CATS, (theApp->glob_prefs->GetCatCount() > 1) );
-
-	CPartFile* file = item->GetFile();
-	// then set state
-	bool canStop;
-	bool canPause;
-	bool canCancel;
-	bool fileResumable;
-	if (file->GetStatus(true) != PS_ALLOCATING) {
-		const uint8_t fileStatus = file->GetStatus();
-		canStop =
-			(fileStatus != PS_ERROR) &&
-			(fileStatus != PS_COMPLETE) &&
-			(file->IsStopped() != true);
-		canPause = (file->GetStatus() != PS_PAUSED) && canStop;
-		fileResumable =
-			(fileStatus == PS_PAUSED) ||
-			(fileStatus == PS_ERROR) ||
-			(fileStatus == PS_INSUFFICIENT);
-		canCancel = fileStatus != PS_COMPLETE;
-	} else {
-		canStop = canPause = canCancel = fileResumable = false;
-	}
-
-	m_menu->Enable( MP_CANCEL,	canCancel );
-	m_menu->Enable( MP_PAUSE,	canPause );
-	m_menu->Enable( MP_STOP,	canStop );
-	m_menu->Enable( MP_RESUME,	fileResumable );
-	m_menu->Enable( MP_CLEARCOMPLETED, CastByID(ID_BTNCLRCOMPL, GetParent(), wxButton)->IsEnabled() );
-
-	wxString view;
-	if (file->IsPartFile() && !file->IsCompleted()) {
-		view = CFormat("%s [%s]") % _("Preview")
-				% file->GetPartMetFileName().RemoveExt();
-	} else if ( file->IsCompleted() ) {
-		view = _("&Open the file");
-	}
-	m_menu->SetLabel(MP_VIEW, view);
-	m_menu->Enable(MP_VIEW, file->PreviewAvailable());
-
-	FileRatingList ratingList;
-	item->GetFile()->GetRatingAndComments(ratingList);
-	m_menu->Enable(MP_VIEWFILECOMMENTS, !ratingList.empty());
-
-	m_menu->Check(  MP_SWAP_A4AF_TO_THIS_AUTO,	file->IsA4AFAuto() );
-
-	int priority = file->IsAutoDownPriority() ? PR_AUTO : file->GetDownPriority();
-
-	priomenu->Check( MP_PRIOHIGH,	priority == PR_HIGH );
-	priomenu->Check( MP_PRIONORMAL, priority == PR_NORMAL );
-	priomenu->Check( MP_PRIOLOW,	priority == PR_LOW );
-	priomenu->Check( MP_PRIOAUTO,	priority == PR_AUTO );
-
-	m_menu->Enable( MP_MENU_EXTD, canPause );
-
-	bool autosort = thePrefs::AutoSortDownload(false);
-	PopupMenu(m_menu, evt.GetPoint());
-	thePrefs::AutoSortDownload(autosort);
-
-	delete m_menu;
-	m_menu = NULL;
-}
-
-
-void CDownloadListCtrl::OnMouseMiddleClick(wxListEvent& evt)
-{
-	// Check if clicked item is selected. If not, unselect all and select it.
-	long index = CheckSelection(evt);
-	if (index >= 0) {
-		ShowFileDetailDialog(index);
-	}
-}
-
-
-void CDownloadListCtrl::ShowFileDetailDialog(long index)
-{
-	// Make list of part files in control
-	std::vector<CPartFile *> files;
-	int nrItems = GetItemCount();
+	// Make list of part files in control (CFileDetailDialog takes CKnownFile*;
+	// a CPartFile upcasts, and the dialog shows download rows from its state).
+	std::vector<CKnownFile *> files;
+	const long nrItems = ItemDataCount();
 	files.reserve(nrItems);
-	for (int i = 0; i < nrItems; i++) {
-		files.push_back(reinterpret_cast<FileCtrlItem_Struct*>(GetItemData(i))->GetFile());
+	for (long i = 0; i < nrItems; i++) {
+		files.push_back(reinterpret_cast<CPartFile *>(ItemAt(i)));
 	}
-	bool autosort = thePrefs::AutoSortDownload(false);
-	CFileDetailDialog(this, files, index).ShowModal();
-	thePrefs::AutoSortDownload(autosort);
+	CFileDetailDialog(this, files, static_cast<int>(row)).ShowModal();
 }
 
-
-void CDownloadListCtrl::OnKeyPressed( wxKeyEvent& event )
+bool CDownloadListCtrl::OnListKey(wxKeyEvent &event)
 {
-	// Check if delete was pressed
 	switch (event.GetKeyCode()) {
-		case WXK_NUMPAD_DELETE:
-		case WXK_DELETE: {
-			wxCommandEvent evt;
-			OnCancelFile( evt );
-			break;
-		}
-		case WXK_F2: {
-			ItemList files = ::GetSelectedItems( this );
-			if (files.size() == 1) {
-				CPartFile* file = files.front()->GetFile();
-
-				// Currently renaming of completed files causes problem with kad
-				if (file->IsPartFile()) {
-					wxString strNewName = ::wxGetTextFromUser(
-						_("Enter new name for this file:"),
-						_("File rename"), file->GetFileName().GetPrintable());
-
-					CPath newName = CPath(strNewName);
-					if (newName.IsOk() && (newName != file->GetFileName())) {
-						theApp->sharedfiles->RenameFile(file, newName);
-					}
+	case WXK_NUMPAD_DELETE:
+	case WXK_DELETE: {
+		wxCommandEvent evt;
+		OnCancelFile(evt);
+		return true;
+	}
+	case WXK_F2: {
+		const std::vector<wxUIntPtr> selected = GetSelectedItemData();
+		if (selected.size() == 1) {
+			CPartFile *file = reinterpret_cast<CPartFile *>(selected.front());
+			// Currently renaming of completed files causes problem with kad
+			if (file->IsPartFile()) {
+				const uint32 fileID = file->ECID();
+				wxString newName;
+				if (!AskNewFileName(this, file->GetFileName(), newName)) {
+					return true;
+				}
+				// Downloads can disappear or complete while the modal event loop runs.
+				if (!HasItemData(selected.front()) || file->ECID() != fileID ||
+					!file->IsPartFile()) {
+					return true;
+				}
+				CPath newPath(newName);
+				if (newPath.IsOk() && (newPath != file->GetFileName())) {
+					theApp->sharedfiles->RenameFile(file, newPath);
 				}
 			}
-			break;
 		}
-		default:
-			event.Skip();
+		return true;
+	}
+	default:
+		return false;
 	}
 }
 
-
-void CDownloadListCtrl::OnDrawItem(
-	int item, wxDC* dc, const wxRect& rect, const wxRect& rectHL, bool highlighted)
+wxString CDownloadListCtrl::GetItemColumnText(wxUIntPtr item, unsigned column) const
 {
-	// Don't do any drawing if there's nobody to see it.
-	if ( !theApp->amuledlg->IsDialogVisible( CamuleDlg::DT_TRANSFER_WND ) ) {
+	CPartFile *file = reinterpret_cast<CPartFile *>(item);
+
+	switch (column) {
+	case COLUMN_DL_PART:
+		if (file->IsPartFile() && !file->IsCompleted()) {
+			return CFormat("%03d") % file->GetPartMetNumber();
+		}
+		return wxEmptyString;
+
+	case COLUMN_DL_NAME:
+		// The rating/comment smiley is the icon on this column, not part of
+		// the text -- see GetItemIcon().
+		return file->GetFileName().GetPrintable();
+
+	case COLUMN_DL_SIZE:
+		return CastItoXBytes(file->GetFileSize());
+
+	case COLUMN_DL_TRANSFERRED:
+		return CastItoXBytes(file->GetTransferred());
+
+	case COLUMN_DL_COMPLETED:
+		return CastItoXBytes(file->GetCompletedSize());
+
+	case COLUMN_DL_SPEED:
+		if (file->GetTransferingSrcCount()) {
+			if (file->GetDisplayKBpsDown() >= 1024) {
+				return CFormat(_("%.1f MiB/s")) % (file->GetDisplayKBpsDown() / 1024.0);
+			}
+			return CFormat(_("%.1f KiB/s")) % file->GetDisplayKBpsDown();
+		}
+		return wxEmptyString;
+
+	case COLUMN_DL_SOURCES: {
+		const uint16 sc = file->GetSourceCount();
+		const uint16 ncsc = file->GetNotCurrentSourcesCount();
+		wxString text = ncsc ? CFormat("%i/%i") % (sc - ncsc) % sc : CFormat("%i") % sc;
+		if (file->GetSrcA4AFCount()) {
+			text += CFormat("+%i") % file->GetSrcA4AFCount();
+		}
+		if (file->GetTransferingSrcCount()) {
+			text += CFormat(" (%i)") % file->GetTransferingSrcCount();
+		}
+		return text;
+	}
+
+	case COLUMN_DL_PRIORITY:
+		return PriorityToStr(file->GetDownPriority(), file->IsAutoDownPriority());
+
+	case COLUMN_DL_STATUS:
+		return file->getPartfileStatus();
+
+	case COLUMN_DL_TIMEREMAINING: {
+		if ((file->GetStatus() != PS_COMPLETING) && file->IsPartFile()) {
+			const uint64 remainSize = file->GetFileSize() - file->GetCompletedSize();
+			const sint32 remainTime = file->getTimeRemaining();
+			wxString text =
+				(remainTime >= 0) ? CastSecondsToHM(remainTime) : wxString(_("Unknown"));
+			text += " (" + CastItoXBytes(remainSize) + ")";
+			return text;
+		}
+		return wxEmptyString;
+	}
+
+	case COLUMN_DL_LASTSEENCOMPLETE:
+		if (file->lastseencomplete) {
+			return FormatLocalDateTime(wxDateTime(file->lastseencomplete));
+		}
+		return _("Unknown");
+
+	case COLUMN_DL_LASTRECEPTION: {
+		const time_t lastReceived = file->GetLastChangeDatetime();
+		if (lastReceived) {
+			return FormatLocalDateTime(wxDateTime(lastReceived));
+		}
+		return _("Unknown");
+	}
+
+	default:
+		return wxEmptyString;
+	}
+}
+
+bool CDownloadListCtrl::GetItemIcon(wxUIntPtr item, unsigned column, wxBitmapBundle &icon) const
+{
+	if (column != COLUMN_DL_NAME) {
+		return false;
+	}
+	CPartFile *file = reinterpret_cast<CPartFile *>(item);
+	if (!file->HasRating() && !file->HasComment()) {
+		return false;
+	}
+	int image = Client_CommentOnly_Smiley;
+	if (file->HasRating()) {
+		image = Client_InvalidRating_Smiley + file->UserRating() - 1;
+	}
+	wxASSERT(image >= Client_InvalidRating_Smiley);
+	wxASSERT(image <= Client_CommentOnly_Smiley);
+	icon = theApp->amuledlg->m_clientImages.GetBundle(image);
+	return true;
+}
+
+bool CDownloadListCtrl::GetItemAttr(wxUIntPtr item, unsigned WXUNUSED(column), wxDataViewItemAttr &attr) const
+{
+	const CPartFile *file = reinterpret_cast<const CPartFile *>(item);
+
+	// Category 0 is "all"; a file in it has no category of its own to take a
+	// colour from, which is the test the pre-wxDataView code used too.
+	const uint8 cat = file->GetCategory();
+	if (!cat) {
+		return false;
+	}
+
+	// A category keeps colour 0 until the user picks one (Preferences writes "Color" as 0 for a
+	// new one), so 0 means unset rather than black. The old code painted those rows black,
+	// which predates the dark themes.
+	const uint32 colour = theApp->glob_prefs->GetCatColor(cat);
+	if (!colour) {
+		return false;
+	}
+
+	// Selected rows keep the system highlight colour: wx overrides a custom foreground while a
+	// row is selected, for the same readability reason the old OnDrawItem() skipped highlighted
+	// rows.
+	attr.SetColour(CMuleColour(colour));
+	return true;
+}
+
+void CDownloadListCtrl::GetItemBarFill(wxUIntPtr item, unsigned column, CBarFillSpec &out) const
+{
+	if (column != COLUMN_DL_PROGRESS || !thePrefs::ShowProgBar()) {
+		return;
+	}
+	CPartFile *file = reinterpret_cast<CPartFile *>(item);
+	if (file->GetFileSize() == 0) {
 		return;
 	}
 
-	FileCtrlItem_Struct* content = reinterpret_cast<FileCtrlItem_Struct *>(GetItemData(item));
+	std::vector<CBarFillSpan> spans;
+	const bool bFlat = thePrefs::UseFlatBar();
 
-	// Define text-color and background
-	// and the border of the drawn area
-	if (highlighted) {
-		CMuleColour colour;
-		if (GetFocus()) {
-			dc->SetBackground(m_hilightBrush);
-			colour = m_hilightBrush.GetColour();
+	if (file->IsCompleted() || file->GetStatus() == PS_COMPLETING) {
+		spans.push_back({ 0, file->GetFileSize() - 1, bFlat ? crFlatProgress : crProgress });
+		out = CBarFillSpec(item, file->GetFileSize(), std::move(spans));
+		return;
+	}
+
+	if (file->GetHashingProgress() > 0) {
+		uint64 left = file->GetHashingProgress() * PARTSIZE;
+		if (left < file->GetFileSize() - 1) {
+			spans.push_back(
+				{ left + 1, file->GetFileSize() - 1, bFlat ? crFlatPending : crPending });
 		} else {
-			dc->SetBackground(m_hilightUnfocusBrush);
-			colour = m_hilightUnfocusBrush.GetColour();
+			left = file->GetFileSize() - 1;
 		}
-		dc->SetTextForeground(wxSystemSettings::GetColour(wxSYS_COLOUR_HIGHLIGHTTEXT));
-		dc->SetPen( colour.Blend(65).GetPen() );
-	} else {
-		dc->SetBackground(*(wxTheBrushList->FindOrCreateBrush(wxSystemSettings::GetColour(wxSYS_COLOUR_LISTBOX), wxBRUSHSTYLE_SOLID)));
-		dc->SetTextForeground(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT));
-		dc->SetPen(*wxTRANSPARENT_PEN);
-	}
-	dc->SetBrush( dc->GetBackground() );
-
-	dc->DrawRectangle( rectHL.x, rectHL.y, rectHL.width, rectHL.height );
-
-	dc->SetPen(*wxTRANSPARENT_PEN);
-
-	if (!highlighted || !GetFocus() ) {
-		// If we have category, override textforeground with what category tells us.
-		CPartFile *file = content->GetFile();
-		if ( file->GetCategory() ) {
-			dc->SetTextForeground(CMuleColour(theApp->glob_prefs->GetCatColor(file->GetCategory())) );
-		}
+		spans.push_back({ 0, left, bFlat ? crFlatProgress : crProgress });
+		out = CBarFillSpec(item, file->GetFileSize(), std::move(spans));
+		return;
 	}
 
-	// Various constant values we use
-	const int iTextOffset = ( rect.GetHeight() - dc->GetCharHeight() ) / 2;
-	const int iOffset = 4;
+	const CGapList &gaplist = file->GetGapList();
+	uint64 lastGapEnd = 0;
+	for (CGapList::const_iterator it = gaplist.begin(); it != gaplist.end(); ++it) {
+		const uint64 start = it.start() / PARTSIZE;
+		if (it.start()) {
+			spans.push_back({ lastGapEnd + 1, it.start() - 1, bFlat ? crFlatHave : crHave });
+		}
+		lastGapEnd = it.end();
+		uint64 end = (it.end() / PARTSIZE) + 1;
+		if (end > file->GetPartCount()) {
+			end = file->GetPartCount();
+		}
 
-	wxRect cur_rec( iOffset, rect.y, 0, rect.height );
-	for (int i = 0; i < GetColumnCount(); i++) {
-		wxListItem listitem;
-		GetColumn(i, listitem);
-
-		if (listitem.GetWidth() > 2*iOffset) {
-			cur_rec.width = listitem.GetWidth() - 2*iOffset;
-
-			// Make a copy of the current rectangle so we can apply specific tweaks
-			wxRect target_rec = cur_rec;
-			if ( i == ColumnProgress ) {
-				// Double the offset to make room for the cirle-marker
-				target_rec.x += iOffset;
-				target_rec.width -= iOffset;
+		for (uint64 i = start; i < end; ++i) {
+			CMuleColour colour;
+			if (i < file->m_SrcpartFrequency.size() && file->m_SrcpartFrequency[i]) {
+				// The same fade the shared-files bar draws. This used to be a
+				// linear ramp of its own, saturating one source later and written
+				// into the green channel through a local called "blue" while the
+				// blue channel stayed at 255, so the same file read as differently
+				// shared depending on which list you looked at.
+				colour = ToMuleColour(
+					partbar::SourceAvailabilityColour(file->m_SrcpartFrequency[i]));
 			} else {
-				// will ensure that text is about in the middle ;)
-				target_rec.y += iTextOffset;
+				colour = crMissing;
 			}
-
-			// Draw the item
-			DrawFileItem(dc, i, target_rec, content);
+			if (file->IsStopped()) {
+				colour.Blend(50);
+			}
+			const uint64 gap_begin = (i == start ? it.start() : PARTSIZE * i);
+			const uint64 gap_end = (i == end - 1 ? it.end() : PARTSIZE * (i + 1) - 1);
+			spans.push_back({ gap_begin, gap_end, colour });
 		}
+	}
+	// Fill the last Have-part (between this gap and the last).
+	spans.push_back({ lastGapEnd + 1, file->GetFileSize() - 1, bFlat ? crFlatHave : crHave });
 
-		// Increment to the next column
-		cur_rec.x += listitem.GetWidth();
+	// Pending parts. Adjacent pending parts must be joined to avoid bright
+	// lines between them.
+	const CPartFile::CReqBlockPtrList requestedBlocks = file->GetRequestedBlockList();
+	uint64 lastStartOffset = 0;
+	uint64 lastEndOffset = 0;
+	CMuleColour pendingColour = bFlat ? crFlatPending : crPending;
+	if (file->IsStopped()) {
+		pendingColour.Blend(50);
+	}
+	for (const Requested_Block_Struct *block : requestedBlocks) {
+		if (block->StartOffset > lastEndOffset + 1) {
+			spans.push_back({ lastStartOffset, lastEndOffset, pendingColour });
+			lastStartOffset = block->StartOffset;
+			lastEndOffset = block->EndOffset;
+		} else {
+			lastEndOffset = block->EndOffset;
+		}
+	}
+	spans.push_back({ lastStartOffset, lastEndOffset, pendingColour });
+
+	out = CBarFillSpec(item, file->GetFileSize(), std::move(spans));
+}
+
+bool CDownloadListCtrl::IsLiveSortColumn() const
+{
+	if (m_sort_orders.empty()) {
+		return false;
+	}
+	switch (static_cast<int>(m_sort_orders.front().first)) {
+	case COLUMN_DL_TRANSFERRED:
+	case COLUMN_DL_COMPLETED:
+	case COLUMN_DL_SPEED:
+	case COLUMN_DL_PROGRESS:
+	case COLUMN_DL_SOURCES:
+	case COLUMN_DL_TIMEREMAINING:
+	case COLUMN_DL_LASTSEENCOMPLETE:
+	case COLUMN_DL_LASTRECEPTION:
+		return true;
+	default:
+		return false;
 	}
 }
 
-
-void CDownloadListCtrl::DrawFileItem( wxDC* dc, int nColumn, const wxRect& rect, FileCtrlItem_Struct* item ) const
+int CDownloadListCtrl::CompareItemData(
+	wxUIntPtr data1, wxUIntPtr data2, unsigned column, bool WXUNUSED(alt), int modifier) const
 {
-	wxDCClipper clipper( *dc, rect.GetX(), rect.GetY(), rect.GetWidth(), rect.GetHeight() );
+	const CPartFile *file1 = reinterpret_cast<const CPartFile *>(data1);
+	const CPartFile *file2 = reinterpret_cast<const CPartFile *>(data2);
+	const int mod = modifier;
 
-	const CPartFile* file = item->GetFile();
+	switch (column) {
+	case COLUMN_DL_PART:
+		return mod * CmpAny(file1->GetPartMetNumber(), file2->GetPartMetNumber());
 
-	// Used to contain the contenst of cells that dont need any fancy drawing, just text.
-	wxString text;
+	case COLUMN_DL_NAME:
+		return mod * CmpAny(file1->GetFileName(), file2->GetFileName());
 
-	switch (nColumn) {
-		// Part Number
-		case ColumnPart: {
-			if (file->IsPartFile() && !file->IsCompleted()) {
-			  text = CFormat("%03d") % file->GetPartMetNumber();
-			}
-			break;
-		}
-		// Filename
-		case ColumnFileName: {
-			wxString filename = file->GetFileName().GetPrintable();
+	case COLUMN_DL_SIZE:
+		return mod * CmpAny(file1->GetFileSize(), file2->GetFileSize());
 
-			if (file->HasRating() || file->HasComment()) {
-				int image = Client_CommentOnly_Smiley;
-				if (file->HasRating()) {
-					image = Client_InvalidRating_Smiley + file->UserRating() - 1;
-				}
+	case COLUMN_DL_TRANSFERRED:
+		return mod * CmpAny(file1->GetTransferred(), file2->GetTransferred());
 
-				wxASSERT(image >= Client_InvalidRating_Smiley);
-				wxASSERT(image <= Client_CommentOnly_Smiley);
+	case COLUMN_DL_COMPLETED:
+		return mod * CmpAny(file1->GetCompletedSize(), file2->GetCompletedSize());
 
-				int imgWidth = 16;
+	case COLUMN_DL_SPEED:
+		return mod * CmpAny(file1->GetDisplayKBpsDown(), file2->GetDisplayKBpsDown());
 
-				// it's already centered by OnDrawItem() ...
-				m_ImageList.Draw(image, *dc, rect.GetX(), rect.GetY() - 1,
-					wxIMAGELIST_DRAW_TRANSPARENT);
-				dc->DrawText(filename, rect.GetX() + imgWidth + 4, rect.GetY());
-			} else {
-				dc->DrawText(filename, rect.GetX(), rect.GetY());
-			}
-			break;
-		}
+	case COLUMN_DL_PROGRESS:
+		return mod * CmpAny(file1->GetPercentCompleted(), file2->GetPercentCompleted());
 
-		// Filesize
-		case ColumnSize:
-			text = CastItoXBytes( file->GetFileSize() );
-			break;
+	case COLUMN_DL_SOURCES:
+		return mod * CmpAny(file1->GetSourceCount(), file2->GetSourceCount());
 
-		// Transferred
-		case ColumnTransferred:
-			text = CastItoXBytes( file->GetTransferred() );
-			break;
+	case COLUMN_DL_PRIORITY:
+		return mod * CmpAny(file1->GetDownPriority(), file2->GetDownPriority());
 
-		// Completed
-		case ColumnCompleted:
-			text = CastItoXBytes( file->GetCompletedSize() );
-			break;
+	case COLUMN_DL_STATUS:
+		return mod * CmpAny(file1->getPartfileStatusRang(), file2->getPartfileStatusRang());
 
-		// Speed
-		case ColumnSpeed:
-			if ( file->GetTransferingSrcCount() ) {
-				if (file->GetKBpsDown() >= 1024) {
-					text = CFormat(_("%.1f MB/s")) % (file->GetKBpsDown() / 1024.0);
-				} else {
-					text = CFormat(_("%.1f kB/s")) % file->GetKBpsDown();
-				}
-			}
-			break;
-
-		// Progress
-		case ColumnProgress:{
-			if (thePrefs::ShowProgBar()) {
-				int iWidth  = rect.GetWidth() - 2;
-				int iHeight = rect.GetHeight() - 2;
-
-				// DO NOT DRAW IT ALL THE TIME
-				uint64 dwTicks = GetTickCount64();
-
-				wxMemoryDC cdcStatus;
-
-				if (item->dwUpdated < dwTicks || file->GetHashingProgress() > 0
-						|| !item->status || iWidth != item->status->GetWidth()) {
-					if ( item->status == NULL) {
-						item->status = new wxBitmap(iWidth, iHeight);
-					} else if ( item->status->GetWidth() != iWidth ) {
-						// Only recreate if the size has changed
-						item->status->Create(iWidth, iHeight);
-					}
-
-					cdcStatus.SelectObject( *item->status );
-
-					if ( thePrefs::UseFlatBar() ) {
-						DrawFileStatusBar( file, &cdcStatus,
-							wxRect(0, 0, iWidth, iHeight), true);
-					} else {
-						DrawFileStatusBar( file, &cdcStatus,
-							wxRect(1, 1, iWidth - 2, iHeight - 2), false);
-
-						// Draw black border
-						cdcStatus.SetPen( *wxBLACK_PEN );
-						cdcStatus.SetBrush( *wxTRANSPARENT_BRUSH );
-						cdcStatus.DrawRectangle( 0, 0, iWidth, iHeight );
-					}
-
-					item->dwUpdated = dwTicks + 5000; // Plus five seconds
-				} else {
-					cdcStatus.SelectObject( *item->status );
-				}
-
-				dc->Blit( rect.GetX(), rect.GetY() + 1, iWidth, iHeight, &cdcStatus, 0, 0);
-
-				if (thePrefs::ShowPercent()) {
-					// Percentage of completing or hashing
-					uint16	hashingProgress = file->GetHashingProgress();
-					double	percent = hashingProgress == 0 ? file->GetPercentCompleted()
-										: 100.0 * hashingProgress * PARTSIZE / file->GetFileSize();
-					if (file->IsCompleted()) {
-						percent = 100.0;
-					} else if (percent > 99.9) {
-						percent = 99.9;
-					}
-					wxString buffer = CFormat("%.1f%%") % percent;
-					int middlex = (2*rect.GetX() + rect.GetWidth()) >> 1;
-					int middley = (2*rect.GetY() + rect.GetHeight()) >> 1;
-
-					wxCoord textwidth, textheight;
-
-					dc->GetTextExtent(buffer, &textwidth, &textheight);
-					wxColour AktColor = dc->GetTextForeground();
-					// Ordinary progress bar: white percentage
-					// Hashing progressbar (green/yellow): black percentage
-					if (thePrefs::ShowProgBar() && hashingProgress == 0) {
-						dc->SetTextForeground(*wxWHITE);
-					} else {
-						dc->SetTextForeground(*wxBLACK);
-					}
-					dc->DrawText(buffer, middlex - (textwidth >> 1), middley - (textheight >> 1));
-					dc->SetTextForeground(AktColor);
-				}
-			}
-
-			break;
-		}
-
-		// Sources
-		case ColumnSources:	{
-			uint16 sc = file->GetSourceCount();
-			uint16 ncsc = file->GetNotCurrentSourcesCount();
-			if ( ncsc ) {
-				text = CFormat("%i/%i") % (sc - ncsc) % sc;
-			} else {
-				text = CFormat("%i") % sc;
-			}
-
-			if ( file->GetSrcA4AFCount() ) {
-				text += CFormat("+%i") % file->GetSrcA4AFCount();
-			}
-
-			if ( file->GetTransferingSrcCount() ) {
-				text += CFormat(" (%i)") % file->GetTransferingSrcCount();
-			}
-
-			break;
-		}
-
-		// Priority
-		case ColumnPriority:
-			text = PriorityToStr( file->GetDownPriority(), file->IsAutoDownPriority() );
-			break;
-
-		// File-status
-		case ColumnStatus:
-			text = file->getPartfileStatus();
-			break;
-
-		// Remaining
-		case ColumnTimeRemaining: {
-			if ((file->GetStatus() != PS_COMPLETING) && file->IsPartFile()) {
-				uint64 remainSize = file->GetFileSize() - file->GetCompletedSize();
-				sint32 remainTime = file->getTimeRemaining();
-
-				if (remainTime >= 0) {
-					text = CastSecondsToHM(remainTime);
-				} else {
-					text = _("Unknown");
-				}
-
-				text += " (" + CastItoXBytes(remainSize) + ")";
-			}
-			break;
-		}
-
-		// Last seen completed
-		case ColumnLastSeenComplete: {
-			if ( file->lastseencomplete ) {
-				text = wxDateTime( file->lastseencomplete ).Format( _("%y/%m/%d %H:%M:%S") );
-			} else {
-				text = _("Unknown");
-			}
-			break;
-		}
-
-		// Last received
-		case ColumnLastReception: {
-			const time_t lastReceived = file->GetLastChangeDatetime();
-			if (lastReceived) {
-				text = wxDateTime(lastReceived).Format( _("%y/%m/%d %H:%M:%S") );
-			} else {
-				text = _("Unknown");
-			}
-		}
-	}
-
-	if ( !text.IsEmpty() ) {
-		dc->DrawText( text, rect.GetX(), rect.GetY() );
-	}
-}
-
-wxString CDownloadListCtrl::GetTTSText(unsigned item) const
-{
-	return reinterpret_cast<FileCtrlItem_Struct*>(GetItemData(item))->GetFile()->GetFileName().GetPrintable();
-}
-
-
-int CDownloadListCtrl::SortProc(wxUIntPtr param1, wxUIntPtr param2, wxIntPtr sortData)
-{
-	FileCtrlItem_Struct* item1 = reinterpret_cast<FileCtrlItem_Struct*>(param1);
-	FileCtrlItem_Struct* item2 = reinterpret_cast<FileCtrlItem_Struct*>(param2);
-
-	int sortMod = (sortData & CMuleListCtrl::SORT_DES) ? -1 : 1;
-	sortData &= CMuleListCtrl::COLUMN_MASK;
-
-	// We modify the result so that it matches with ascending or descending
-	return sortMod * Compare( item1->GetFile(), item2->GetFile(), sortData);
-}
-
-
-int CDownloadListCtrl::Compare( const CPartFile* file1, const CPartFile* file2, long lParamSort)
-{
-	int result = 0;
-
-	switch (lParamSort) {
-	// Sort by part number
-	case ColumnPart:
-		result = CmpAny(
-			file1->GetPartMetNumber(),
-			file2->GetPartMetNumber() );
-		break;
-
-	// Sort by filename
-	case ColumnFileName:
-		result = CmpAny(
-			file1->GetFileName(),
-			file2->GetFileName() );
-		break;
-
-	// Sort by size
-	case ColumnSize:
-		result = CmpAny(
-			file1->GetFileSize(),
-			file2->GetFileSize() );
-		break;
-
-	// Sort by transferred
-	case ColumnTransferred:
-		result = CmpAny(
-			file1->GetTransferred(),
-			file2->GetTransferred() );
-		break;
-
-	// Sort by completed
-	case ColumnCompleted:
-		result = CmpAny(
-			file1->GetCompletedSize(),
-			file2->GetCompletedSize() );
-		break;
-
-	// Sort by speed
-	case ColumnSpeed:
-		result = CmpAny(
-			file1->GetKBpsDown() * 1024,
-			file2->GetKBpsDown() * 1024 );
-		break;
-
-	// Sort by percentage completed
-	case ColumnProgress:
-		result = CmpAny(
-			file1->GetPercentCompleted(),
-			file2->GetPercentCompleted() );
-		break;
-
-	// Sort by number of sources
-	case ColumnSources:
-		result = CmpAny(
-			file1->GetSourceCount(),
-			file2->GetSourceCount() );
-		break;
-
-	// Sort by priority
-	case ColumnPriority:
-		result = CmpAny(
-			file1->GetDownPriority(),
-			file2->GetDownPriority() );
-		break;
-
-	// Sort by status
-	case ColumnStatus:
-		result = CmpAny(
-			file1->getPartfileStatusRang(),
-			file2->getPartfileStatusRang() );
-		break;
-
-	// Sort by remaining time
-	case ColumnTimeRemaining:
+	case COLUMN_DL_TIMEREMAINING:
+		// -1 ("unknown") always sorts last, regardless of direction -- `mod`
+		// is deliberately not applied to this branch.
 		if (file1->getTimeRemaining() == -1) {
-			if (file2->getTimeRemaining() == -1) {
-				result = 0;
-			} else {
-				result = 1;
-			}
-		} else {
-			if (file2->getTimeRemaining() == -1) {
-				result = -1;
-			} else {
-				result = CmpAny(
-					file1->getTimeRemaining(),
-					file2->getTimeRemaining() );
-			}
+			return (file2->getTimeRemaining() == -1) ? 0 : 1;
 		}
-		break;
+		if (file2->getTimeRemaining() == -1) {
+			return -1;
+		}
+		return mod * CmpAny(file1->getTimeRemaining(), file2->getTimeRemaining());
 
-	// Sort by last seen complete
-	case ColumnLastSeenComplete:
-		result = CmpAny(
-			file1->lastseencomplete,
-			file2->lastseencomplete );
-		break;
+	case COLUMN_DL_LASTSEENCOMPLETE:
+		return mod * CmpAny(file1->lastseencomplete, file2->lastseencomplete);
 
-	// Sort by last reception
-	case ColumnLastReception:
-		result = CmpAny(
-			file1->GetLastChangeDatetime(),
-			file2->GetLastChangeDatetime() );
-		break;
+	case COLUMN_DL_LASTRECEPTION:
+		return mod * CmpAny(file1->GetLastChangeDatetime(), file2->GetLastChangeDatetime());
+
+	default:
+		return 0;
 	}
-
-	return result;
 }
 
 void CDownloadListCtrl::ClearCompleted()
 {
 	CastByID(ID_BTNCLRCOMPL, GetParent(), wxButton)->Enable(false);
 
-	// Search for completed files
 	ListOfUInts32 toClear;
-	for ( ListItems::iterator it = m_ListItems.begin(); it != m_ListItems.end(); ) {
-		FileCtrlItem_Struct* item = it->second; ++it;
-
-		CPartFile* file = item->GetFile();
-
+	for (CPartFile *file : m_files) {
 		if (file->IsCompleted() && file->CheckShowItemInGivenCat(m_category)) {
 			toClear.push_back(file->ECID());
 		}
@@ -1267,212 +1251,82 @@ void CDownloadListCtrl::ClearCompleted()
 	}
 }
 
-
-void CDownloadListCtrl::ShowFilesCount( int diff )
+void CDownloadListCtrl::ShowFilesCount(int diff)
 {
-	m_filecount += diff;
+	SetFilesCount(m_filecount + diff);
+}
 
-	wxStaticText* label = CastByName( "downloadsLabel", GetParent(), wxStaticText );
+void CDownloadListCtrl::SetFilesCount(int count)
+{
+	m_filecount = count;
 
+	wxStaticText *label = CastByName("downloadsLabel", GetParent(), wxStaticText);
 	label->SetLabel(CFormat(_("Downloads (%i)")) % m_filecount);
 	label->GetParent()->Layout();
 }
 
-
-static const CMuleColour crHave(104, 104, 104);
-static const CMuleColour crFlatHave(0, 0, 0);
-
-static const CMuleColour crPending(255, 208, 0);
-static const CMuleColour crFlatPending(255, 255, 100);
-
-static const CMuleColour crProgress(0, 224, 0);
-static const CMuleColour crFlatProgress(0, 150, 0);
-
-static const CMuleColour crMissing(255, 0, 0);
-
-void CDownloadListCtrl::DrawFileStatusBar(
-	const CPartFile* file, wxDC* dc, const wxRect& rect, bool bFlat ) const
+void CDownloadListCtrl::SetTotalSize(uint64 total)
 {
-	static CBarShader s_ChunkBar(16);
+	m_shownSize = total;
 
-	s_ChunkBar.SetHeight(rect.height);
-	s_ChunkBar.SetWidth(rect.width);
-	s_ChunkBar.SetFileSize( file->GetFileSize() );
-	s_ChunkBar.Set3dDepth( thePrefs::Get3DDepth() );
-
-	if ( file->IsCompleted() || file->GetStatus() == PS_COMPLETING ) {
-		s_ChunkBar.Fill( bFlat ? crFlatProgress : crProgress );
-		s_ChunkBar.Draw(dc, rect.x, rect.y, bFlat);
-		return;
-	} else if (file->GetHashingProgress() > 0) {
-		uint64 left = file->GetHashingProgress() * PARTSIZE;
-		if (left < file->GetFileSize() - 1) {
-			// Fill the amount not yet hashed with yellow
-			s_ChunkBar.FillRange(left + 1, file->GetFileSize() - 1, bFlat ? crFlatPending : crPending);
-		} else {
-			left = file->GetFileSize() - 1;
-		}
-	    // Fill the amount already hashed with green
-	    s_ChunkBar.FillRange(0, left, bFlat ? crFlatProgress : crProgress);
-		s_ChunkBar.Draw(dc, rect.x, rect.y, bFlat);
+	// This label lives in the sources pane, a different window from the download list, so reach
+	// it via the transfer window rather than GetParent(). Guarded for the early calls before
+	// that window is fully constructed.
+	if (!theApp->amuledlg || !theApp->amuledlg->m_transferwnd) {
 		return;
 	}
-	// Part availability ( of missing parts )
-	const CGapList& gaplist = file->GetGapList();
-	CGapList::const_iterator it = gaplist.begin();
-	uint64 lastGapEnd = 0;
-	CMuleColour colour;
-
-	for (; it != gaplist.end(); ++it) {
-
-		// Start position
-		uint32 start = ( it.start() / PARTSIZE );
-		// fill the Have-Part (between this gap and the last)
-		if (it.start()) {
-		  s_ChunkBar.FillRange(lastGapEnd + 1, it.start() - 1,  bFlat ? crFlatHave : crHave);
-		}
-		lastGapEnd = it.end();
-		// End position
-		uint32 end   = ( it.end() / PARTSIZE ) + 1;
-
-		// Avoid going past the filesize. Dunno if this can happen, but the old code did check.
-		if ( end > file->GetPartCount() ) {
-			end = file->GetPartCount();
-		}
-
-		// Place each gap, one PART at a time
-		for ( uint64 i = start; i < end; ++i ) {
-			if ( i < file->m_SrcpartFrequency.size() && file->m_SrcpartFrequency[i]) {
-				int blue = 210 - ( 22 * ( file->m_SrcpartFrequency[i] - 1 ) );
-				colour.Set(0, ( blue < 0 ? 0 : blue ), 255 );
-			} else {
-				colour = crMissing;
-			}
-
-			if ( file->IsStopped() ) {
-				colour.Blend(50);
-			}
-
-			uint64 gap_begin = ( i == start   ? it.start() : PARTSIZE * i );
-			uint64 gap_end   = ( i == end - 1 ? it.end()   : PARTSIZE * ( i + 1 ) - 1 );
-
-			s_ChunkBar.FillRange( gap_begin, gap_end,  colour);
-		}
-	}
-
-	// fill the last Have-Part (between this gap and the last)
-	s_ChunkBar.FillRange(lastGapEnd + 1, file->GetFileSize() - 1,  bFlat ? crFlatHave : crHave);
-
-	// Pending parts
-	const CPartFile::CReqBlockPtrList& requestedblocks_list = file->GetRequestedBlockList();
-	CPartFile::CReqBlockPtrList::const_iterator it2 = requestedblocks_list.begin();
-	// adjacing pending parts must be joined to avoid bright lines between them
-	uint64 lastStartOffset = 0;
-	uint64 lastEndOffset = 0;
-
-	colour = bFlat ? crFlatPending : crPending;
-
-	if ( file->IsStopped() ) {
-		colour.Blend(50);
-	}
-
-	for (; it2 != requestedblocks_list.end(); ++it2) {
-
-		if ((*it2)->StartOffset > lastEndOffset + 1) {
-			// not adjacing, draw last block
-			s_ChunkBar.FillRange(lastStartOffset, lastEndOffset, colour);
-			lastStartOffset = (*it2)->StartOffset;
-			lastEndOffset   = (*it2)->EndOffset;
-		} else {
-			// adjacing, grow block
-			lastEndOffset   = (*it2)->EndOffset;
-		}
-	}
-
-	s_ChunkBar.FillRange(lastStartOffset, lastEndOffset, colour);
-
-
-	// Draw the progress-bar
-	s_ChunkBar.Draw( dc, rect.x, rect.y, bFlat );
-
-
-	// Green progressbar width
-	int width = (int)(( (float)rect.width / (float)file->GetFileSize() ) *
-			file->GetCompletedSize() );
-
-	if ( bFlat ) {
-		dc->SetBrush( crFlatProgress.GetBrush() );
-
-		dc->DrawRectangle( rect.x, rect.y, width, 3 );
-	} else {
-		// Draw the two black lines for 3d-effect
-		dc->SetPen( *wxBLACK_PEN );
-		dc->DrawLine( rect.x, rect.y + 0, rect.x + width, rect.y + 0 );
-		dc->DrawLine( rect.x, rect.y + 2, rect.x + width, rect.y + 2 );
-
-		// Draw the green line
-		dc->SetPen( *(wxThePenList->FindOrCreatePen( crProgress , 1, wxPENSTYLE_SOLID ) ));
-		dc->DrawLine( rect.x, rect.y + 1, rect.x + width, rect.y + 1 );
+	wxStaticText *label = CastByName("downloadsTotalSize", theApp->amuledlg->m_transferwnd, wxStaticText);
+	if (label) {
+		label->SetLabel(CFormat(_("Total queue size: %s")) % CastItoXBytes(m_shownSize));
+		label->GetParent()->Layout();
 	}
 }
 
-#	define QUOTE	"\'"
-
-void CDownloadListCtrl::PreviewFile(CPartFile* file)
+void CDownloadListCtrl::UpdateFreeSpace()
 {
-	wxString command;
-	// If no player set in preferences, use mplayer.
-	// And please, do a warning also :P
-	if (thePrefs::GetVideoPlayer().IsEmpty()) {
-		wxMessageBox(_(
-			"To prevent this warning to show up in every preview,\nset your preferred video player in preferences (default is mplayer)."),
-			_("File preview"), wxOK, this);
-		// Since newer versions for some reason mplayer does not automatically
-		// select video output device and needs a parameter, go figure...
-		command = "xterm -T \"aMule Preview\" -iconic -e mplayer " QUOTE "$file" QUOTE;
-	} else {
-		command = thePrefs::GetVideoPlayer();
+	if (!theApp->amuledlg || !theApp->amuledlg->m_transferwnd) {
+		return;
+	}
+	// Resolved once: this runs on the GUI timer, and the label outlives every call,
+	// belonging to the transfer window.
+	if (!m_freeSpaceLabel) {
+		m_freeSpaceLabel =
+			CastByName("downloadsFreeSpace", theApp->amuledlg->m_transferwnd, wxStaticText);
+		if (!m_freeSpaceLabel) {
+			return;
+		}
+		// Its own label so the "|" is not recoloured with the figure;
+		// resolved alongside it and equally long-lived.
+		m_freeSpaceSepLabel =
+			CastByName("downloadsFreeSpaceSep", theApp->amuledlg->m_transferwnd, wxStaticText);
 	}
 
-	wxString partFile;	// File name with full path
-	wxString partName;	// File name only, without path
+	const sint64 freeSpace = theStats::GetTempFreeSpace();
 
-	// Check if we are (pre)viewing a completed file or not
-	if (!file->IsCompleted()) {
-		// Remove the .met and see if out video player specifiation uses the magic string
-		partName = file->GetPartMetFileName().RemoveExt().GetRaw();
-		partFile = thePrefs::GetTempDir().JoinPaths(file->GetPartMetFileName().RemoveExt()).GetRaw();
-	} else {
-		// This is a complete file
-		// FIXME: This is probably not going to work if the filenames are mangled ...
-		partName = file->GetFileName().GetRaw();
-		partFile = file->GetFullName().GetRaw();
-	}
-
-	// Compatibility with old behaviour
-	if (!command.Replace("$file", "%PARTFILE")) {
-		if ((command.Find("%PARTFILE") == wxNOT_FOUND) && (command.Find("%PARTNAME") == wxNOT_FOUND)) {
-			// No magic string, so we just append the filename to the player command
-			// Need to use quotes in case filename contains spaces
-			command << " " << QUOTE << "%PARTFILE" << QUOTE;
+	// What the queue still has to write, over every category. Completed files are already out
+	// of temp, and the bytes a part file holds are already off the free-space figure, so what
+	// is left to download is exactly what the filesystem still has to find room for. Paused and
+	// stopped files count too: they are space the queue will need as soon as they resume.
+	//
+	// Skipped when there is no figure to compare against -- nothing to warn about, and this
+	// walks the whole queue.
+	uint64 remaining = 0;
+	if (freeSpace != FREE_SPACE_UNKNOWN) {
+		for (CPartFile *file : m_files) {
+			if (file->IsCompleted()) {
+				continue;
+			}
+			const uint64 size = file->GetFileSize();
+			const uint64 done = file->GetCompletedSize();
+			if (done < size) {
+				remaining += size - done;
+			}
 		}
 	}
 
-	// We have to escape quote characters in the file name, otherwise arbitrary
-	// options could be passed to the player.
-	partFile.Replace(QUOTE, "\\" QUOTE);
-	partName.Replace(QUOTE, "\\" QUOTE);
-	command.Replace("%PARTFILE", partFile);
-	command.Replace("%PARTNAME", partName);
-
-	// We can't use wxShell here, it blocks the app
-	CTerminationProcess *p = new CTerminationProcess(command);
-	int ret = wxExecute(command, wxEXEC_ASYNC, p);
-	bool ok = ret > 0;
-	if (!ok) {
-		delete p;
-		AddLogLineC(CFormat( _("ERROR: Failed to execute external media-player! Command: `%s'") ) %
-			command );
-	}
+	const bool warn = (freeSpace != FREE_SPACE_UNKNOWN) && (static_cast<uint64>(freeSpace) < remaining);
+	// Continues the "Total queue size:" label to its left.
+	CamuleDlg::SetFreeSpaceLabel(m_freeSpaceLabel, freeSpace, warn, m_freeSpaceSepLabel);
 }
+
 // File_checked_for_headers

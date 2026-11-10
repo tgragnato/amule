@@ -23,178 +23,388 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include "config.h"		// Needed for HAVE_BOOST_SOURCES
-
+#include "config.h" // Needed for HAVE_BOOST_SOURCES
 
 // Windows requires that Boost headers are included before wx headers.
 // This works if precompiled headers are disabled for this file.
 
 #define BOOST_ALL_NO_LIB
 
-// Suppress warning caused by faulty boost/preprocessor/config/config.hpp in Boost 1.49
-#if defined __GNUC__ && ! defined __GXX_EXPERIMENTAL_CXX0X__ && __cplusplus < 201103L
-	#define BOOST_PP_VARIADICS 0
-#endif
-
-#include <algorithm>	// Needed for std::min - Boost up to 1.54 fails to compile with MSVC 2013 otherwise
+#include <algorithm> // Needed for std::min - Boost up to 1.54 fails to compile with MSVC 2013 otherwise
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <optional>
+#include <vector>
 
-// Trip the compile if we accidentally pull a deprecated Asio API back in.
-#define BOOST_ASIO_NO_DEPRECATED
+#include <poll.h> // Bounded readability wait for the sync-read no-progress timeout
+
+#include "WarningsPush_Asio.h"
 #include <boost/asio.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/version.hpp>
+#include "WarningsPop.h"
 
-//
-// Do away with building Boost.System, adding lib paths...
-// Just include the single file and be done.
-//
+// Do away with building Boost.System, adding lib paths... Just include the single file.
 #ifdef HAVE_BOOST_SOURCES
-#	include <boost/../libs/system/src/error_code.cpp>
+#include <boost/../libs/system/src/error_code.cpp>
 #else
-#	include <boost/system/error_code.hpp>
+#include <boost/system/error_code.hpp>
 #endif
 
 #include "LibSocket.h"
-#include <wx/thread.h>		// wxMutex
-#include <wx/intl.h>		// _()
-#include <common/Format.h>	// Needed for CFormat
+#include "AddressFamilyPolicyAsio.h" // ListenerBindFor, for a listener that follows the policy
+#include "NetworkAddressAsio.h"
+#include "PeerAddressing.h"  // Needed for OutboundIPv6Source
+#include "StreamTransport.h" // IStreamTransport, for the attached-stream branches
+#include "GuiEvents.h"       // CoreNotify_LibSocket*, the transport event bridge
+#include <wx/thread.h>       // wxMutex
+#include <wx/intl.h>         // _()
+#include <common/Format.h>   // Needed for CFormat
 #include "Logger.h"
 #include "GuiEvents.h"
 #include "amuleIPV4Address.h"
 #include "MuleUDPSocket.h"
-#include "OtherFunctions.h"	// DeleteContents
+#include "NetworkInterfaces.h" // DetectNetworkInterfaces (bind-to-interface resolution)
+#include "OtherFunctions.h"    // DeleteContents
 #include "ScopedPtr.h"
 #include <common/Macros.h>
 
-#ifdef __WINDOWS__
-	// SIO_KEEPALIVE_VALS + struct tcp_keepalive for SetTcpKeepalive.
-	// winsock2.h is already brought in transitively by boost::asio.
-	#include <mstcpip.h>
-#else
-	#include <fcntl.h>		// FD_CLOEXEC
-	#include <netinet/tcp.h>	// TCP_KEEPIDLE / TCP_KEEPINTVL / TCP_KEEPCNT
-	#include <sys/socket.h>		// SO_KEEPALIVE
+#include <fcntl.h>       // FD_CLOEXEC
+#include <netinet/tcp.h> // TCP_KEEPIDLE / TCP_KEEPINTVL / TCP_KEEPCNT
+#include <sys/socket.h>  // SO_KEEPALIVE / SO_BINDTODEVICE
+#include <netinet/in.h>  // IP_BOUND_IF / IPPROTO_*
+#include <net/if.h>      // if_nametoindex / if_indextoname / IF_NAMESIZE
+#include <arpa/inet.h>   // htonl
+#include <unistd.h>      // close() for the startup bind probe
+#include <cstring>       // strlen() for SO_BINDTODEVICE
+#include <cerrno>        // errno / EPERM
+// The 10.6 SDK has IP_BOUND_IF but not IPV6_BOUND_IF. Value is ABI-stable.
+#if defined(__APPLE__) && !defined(IPV6_BOUND_IF)
+#define IPV6_BOUND_IF 125
 #endif
 
 using namespace boost::asio;
-using namespace boost::system;	// for error_code
-static io_context s_io_service;
-
-//
-// Mark a freshly-created socket close-on-exec so subprocesses launched
-// via wxExecute() (preview-with-vlc, etc.) don't inherit and pin our
-// listen / UDP file descriptors. Without this, vlc keeps the bind alive
-// after aMule exits, and the next aMule start fails with
-// "Address already in use" until the user kills vlc (#172).
-//
-// No-op on Windows: WinSock SOCKET handles are non-inheritable by
-// default unless the parent passes bInheritHandle=TRUE to CreateProcess,
-// which wxExecute does not do.
-//
-template <typename Handle>
-static inline void SetCloexecOnSocket(Handle native)
+using namespace boost::system; // for error_code
+// Keep one event loop per worker: posting a TCP write wakes only its owner.
+// UDP, the listener and the resolver continue to use the first context.
+static constexpr int s_numberOfAsioThreads = 4;
+class CAsioContext : public io_context
 {
-#ifndef __WINDOWS__
+public:
+	void Shutdown() { shutdown(); }
+};
+
+struct CAsioContextPool
+{
+	~CAsioContextPool()
+	{
+		// An accept handler on the first context can own a socket on any other
+		// context. Release every pending handler while all socket services still
+		// exist, before any individual io_context destroys its services.
+		for (auto &context : contexts) {
+			context.Shutdown();
+		}
+	}
+
+	std::array<CAsioContext, s_numberOfAsioThreads> contexts;
+};
+
+static CAsioContextPool s_contextPool;
+static auto &s_ioContexts = s_contextPool.contexts;
+static io_context &s_io_service = s_ioContexts.front();
+
+static io_context &NextTcpContext()
+{
+	static std::atomic<unsigned> next{ 0 };
+	return s_ioContexts[next.fetch_add(1, std::memory_order_relaxed) % s_ioContexts.size()];
+}
+
+// The network interface to bind every socket to (empty = system default). Pushed in by the
+// core via SetSocketBindInterface() rather than read from thePrefs directly: mulesocket
+// must not depend on CPreferences, since EC-only tools (amulecmd, amuleweb) link this
+// library but not the full preferences.
+static wxString s_bindToInterface;
+
+void SetSocketBindInterface(const wxString &iface)
+{
+	s_bindToInterface = iface;
+}
+
+static std::atomic<bool> s_listenerWidening{ true };
+
+void SetListenerWidening(bool allowed)
+{
+	s_listenerWidening = allowed;
+}
+
+#ifdef ENABLE_IPV6
+static CNetworkAddress s_advertisedIPv6 = CNetworkAddress::Absent();
+
+void SetSocketAdvertisedIPv6(const CNetworkAddress &advertised)
+{
+	s_advertisedIPv6 = advertised;
+}
+#endif
+
+// Mark a freshly-created socket close-on-exec so subprocesses launched via wxExecute()
+// (preview-with-vlc, etc.) do not inherit and pin our listen / UDP file descriptors.
+// Without this, vlc keeps the bind alive after aMule exits and the next start fails with
+// "Address already in use" until vlc is killed.
+//
+// No-op on Windows: WinSock SOCKET handles are non-inheritable by default unless the parent
+// passes bInheritHandle=TRUE to CreateProcess.
+template <typename Handle> static inline void SetCloexecOnSocket(Handle native)
+{
 	int flags = ::fcntl(native, F_GETFD, 0);
 	if (flags != -1) {
 		::fcntl(native, F_SETFD, flags | FD_CLOEXEC);
 	}
-#else
-	(void) native;
-#endif
 }
 
-
-// Turn on TCP keepalive with per-socket timings. Used by the EC sockets
-// to detect a half-open connection (peer gone, FIN/RST lost or never
-// sent — common after a network blip, OOM-kill, etc.) instead of
-// sitting idle until the default ~2h TCP retransmit timeout kicks in.
+// Turn on TCP keepalive with per-socket timings. Used by the EC sockets to detect a
+// half-open connection (peer gone, FIN/RST lost or never sent -- common after a network
+// blip or an OOM-kill) instead of sitting idle until the default ~2h TCP retransmit
+// timeout.
 //
-// POSIX: SO_KEEPALIVE plus the three TCP-layer timing knobs. Linux
-// names (TCP_KEEPIDLE / TCP_KEEPINTVL / TCP_KEEPCNT) are the canonical
-// set; macOS / *BSD use TCP_KEEPALIVE for the idle time and inherit
-// the system defaults for interval and count, which is acceptable as
-// a fallback.
-//
-// Windows: SIO_KEEPALIVE_VALS via WSAIoctl. The Windows surface only
-// exposes idle and interval; the probe count uses the system default
-// (typically 10 on modern Windows).
+// POSIX: SO_KEEPALIVE plus the three TCP-layer timing knobs. The Linux names are the
+// canonical set; macOS / *BSD use TCP_KEEPALIVE for the idle time and inherit the system
+// defaults for interval and count. Windows: SIO_KEEPALIVE_VALS via WSAIoctl, which exposes
+// only idle and interval; the probe count uses the system default.
 template <typename Handle>
 static inline void SetTcpKeepalive(Handle native, int idleSec, int intervalSec, int count)
 {
-#ifdef __WINDOWS__
-	struct tcp_keepalive ka = {};
-	ka.onoff = 1;
-	ka.keepalivetime = static_cast<ULONG>(idleSec) * 1000;
-	ka.keepaliveinterval = static_cast<ULONG>(intervalSec) * 1000;
-	DWORD bytesReturned = 0;
-	(void) count;	// SIO_KEEPALIVE_VALS doesn't expose count
-	::WSAIoctl(native, SIO_KEEPALIVE_VALS, &ka, sizeof(ka),
-		NULL, 0, &bytesReturned, NULL, NULL);
-#else
 	int yes = 1;
 	::setsockopt(native, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(yes));
-	#ifdef TCP_KEEPIDLE
-		::setsockopt(native, IPPROTO_TCP, TCP_KEEPIDLE, &idleSec, sizeof(idleSec));
-	#elif defined(TCP_KEEPALIVE)
-		// macOS / *BSD spelling — idle-only, no separate INTVL/CNT knobs.
-		::setsockopt(native, IPPROTO_TCP, TCP_KEEPALIVE, &idleSec, sizeof(idleSec));
-	#endif
-	#ifdef TCP_KEEPINTVL
-		::setsockopt(native, IPPROTO_TCP, TCP_KEEPINTVL, &intervalSec, sizeof(intervalSec));
-	#else
-		(void) intervalSec;
-	#endif
-	#ifdef TCP_KEEPCNT
-		::setsockopt(native, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
-	#else
-		(void) count;
-	#endif
+#ifdef TCP_KEEPIDLE
+	::setsockopt(native, IPPROTO_TCP, TCP_KEEPIDLE, &idleSec, sizeof(idleSec));
+#elif defined(TCP_KEEPALIVE)
+	// macOS / *BSD spelling -- idle-only, no separate INTVL/CNT knobs.
+	::setsockopt(native, IPPROTO_TCP, TCP_KEEPALIVE, &idleSec, sizeof(idleSec));
+#endif
+#ifdef TCP_KEEPINTVL
+	::setsockopt(native, IPPROTO_TCP, TCP_KEEPINTVL, &intervalSec, sizeof(intervalSec));
+#else
+	(void)intervalSec;
+#endif
+#ifdef TCP_KEEPCNT
+	::setsockopt(native, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
+#else
+	(void)count;
 #endif
 }
 
+typedef int NativeSocketHandle;
 
-// Number of threads in the Asio thread pool
-const int CAsioService::m_numberOfThreads = 4;
+// Resolve a bind-interface value to an interface index (0 if empty or not resolvable): a
+// POSIX name via if_nametoindex(), a Windows adapter FriendlyName via
+// GetAdaptersAddresses(), or a bare numeric index.
+static unsigned int ResolveBindInterfaceIndex(const wxString &ifname)
+{
+	if (ifname.IsEmpty()) {
+		return 0;
+	}
+	unsigned int idx = 0;
+	idx = if_nametoindex(static_cast<const char *>(ifname.utf8_str()));
+	if (idx == 0) {
+		// Fall back to a bare interface index (also the manual Windows path).
+		unsigned long n = 0;
+		if (ifname.ToULong(&n) && n > 0 && n <= 0xFFFFFFFFul) {
+			idx = static_cast<unsigned int>(n);
+		}
+	}
+	return idx;
+}
 
-/**
- * ASIO Client TCP socket implementation
- */
+// Bind a raw socket's egress to a network interface. Unlike binding to a local IP
+// (SetLocal), this pins the *route*, so traffic cannot leak out via the default-route
+// interface -- the VPN-leak case.
+//
+// Each platform needs the option that is a real egress *constraint*:
+//   Linux         : SO_BINDTODEVICE. IP_UNICAST_IF is only a routing preference here --
+//                   verified: it silently falls back to the default route -- so it cannot
+//                   prevent leaks. SO_BINDTODEVICE may require CAP_NET_RAW on some
+//                   kernels, which the caller surfaces rather than pretending traffic is
+//                   contained.
+//   macOS / Darwin: IP_BOUND_IF / IPV6_BOUND_IF, a true constraint.
+//   Windows       : IP_UNICAST_IF / IPV6_UNICAST_IF, a real constraint there.
+//
+// Returns 0 on success or an errno-style code on failure; sets *notFound when the
+// interface cannot be resolved, which is distinct from a permission error.
+static int ApplyBindToInterface(NativeSocketHandle native, const wxString &ifname, bool isV6, bool *notFound)
+{
+	*notFound = false;
+	unsigned int idx = ResolveBindInterfaceIndex(ifname);
+	if (idx == 0) {
+		*notFound = true;
+		return -1;
+	}
+#if defined(__linux__)
+	// SO_BINDTODEVICE takes the interface *name*; derive the canonical name
+	// from the resolved index (also normalises a numeric-index entry).
+	(void)isV6; // family-agnostic
+	char devName[IF_NAMESIZE] = { 0 };
+	if (if_indextoname(idx, devName) == NULL) {
+		*notFound = true;
+		return -1;
+	}
+	if (::setsockopt(native, SOL_SOCKET, SO_BINDTODEVICE, devName, strlen(devName)) != 0) {
+		return errno;
+	}
+	return 0;
+#elif defined(IP_BOUND_IF) // macOS / Darwin -- index in host byte order
+	int v = static_cast<int>(idx);
+	if (::setsockopt(native,
+		    isV6 ? IPPROTO_IPV6 : IPPROTO_IP,
+		    isV6 ? IPV6_BOUND_IF : IP_BOUND_IF,
+		    &v,
+		    sizeof(v)) != 0) {
+		return errno;
+	}
+	return 0;
+#else
+	(void)native;
+	(void)isV6;
+	return ENOTSUP;
+#endif
+}
 
-class CamuleIPV4Endpoint : public ip::tcp::endpoint {
+// Set while binding fails, so a failure is reported once, not on every connect. The core reports
+// the startup outcome via TestSocketBindInterface; this catches an interface lost later, such as a
+// VPN going down.
+static std::atomic<bool> s_bindFailing{ false };
+
+// Per-socket egress bind (reads the interface pushed in by the core). Returns false when a
+// configured interface could not be applied; the failure is already reported here.
+template <typename Handle> static bool SetBoundInterface(Handle native, const wxString &ifname, bool isV6)
+{
+	if (ifname.IsEmpty()) {
+		return true;
+	}
+	bool notFound = false;
+	int err = ApplyBindToInterface(static_cast<NativeSocketHandle>(native), ifname, isV6, &notFound);
+	if (err == 0) {
+		s_bindFailing = false;
+		AddDebugLogLineF(logAsio, CFormat("Bind-to-interface: bound socket to '%s'") % ifname);
+		return true;
+	} else if (!s_bindFailing.exchange(true)) {
+		AddLogLineC(
+			CFormat(notFound ? _("WARNING: network interface '%s' is gone - traffic is no "
+					     "longer bound to it and may leave via the default route.")
+					 : _("WARNING: could not bind to network interface '%s' - traffic "
+					     "may leave via the default route.")) %
+			ifname);
+	} else {
+		AddDebugLogLineN(logAsio,
+			CFormat("Bind-to-interface: could not bind socket to '%s' (%s)") % ifname %
+				(notFound ? "no such interface" : "error"));
+	}
+	return false;
+}
+
+// Bind an already-open raw socket (e.g. libcurl's HTTP socket) to the
+// configured interface, reusing the exact same logic as aMule's own sockets.
+bool BindRawSocketToInterface(uintptr_t fd, const wxString &iface)
+{
+	if (iface.IsEmpty()) {
+		return true;
+	}
+	const NativeSocketHandle native = static_cast<NativeSocketHandle>(fd);
+	// libcurl opens one socket per resolved address, and macOS rejects the IPv4 option on a v6 one.
+	sockaddr_storage local{};
+	socklen_t localLen = sizeof(local);
+	if (::getsockname(native, reinterpret_cast<sockaddr *>(&local), &localLen) != 0) {
+		return false;
+	}
+	bool notFound = false;
+	return ApplyBindToInterface(native, iface, local.ss_family == AF_INET6, &notFound) == 0;
+}
+
+// Validate the configured interface once, on a throwaway socket, so the core can report the
+// real outcome at startup (found / not-found / permission denied) rather than discovering
+// it silently per socket.
+static BindInterfaceStatus ProbeBindInterface(const wxString &ifname)
+{
+	if (ifname.IsEmpty()) {
+		return BindIface_Empty;
+	}
+	if (ResolveBindInterfaceIndex(ifname) == 0) {
+		return BindIface_NotFound;
+	}
+	int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+	if (fd < 0) {
+		return BindIface_OK;
+	}
+	bool notFound = false;
+	int err = ApplyBindToInterface(fd, ifname, false, &notFound);
+	::close(fd);
+	if (err == 0) {
+		return BindIface_OK;
+	}
+	if (notFound) {
+		return BindIface_NotFound;
+	}
+	if (err == EPERM || err == EACCES) {
+		return BindIface_Denied;
+	}
+	return BindIface_Unsupported;
+}
+
+BindInterfaceStatus TestSocketBindInterface(const wxString &ifname)
+{
+	const BindInterfaceStatus status = ProbeBindInterface(ifname);
+	// The core reports this outcome, so the sockets that follow do not repeat it.
+	s_bindFailing = status == BindIface_NotFound || status == BindIface_Denied;
+	return status;
+}
+
+/** ASIO Client TCP socket implementation */
+
+class CamuleIPV4Endpoint : public ip::tcp::endpoint
+{
 public:
 	CamuleIPV4Endpoint() {}
 
-	CamuleIPV4Endpoint(const CamuleIPV4Endpoint & impl) : ip::tcp::endpoint(impl) {}
-	CamuleIPV4Endpoint(const ip::tcp::endpoint & ep) { * this = ep; }
-	CamuleIPV4Endpoint(const ip::udp::endpoint & ep) { address(ep.address()); port(ep.port()); }
-
-	const CamuleIPV4Endpoint& operator = (const ip::tcp::endpoint & ep)
+	CamuleIPV4Endpoint(const CamuleIPV4Endpoint &impl)
+	: ip::tcp::endpoint(impl)
 	{
-		* (ip::tcp::endpoint *) this = ep;
+	}
+	// The user-provided copy ctor above suppresses the implicitly-declared copy-assignment
+	// operator under C++11+ (deprecated form); make the default one explicit so
+	// -Wdeprecated-copy stays quiet.
+	CamuleIPV4Endpoint &operator=(const CamuleIPV4Endpoint &) = default;
+	CamuleIPV4Endpoint(const ip::tcp::endpoint &ep) { *this = ep; }
+	CamuleIPV4Endpoint(const ip::udp::endpoint &ep)
+	{
+		address(ep.address());
+		port(ep.port());
+	}
+
+	const CamuleIPV4Endpoint &operator=(const ip::tcp::endpoint &ep)
+	{
+		*(ip::tcp::endpoint *)this = ep;
 		return *this;
 	}
 };
 
 // See the comment above CAsioUDPSocketImpl for the rationale on enable_shared_from_this:
-// pending asio completion handlers must keep the impl alive past the wrapper's
-// death (and past the old 1-second-timer guard that did not survive the time
-// jump on wake-from-sleep — issue #384).
+// pending asio completion handlers must keep the impl alive past the wrapper's death (and
+// past the old 1-second-timer guard that did not survive the time jump on wake-from-sleep,
+// issue #384).
 class CAsioSocketImpl : public std::enable_shared_from_this<CAsioSocketImpl>
 {
-	// Buffer size posted with async_read_some.  256 KB lets a fast peer
-	// fill the buffer with several TCP segments at once on POSIX (epoll/
-	// kqueue), and is the IOCP-native WSARecv buffer on Windows.  Bigger
-	// keeps per-byte event-loop overhead small without blowing memory.
+	// Buffer size posted with async_read_some. 256 KB lets a fast peer fill the buffer with
+	// several TCP segments at once on POSIX (epoll/kqueue), and is the IOCP-native WSARecv
+	// buffer on Windows. Bigger keeps per-byte event-loop overhead small without blowing
+	// memory.
 	static constexpr uint32 READ_CHUNK = 256 * 1024;
 
 public:
 	// cppcheck-suppress uninitMemberVar m_readBufferPtr
-	CAsioSocketImpl(CLibSocket * libSocket) :
-		m_libSocket(libSocket),
-		m_strand(s_io_service)
+	CAsioSocketImpl(CLibSocket *libSocket, io_context &context = NextTcpContext())
+	: m_ioc(context)
+	, m_libSocket(libSocket)
+	, m_strand(m_ioc)
 	{
 		m_OK = false;
 		m_blocksRead = false;
@@ -202,9 +412,9 @@ public:
 		m_ErrorCode = 0;
 		m_readBuffer = NULL;
 		m_readBufferSize = 0;
-		m_readPending = false;
+		m_readPending.store(false, std::memory_order_relaxed);
 		m_readBufferContent = 0;
-		m_eventPending = false;
+		m_eventPending.store(false, std::memory_order_relaxed);
 		m_port = 0;
 		m_sendBuffer.store(nullptr, std::memory_order_relaxed);
 		m_connected = false;
@@ -215,7 +425,13 @@ public:
 		m_sync = false;
 		m_IP = L"?";
 		m_IPint = 0;
-		m_socket = new ip::tcp::socket(s_io_service);
+		m_connectTimeoutMs = 0;
+		// No-progress bound for synchronous EC reads. amuled's control channel never
+		// legitimately goes 30 s without a byte mid-reply, so this only ever trips on a genuinely
+		// stalled / desynced peer (see ReadSync). Kept generous so slow-but-progressing large
+		// transfers cannot false-trip it.
+		m_syncReadTimeoutMs = 30000;
+		m_socket = new ip::tcp::socket(m_ioc);
 
 		// Set socket to non blocking
 		m_socket->non_blocking();
@@ -228,22 +444,23 @@ public:
 		delete m_socket;
 	}
 
-	// Called by the wrapper's destructor (or by LinkSocketImpl when swapping
-	// us out) to detach the back-pointer so any callback that fires after
-	// the wrapper is gone no-ops its CoreNotify_* branch instead of
-	// dereferencing freed memory. Atomic so the wrapper-side (any thread)
-	// and the strand-side reads don't need an external lock.
-	void OnWrapperGone()
-	{
-		m_libSocket.store(nullptr, std::memory_order_release);
-	}
+	// Called by the wrapper's destructor (or by LinkSocketImpl when swapping us out) to detach
+	// the back-pointer so any callback that fires after the wrapper is gone no-ops its
+	// CoreNotify_* branch instead of dereferencing freed memory. Atomic so the wrapper-side
+	// (any thread) and the strand-side reads need no external lock.
+	void OnWrapperGone() { m_libSocket.store(nullptr, std::memory_order_release); }
 
-	void Notify(bool notify)
-	{
-		m_notify = notify;
-	}
+	void Notify(bool notify) { m_notify = notify; }
 
-	bool Connect(const amuleIPV4Address& adr, bool wait)
+	// Bound the synchronous connect (0 = no bound, the default). Only
+	// honoured on the sync connect path -- see Connect().
+	void SetConnectTimeout(int ms) { m_connectTimeoutMs = ms; }
+
+	// Bound how long a synchronous read may make no progress (0 = no bound). Applies to
+	// ReadSync; see there for why this cannot be an SO_RCVTIMEO.
+	void SetSyncReadTimeout(int ms) { m_syncReadTimeoutMs = ms; }
+
+	bool Connect(const amuleIPV4Address &adr, bool wait)
 	{
 		if (!m_proxyState) {
 			SetIp(adr);
@@ -251,38 +468,80 @@ public:
 		m_port = adr.Service();
 		m_closed = false;
 		m_OK = false;
-		m_sync = !m_notify;		// set this once for the whole lifetime of the socket
+		m_sync = !m_notify; // set this once for the whole lifetime of the socket
 		AddDebugLogLineF(logAsio, CFormat("Connect %s %p") % m_IP % this);
 
-		if (wait || m_sync) {
-			error_code ec;
-			m_socket->connect(adr.GetEndpoint(), ec);
-			m_OK = !ec;
-			m_connected = m_OK;
-			return m_OK;
-		} else {
-			auto self = shared_from_this();
-			m_socket->async_connect(adr.GetEndpoint(),
-				bind_executor(m_strand, [self](const error_code& ec) { self->HandleConnect(ec); }));
-			// m_OK and return are false because we are not connected yet
-			return false;
+		// Pin outbound traffic to the configured network interface (VPN-leak fix, #173). This
+		// must apply even when no local IP is bound (no SetLocal call), so open the socket here
+		// to set the option before connect; asio's connect happily reuses an already-open socket.
+		if (!s_bindToInterface.IsEmpty()) {
+			error_code openEc;
+			if (!m_socket->is_open()) {
+				m_socket->open(ip::tcp::v4(), openEc);
+			}
+			if (!openEc) {
+				SetBoundInterface(m_socket->native_handle(), s_bindToInterface, false);
+			}
 		}
+
+		return RunConnect(adr.GetEndpoint(), wait);
 	}
 
-	bool IsConnected() const
+#ifdef ENABLE_IPV6
+	bool ConnectIPv6(const CNetworkAddress &target, uint16 port, bool wait)
 	{
-		return m_connected;
+		PrepareConnectIPv6(target, port);
+
+		const boost::optional<AddressFamilyPolicy::SAsioTarget> asioTarget =
+			AddressFamilyPolicy::AsioTargetFor(target);
+		if (!asioTarget || asioTarget->protocol != ip::tcp::v6()) {
+			return FailConnect(boost::asio::error::address_family_not_supported);
+		}
+		// Already open means a configured local IPv4 bind, which cannot reach an IPv6 peer.
+		if (m_socket->is_open()) {
+			return FailConnect(boost::asio::error::address_family_not_supported);
+		}
+		error_code ec;
+		m_socket->open(ip::tcp::v6(), ec);
+		if (ec) {
+			return FailConnect(ec);
+		}
+		// Unlike IPv4, an unpinned IPv6 connect is refused so it cannot leave through another
+		// interface (VPN-leak fix, #173).
+		if (!SetBoundInterface(m_socket->native_handle(), s_bindToInterface, true)) {
+			error_code ignore;
+			m_socket->close(ignore);
+			return FailConnect(boost::asio::error::no_such_device);
+		}
+		const CNetworkAddress source = PeerAddressing::OutboundIPv6Source(s_advertisedIPv6, target);
+		if (source.IsPresent()) {
+			// A failed bind leaves the socket unbound, so the system still picks a source.
+			m_socket->bind(ip::tcp::endpoint(NetworkAddressAsio::ToAsioAddress(source), 0), ec);
+			if (ec) {
+				AddDebugLogLineN(logAsio,
+					CFormat("Cannot leave from advertised %s: %s") % source.ToWxString() %
+						ec.message());
+			}
+		}
+
+		return RunConnect(ip::tcp::endpoint(asioTarget->address, port), wait);
 	}
+
+	bool RefuseConnectIPv6(const CNetworkAddress &target, uint16 port)
+	{
+		PrepareConnectIPv6(target, port);
+		return FailConnect(boost::asio::error::address_family_not_supported);
+	}
+#endif
+
+	bool IsConnected() const { return m_connected; }
 
 	// For wxSocketClient, Ok won't return true unless the client is connected to a server.
-	bool IsOk() const
-	{
-		return m_OK;
-	}
+	bool IsOk() const { return m_OK; }
 
-	// Apply TCP keepalive timings to the underlying socket if it's open.
-	// Caller is expected to invoke this after a successful connect (client
-	// side) or accept (server side) so the kernel native_handle is live.
+	// Apply TCP keepalive timings to the underlying socket if it is open. The caller is
+	// expected to invoke this after a successful connect (client side) or accept (server side)
+	// so the kernel native_handle is live.
 	void EnableTcpKeepalive(int idleSec, int probeIntervalSec, int probeCount)
 	{
 		if (!m_socket || !m_socket->is_open()) {
@@ -291,40 +550,47 @@ public:
 		SetTcpKeepalive(m_socket->native_handle(), idleSec, probeIntervalSec, probeCount);
 	}
 
-	bool IsDestroying() const
+	// Turn Nagle off. Same timing contract as EnableTcpKeepalive: the
+	// caller invokes this once the fd is live (after connect / accept).
+	void EnableTcpNoDelay()
 	{
-		return m_destroying.load(std::memory_order_acquire);
+		if (!m_socket || !m_socket->is_open()) {
+			return;
+		}
+		error_code ec;
+		m_socket->set_option(ip::tcp::no_delay(true), ec);
 	}
+
+	bool IsDestroying() const { return m_destroying.load(std::memory_order_acquire); }
 
 	// Returns the actual error code
-	int LastError() const
-	{
-		return m_ErrorCode;
-	}
+	int LastError() const { return m_ErrorCode; }
 
 	// Is reading blocked?
-	bool BlocksRead() const
-	{
-		return m_blocksRead;
-	}
+	bool BlocksRead() const { return m_blocksRead; }
 
 	// Is writing blocked?
-	bool BlocksWrite() const
+	bool BlocksWrite() const { return m_blocksWrite.load(std::memory_order_acquire); }
+	uint64 TakeSendWakeDelay()
 	{
-		return m_blocksWrite.load(std::memory_order_acquire);
+		const auto completed = m_sendCompletedAt.exchange(0, std::memory_order_relaxed);
+		if (completed == 0) {
+			return 0;
+		}
+		const auto elapsed = std::chrono::steady_clock::now().time_since_epoch().count() - completed;
+		return std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::steady_clock::duration(elapsed))
+			.count();
 	}
 
-	// Problem: wx sends an event when data gets available, so first there is an event, then Read() is called
-	// Asio can read async with callback, so you first read, then you get an event.
-	// Strategy:
-	// - Read some data in background into a buffer
-	// - Callback posts event when something is there
-	// - Read data from buffer
-	// - If data is exhausted, start reading more in background
-	// - If not, post another event (making sure events don't pile up though)
-	uint32 Read(char * buf, uint32 bytesToRead)
+	// wx sends an event when data becomes available, so first there is an event, then Read() is
+	// called; asio reads asynchronously with a callback, so you read first and then get an
+	// event. Strategy: read some data in the background into a buffer, have the callback post
+	// an event when something is there, read from the buffer, and either start another
+	// background read when it is exhausted or post another event (without piling them up).
+	uint32 Read(char *buf, uint32 bytesToRead)
 	{
-		if (bytesToRead == 0) {			// huh?
+		if (bytesToRead == 0) { // huh?
 			return 0;
 		}
 
@@ -337,21 +603,23 @@ public:
 			return 0;
 		}
 
-		if (m_readPending					// Background read hasn't completed.
-			|| m_readBufferContent == 0) {	// shouldn't be if it's not pending
+		// Acquire, pairing with the release in HandleRead: seeing false here
+		// means the buffer state published alongside it is visible too.
+		if (m_readPending.load(std::memory_order_acquire) // Background read hasn't completed.
+			|| m_readBufferContent == 0) {            // shouldn't be if it's not pending
 
 			m_blocksRead = true;
 			AddDebugLogLineF(logAsio, CFormat("Read1 %s %d - Block") % m_IP % bytesToRead);
 			return 0;
 		}
 
-		m_blocksRead = false;	// shouldn't be needed
+		m_blocksRead = false; // shouldn't be needed
 
 		// Read from our buffer
 		uint32 readCache = std::min(m_readBufferContent, bytesToRead);
 		memcpy(buf, m_readBufferPtr, readCache);
-		m_readBufferContent	-= readCache;
-		m_readBufferPtr		+= readCache;
+		m_readBufferContent -= readCache;
+		m_readBufferPtr += readCache;
 
 		AddDebugLogLineF(logAsio, CFormat("Read2 %s %d - %d") % m_IP % bytesToRead % readCache);
 		if (m_readBufferContent) {
@@ -364,37 +632,44 @@ public:
 		return readCache;
 	}
 
-
 	// Make a copy of the data and send it in background
 	// - unless a background send is already going on
-	uint32 Write(const void * buf, uint32 nbytes)
+	uint32 Write(const void *buf, uint32 nbytes)
 	{
 		if (m_sync) {
 			return WriteSync(buf, nbytes);
 		}
 
 		if (m_sendBuffer.load(std::memory_order_acquire)) {
-			m_blocksWrite.store(true, std::memory_order_relaxed);
-			AddDebugLogLineF(logAsio, CFormat("Write blocks %d %p %s") % nbytes % m_sendBuffer.load() % m_IP);
-			return 0;
+			// Close the lost-wakeup window with HandleSend: the old send may have
+			// completed between the first buffer check and publishing m_blocksWrite.
+			// If it did, this write is no longer blocked and can be accepted now.
+			// These operations and HandleSend's CAS/exchange need a common seq_cst
+			// order: release/acquire alone allows both sides to miss the other's update.
+			m_blocksWrite.store(true, std::memory_order_seq_cst);
+			if (m_sendBuffer.load(std::memory_order_seq_cst)) {
+				AddDebugLogLineF(logAsio,
+					CFormat("Write blocks %d %p %s") % nbytes % m_sendBuffer.load() %
+						m_IP);
+				return 0;
+			}
+			m_blocksWrite.store(false, std::memory_order_relaxed);
 		}
 		AddDebugLogLineF(logAsio, CFormat("Write %d %s") % nbytes % m_IP);
-		char* newBuf = new char[nbytes];
+		char *newBuf = new char[nbytes];
 		memcpy(newBuf, buf, nbytes);
 		m_sendBuffer.store(newBuf, std::memory_order_release);
 		auto self = shared_from_this();
 		dispatch(m_strand, [self, newBuf, nbytes]() { self->DispatchWrite(newBuf, nbytes); });
-		m_ErrorCode = 0;
 		return nbytes;
 	}
-
 
 	void Close()
 	{
 		if (!m_closed) {
 			m_closed = true;
 			m_connected = false;
-			if (m_sync || s_io_service.stopped()) {
+			if (m_sync || m_ioc.stopped()) {
 				DispatchClose();
 			} else {
 				auto self = shared_from_this();
@@ -403,23 +678,32 @@ public:
 		}
 	}
 
-
-	// See the parallel comment on CAsioUDPSocketImpl::Destroy(). The TCP path
-	// has identical wake-from-sleep risk; the fix is identical too — drop the
-	// 1-second-timer band-aid in favour of shared_from_this lifetime.
+	// See the parallel comment on CAsioUDPSocketImpl::Destroy(). The TCP path has identical
+	// wake-from-sleep risk, and the fix is identical too -- drop the 1-second-timer band-aid in
+	// favour of shared_from_this lifetime.
 	//
-	// TCP routes wrapper deletion through CoreNotify_LibSocketDestroy (rather
-	// than deleting inline like UDP) because TCP wrappers are reachable from
-	// many parts of the core; the GUI-thread delete preserves the existing
-	// thread affinity for that cleanup.
+	// TCP routes wrapper deletion through CoreNotify_LibSocketDestroy rather than deleting
+	// inline like UDP, because TCP wrappers are reachable from many parts of the core and the
+	// GUI-thread delete preserves that thread affinity.
 	void Destroy()
 	{
 		if (m_destroying.exchange(true, std::memory_order_acq_rel)) {
-			CLibSocket * w = m_libSocket.load(std::memory_order_acquire);
-			AddDebugLogLineC(logAsio, CFormat("Destroy() already dying socket %p %p %s") % w % this % m_IP);
+			// Not an error: the guard is here so callers can be sloppy, and several
+			// deliberately are. CClientTCPSocket::Safe_Delete() says "Destroy may be called
+			// several times" and calls it regardless, and StopConnectionTry() destroys sockets
+			// whose connect is still in flight -- when that connect later fails, OnConnect()
+			// destroys the same socket again. The wrapper is notified once, by whichever call
+			// won the exchange.
+			//
+			// Logged at 'F' rather than 'C' for that reason: AddDebugLogLineC survives a release
+			// build, so a critical line here reached every user's log on an ordinary peer
+			// disconnect.
+			CLibSocket *w = m_libSocket.load(std::memory_order_acquire);
+			AddDebugLogLineF(logAsio,
+				CFormat("Destroy() already dying socket %p %p %s") % w % this % m_IP);
 			return;
 		}
-		CLibSocket * wrapper = m_libSocket.load(std::memory_order_acquire);
+		CLibSocket *wrapper = m_libSocket.load(std::memory_order_acquire);
 		AddDebugLogLineF(logAsio, CFormat("Destroy() %p %p %s") % wrapper % this % m_IP);
 		Close();
 
@@ -427,35 +711,31 @@ public:
 		auto teardown = [self]() {
 			// Null the back-pointer before notifying so any callback that
 			// fires after this point sees null and skips its CoreNotify_*.
-			CLibSocket * w = self->m_libSocket.exchange(nullptr,
-				std::memory_order_acq_rel);
+			CLibSocket *w = self->m_libSocket.exchange(nullptr, std::memory_order_acq_rel);
 			if (w) {
 				CoreNotify_LibSocketDestroy(w);
 			}
 		};
 
-		if (m_sync || s_io_service.stopped()) {
+		if (m_sync || m_ioc.stopped()) {
 			teardown();
 		} else {
 			post(m_strand, teardown);
 		}
 	}
 
+	wxString GetPeer() { return m_IP; }
 
-	wxString GetPeer()
+	CNetworkAddress GetPeerAddress()
 	{
-		return m_IP;
+		return m_peerAddress.IsPresent() ? m_peerAddress
+						 : CNetworkAddress::FromIPv4NetworkOrderOrAbsent(m_IPint);
 	}
 
-	uint32 GetPeerInt()
-	{
-		return m_IPint;
-	}
+	uint32 GetPeerInt() { return m_IPint; }
 
-	//
-	// Bind socket to local endpoint if user wants to choose the local address
-	//
-	void SetLocal(const amuleIPV4Address& local)
+	// Bind socket to local endpoint if the user wants to choose the local address
+	void SetLocal(const amuleIPV4Address &local)
 	{
 		error_code ec;
 		if (!m_socket->is_open()) {
@@ -465,30 +745,29 @@ public:
 				AddDebugLogLineC(logAsio, CFormat("Can't open socket : %s") % ec.message());
 			}
 		}
-		//
-		// We are using random (OS-defined) local ports.
-		// To set a constant output port, first call
-		// m_socket->set_option(socket_base::reuse_address(true));
-		// and then set the endpoint's port to it.
-		//
+		// We are using random (OS-defined) local ports. To set a constant output port, first
+		// call m_socket->set_option(socket_base::reuse_address(true)) and then set the
+		// endpoint's port to it.
 		CamuleIPV4Endpoint endpoint(local.GetEndpoint());
 		endpoint.port(0);
 		m_socket->bind(endpoint, ec);
 		if (ec) {
-			AddDebugLogLineC(logAsio, CFormat("Can't bind socket to local endpoint %s : %s")
-				% local.IPAddress() % ec.message());
+			AddDebugLogLineC(logAsio,
+				CFormat("Can't bind socket to local endpoint %s : %s") % local.IPAddress() %
+					ec.message());
 		} else {
-			AddDebugLogLineF(logAsio, CFormat("Bound socket to local endpoint %s") % local.IPAddress());
+			AddDebugLogLineF(
+				logAsio, CFormat("Bound socket to local endpoint %s") % local.IPAddress());
 		}
 	}
 
+	// Acquiring, not a plain store: it has to pick up the value the posting side wrote, so
+	// everything published before that post -- the filled buffer and the cleared m_readPending
+	// -- is visible to the Read() this notification is about to drive. A plain store leaves the
+	// reader free to see a stale read state and block on data that is already here.
+	void EventProcessed() { m_eventPending.exchange(false, std::memory_order_acquire); }
 
-	void EventProcessed()
-	{
-		m_eventPending = false;
-	}
-
-	void SetWrapSocket(CLibSocket * socket)
+	void SetWrapSocket(CLibSocket *socket)
 	{
 		m_libSocket.store(socket, std::memory_order_release);
 		// Also do some setting up
@@ -501,28 +780,29 @@ public:
 	bool UpdateIP()
 	{
 		error_code ec;
-		amuleIPV4Address addr = CamuleIPV4Endpoint(m_socket->remote_endpoint(ec));
+		const auto endpoint = m_socket->remote_endpoint(ec);
 		if (SetError(ec)) {
 			AddDebugLogLineN(logAsio, CFormat("UpdateIP failed %p %s") % this % ec.message());
 			return false;
 		}
-		SetIp(addr);
-		m_port = addr.Service();
+		m_peerAddress = NetworkAddressAsio::FromIngressAddress(endpoint.address());
+		m_IPstring = wxString(m_peerAddress.ToString());
+		m_IP = m_IPstring.c_str();
+		// Keep the legacy ed2k value separate from the native peer address.
+		m_IPint = m_peerAddress.ToIPv4NetworkOrderOrZero();
+		m_port = endpoint.port();
 		AddDebugLogLineF(logAsio, CFormat("UpdateIP %s %d %p") % m_IP % m_port % this);
 		return true;
 	}
 
-	const wxChar * GetIP() const { return m_IP; }
+	const wxChar *GetIP() const { return m_IP; }
 	uint16 GetPort() const { return m_port; }
 
-	ip::tcp::socket & GetAsioSocket()
-	{
-		return * m_socket;
-	}
+	ip::tcp::socket &GetAsioSocket() { return *m_socket; }
 
 	bool GetProxyState() const { return m_proxyState; }
 
-	void SetProxyState(bool state, const amuleIPV4Address * adr)
+	void SetProxyState(bool state, const amuleIPV4Address *adr)
 	{
 		m_proxyState = state;
 		if (state) {
@@ -538,12 +818,8 @@ public:
 	}
 
 private:
-	//
-	// Dispatch handlers
-	// Access to m_socket is all bundled in the thread running s_io_service to avoid
-	// concurrent access to the socket from several threads.
-	// So once things are running (after connect), all access goes through one of these handlers.
-	//
+	// Once connected, asynchronous access to m_socket runs through its owning strand.
+	// Keep close, destroy and completion handlers serialised on the socket's context.
 	void DispatchClose()
 	{
 		error_code ec;
@@ -558,12 +834,10 @@ private:
 	void DispatchBackgroundRead()
 	{
 		AddDebugLogLineF(logAsio, CFormat("DispatchBackgroundRead %s") % m_IP);
-		// Why async_read_some and not async_wait(wait_read): on Windows
-		// boost.asio implements async_wait via its select_reactor (a single
-		// select() loop in a dedicated thread) because IOCP has no native
-		// "ready notification" without a buffer.  async_read_some maps to
-		// WSARecv on Windows (IOCP-native) and to epoll/kqueue on POSIX, so
-		// it is the fast path on every platform.
+		// Why async_read_some and not async_wait(wait_read): on Windows boost.asio implements
+		// async_wait via its select_reactor, because IOCP has no native "ready notification"
+		// without a buffer. async_read_some maps to WSARecv on Windows (IOCP-native) and to
+		// epoll/kqueue on POSIX.
 		if (m_readBufferSize < READ_CHUNK) {
 			delete[] m_readBuffer;
 			m_readBuffer = new char[READ_CHUNK];
@@ -571,67 +845,99 @@ private:
 		}
 		auto self = shared_from_this();
 		m_socket->async_read_some(buffer(m_readBuffer, m_readBufferSize),
-			bind_executor(m_strand, [self](const error_code& ec, std::size_t n) { self->HandleRead(ec, n); }));
+			bind_executor(m_strand,
+				[self](const error_code &ec, std::size_t n) { self->HandleRead(ec, n); }));
 	}
 
-	// The buffer pointer is passed explicitly so each HandleSend knows
-	// which buffer it owns and must delete.  m_sendBuffer only tracks the
-	// currently-in-flight write and is cleared by HandleSend when the send
-	// completes — it cannot be used to identify the buffer to free.
-	void DispatchWrite(char* sendBuffer, uint32 nbytes)
+	// The buffer pointer is passed explicitly so each HandleSend knows which buffer it owns and
+	// must delete. m_sendBuffer only tracks the currently-in-flight write and is cleared by
+	// HandleSend when the send completes, so it cannot identify the buffer to free.
+	void DispatchWrite(char *sendBuffer, uint32 nbytes)
 	{
 		auto self = shared_from_this();
-		async_write(*m_socket, buffer(sendBuffer, nbytes),
-			bind_executor(m_strand, [self, sendBuffer](const error_code& ec, std::size_t n) { self->HandleSend(sendBuffer, ec, n); }));
+		async_write(*m_socket,
+			buffer(sendBuffer, nbytes),
+			bind_executor(m_strand, [self, sendBuffer](const error_code &ec, std::size_t n) {
+				self->HandleSend(sendBuffer, ec, n);
+			}));
 	}
 
-	//
 	// Completion handlers for async requests
-	//
 
-	void HandleConnect(const error_code& err)
+	void HandleConnect(const error_code &err)
 	{
-		m_OK = !err;
-		AddDebugLogLineF(logAsio, CFormat("HandleConnect %d %s") % m_OK % m_IP);
-		CLibSocket * wrapper = m_libSocket.load(std::memory_order_acquire);
+		const bool ok = !err;
+		m_OK = ok;
+		if (ok) {
+			// A successful connect means the socket is healthy: clear any stale error left on
+			// this impl (e.g. an EBADF/aborted read that completed during the reconnect
+			// socket-swap). Otherwise SocketRealError() stays true and CECSocket::WritePacket
+			// refuses to send the EC login on the reused connection (#444).
+			m_ErrorCode = 0;
+		}
+		AddDebugLogLineF(logAsio, CFormat("HandleConnect %d %s") % ok % m_IP);
+		CLibSocket *wrapper = m_libSocket.load(std::memory_order_acquire);
 		if (!wrapper) {
 			AddDebugLogLineF(logAsio, CFormat("HandleConnect: wrapper gone %s") % m_IP);
 		} else {
-			CoreNotify_LibSocketConnect(wrapper, err.value());
-			if (m_OK) {
+			if (ok) {
+				// Before the connect event, so its handler sees IsConnected(). Close() sets
+				// m_closed before it clears m_connected, so re-checking here cannot miss it.
+				m_connected = true;
+				if (m_closed) {
+					m_connected = false;
+				}
+			}
+			// The handlers compare against boost::system::errc, which Windows does not report
+			// directly: its WSAECONNREFUSED is 10061, not ECONNREFUSED.
+			const boost::system::error_condition condition = err.default_error_condition();
+			CoreNotify_LibSocketConnect(wrapper,
+				condition.category() == boost::system::generic_category() ? condition.value()
+											  : err.value());
+			if (ok) {
 				// After connect also send a OUTPUT event to show data is available
 				CoreNotify_LibSocketSend(wrapper, 0);
 				// Start reading
 				StartBackgroundRead();
-				m_connected = true;
 			}
 		}
 	}
 
-	void HandleSend(char* sentBuffer, const error_code& err, size_t bytes_transferred)
+	void HandleSend(char *sentBuffer, const error_code &err, size_t bytes_transferred)
 	{
 		delete[] sentBuffer;
-		// Atomically clear m_sendBuffer only if it still points to the buffer
-		// we just finished sending.  A racing Write() on the throttler thread
-		// may have already swapped in a new buffer.
-		m_sendBuffer.compare_exchange_strong(sentBuffer, nullptr, std::memory_order_release);
+		// Atomically clear m_sendBuffer only if it still points to the buffer we just finished
+		// sending. A racing Write() on the throttler thread may have already swapped in a new
+		// buffer.
+		m_sendBuffer.compare_exchange_strong(sentBuffer, nullptr, std::memory_order_seq_cst);
+		const bool writeWasBlocked = m_blocksWrite.exchange(false, std::memory_order_seq_cst);
+		if (writeWasBlocked) {
+			m_sendCompletedAt.store(std::chrono::steady_clock::now().time_since_epoch().count(),
+				std::memory_order_relaxed);
+		}
 
-		CLibSocket * wrapper = m_libSocket.load(std::memory_order_acquire);
+		CLibSocket *wrapper = m_libSocket.load(std::memory_order_acquire);
 		if (!wrapper) {
 			AddDebugLogLineF(logAsio, CFormat("HandleSend: wrapper gone %s") % m_IP);
 		} else {
 			if (SetError(err)) {
-				AddDebugLogLineN(logAsio, CFormat("HandleSend Error %d %s") % bytes_transferred % m_IP);
+				AddDebugLogLineN(logAsio,
+					CFormat("HandleSend Error %d %s") % bytes_transferred % m_IP);
 				PostLostEvent();
 			} else {
-				AddDebugLogLineF(logAsio, CFormat("HandleSend %d %s") % bytes_transferred % m_IP);
-				m_blocksWrite.store(false, std::memory_order_release);
-				CoreNotify_LibSocketSend(wrapper, m_ErrorCode);
+				AddDebugLogLineF(
+					logAsio, CFormat("HandleSend %d %s") % bytes_transferred % m_IP);
+				// Match wxSOCKET_OUTPUT's edge-triggered behaviour: a completion only
+				// makes output newly available when a Write() was refused. Proxy
+				// negotiation remains completion-driven and needs every output event.
+				if (writeWasBlocked || m_proxyState.load(std::memory_order_acquire)) {
+					CoreNotify_LibSocketSend(wrapper, 0);
+				}
 			}
 		}
 	}
 
-	void HandleRead(const error_code & ec, size_t bytes_transferred)
+	void HandleRead(const error_code &ec, size_t bytes_transferred)
 	{
 		if (!m_libSocket.load(std::memory_order_acquire)) {
 			AddDebugLogLineF(logAsio, CFormat("HandleRead: wrapper gone %s") % m_IP);
@@ -655,70 +961,174 @@ private:
 		m_readBufferPtr = m_readBuffer;
 		m_readBufferContent = (uint32)bytes_transferred;
 
-		m_readPending = false;
+		// Release, and after the buffer writes above on purpose. A reader that acquire-loads this
+		// as false is then guaranteed to see the content and pointer written before it.
+		//
+		// Plain stores let the two become visible out of order. The main thread would see the new
+		// content with the pending flag still set, take the "a background read is still running"
+		// branch in Read(), and return without serving data already sitting in the buffer -- and
+		// without arming anything. Since that branch is reached from an event already consumed,
+		// nothing looks again: the socket stays open with its bytes unread. Caught in the act on
+		// arm64, where the reordering is permitted:
+		//
+		//   handleRead(10)[c=10 p=0]   <- strand: content set, pending cleared
+		//   block(8)     [c=10 p=1]    <- main: new content, stale flag
+		m_readPending.store(false, std::memory_order_release);
 		m_blocksRead = false;
 		PostReadEvent(2);
 	}
 
-
-	//
 	// Other functions
-	//
 
 	void StartBackgroundRead()
 	{
-		m_readPending = true;
+		m_readPending.store(true, std::memory_order_relaxed);
 		m_readBufferContent = 0;
 		auto self = shared_from_this();
 		dispatch(m_strand, [self]() { self->DispatchBackgroundRead(); });
 	}
 
-	void PostReadEvent(int DEBUG_ONLY(from) )
+	void PostReadEvent(int from)
 	{
-		if (!m_eventPending) {
+		// One atomic step, so exactly one caller can win the right to notify: a plain
+		// test-then-set lets the ASIO thread and the main thread both see it clear and post twice,
+		// or -- the damaging direction -- lets this thread see it set and skip while the main
+		// thread is about to clear it, leaving data buffered with nothing left to announce it.
+		//
+		// The exchange writes unconditionally, so even the skipping path releases everything
+		// written before it. EventProcessed acquires that same value, which stops the reader
+		// acting on a stale read state.
+		//
+		// Checked before the latch is taken, not after: with no wrapper there is nothing to
+		// deliver a notification, and taking the latch here would leave it set for the life of the
+		// socket and make every later post skip.
+		CLibSocket *wrapper = m_libSocket.load(std::memory_order_acquire);
+		if (!wrapper) {
+			AddDebugLogLineF(
+				logAsio, CFormat("Post read event %d %s - no wrapper") % from % m_IP);
+			return;
+		}
+
+		if (!m_eventPending.exchange(true, std::memory_order_acq_rel)) {
 			AddDebugLogLineF(logAsio, CFormat("Post read event %d %s") % from % m_IP);
-			m_eventPending = true;
-			CLibSocket * wrapper = m_libSocket.load(std::memory_order_acquire);
-			if (wrapper) {
-				CoreNotify_LibSocketReceive(wrapper, m_ErrorCode);
-			}
+			CoreNotify_LibSocketReceive(wrapper, m_ErrorCode.load());
 		}
 	}
 
 	void PostLostEvent()
 	{
-		CLibSocket * wrapper = m_libSocket.load(std::memory_order_acquire);
+		CLibSocket *wrapper = m_libSocket.load(std::memory_order_acquire);
 		if (wrapper && !m_destroying.load(std::memory_order_acquire) && !m_closed) {
 			CoreNotify_LibSocketLost(wrapper);
 		}
 	}
 
-	void SetError()
+	void SetError() { m_ErrorCode = 2; }
+
+	// Success leaves m_ErrorCode alone: the other direction's handler may have stored an error.
+	// HandleConnect and SetProxyState(false) clear it on purpose.
+	bool SetError(const error_code &err)
 	{
-		m_ErrorCode = 2;
+		if (err) {
+			m_ErrorCode = err.value();
+		}
+		return static_cast<bool>(err);
 	}
 
-	bool SetError(const error_code & err)
-	{
-		m_ErrorCode = err.value();
-		return m_ErrorCode != errc::success;
-	}
-
-	//
 	// Synchronous sockets (amulecmd)
-	//
-	uint32 ReadSync(char * buf, uint32 bytesToRead)
+	uint32 ReadSync(char *buf, uint32 bytesToRead)
 	{
-		error_code ec;
-		uint32 received = read(*m_socket, buffer(buf, bytesToRead), ec);
-		SetError(ec);
-		if (ec) {
-			DispatchSyncLost();
+		if (m_syncReadTimeoutMs <= 0) {
+			// Timeout disabled -- legacy unbounded blocking read.
+			error_code ec;
+			uint32 received = read(*m_socket, buffer(buf, bytesToRead), ec);
+			SetError(ec);
+			if (ec) {
+				DispatchSyncLost();
+			}
+			return received;
+		}
+
+		// No-progress bounded read. Asio's synchronous read() falls back to an *unbounded*
+		// internal poll_read(-1) on EAGAIN, so SO_RCVTIMEO cannot bound it. Instead each read_some
+		// is gated behind a poll() carrying the remaining no-progress budget, which resets whenever
+		// bytes arrive: a slow-but-progressing large transfer never trips it, but a genuinely
+		// stalled or desynced peer does -- and is then reported as a lost peer, so the EC layer's
+		// reconnect path takes over instead of hanging forever holding the caller's EC mutex.
+		const auto fd = m_socket->native_handle();
+		uint32 received = 0;
+		while (received < bytesToRead) {
+			// Wait up to the remaining no-progress budget for readability. POSIX uses poll() --
+			// no FD_SETSIZE cap, and the EC socket can get a high fd after a reconnect under
+			// load; Windows uses select() because WSAPoll needs _WIN32_WINNT >= 0x0600 and this
+			// build targets 0x0501, and on Winsock fd_set is count-indexed so a single socket is
+			// always in range.
+			bool timed_out = false;
+			bool poll_failed = false;
+			int poll_errno = 0;
+			struct pollfd pfd;
+			pfd.fd = fd;
+			pfd.events = POLLIN;
+			pfd.revents = 0;
+			const int pr = ::poll(&pfd, 1, m_syncReadTimeoutMs);
+			timed_out = (pr == 0);
+			if (pr < 0) {
+				if (errno == EINTR) {
+					continue; // signal -- re-arm the budget
+				}
+				poll_failed = true;
+				poll_errno = errno;
+			}
+			if (timed_out) {
+				// No data for the whole budget -- treat as a stalled peer so the EC layer
+				// reconnects or fails fast instead of hanging. This is fatal for the
+				// synchronous EC clients: the caller reports the peer lost and exits. Emitted
+				// unconditionally on stderr, NOT the debug-gated logAsio category, so it is
+				// visible in release builds right before the "External Connection lost -
+				// exiting." the EC layer prints next.
+				wxString msg =
+					CFormat(wxT("amule: synchronous socket read made no progress for %d "
+						    "ms (peer %s) - stalled or desynced peer; dropping the "
+						    "connection.")) %
+					m_syncReadTimeoutMs % m_IP;
+				fprintf(stderr, "%s\n", (const char *)unicode2char(msg));
+				fflush(stderr);
+				error_code ec = boost::asio::error::timed_out;
+				SetError(ec);
+				DispatchSyncLost();
+				return received;
+			}
+			if (poll_failed) {
+				error_code ec(poll_errno, system_category());
+				SetError(ec);
+				DispatchSyncLost();
+				return received;
+			}
+			// Readable: a blocking read_some now returns promptly (data or
+			// EOF), so it cannot re-introduce an unbounded wait.
+			error_code ec;
+			size_t n = m_socket->read_some(buffer(buf + received, bytesToRead - received), ec);
+			if (ec == boost::asio::error::would_block || ec == boost::asio::error::try_again) {
+				continue; // spurious readiness -- re-arm the budget
+			}
+			if (ec) {
+				SetError(ec);
+				DispatchSyncLost();
+				return received;
+			}
+			if (n == 0) {
+				// Orderly EOF from the peer.
+				error_code eof_ec = boost::asio::error::eof;
+				SetError(eof_ec);
+				DispatchSyncLost();
+				return received;
+			}
+			received += static_cast<uint32>(n); // progress -- budget re-arms
 		}
 		return received;
 	}
 
-	uint32 WriteSync(const void * buf, uint32 nbytes)
+	uint32 WriteSync(const void *buf, uint32 nbytes)
 	{
 		error_code ec;
 		uint32 sent = write(*m_socket, buffer(buf, nbytes), ec);
@@ -729,206 +1139,363 @@ private:
 		return sent;
 	}
 
-	// Sync clients (amulecmd, amuleweb) don't have an async_read pending
-	// after auth, so the EOF that fires HandleRead → PostLostEvent for
-	// async clients never gets seen. Detection happens here instead, in
-	// ReadSync / WriteSync. PostLostEvent + wxQueueEvent would round-
-	// trip through the wx event loop — which amuleweb has (wxApp::OnRun)
-	// but amulecmd doesn't (its main thread is in fgets reading stdin,
-	// not in wxApp's event loop, so queued events are never processed).
-	// Direct synchronous dispatch through the same wrapper->OnLost(0)
-	// path the async reactor uses covers both: CECMuleSocket::OnLost(int)
-	// forwards to the EC-layer CECSocket::OnLost virtual, CRemoteConnect's
-	// override fires (NULL notifier → _exit fallback) and the headless
-	// EC client exits cleanly instead of serving stale data in limp mode.
+	// Sync clients (amulecmd, amuleweb) have no async_read pending after auth, so the EOF that
+	// fires HandleRead -> PostLostEvent for async clients is never seen. Detection happens here
+	// instead, in ReadSync / WriteSync. PostLostEvent + wxQueueEvent would round-trip through
+	// the wx event loop, which amuleweb has but amulecmd does not -- its main thread is in
+	// fgets reading stdin, so queued events are never processed. Direct synchronous dispatch
+	// through the same wrapper->OnLost(0) path the async reactor uses covers both, so the
+	// headless EC client exits cleanly rather than serving stale data in limp mode.
 	void DispatchSyncLost()
 	{
-		CLibSocket * wrapper = m_libSocket.load(std::memory_order_acquire);
+		CLibSocket *wrapper = m_libSocket.load(std::memory_order_acquire);
 		if (wrapper && !m_destroying.load(std::memory_order_acquire) && !m_closed) {
 			wrapper->OnLost(0);
 		}
 	}
 
-	//
-	// Access to even const & wxString is apparently not thread-safe.
-	// Locks are set/removed in wx and reference counts can go astray.
-	// So store our IP string in a wxString which is used nowhere.
-	// Store a pointer to its string buffer as well and use THAT everywhere.
-	//
-	void SetIp(const amuleIPV4Address& adr)
+	bool RunConnect(const ip::tcp::endpoint &endpoint, bool wait)
+	{
+		if (wait || m_sync) {
+			error_code ec;
+			if (m_connectTimeoutMs > 0) {
+				// Bounded synchronous connect: async_connect raced against a steady_timer,
+				// both driven here on the socket's own context. A synchronous EC connection
+				// may precede the CAsioService worker pool. Restart a stopped context before
+				// running another connect. It must precede the pool: run_one() returns only
+				// for handlers run on this thread, so a worker that took the completion would
+				// leave this loop waiting for the timer. Portable through asio with no per-OS
+				// socket-timeout handling: a wrong or unreachable host fails in
+				// m_connectTimeoutMs instead of hanging on the OS TCP connect timeout.
+				ec = boost::asio::error::would_block;
+				m_socket->async_connect(endpoint, [&ec](const error_code &e) { ec = e; });
+				steady_timer timer(m_ioc);
+				timer.expires_after(std::chrono::milliseconds(m_connectTimeoutMs));
+				bool timedOut = false;
+				timer.async_wait([this, &timedOut](const error_code &e) {
+					// Fires only while the connect is still pending;
+					// closing the socket aborts it so run_one() returns.
+					if (e != boost::asio::error::operation_aborted) {
+						timedOut = true;
+						error_code ignore;
+						m_socket->close(ignore);
+					}
+				});
+				m_ioc.restart();
+				while (ec == boost::asio::error::would_block) {
+					if (m_ioc.run_one() == 0) {
+						break;
+					}
+				}
+				timer.cancel();
+				m_ioc.poll(); // drain the cancelled timer handler
+				if (timedOut) {
+					ec = boost::asio::error::timed_out;
+				}
+			} else {
+				m_socket->connect(endpoint, ec);
+			}
+			const bool ok = !ec;
+			m_OK = ok;
+			m_connected = ok;
+			// As in HandleConnect, a successful connect clears a stale error.
+			m_ErrorCode = ec.value();
+			return ok;
+		} else {
+			auto self = shared_from_this();
+			m_socket->async_connect(endpoint,
+				bind_executor(
+					m_strand, [self](const error_code &ec) { self->HandleConnect(ec); }));
+			// m_OK and return are false because we are not connected yet
+			return false;
+		}
+	}
+
+	// Access to even a const & wxString is apparently not thread-safe: locks are set/removed in
+	// wx and reference counts can go astray. So the IP string is stored in a wxString used
+	// nowhere, and a pointer to its string buffer is what gets used everywhere.
+	void SetIp(const amuleIPV4Address &adr)
 	{
 		m_IPstring = adr.IPAddress();
 		m_IP = m_IPstring.c_str();
 		m_IPint = StringIPtoUint32(m_IPstring);
+		m_peerAddress = CNetworkAddress::Absent();
 	}
 
-	// Atomic so OnWrapperGone() (called from the wrapper's dtor on any
-	// thread) and the strand-side load in Destroy() can both touch it
-	// without an external lock.
-	std::atomic<CLibSocket *>	m_libSocket;
-	ip::tcp::socket	*	m_socket;
-										// remote IP
-	wxString		m_IPstring;			// as String (use nowhere because of threading!)
-	const wxChar *	m_IP;				// as char*  (use in debug logs)
-	uint32			m_IPint;			// as int
-	uint16			m_port;				// remote port
-	bool			m_OK;
-	int				m_ErrorCode;
-	bool			m_blocksRead;
-	char *			m_readBuffer;
-	uint32			m_readBufferSize;
-	char *			m_readBufferPtr;
-	bool			m_readPending;
-	uint32			m_readBufferContent;
-	bool			m_eventPending;
-	std::atomic<char*>	m_sendBuffer;	// atomic: shared between throttler thread (Write) and ASIO thread (HandleSend)
-	std::atomic<bool>	m_blocksWrite;	// atomic: shared between throttler thread (BlocksWrite) and ASIO thread (HandleSend)
-	io_context::strand	m_strand;		// handle synchronisation in io_service thread pool
-	bool			m_connected;
-	bool			m_closed;
-	std::atomic<bool>	m_destroying;	// set once Destroy() has been called
-	bool			m_proxyState;
-	bool			m_notify;			// set by Notify()
-	bool			m_sync;				// copied from !m_notify on Connect()
+#ifdef ENABLE_IPV6
+	void PrepareConnectIPv6(const CNetworkAddress &target, uint16 port)
+	{
+		m_peerAddress = target;
+		m_IPstring = wxString(m_peerAddress.ToString());
+		m_IP = m_IPstring.c_str();
+		m_IPint = m_peerAddress.ToIPv4NetworkOrderOrZero();
+		m_port = port;
+		m_closed = false;
+		m_OK = false;
+		m_sync = !m_notify; // set this once for the whole lifetime of the socket
+		AddDebugLogLineF(logAsio, CFormat("Connect %s %p") % m_IP % this);
+	}
+
+	// A connect refused before it starts fails the way a failed connect does: at once for a
+	// synchronous caller, through OnConnect() otherwise. HandleConnect() queues that event, so
+	// it still arrives after the caller saw false.
+	bool FailConnect(const error_code &error)
+	{
+		m_ErrorCode = error.value();
+		if (!m_sync) {
+			HandleConnect(error);
+		}
+		return false;
+	}
+#endif
+
+	io_context &m_ioc; // Fixed for the socket lifetime, including accepted sockets.
+
+	// Atomic so OnWrapperGone() (called from the wrapper's dtor on any thread) and the
+	// strand-side load in Destroy() can both touch it without an external lock.
+	std::atomic<CLibSocket *> m_libSocket;
+	ip::tcp::socket *m_socket;
+	// remote IP
+	wxString m_IPstring;           // as String (use nowhere because of threading!)
+	const wxChar *m_IP;            // as char*  (use in debug logs)
+	uint32 m_IPint;                // as int
+	CNetworkAddress m_peerAddress; // Native accepted TCP peer; absent before UpdateIP.
+	uint16 m_port;                 // remote port
+	// atomic: HandleConnect sets it on the ASIO thread, IsOk() reads it on the main thread
+	std::atomic<bool> m_OK;
+	// atomic: shared by the ASIO, main and throttler threads
+	std::atomic<int> m_ErrorCode;
+	// atomic only against the data race. Read() can still store true after HandleRead() stored
+	// false, so BlocksRead() stays stale until the read event HandleRead() posted runs Read().
+	std::atomic<bool> m_blocksRead;
+	char *m_readBuffer;
+	uint32 m_readBufferSize;
+	char *m_readBufferPtr;
+	// atomic: cleared on the ASIO thread (HandleRead) and read on the main thread (Read), and
+	// it is the flag that orders the whole read handoff -- see HandleRead for why plain stores
+	// were not enough.
+	std::atomic<bool> m_readPending;
+	uint32 m_readBufferContent;
+	// atomic: posted from the ASIO thread and cleared on the main thread, and
+	// it is the latch that decides whether a completed read gets announced
+	std::atomic<bool> m_eventPending;
+	std::atomic<char *>
+		m_sendBuffer; // atomic: shared between throttler thread (Write) and ASIO thread (HandleSend)
+	std::atomic<bool> m_blocksWrite; // atomic: shared between throttler thread (BlocksWrite) and ASIO
+					 // thread (HandleSend)
+	std::atomic<std::chrono::steady_clock::rep> m_sendCompletedAt{ 0 };
+	io_context::strand m_strand; // handle synchronisation in io_service thread pool
+	// atomic: HandleConnect sets it on the ASIO thread, IsConnected() reads it on the main thread
+	std::atomic<bool> m_connected;
+	// atomic: Close() sets it on the main thread, PostLostEvent() reads it on the ASIO thread
+	std::atomic<bool> m_closed;
+	std::atomic<bool> m_destroying; // set once Destroy() has been called
+	// Set by the main thread's proxy state machine and read by ASIO send completions.
+	std::atomic<bool> m_proxyState;
+	bool m_notify;           // set by Notify()
+	bool m_sync;             // copied from !m_notify on Connect()
+	int m_connectTimeoutMs;  // 0 = no bound; honoured on the sync connect path
+	int m_syncReadTimeoutMs; // no-progress bound for ReadSync (0 = unbounded)
 };
 
-
-/**
- * Library socket wrapper
- */
+/** Library socket wrapper */
 
 CLibSocket::CLibSocket(int /* flags */)
 {
-	// make_shared so the impl can later use shared_from_this() inside async
-	// callbacks. The TCP impl's ctor does not start any async ops, so no
-	// post-construction Init() call is needed; async work starts in Connect().
+	// make_shared so the impl can later use shared_from_this() inside async callbacks. The TCP
+	// impl's ctor does not start any async ops, so no post-construction Init() call is needed;
+	// async work starts in Connect().
 	m_aSocket = std::make_shared<CAsioSocketImpl>(this);
 }
 
-
 CLibSocket::~CLibSocket()
 {
-	AddDebugLogLineF(logAsio, CFormat("~CLibSocket() %p %p %s") % this % m_aSocket.get() % m_aSocket->GetIP());
-	// Detach the back-pointer first so any callbacks that fire after the
-	// wrapper is gone don't dereference us. The impl itself stays alive as
-	// long as any callback still holds a shared_from_this() ref; once the
-	// last drops, the impl destructs cleanly and frees the asio socket.
+	AddDebugLogLineF(
+		logAsio, CFormat("~CLibSocket() %p %p %s") % this % m_aSocket.get() % m_aSocket->GetIP());
+	// Detach the back-pointer first so any callbacks that fire after the wrapper is gone do not
+	// dereference us. The impl itself stays alive as long as any callback still holds a
+	// shared_from_this() ref; once the last drops, the impl destructs cleanly and frees the
+	// asio socket.
 	if (m_aSocket) {
 		m_aSocket->OnWrapperGone();
 	}
 }
 
-
-bool CLibSocket::Connect(const amuleIPV4Address& adr, bool wait)
+bool CLibSocket::Connect(const amuleIPV4Address &adr, bool wait)
 {
+	if (m_transport) {
+		// An accepted stream has a peer; dialling would open a second one.
+		return false;
+	}
 	return m_aSocket->Connect(adr, wait);
 }
 
+#ifdef ENABLE_IPV6
+bool CLibSocket::ConnectIPv6(const CNetworkAddress &target, uint16 port, bool wait)
+{
+	if (m_transport) {
+		// An accepted stream has a peer; dialling would open a second one. No failed-connect
+		// event is raised: it would tear down the live stream the transport carries, whose
+		// error LastError() reports.
+		return false;
+	}
+	return m_aSocket->ConnectIPv6(target, port, wait);
+}
+
+bool CLibSocket::RefuseConnectIPv6(const CNetworkAddress &target, uint16 port)
+{
+	if (m_transport) {
+		// Same rule as ConnectIPv6(): no event that would tear down the transport's stream.
+		return false;
+	}
+	return m_aSocket->RefuseConnectIPv6(target, port);
+}
+#endif
 
 bool CLibSocket::IsConnected() const
 {
-	return m_aSocket->IsConnected();
+	return m_transport ? m_transport->IsConnected() : m_aSocket->IsConnected();
 }
-
 
 bool CLibSocket::IsOk() const
 {
-	return m_aSocket->IsOk();
+	return m_transport ? m_transport->IsOk() : m_aSocket->IsOk();
 }
-
 
 void CLibSocket::EnableTcpKeepalive(int idleSec, int probeIntervalSec, int probeCount)
 {
 	m_aSocket->EnableTcpKeepalive(idleSec, probeIntervalSec, probeCount);
 }
 
+void CLibSocket::EnableTcpNoDelay()
+{
+	m_aSocket->EnableTcpNoDelay();
+}
+
+void CLibSocket::SetConnectTimeout(int ms)
+{
+	m_aSocket->SetConnectTimeout(ms);
+}
 
 wxString CLibSocket::GetPeer()
 {
-	return m_aSocket->GetPeer();
+	return m_transport ? wxString(m_transport->GetPeerAddress().ToString()) : m_aSocket->GetPeer();
 }
 
+CNetworkAddress CLibSocket::GetPeerAddress()
+{
+	return m_transport ? m_transport->GetPeerAddress() : m_aSocket->GetPeerAddress();
+}
 
 uint32 CLibSocket::GetPeerInt()
 {
-	return m_aSocket->GetPeerInt();
+	// Narrowed only here: this accessor's type is the ed2k wire form.
+	return m_transport ? m_transport->GetPeerAddress().ToIPv4NetworkOrderOrZero()
+			   : m_aSocket->GetPeerInt();
 }
-
 
 void CLibSocket::Destroy()
 {
+	// First: closing can produce callbacks, which must not land on a
+	// half-destroyed wrapper. Detaching waits for a flush request the upload
+	// thread is raising, which could otherwise queue behind this socket's delete.
+	if (m_transport) {
+		m_transport->SetEvents(nullptr);
+		m_transport->Close();
+	}
 	m_aSocket->Destroy();
 }
 
+void CLibSocket::ResetForReconnect()
+{
+	// LinkSocketImpl() detaches the outgoing impl (OnWrapperGone, so any in-flight asio
+	// callback that still holds a shared_from_this() ref no-ops its notify branch) before
+	// swapping the fresh one in. The old impl then tears its socket down once the last pending
+	// handler drops.
+	LinkSocketImpl(std::make_shared<CAsioSocketImpl>(this));
+}
 
 bool CLibSocket::IsDestroying() const
 {
 	return m_aSocket->IsDestroying();
 }
 
-
 void CLibSocket::Notify(bool notify)
 {
 	m_aSocket->Notify(notify);
 }
 
-
-uint32 CLibSocket::Read(void * buffer, uint32 nbytes)
+uint32 CLibSocket::Read(void *buffer, uint32 nbytes)
 {
-	return m_aSocket->Read((char *) buffer, nbytes);
+	if (!m_transport) {
+		return m_aSocket->Read((char *)buffer, nbytes);
+	}
+	const uint32 count = m_transport->Read(buffer, nbytes);
+	if (m_transportLostDeferred && !m_transport->HasReadableBytes()) {
+		m_transportLostDeferred = false;
+		CoreNotify_LibSocketLost(this);
+		return count;
+	}
+	// A packet reader takes one packet per event, so bytes left behind would wait for the next
+	// payload to arrive and the last packet of a burst would never be read.
+	if (!m_transport->BlocksRead()) {
+		PostTransportReadEvent();
+	}
+	return count;
 }
 
-
-uint32 CLibSocket::Write(const void * buffer, uint32 nbytes)
+uint32 CLibSocket::Write(const void *buffer, uint32 nbytes)
 {
-	return m_aSocket->Write(buffer, nbytes);
+	return m_transport ? m_transport->Write(buffer, nbytes) : m_aSocket->Write(buffer, nbytes);
 }
-
 
 void CLibSocket::Close()
 {
+	if (m_transport) {
+		m_transport->Close();
+		return;
+	}
 	m_aSocket->Close();
 }
 
-
 int CLibSocket::LastError() const
 {
-	return m_aSocket->LastError();
+	return m_transport ? m_transport->LastError() : m_aSocket->LastError();
 }
 
-
-void CLibSocket::SetLocal(const amuleIPV4Address& local)
+void CLibSocket::SetLocal(const amuleIPV4Address &local)
 {
 	m_aSocket->SetLocal(local);
 }
-
-
 
 // new Stuff
 
 bool CLibSocket::BlocksRead() const
 {
-	return m_aSocket->BlocksRead();
+	return m_transport ? m_transport->BlocksRead() : m_aSocket->BlocksRead();
 }
-
 
 bool CLibSocket::BlocksWrite() const
 {
-	return m_aSocket->BlocksWrite();
+	return m_transport ? m_transport->BlocksWrite() : m_aSocket->BlocksWrite();
 }
 
+uint64 CLibSocket::TakeSendWakeDelay()
+{
+	return m_transport ? 0 : m_aSocket->TakeSendWakeDelay();
+}
 
 void CLibSocket::EventProcessed()
 {
+	m_transportReadEventPending.store(false, std::memory_order_release);
 	m_aSocket->EventProcessed();
 }
 
-
 void CLibSocket::LinkSocketImpl(std::shared_ptr<class CAsioSocketImpl> socket)
 {
-	// Detach the back-pointer on the outgoing impl before swapping it out;
-	// any in-flight callback that still holds a shared_from_this() ref on
-	// it will then no-op its notify branch instead of touching us.
+	// Detach the back-pointer on the outgoing impl before swapping it out; any in-flight
+	// callback that still holds a shared_from_this() ref on it will then no-op its notify
+	// branch instead of touching us.
 	if (m_aSocket) {
 		m_aSocket->OnWrapperGone();
 	}
@@ -936,83 +1503,181 @@ void CLibSocket::LinkSocketImpl(std::shared_ptr<class CAsioSocketImpl> socket)
 	m_aSocket->SetWrapSocket(this);
 }
 
-
-const wxChar * CLibSocket::GetIP() const
+const wxChar *CLibSocket::GetIP() const
 {
-	return m_aSocket->GetIP();
+	// Taken at attach, not built here: this hands back a borrowed pointer, and
+	// building it on demand would mutate a member from a const accessor that
+	// the upload thread is free to call.
+	return m_transport ? m_peerText.c_str() : m_aSocket->GetIP();
 }
 
+void CLibSocket::AttachTransport(std::unique_ptr<IStreamTransport> transport)
+{
+	transport->SetEvents(this);
+	m_transport = std::move(transport);
+	// Fixed for the transport's lifetime, so GetIP() can hand out a pointer
+	// into it without building anything.
+	m_peerText = wxString(m_transport->GetPeerAddress().ToString());
+}
+
+// Queued rather than called: CoreNotify_* marshals to the main thread, which
+// is what makes a flush request raised on the upload thread safe to answer.
+void CLibSocket::OnStreamConnected()
+{
+	CoreNotify_LibSocketConnect(this, 0);
+}
+
+void CLibSocket::PostTransportReadEvent()
+{
+	if (!m_transportReadEventPending.exchange(true, std::memory_order_acq_rel)) {
+		CoreNotify_LibSocketReceive(this, 0);
+	}
+}
+
+void CLibSocket::OnStreamReadable()
+{
+	PostTransportReadEvent();
+}
+
+void CLibSocket::OnStreamWritable()
+{
+	CoreNotify_LibSocketSend(this, 0);
+}
+
+void CLibSocket::OnStreamLost()
+{
+	// A packet reader takes one packet per read event, so a clean end would overtake the read
+	// events still owed for bytes already received; TCP reports EOF only once they are read.
+	// A failure is reported at once: CEMSocket drops every read once LastError() is set.
+	if (m_transport && m_transport->LastError() == 0 && m_transport->HasReadableBytes()) {
+		m_transportLostDeferred = true;
+		PostTransportReadEvent();
+		return;
+	}
+	CoreNotify_LibSocketLost(this);
+}
+
+void CLibSocket::OnFlushRequested()
+{
+	// Not LibSocketSend: that reaches CEMSocket::OnSend, which reports a
+	// completed write and never offers the queue, so the peer is never
+	// answered.
+	CoreNotify_LibSocketFlush(this);
+}
+
+void CLibSocket::FlushTransport()
+{
+	if (m_transport) {
+		m_transport->Flush();
+	}
+}
 
 bool CLibSocket::GetProxyState() const
 {
 	return m_aSocket->GetProxyState();
 }
 
-
-void CLibSocket::SetProxyState(bool state, const amuleIPV4Address * adr)
+void CLibSocket::SetProxyState(bool state, const amuleIPV4Address *adr)
 {
 	m_aSocket->SetProxyState(state, adr);
 }
 
+/** ASIO TCP socket server */
 
-/**
- * ASIO TCP socket server
- */
-
-// See the parallel comment on CAsioUDPSocketImpl. Same lifetime fix applied
-// here so a pending async_accept completion can't fire on a freed acceptor
-// impl after the wrapper has been deleted.
+// See the parallel comment on CAsioUDPSocketImpl. Same lifetime fix applied here so a
+// pending async_accept completion cannot fire on a freed acceptor impl after the wrapper
+// has been deleted.
 class CAsioSocketServerImpl : public ip::tcp::acceptor,
-	public std::enable_shared_from_this<CAsioSocketServerImpl>
+			      public std::enable_shared_from_this<CAsioSocketServerImpl>
 {
 public:
-	CAsioSocketServerImpl(const amuleIPV4Address & adr, CLibSocketServer * libSocketServer)
-		: ip::tcp::acceptor(s_io_service),
-		  m_libSocketServer(libSocketServer),
-		  m_strand(s_io_service),
-		  m_address(adr)
+	CAsioSocketServerImpl(const amuleIPV4Address &adr,
+		CLibSocketServer *libSocketServer,
+		bool bindInterfaceOverride = false,
+		const wxString &bindInterface = wxEmptyString,
+		bool exclusiveBind = false,
+		ListenerFamilies families = ListenerFamilies::FromAddress)
+	: ip::tcp::acceptor(s_io_service)
+	, m_libSocketServer(libSocketServer)
+	, m_acceptStopped(false)
+	, m_strand(s_io_service)
+	, m_address(adr)
+	, m_bindInterfaceOverride(bindInterfaceOverride)
+	, m_bindInterface(bindInterface)
+	, m_exclusiveBind(exclusiveBind)
+	, m_families(families)
 	{
 		m_ok = false;
 		m_socketAvailable = false;
 	}
 
-	~CAsioSocketServerImpl()
-	{
-	}
+	~CAsioSocketServerImpl() {}
 
-	// Init() runs the bind/listen/StartAccept sequence after the managing
-	// shared_ptr is in place — StartAccept captures shared_from_this(), and
-	// that's only valid post-construction.
+	// Init() runs the bind/listen/StartAccept sequence after the managing shared_ptr is in
+	// place -- StartAccept captures shared_from_this(), which is only valid
+	// post-construction.
 	void Init()
 	{
 		try {
-			open(m_address.GetEndpoint().protocol());
-			SetCloexecOnSocket(native_handle());
-			set_option(ip::tcp::acceptor::reuse_address(true));
-			bind(m_address.GetEndpoint());
+			if (!OpenAndBindIPv6FromPolicy()) {
+				OpenAndBind(m_address.GetEndpoint().protocol(),
+					m_address.GetEndpoint(),
+					false,
+					std::nullopt);
+			}
 			listen();
-			StartAccept();
+			error_code endpointError;
+			const ip::tcp::endpoint boundEndpoint = local_endpoint(endpointError);
+			if (!endpointError) {
+				m_boundEndpoint = boundEndpoint;
+			}
+			auto self = shared_from_this();
+			post(m_strand, [self]() { self->StartAccept(); });
 			m_ok = true;
-			AddDebugLogLineN(logAsio, CFormat("CAsioSocketServerImpl bind to %s %d") % m_address.IPAddress() % m_address.Service());
-		} catch (const system_error& err) {
-			AddDebugLogLineC(logAsio, CFormat("CAsioSocketServerImpl bind to %s %d failed - %s") % m_address.IPAddress() % m_address.Service() % err.code().message());
+			AddDebugLogLineN(logAsio,
+				CFormat("CAsioSocketServerImpl bind to %s %d") % m_address.IPAddress() %
+					m_address.Service());
+		} catch (const system_error &err) {
+			AddDebugLogLineC(logAsio,
+				CFormat("CAsioSocketServerImpl bind to %s %d failed - %s") %
+					m_address.IPAddress() % m_address.Service() % err.code().message());
 		}
 	}
 
-	// Detach the back-pointer to the wrapper so any in-flight async_accept
-	// completion that fires after the wrapper has been deleted no-ops its
-	// CoreNotify_ServerTCPAccept branch instead of dereferencing freed memory.
-	void OnWrapperGone()
-	{
-		m_libSocketServer.store(nullptr, std::memory_order_release);
-	}
+	// Detach the back-pointer to the wrapper so any in-flight async_accept completion that
+	// fires after the wrapper has been deleted no-ops its CoreNotify_ServerTCPAccept branch
+	// instead of dereferencing freed memory.
+	void OnWrapperGone() { m_libSocketServer.store(nullptr, std::memory_order_release); }
 
-	// For wxSocketServer, Ok will return true if the server could bind to the specified address and is already listening for new connections.
+	// For wxSocketServer, Ok will return true if the server could bind to the specified address and is
+	// already listening for new connections.
 	bool IsOk() const { return m_ok; }
 
-	void Close() { close();	}
+	wxString BoundHost() const
+	{
+		if (!m_ok || !m_boundEndpoint) {
+			return wxEmptyString;
+		}
+		const ip::address address = m_boundEndpoint->address();
+		if (address.is_v6()) {
+			return CFormat("[%s]") % address.to_string();
+		}
+		return CFormat("%s") % address.to_string();
+	}
 
-	bool AcceptWith(CLibSocket & socket)
+	void Close()
+	{
+		if (m_acceptStopped.exchange(true, std::memory_order_acq_rel)) {
+			return;
+		}
+		auto self = shared_from_this();
+		post(m_strand, [self]() {
+			error_code ignored;
+			self->close(ignored);
+		});
+	}
+
+	bool AcceptWith(CLibSocket &socket)
 	{
 		if (!m_socketAvailable) {
 			AddDebugLogLineF(logAsio, "AcceptWith: nothing there");
@@ -1023,7 +1688,7 @@ public:
 		socket.LinkSocketImpl(std::move(m_currentSocket));
 
 		// check if we have another socket ready for reception
-		m_currentSocket = std::make_shared<CAsioSocketImpl>(nullptr);
+		m_currentSocket = NewAcceptSocket();
 		error_code ec;
 		// async_accept does not work if server is non-blocking
 		// temporarily switch it to non-blocking
@@ -1033,18 +1698,23 @@ public:
 		// back to blocking
 		non_blocking(false);
 		if (ec || !m_currentSocket->UpdateIP()) {
-			// nothing there
+			// Keep an unopened probe for the next async accept. Discarding it would
+			// consume another context without accepting a connection.
+			if (m_currentSocket->GetAsioSocket().is_open()) {
+				m_currentSocket.reset();
+			}
 			m_socketAvailable = false;
 			// start getting another one
-			StartAccept();
+			auto self = shared_from_this();
+			post(m_strand, [self]() { self->StartAccept(); });
 			AddDebugLogLineF(logAsio, "AcceptWith: ok, getting another socket in background");
 		} else {
 			// we got another socket right away
-			m_socketAvailable = true;	// it is already true, but this improves readability
+			m_socketAvailable = true; // it is already true, but this improves readability
 			AddDebugLogLineF(logAsio, "AcceptWith: ok, another socket is available");
 			// aMule actually doesn't need a notification as it polls the listen socket.
 			// amuleweb does need it though
-			CLibSocketServer * w = m_libSocketServer.load(std::memory_order_acquire);
+			CLibSocketServer *w = m_libSocketServer.load(std::memory_order_acquire);
 			if (w) {
 				CoreNotify_ServerTCPAccept(w);
 			}
@@ -1056,25 +1726,110 @@ public:
 	bool SocketAvailable() const { return m_socketAvailable; }
 
 private:
+	std::shared_ptr<CAsioSocketImpl> NewAcceptSocket()
+	{
+		// Accepting into a CLibSocket replaces its temporary, unconnected impl.
+		// Give this listener its own rotation so those wrappers cannot skip workers.
+		const size_t index =
+			m_nextAcceptContext.fetch_add(1, std::memory_order_relaxed) % s_ioContexts.size();
+		return std::make_shared<CAsioSocketImpl>(nullptr, s_ioContexts[index]);
+	}
+
+	// Throws system_error and leaves the acceptor open on failure. isV6 selects the
+	// bind-to-interface option and is independent of the protocol for the IPv4 path, which has
+	// always passed false.
+	void OpenAndBind(const ip::tcp &protocol,
+		const ip::tcp::endpoint &endpoint,
+		bool isV6,
+		const std::optional<bool> &v6Only)
+	{
+		open(protocol);
+		SetCloexecOnSocket(native_handle());
+		if (v6Only) {
+			set_option(ip::v6_only(*v6Only));
+		}
+		// When an explicit per-server interface is set (EC listener), use it verbatim --
+		// empty means "any", NOT a fall-back to the global P2P pin. Otherwise inherit the
+		// global bind-to-interface setting.
+		const bool interfaceBound = SetBoundInterface(
+			native_handle(), m_bindInterfaceOverride ? m_bindInterface : s_bindToInterface, isV6);
+		// Only the IPv6 attempt treats this as fatal: it has an IPv4 fallback, while the IPv4
+		// listener has always run with the failure reported and the socket unpinned.
+		if (isV6 && !interfaceBound) {
+			throw system_error(error_code(boost::asio::error::no_such_device));
+		}
+		// A replacement listener must fail if another process already owns the
+		// requested port. On Windows SO_REUSEADDR can otherwise allow both binds.
+#ifdef __WXMSW__
+		set_option(ip::tcp::acceptor::reuse_address(!m_exclusiveBind));
+#else
+		set_option(ip::tcp::acceptor::reuse_address(true));
+#endif
+		bind(endpoint);
+	}
+
+	// Returns false, with the acceptor closed, when the caller must take the IPv4 path on
+	// m_address: the listener does not follow the policy, the policy keeps it on IPv4, or the
+	// IPv6 socket could not be set up.
+	bool OpenAndBindIPv6FromPolicy()
+	{
+		if (m_families != ListenerFamilies::FromPolicy ||
+			(!s_listenerWidening && m_address.GetEndpoint().address().is_unspecified())) {
+			return false;
+		}
+		const AddressFamilyPolicy::ListenerBind plan = AddressFamilyPolicy::ListenerBindFor(
+			AddressFamilyPolicy::Configured(), m_address.GetEndpoint().address());
+		if (plan.protocol != ip::tcp::v6()) {
+			return false;
+		}
+		try {
+			OpenAndBind(plan.protocol,
+				ip::tcp::endpoint(plan.address, m_address.GetEndpoint().port()),
+				true,
+				plan.v6Only);
+			return true;
+		} catch (const system_error &err) {
+			error_code ignored;
+			close(ignored);
+			AddDebugLogLineC(logAsio,
+				CFormat("CAsioSocketServerImpl could not open the IPv6 listener on [%s]:%d, "
+					"falling back to IPv4 - %s") %
+					plan.address.to_string() % m_address.Service() %
+					err.code().message());
+			return false;
+		}
+	}
 
 	void StartAccept()
 	{
-		m_currentSocket = std::make_shared<CAsioSocketImpl>(nullptr);
+		if (m_acceptStopped.load(std::memory_order_acquire)) {
+			return;
+		}
+		if (!m_currentSocket) {
+			m_currentSocket = NewAcceptSocket();
+		}
 		auto self = shared_from_this();
 		async_accept(m_currentSocket->GetAsioSocket(),
-			bind_executor(m_strand, [self](const error_code& ec) { self->HandleAccept(ec); }));
+			bind_executor(m_strand, [self](const error_code &ec) { self->HandleAccept(ec); }));
 	}
 
-	void HandleAccept(const error_code& error)
+	void HandleAccept(const error_code &error)
 	{
+		if (m_acceptStopped.load(std::memory_order_acquire) ||
+			error == boost::asio::error::operation_aborted ||
+			error == boost::asio::error::bad_descriptor) {
+			m_acceptStopped.store(true, std::memory_order_release);
+			return;
+		}
 		if (error) {
 			AddDebugLogLineC(logAsio, CFormat("Error in HandleAccept: %s") % error.message());
 		} else {
 			if (m_currentSocket->UpdateIP()) {
-				AddDebugLogLineN(logAsio, CFormat("HandleAccept received a connection from %s:%d")
-					% m_currentSocket->GetIP() % m_currentSocket->GetPort());
+				AddDebugLogLineN(logAsio,
+					CFormat("HandleAccept received a connection from %s:%d") %
+						m_currentSocket->GetIP() % m_currentSocket->GetPort());
 				m_socketAvailable = true;
-				CLibSocketServer * w = m_libSocketServer.load(std::memory_order_acquire);
+				CLibSocketServer *w = m_libSocketServer.load(std::memory_order_acquire);
 				if (w) {
 					CoreNotify_ServerTCPAccept(w);
 				}
@@ -1083,7 +1838,8 @@ private:
 				AddDebugLogLineN(logAsio, "Error in HandleAccept: invalid socket");
 			}
 		}
-		// We were not successful. Try again.
+		// We were not successful. Try again with a fresh socket.
+		m_currentSocket.reset();
 		// Post the request to the event queue to make sure it doesn't get called immediately.
 		auto self = shared_from_this();
 		post(m_strand, [self]() { self->StartAccept(); });
@@ -1091,129 +1847,178 @@ private:
 
 	// The wrapper object. Atomic for the same reason as CAsioSocketImpl::m_libSocket.
 	std::atomic<CLibSocketServer *> m_libSocketServer;
+	// Closing/rebinding cancels the pending accept; its completion must not retry on a closed
+	// acceptor (which would spin on bad_descriptor and flood the GUI log).
+	std::atomic<bool> m_acceptStopped;
 	// Startup ok
 	bool m_ok;
+	// Written once in Init() before accepting starts, so main-thread reads do not race the
+	// accept handlers.
+	std::optional<ip::tcp::endpoint> m_boundEndpoint;
 	// The last socket that connected to us
 	std::shared_ptr<CAsioSocketImpl> m_currentSocket;
+	std::atomic<size_t> m_nextAcceptContext{ 0 };
 	// Is there a socket available?
 	bool m_socketAvailable;
-	io_context::strand	m_strand;		// handle synchronisation in io_service thread pool
-	// Bind address. Stored so Init() can run after construction (the
-	// shared-from-this contract needs make_shared to complete before any
-	// async ops start).
+	io_context::strand m_strand; // handle synchronisation in io_service thread pool
+	// Bind address. Stored so Init() can run after construction (the shared-from-this contract
+	// needs make_shared to complete before any async ops start).
 	amuleIPV4Address m_address;
+	// Per-server egress interface override. When m_bindInterfaceOverride is true,
+	// m_bindInterface is used verbatim (empty = any) instead of the process-global
+	// s_bindToInterface. Lets the EC listener bind to a different interface than ed2k/Kad.
+	bool m_bindInterfaceOverride;
+	wxString m_bindInterface;
+	bool m_exclusiveBind;
+	ListenerFamilies m_families;
 };
 
-
-CLibSocketServer::CLibSocketServer(const amuleIPV4Address& adr, int /* flags */)
+CLibSocketServer::CLibSocketServer(const amuleIPV4Address &adr, int /* flags */, ListenerFamilies families)
+: m_listenerFamilies(families)
 {
-	// make_shared so the impl can use shared_from_this() inside its
-	// async_accept callbacks. Init() runs the bind/listen/StartAccept
-	// sequence after the managing shared_ptr is in place.
-	m_aServer = std::make_shared<CAsioSocketServerImpl>(adr, this);
+	// make_shared so the impl can use shared_from_this() inside its async_accept callbacks.
+	// Init() runs the bind/listen/StartAccept sequence after the managing shared_ptr is in
+	// place.
+	m_aServer = std::make_shared<CAsioSocketServerImpl>(
+		adr, this, false, wxEmptyString, false, m_listenerFamilies);
 	m_aServer->Init();
 }
 
+CLibSocketServer::CLibSocketServer(
+	const amuleIPV4Address &adr, int /* flags */, const wxString &bindInterface)
+: m_listenerFamilies(ListenerFamilies::FromAddress)
+{
+	// As above, but with an explicit per-server egress interface (empty = any)
+	// that overrides the process-global bind-to-interface pin.
+	m_aServer = std::make_shared<CAsioSocketServerImpl>(adr, this, true, bindInterface);
+	m_aServer->Init();
+}
 
 CLibSocketServer::~CLibSocketServer()
 {
 	if (m_aServer) {
 		m_aServer->OnWrapperGone();
+		m_aServer->Close();
 	}
 	// shared_ptr drops automatically; impl stays alive via callback self refs
 	// until the last in-flight async_accept completion drains.
 }
 
+bool CLibSocketServer::Rebind(const amuleIPV4Address &adr)
+{
+	auto replacement = std::make_shared<CAsioSocketServerImpl>(
+		adr, this, false, wxEmptyString, true, m_listenerFamilies);
+	replacement->Init();
+	if (!replacement->IsOk()) {
+		return false;
+	}
 
-// Accepts an incoming connection request, and creates a new CLibSocket object which represents the server-side of the connection.
-// Only used in CamuleApp::ListenSocketHandler() and we don't get there.
-CLibSocket * CLibSocketServer::Accept(bool /* wait */)
+	std::shared_ptr<CAsioSocketServerImpl> previous = std::move(m_aServer);
+	m_aServer = std::move(replacement);
+	if (previous) {
+		previous->OnWrapperGone();
+		previous->Close();
+	}
+	return true;
+}
+
+// Accepts an incoming connection request, and creates a new CLibSocket object which represents the
+// server-side of the connection. Only used in CamuleApp::ListenSocketHandler() and we don't get there.
+CLibSocket *CLibSocketServer::Accept(bool /* wait */)
 {
 	wxFAIL;
 	return NULL;
 }
 
-
 // Accept an incoming connection using the specified socket object.
-bool CLibSocketServer::AcceptWith(CLibSocket & socket, bool WXUNUSED_UNLESS_DEBUG(wait) )
+bool CLibSocketServer::AcceptWith(CLibSocket &socket, bool WXUNUSED_UNLESS_DEBUG(wait))
 {
 	wxASSERT(!wait);
 	return m_aServer->AcceptWith(socket);
 }
-
 
 bool CLibSocketServer::IsOk() const
 {
 	return m_aServer->IsOk();
 }
 
+wxString CLibSocketServer::BoundHost() const
+{
+	return m_aServer->BoundHost();
+}
 
 void CLibSocketServer::Close()
 {
 	m_aServer->Close();
 }
 
-
 bool CLibSocketServer::SocketAvailable()
 {
 	return m_aServer->SocketAvailable();
 }
 
+/** ASIO UDP socket implementation */
 
-/**
- * ASIO UDP socket implementation
- */
-
-// Wake-from-sleep crash (issue #384) was caused by asio completion handlers
-// firing on a freed CAsioUDPSocketImpl: pending async_receive_from ops survive
-// a long suspend, complete on wake, and re-enter HandleRead → StartBackgroundRead
-// after the impl has been destroyed by the post-resume socket-recreation path.
-// The old 1-second-timer guard in Destroy() did not survive the time jump.
+// A wake-from-sleep crash was caused by asio completion handlers firing on a freed
+// CAsioUDPSocketImpl: pending async_receive_from ops survive a long suspend, complete on
+// wake, and re-enter HandleRead -> StartBackgroundRead after the impl has been destroyed by
+// the post-resume socket-recreation path. The old 1-second-timer guard in Destroy() did not
+// survive the time jump.
 //
-// Fix: enable_shared_from_this. Each async callback captures
-// [self = shared_from_this()], keeping the impl alive until the last in-flight
-// callback drops its ref. The wrapper's raw back-pointer m_libSocket is atomic
-// and nulled on the strand during Destroy(), so callbacks that fire after the
-// wrapper has been notified-destroyed silently no-op instead of dereferencing
-// freed memory.
+// Fix: enable_shared_from_this. Each async callback captures [self = shared_from_this()],
+// keeping the impl alive until the last in-flight callback drops its ref. The wrapper's raw
+// back-pointer m_libSocket is atomic and nulled on the strand during Destroy(), so
+// callbacks that fire after the wrapper has been notified-destroyed silently no-op.
 class CAsioUDPSocketImpl : public std::enable_shared_from_this<CAsioUDPSocketImpl>
 {
 private:
 	// UDP data block
-	class CUDPData {
+	class CUDPData
+	{
 	public:
-		char * buffer;
+		char *buffer;
 		uint32 size;
 		amuleIPV4Address ipadr;
+		CNetworkAddress sourceAddress;
+		uint16 sourcePort = 0;
 
-		CUDPData(const void * src, uint32 _size, amuleIPV4Address adr) :
-			size(_size), ipadr(adr)
+		CUDPData(const void *src, uint32 _size, amuleIPV4Address adr)
+		: size(_size)
+		, ipadr(adr)
 		{
 			buffer = new char[size];
 			memcpy(buffer, src, size);
 		}
 
-		~CUDPData()
+		CUDPData(const void *src, uint32 _size, CNetworkAddress address, uint16 port)
+		: size(_size)
+		, sourceAddress(std::move(address))
+		, sourcePort(port)
 		{
-			delete[] buffer;
+			buffer = new char[size];
+			memcpy(buffer, src, size);
 		}
+
+		~CUDPData() { delete[] buffer; }
 	};
 
 public:
-	CAsioUDPSocketImpl(const amuleIPV4Address &address, int /* flags */, CLibUDPSocket * libSocket) :
-		m_libSocket(libSocket),
-		m_strand(s_io_service),
-		m_address(address)
+	CAsioUDPSocketImpl(const amuleIPV4Address &address,
+		int /* flags */,
+		CLibUDPSocket *libSocket,
+		CMuleUDPSocket *muleSocket)
+	: m_libSocket(libSocket)
+	, m_muleSocket(muleSocket)
+	, m_strand(s_io_service)
+	, m_address(address)
 	{
-		m_muleSocket = NULL;
 		m_socket = NULL;
 		m_readBuffer = new char[CMuleUDPSocket::UDP_BUFFER_SIZE];
 		m_OK = true;
 		m_destroying.store(false, std::memory_order_relaxed);
-		// CreateSocket() must run after construction completes — it calls
-		// StartBackgroundRead() which captures shared_from_this(), and that
-		// requires a managing shared_ptr to already exist. The wrapper calls
-		// Init() right after make_shared.
+		// CreateSocket() must run after construction completes -- it calls StartBackgroundRead()
+		// which captures shared_from_this(), and that requires a managing shared_ptr to already
+		// exist. The wrapper calls Init() right after make_shared.
 	}
 
 	~CAsioUDPSocketImpl()
@@ -1226,36 +2031,23 @@ public:
 
 	// Called by the wrapper after make_shared so StartBackgroundRead() can
 	// safely call shared_from_this().
-	void Init()
-	{
-		CreateSocket();
-	}
+	void Init() { CreateSocket(); }
 
-	// Called by the wrapper's destructor (or by the destroy chain) to detach
-	// the back-pointer so any still-in-flight callbacks no-op the notify path
-	// instead of touching the freed wrapper. Atomic so it's safe to call from
-	// any thread without an external lock.
-	void OnWrapperGone()
-	{
-		m_libSocket.store(nullptr, std::memory_order_release);
-	}
+	// Called by the wrapper's destructor (or by the destroy chain) to detach the back-pointer
+	// so any still-in-flight callbacks no-op the notify path instead of touching the freed
+	// wrapper. Atomic so it is safe to call from any thread without an external lock.
+	void OnWrapperGone() { m_libSocket.store(nullptr, std::memory_order_release); }
 
-	void SetClientData(CMuleUDPSocket * muleSocket)
+	uint32 RecvFrom(CNetworkAddress &addr, uint16 &port, void *buf, uint32 nBytes)
 	{
-		AddDebugLogLineF(logAsio, "UDP SetClientData");
-		m_muleSocket = muleSocket;
-	}
-
-	uint32 RecvFrom(amuleIPV4Address& addr, void* buf, uint32 nBytes)
-	{
-		CUDPData * recdata;
+		CUDPData *recdata;
 		{
 			wxMutexLocker lock(m_receiveBuffersLock);
 			if (m_receiveBuffers.empty()) {
 				AddDebugLogLineN(logAsio, "UDP RecvFromError no data");
 				return 0;
 			}
-			recdata = * m_receiveBuffers.begin();
+			recdata = *m_receiveBuffers.begin();
 			m_receiveBuffers.pop_front();
 		}
 		uint32 read = recdata->size;
@@ -1265,25 +2057,23 @@ public:
 			read = nBytes;
 		}
 		memcpy(buf, recdata->buffer, read);
-		addr = recdata->ipadr;
+		addr = recdata->sourceAddress;
+		port = recdata->sourcePort;
 		delete recdata;
 		return read;
 	}
 
-	uint32 SendTo(const amuleIPV4Address& addr, const void* buf, uint32 nBytes)
+	uint32 SendTo(const amuleIPV4Address &addr, const void *buf, uint32 nBytes)
 	{
 		// Collect data, make a copy of the buffer's content
-		CUDPData * recdata = new CUDPData(buf, nBytes, addr);
+		CUDPData *recdata = new CUDPData(buf, nBytes, addr);
 		AddDebugLogLineF(logAsio, CFormat("UDP SendTo %d to %s") % nBytes % addr.IPAddress());
 		auto self = shared_from_this();
 		dispatch(m_strand, [self, recdata]() { self->DispatchSendTo(recdata); });
 		return nBytes;
 	}
 
-	bool IsOk() const
-	{
-		return m_OK;
-	}
+	bool IsOk() const { return m_OK; }
 
 	void Close()
 	{
@@ -1295,41 +2085,35 @@ public:
 		}
 	}
 
-	// Destroy() schedules a single strand task that closes the socket, nulls
-	// the back-pointer, and deletes the wrapper. The impl itself stays alive
-	// as long as any in-flight async callback holds a shared_from_this() ref
-	// — it dies cleanly when the last drains, with no risk of a pending
-	// completion firing on freed memory.
+	// Destroy() schedules a single strand task that closes the socket, nulls the back-pointer,
+	// and deletes the wrapper. The impl itself stays alive as long as any in-flight async
+	// callback holds a shared_from_this() ref, and dies cleanly when the last drains.
 	//
-	// Note: unlike the TCP path which posts CoreNotify_LibSocketDestroy to
-	// route the wrapper delete through the GUI thread, UDP deletes the
-	// wrapper directly. By contract the caller (CMuleUDPSocket) has already
-	// nulled its pointer before calling Destroy(), so nothing else is
-	// expected to reach the wrapper.
+	// Unlike the TCP path, which posts CoreNotify_LibSocketDestroy to route the wrapper delete
+	// through the GUI thread, UDP deletes the wrapper directly: by contract the caller has
+	// already nulled its pointer before calling Destroy(), so nothing else is expected to reach
+	// the wrapper.
 	void Destroy()
 	{
 		if (m_destroying.exchange(true, std::memory_order_acq_rel)) {
 			// Already destroying; no-op so callers can be sloppy about it.
 			return;
 		}
-		CLibUDPSocket * wrapper = m_libSocket.load(std::memory_order_acquire);
+		CLibUDPSocket *wrapper = m_libSocket.load(std::memory_order_acquire);
 		AddDebugLogLineF(logAsio, CFormat("Destroy() %p %p") % wrapper % this);
 
 		auto self = shared_from_this();
 		auto teardown = [self]() {
-			// Null the back-pointer before deleting the wrapper so any
-			// callback that fires after this point sees null and skips
-			// its notify branch.
-			CLibUDPSocket * w = self->m_libSocket.exchange(nullptr,
-				std::memory_order_acq_rel);
+			// Null the back-pointer before deleting the wrapper so any callback that fires after
+			// this point sees null and skips its notify branch.
+			CLibUDPSocket *w = self->m_libSocket.exchange(nullptr, std::memory_order_acq_rel);
 			if (self->m_socket) {
 				error_code ec;
 				self->m_socket->close(ec);
 			}
 			if (w) {
-				// Wrapper dtor drops its shared_ptr<impl>; we still hold
-				// 'self' here so the impl stays alive until all queued
-				// callbacks drain.
+				// Wrapper dtor drops its shared_ptr<impl>; we still hold 'self' here so
+				// the impl stays alive until all queued callbacks drain.
 				delete w;
 			}
 		};
@@ -1343,23 +2127,15 @@ public:
 		}
 	}
 
-
 private:
-	//
-	// Dispatch handlers
-	// Access to m_socket is all bundled in the thread running s_io_service to avoid
-	// concurrent access to the socket from several threads.
-	// So once things are running (after connect), all access goes through one of these handlers.
-	//
+	// Dispatch handlers. Access to m_socket is all bundled in the thread running
+	// s_io_service to avoid concurrent access from several threads.
 	void DispatchClose()
 	{
-		// CreateSocket() leaves m_socket NULL on bind failure (e.g. EADDRINUSE
-		// during the post-resume recovery path, where the old socket's close
-		// hasn't yet been processed on the strand before the new bind runs).
-		// Without this guard the subsequent CMuleUDPSocket::DestroySocket()
-		// → Close() → DispatchClose chain dereferences the NULL m_socket
-		// and SIGSEGVs — exposed by #384 once the shared_from_this fix lets
-		// amuled survive the first wake-from-sleep.
+		// CreateSocket() leaves m_socket NULL on bind failure -- EADDRINUSE during the post-resume
+		// recovery path, where the old socket's close has not yet been processed on the strand
+		// before the new bind runs. Without this guard the subsequent DestroySocket() -> Close()
+		// -> DispatchClose chain dereferences the NULL m_socket and SIGSEGVs.
 		if (!m_socket) {
 			AddDebugLogLineF(logAsio, "UDP Close: socket already null (CreateSocket failed)");
 			return;
@@ -1373,36 +2149,40 @@ private:
 		}
 	}
 
-	void DispatchSendTo(CUDPData * recdata)
+	void DispatchSendTo(CUDPData *recdata)
 	{
 		ip::udp::endpoint endpoint(recdata->ipadr.GetEndpoint().address(), recdata->ipadr.Service());
 
-		AddDebugLogLineF(logAsio, CFormat("UDP DispatchSendTo %d to %s:%d") % recdata->size
-			% endpoint.address().to_string() % endpoint.port());
+		AddDebugLogLineF(logAsio,
+			CFormat("UDP DispatchSendTo %d to %s:%d") % recdata->size %
+				endpoint.address().to_string() % endpoint.port());
 		auto self = shared_from_this();
-		m_socket->async_send_to(buffer(recdata->buffer, recdata->size), endpoint,
-			bind_executor(m_strand, [self, recdata](const error_code& ec, std::size_t sent) { self->HandleSendTo(ec, sent, recdata); }));
+		m_socket->async_send_to(buffer(recdata->buffer, recdata->size),
+			endpoint,
+			bind_executor(m_strand, [self, recdata](const error_code &ec, std::size_t sent) {
+				self->HandleSendTo(ec, sent, recdata);
+			}));
 	}
 
-	//
 	// Completion handlers for async requests
-	//
 
-	void HandleRead(const error_code & ec, size_t received)
+	void HandleRead(const error_code &ec, size_t received)
 	{
 		if (ec) {
 			AddDebugLogLineN(logAsio, CFormat("UDP HandleReadError %s") % ec.message());
 		} else if (received == 0) {
 			AddDebugLogLineF(logAsio, "UDP HandleReadError nothing available");
-		} else if (m_muleSocket == NULL) {
-			AddDebugLogLineN(logAsio, "UDP HandleReadError no handler");
 		} else {
 
-			amuleIPV4Address ipadr = amuleIPV4Address(CamuleIPV4Endpoint(m_receiveEndpoint));
-			AddDebugLogLineF(logAsio, CFormat("UDP HandleRead %d %s:%d") % received % ipadr.IPAddress() % ipadr.Service());
+			const CNetworkAddress sourceAddress =
+				NetworkAddressAsio::FromIngressAddress(m_receiveEndpoint.address());
+			AddDebugLogLineF(logAsio,
+				CFormat("UDP HandleRead %d %s:%d") % received % sourceAddress.ToString() %
+					m_receiveEndpoint.port());
 
 			// create our read buffer
-			CUDPData * recdata = new CUDPData(m_readBuffer, received, ipadr);
+			CUDPData *recdata =
+				new CUDPData(m_readBuffer, received, sourceAddress, m_receiveEndpoint.port());
 			{
 				wxMutexLocker lock(m_receiveBuffersLock);
 				m_receiveBuffers.push_back(recdata);
@@ -1412,43 +2192,49 @@ private:
 		StartBackgroundRead();
 	}
 
-	void HandleSendTo(const error_code & ec, size_t sent, CUDPData * recdata)
+	void HandleSendTo(const error_code &ec, size_t sent, CUDPData *recdata)
 	{
 		if (ec) {
 			AddDebugLogLineN(logAsio, CFormat("UDP HandleSendToError %s") % ec.message());
 		} else if (sent != recdata->size) {
-			AddDebugLogLineN(logAsio, CFormat("UDP HandleSendToError tosend: %d sent %d") % recdata->size % sent);
+			AddDebugLogLineN(logAsio,
+				CFormat("UDP HandleSendToError tosend: %d sent %d") % recdata->size % sent);
 		}
-		if (m_muleSocket == NULL) {
-			AddDebugLogLineN(logAsio, "UDP HandleSendToError no handler");
-		} else {
-			AddDebugLogLineF(logAsio, CFormat("UDP HandleSendTo %d to %s") % sent % recdata->ipadr.IPAddress());
-			CoreNotify_UDPSocketSend(m_muleSocket);
-		}
+		AddDebugLogLineF(
+			logAsio, CFormat("UDP HandleSendTo %d to %s") % sent % recdata->ipadr.IPAddress());
+		CoreNotify_UDPSocketSend(m_muleSocket);
 		delete recdata;
 	}
 
-	//
 	// Other functions
-	//
 
 	void CreateSocket()
 	{
 		try {
 			delete m_socket;
 			ip::udp::endpoint endpoint(m_address.GetEndpoint().address(), m_address.Service());
-			// Open + bind in two steps so we can mark the fd close-on-exec
-			// before bind, matching the TCP acceptor path. Single-arg
-			// ctor + open() is the documented Asio idiom for "create
-			// without binding".
+			// Open + bind in two steps so the fd can be marked close-on-exec before bind,
+			// matching the TCP acceptor path. Single-arg ctor + open() is the documented Asio
+			// idiom for "create without binding".
 			m_socket = new ip::udp::socket(s_io_service);
 			m_socket->open(endpoint.protocol());
+			// SO_REUSEADDR so a post-suspend rebind (DestroySocket + CreateSocket in
+			// CMuleUDPSocket::OnReceive when a read callback returns an error) does not hit
+			// EADDRINUSE while the kernel still considers the previous binding live. Without this
+			// Kad and the ed2k client UDP stay broken until the user restarts amule.
+			m_socket->set_option(socket_base::reuse_address(true));
 			SetCloexecOnSocket(m_socket->native_handle());
+			// Pin this UDP socket (ed2k client/server + Kad all funnel
+			// through here) to the configured interface (#173).
+			SetBoundInterface(m_socket->native_handle(), s_bindToInterface, false);
 			m_socket->bind(endpoint);
-			AddDebugLogLineN(logAsio, CFormat("Created UDP socket %s %d") % m_address.IPAddress() % m_address.Service());
+			AddDebugLogLineN(logAsio,
+				CFormat("Created UDP socket %s %d") % m_address.IPAddress() %
+					m_address.Service());
 			StartBackgroundRead();
-		} catch (const system_error& err) {
-			AddLogLineC(CFormat("Error creating UDP socket %s %d : %s") % m_address.IPAddress() % m_address.Service() % err.code().message());
+		} catch (const system_error &err) {
+			AddLogLineC(CFormat(_("Error creating UDP socket %s %d : %s")) %
+				    m_address.IPAddress() % m_address.Service() % err.code().message());
 			m_socket = NULL;
 			m_OK = false;
 		}
@@ -1456,189 +2242,177 @@ private:
 
 	void StartBackgroundRead()
 	{
-		// Skip if Destroy() has already nulled the socket via the strand
-		// teardown lambda. Without this guard the impl's last self ref
-		// (held by the in-flight async_receive_from completion that
-		// brought us here) would try to re-queue a recv on a closed-and-
-		// nulled socket.
+		// Skip if Destroy() has already nulled the socket via the strand teardown lambda. Without
+		// this guard the impl's last self ref -- held by the in-flight completion that brought us
+		// here -- would try to re-queue a recv on a closed-and-nulled socket.
 		if (!m_socket || m_destroying.load(std::memory_order_acquire)) {
 			return;
 		}
 		auto self = shared_from_this();
-		m_socket->async_receive_from(buffer(m_readBuffer, CMuleUDPSocket::UDP_BUFFER_SIZE), m_receiveEndpoint,
-			bind_executor(m_strand, [self](const error_code& ec, std::size_t n) { self->HandleRead(ec, n); }));
+		m_socket->async_receive_from(buffer(m_readBuffer, CMuleUDPSocket::UDP_BUFFER_SIZE),
+			m_receiveEndpoint,
+			bind_executor(m_strand,
+				[self](const error_code &ec, std::size_t n) { self->HandleRead(ec, n); }));
 	}
 
-	// Atomic so OnWrapperGone() (called from the wrapper's dtor on any
-	// thread) and the strand-side load in Destroy() can both touch it
-	// without an external lock.
-	std::atomic<CLibUDPSocket *>	m_libSocket;
-	ip::udp::socket *	m_socket;
-	CMuleUDPSocket *	m_muleSocket;
-	bool				m_OK;
-	std::atomic<bool>	m_destroying;	// set once Destroy() has been called
-	io_context::strand	m_strand;		// handle synchronisation in io_service thread pool
-	amuleIPV4Address	m_address;
+	// Atomic so OnWrapperGone() (called from the wrapper's dtor on any thread) and the
+	// strand-side load in Destroy() can both touch it without an external lock.
+	std::atomic<CLibUDPSocket *> m_libSocket;
+	ip::udp::socket *m_socket;
+	// const: HandleRead() and HandleSendTo() read it on the ASIO thread
+	CMuleUDPSocket *const m_muleSocket;
+	bool m_OK;
+	std::atomic<bool> m_destroying; // set once Destroy() has been called
+	io_context::strand m_strand;    // handle synchronisation in io_service thread pool
+	amuleIPV4Address m_address;
 
 	// One fix receive buffer
-	char *				m_readBuffer;
+	char *m_readBuffer;
 	// and a list of dynamic buffers. UDP data may be coming in faster
 	// than the main loop can handle it.
-	std::list<CUDPData *>	m_receiveBuffers;
-	wxMutex				m_receiveBuffersLock;
+	std::list<CUDPData *> m_receiveBuffers;
+	wxMutex m_receiveBuffersLock;
 
 	// Address of last reception
-	ip::udp::endpoint	m_receiveEndpoint;
+	ip::udp::endpoint m_receiveEndpoint;
 };
 
+/** Library UDP socket wrapper */
 
-/**
- * Library UDP socket wrapper
- */
-
-CLibUDPSocket::CLibUDPSocket(amuleIPV4Address &address, int flags)
+CLibUDPSocket::CLibUDPSocket(amuleIPV4Address &address, int flags, CMuleUDPSocket *handler)
 {
-	// make_shared must run to completion (so a shared_ptr exists to manage
-	// the object) before Init() — Init triggers async_receive_from whose
-	// completion handler captures shared_from_this(), and that requires a
-	// managing shared_ptr to already be in place.
-	m_aSocket = std::make_shared<CAsioUDPSocketImpl>(address, flags, this);
+	wxASSERT(handler);
+	// make_shared must run to completion (so a shared_ptr exists to manage the object) before
+	// Init() -- Init triggers async_receive_from whose completion handler captures
+	// shared_from_this(), and that requires a managing shared_ptr to already be in place.
+	m_aSocket = std::make_shared<CAsioUDPSocketImpl>(address, flags, this, handler);
 	m_aSocket->Init();
 }
-
 
 CLibUDPSocket::~CLibUDPSocket()
 {
 	AddDebugLogLineF(logAsio, CFormat("~CLibUDPSocket() %p %p") % this % m_aSocket.get());
-	// Detach the back-pointer first so any callbacks that fire after the
-	// wrapper is gone don't dereference us. The impl itself stays alive as
-	// long as any callback still holds a shared_from_this() ref; once the
-	// last drops, the impl destructs cleanly and frees the asio socket.
+	// Detach the back-pointer first so any callbacks that fire after the wrapper is gone do not
+	// dereference us. The impl itself stays alive as long as any callback still holds a
+	// shared_from_this() ref; once the last drops, the impl destructs cleanly and frees the
+	// asio socket.
 	if (m_aSocket) {
 		m_aSocket->OnWrapperGone();
 	}
 }
-
 
 bool CLibUDPSocket::IsOk() const
 {
 	return m_aSocket->IsOk();
 }
 
-
-uint32 CLibUDPSocket::RecvFrom(amuleIPV4Address& addr, void* buf, uint32 nBytes)
+uint32 CLibUDPSocket::RecvFrom(CNetworkAddress &addr, uint16 &port, void *buf, uint32 nBytes)
 {
-	return m_aSocket->RecvFrom(addr, buf, nBytes);
+	return m_aSocket->RecvFrom(addr, port, buf, nBytes);
 }
 
-
-uint32 CLibUDPSocket::SendTo(const amuleIPV4Address& addr, const void* buf, uint32 nBytes)
+uint32 CLibUDPSocket::SendTo(const amuleIPV4Address &addr, const void *buf, uint32 nBytes)
 {
 	return m_aSocket->SendTo(addr, buf, nBytes);
 }
-
-
-void CLibUDPSocket::SetClientData(CMuleUDPSocket * muleSocket)
-{
-	m_aSocket->SetClientData(muleSocket);
-}
-
 
 int CLibUDPSocket::LastError() const
 {
 	return !IsOk();
 }
 
-
 void CLibUDPSocket::Close()
 {
 	m_aSocket->Close();
 }
-
 
 void CLibUDPSocket::Destroy()
 {
 	m_aSocket->Destroy();
 }
 
+/** CAsioService - ASIO event loop thread */
 
-/**
- * CAsioService - ASIO event loop thread
- */
-
-class CAsioServiceThread : public wxThread {
+class CAsioServiceThread : public wxThread
+{
 public:
-	CAsioServiceThread() : wxThread(wxTHREAD_JOINABLE)
+	CAsioServiceThread()
+	: wxThread(wxTHREAD_JOINABLE)
 	{
-		static int count = 0;
-		m_threadNumber = ++count;
+	}
+
+	void Start(io_context &context, int number)
+	{
+		m_context = &context;
+		m_threadNumber = number;
 		Create();
 		Run();
 	}
 
-	void * Entry()
+	void *Entry() override
 	{
 		AddLogLineNS(CFormat(_("Asio thread %d started")) % m_threadNumber);
-		auto worker = make_work_guard(s_io_service);		// keep io_service running
-		s_io_service.run();
+		auto worker = make_work_guard(*m_context);
+		m_context->run();
 		AddDebugLogLineN(logAsio, CFormat("Asio thread %d stopped") % m_threadNumber);
 
-		return NULL;
+		return nullptr;
 	}
 
 private:
-	int m_threadNumber;
+	io_context *m_context = nullptr;
+	int m_threadNumber = 0;
 };
 
-/**
- * The constructor starts the thread.
- */
+/** The constructor starts the threads. */
 CAsioService::CAsioService()
 {
-	m_threads = new CAsioServiceThread[m_numberOfThreads];
+	// Synchronous EC connects can leave their context stopped before this pool starts.
+	// Restart all contexts before launching any worker, also when recreating the service.
+	for (auto &context : s_ioContexts) {
+		context.restart();
+	}
+	m_threads = new CAsioServiceThread[s_numberOfAsioThreads];
+	for (int i = 0; i < s_numberOfAsioThreads; ++i) {
+		m_threads[i].Start(s_ioContexts[i], i + 1);
+	}
 }
-
 
 CAsioService::~CAsioService()
 {
+	Stop();
 }
-
 
 void CAsioService::Stop()
 {
 	if (!m_threads) {
 		return;
 	}
-	s_io_service.stop();
-	// Wait for threads to exit
-	for (int i = 0; i < m_numberOfThreads; i++) {
-		CAsioServiceThread * t = m_threads + i;
-		t->Wait();
+	for (auto &context : s_ioContexts) {
+		context.stop();
+	}
+	// Stop every context before waiting for any worker to exit.
+	for (int i = 0; i < s_numberOfAsioThreads; ++i) {
+		m_threads[i].Wait();
 	}
 	delete[] m_threads;
-	m_threads = 0;
+	m_threads = nullptr;
 }
 
-
-
-
-
-/**
- * amuleIPV4Address
- */
+/** amuleIPV4Address */
 
 amuleIPV4Address::amuleIPV4Address()
-	: m_endpoint(new CamuleIPV4Endpoint())
+: m_endpoint(new CamuleIPV4Endpoint())
 {
 }
 
 amuleIPV4Address::amuleIPV4Address(const amuleIPV4Address &a)
-	: m_endpoint(new CamuleIPV4Endpoint(*a.m_endpoint))
+: m_endpoint(new CamuleIPV4Endpoint(*a.m_endpoint))
 {
 }
 
 amuleIPV4Address::amuleIPV4Address(const CamuleIPV4Endpoint &ep)
-	: m_endpoint(new CamuleIPV4Endpoint(ep))
+: m_endpoint(new CamuleIPV4Endpoint(ep))
 {
 }
 
@@ -1647,7 +2421,7 @@ amuleIPV4Address::~amuleIPV4Address()
 	delete m_endpoint;
 }
 
-amuleIPV4Address& amuleIPV4Address::operator=(const amuleIPV4Address &a)
+amuleIPV4Address &amuleIPV4Address::operator=(const amuleIPV4Address &a)
 {
 	if (this != &a) {
 		*m_endpoint = *a.m_endpoint;
@@ -1655,13 +2429,13 @@ amuleIPV4Address& amuleIPV4Address::operator=(const amuleIPV4Address &a)
 	return *this;
 }
 
-amuleIPV4Address& amuleIPV4Address::operator=(const CamuleIPV4Endpoint &ep)
+amuleIPV4Address &amuleIPV4Address::operator=(const CamuleIPV4Endpoint &ep)
 {
 	*m_endpoint = ep;
 	return *this;
 }
 
-bool amuleIPV4Address::Hostname(const wxString& name)
+bool amuleIPV4Address::Hostname(const wxString &name)
 {
 	if (name.IsEmpty()) {
 		return false;
@@ -1674,24 +2448,41 @@ bool amuleIPV4Address::Hostname(const wxString& name)
 		m_endpoint->address(adr);
 		return true;
 	}
-	AddDebugLogLineN(logAsio, CFormat("Hostname(\"%s\") failed, not an IP address %s") % name % ec.message());
+	AddDebugLogLineN(
+		logAsio, CFormat("Hostname(\"%s\") failed, not an IP address %s") % name % ec.message());
 
-	// Try to resolve (sync). Normally not required. Unless you type in your hostname as "local IP address" or something.
+	// Try to resolve (sync). Normally not required, unless you type in your hostname as "local
+	// IP address" or something.
+	//
+	// Only IPv4 addresses, asked for explicitly: the resolve(host, service) overload passes a
+	// default-constructed flag set and leaves the family unrestricted, so getaddrinfo answers
+	// with AAAA records too, on any host. Their order is up to the platform resolver and IPv6
+	// routinely comes first, so taking the first result would store an IPv6 address in what the
+	// rest of aMule treats as a v4-only endpoint.
 	error_code ec2;
 	ip::tcp::resolver res(s_io_service);
-	// We only want to get IPV4 addresses.
-	ip::tcp::resolver::results_type endpoint_iterator = res.resolve(sname, "", ec2);
+	ip::tcp::resolver::results_type endpoint_iterator = res.resolve(ip::tcp::v4(), sname, "", ec2);
 	if (ec2) {
-		AddDebugLogLineN(logAsio, CFormat("Hostname(\"%s\") resolve failed: %s") % name % ec2.message());
+		AddDebugLogLineN(
+			logAsio, CFormat("Hostname(\"%s\") resolve failed: %s") % name % ec2.message());
 		return false;
 	}
-	if (endpoint_iterator == ip::tcp::resolver::results_type()) {
-		AddDebugLogLineN(logAsio, CFormat("Hostname(\"%s\") resolve failed: no address found") % name);
-		return false;
+	// Belt and braces: the AF_INET query above should only ever yield v4 entries, but the
+	// endpoint is v4-only by contract, so scan for one rather than trusting begin() the way the
+	// unrestricted query did.
+	for (const auto &entry : endpoint_iterator) {
+		if (entry.endpoint().address().is_v4()) {
+			m_endpoint->address(entry.endpoint().address());
+			AddDebugLogLineN(
+				logAsio, CFormat("Hostname(\"%s\") resolved to %s") % name % IPAddress());
+			return true;
+		}
 	}
-	m_endpoint->address(endpoint_iterator.begin()->endpoint().address());
-	AddDebugLogLineN(logAsio, CFormat("Hostname(\"%s\") resolved to %s") % name % IPAddress());
-	return true;
+	// A name that only has AAAA records lands here. aMule is IPv4-only end to end
+	// (amuleIPV4Address, the uint32 IPs, the EC listener), so failing is the honest answer --
+	// the caller reports it instead of dialling an address the socket layer cannot use.
+	AddDebugLogLineN(logAsio, CFormat("Hostname(\"%s\") resolve failed: no IPv4 address found") % name);
+	return false;
 }
 
 bool amuleIPV4Address::Service(uint16 service)
@@ -1718,9 +2509,8 @@ wxString amuleIPV4Address::IPAddress() const
 	return CFormat("%s") % m_endpoint->address().to_string();
 }
 
-// "Set address to any of the addresses of the current machine."
-// This just sets the address to 0.0.0.0 .
-// wx does the same.
+// "Set address to any of the addresses of the current machine." This just sets the address
+// to 0.0.0.0, as wx does.
 bool amuleIPV4Address::AnyAddress()
 {
 	m_endpoint->address(ip::address_v4::any());
@@ -1728,110 +2518,115 @@ bool amuleIPV4Address::AnyAddress()
 	return true;
 }
 
-const CamuleIPV4Endpoint & amuleIPV4Address::GetEndpoint() const
+const CamuleIPV4Endpoint &amuleIPV4Address::GetEndpoint() const
 {
-	return * m_endpoint;
+	return *m_endpoint;
 }
 
-CamuleIPV4Endpoint & amuleIPV4Address::GetEndpoint()
+CamuleIPV4Endpoint &amuleIPV4Address::GetEndpoint()
 {
-	return * m_endpoint;
+	return *m_endpoint;
 }
 
-
-//
 // Notification stuff
-//
 namespace MuleNotify
 {
 
-	void LibSocketConnect(CLibSocket * socket, int error)
-	{
-		if (socket->IsDestroying()) {
-			AddDebugLogLineF(logAsio, CFormat("LibSocketConnect Destroying %s %d") % socket->GetIP() % error);
-		} else if (socket->GetProxyState()) {
-			AddDebugLogLineF(logAsio, CFormat("LibSocketConnect Proxy %s %d") % socket->GetIP() % error);
-			socket->OnProxyEvent(MULE_SOCKET_CONNECTION);
-		} else {
-			AddDebugLogLineF(logAsio, CFormat("LibSocketConnect %s %d") %socket->GetIP() % error);
-			socket->OnConnect(error);
-		}
+void LibSocketConnect(CLibSocket *socket, int error)
+{
+	if (socket->IsDestroying()) {
+		AddDebugLogLineF(
+			logAsio, CFormat("LibSocketConnect Destroying %s %d") % socket->GetIP() % error);
+	} else if (socket->GetProxyState()) {
+		AddDebugLogLineF(logAsio, CFormat("LibSocketConnect Proxy %s %d") % socket->GetIP() % error);
+		socket->OnProxyEvent(MULE_SOCKET_CONNECTION);
+	} else {
+		AddDebugLogLineF(logAsio, CFormat("LibSocketConnect %s %d") % socket->GetIP() % error);
+		socket->OnConnect(error);
 	}
+}
 
-	void LibSocketSend(CLibSocket * socket, int error)
-	{
-		if (socket->IsDestroying()) {
-			AddDebugLogLineF(logAsio, CFormat("LibSocketSend Destroying %s %d") % socket->GetIP() % error);
-		} else if (socket->GetProxyState()) {
-			AddDebugLogLineF(logAsio, CFormat("LibSocketSend Proxy %s %d") % socket->GetIP() % error);
-			socket->OnProxyEvent(MULE_SOCKET_OUTPUT);
-		} else {
-			AddDebugLogLineF(logAsio, CFormat("LibSocketSend %s %d") % socket->GetIP() % error);
-			socket->OnSend(error);
-		}
+void LibSocketSend(CLibSocket *socket, int error)
+{
+	if (socket->IsDestroying()) {
+		AddDebugLogLineF(
+			logAsio, CFormat("LibSocketSend Destroying %s %d") % socket->GetIP() % error);
+	} else if (socket->GetProxyState()) {
+		AddDebugLogLineF(logAsio, CFormat("LibSocketSend Proxy %s %d") % socket->GetIP() % error);
+		socket->OnProxyEvent(MULE_SOCKET_OUTPUT);
+	} else {
+		AddDebugLogLineF(logAsio, CFormat("LibSocketSend %s %d") % socket->GetIP() % error);
+		socket->OnSend(error);
 	}
+}
 
-	void LibSocketReceive(CLibSocket * socket, int error)
-	{
-		socket->EventProcessed();
-		if (socket->IsDestroying()) {
-			AddDebugLogLineF(logAsio, CFormat("LibSocketReceive Destroying %s %d") % socket->GetIP() % error);
-		} else if (socket->GetProxyState()) {
-			AddDebugLogLineF(logAsio, CFormat("LibSocketReceive Proxy %s %d") % socket->GetIP() % error);
-			socket->OnProxyEvent(MULE_SOCKET_INPUT);
-		} else {
-			AddDebugLogLineF(logAsio, CFormat("LibSocketReceive %s %d") % socket->GetIP() % error);
-			socket->OnReceive(error);
-		}
+void LibSocketFlush(CLibSocket *socket)
+{
+	if (socket->IsDestroying()) {
+		return;
 	}
+	socket->FlushTransport();
+}
 
-	void LibSocketLost(CLibSocket * socket)
-	{
-		if (socket->IsDestroying()) {
-			AddDebugLogLineF(logAsio, CFormat("LibSocketLost Destroying %s") % socket->GetIP());
-		} else if (socket->GetProxyState()) {
-			AddDebugLogLineF(logAsio, CFormat("LibSocketLost Proxy %s") % socket->GetIP());
-			socket->OnProxyEvent(MULE_SOCKET_LOST);
-		} else {
-			AddDebugLogLineF(logAsio, CFormat("LibSocketLost %s") % socket->GetIP());
-			socket->OnLost(0);
-		}
+void LibSocketReceive(CLibSocket *socket, int error)
+{
+	socket->EventProcessed();
+	if (socket->IsDestroying()) {
+		AddDebugLogLineF(
+			logAsio, CFormat("LibSocketReceive Destroying %s %d") % socket->GetIP() % error);
+	} else if (socket->GetProxyState()) {
+		AddDebugLogLineF(logAsio, CFormat("LibSocketReceive Proxy %s %d") % socket->GetIP() % error);
+		socket->OnProxyEvent(MULE_SOCKET_INPUT);
+	} else {
+		AddDebugLogLineF(logAsio, CFormat("LibSocketReceive %s %d") % socket->GetIP() % error);
+		socket->OnReceive(error);
 	}
+}
 
-	void LibSocketDestroy(CLibSocket * socket)
-	{
-		AddDebugLogLineF(logAsio, CFormat("LibSocket_Destroy %s") % socket->GetIP());
-		delete socket;
+void LibSocketLost(CLibSocket *socket)
+{
+	if (socket->IsDestroying()) {
+		AddDebugLogLineF(logAsio, CFormat("LibSocketLost Destroying %s") % socket->GetIP());
+	} else if (socket->GetProxyState()) {
+		AddDebugLogLineF(logAsio, CFormat("LibSocketLost Proxy %s") % socket->GetIP());
+		socket->OnProxyEvent(MULE_SOCKET_LOST);
+	} else {
+		AddDebugLogLineF(logAsio, CFormat("LibSocketLost %s") % socket->GetIP());
+		socket->OnLost(0);
 	}
+}
 
-	void ProxySocketEvent(CLibSocket * socket, int evt)
-	{
-		AddDebugLogLineF(logAsio, CFormat("ProxySocketEvent %s %d") % socket->GetIP() % evt);
-		socket->OnProxyEvent(evt);
-	}
+void LibSocketDestroy(CLibSocket *socket)
+{
+	AddDebugLogLineF(logAsio, CFormat("LibSocket_Destroy %s") % socket->GetIP());
+	delete socket;
+}
 
-	void ServerTCPAccept(CLibSocketServer * socketServer)
-	{
-		AddDebugLogLineF(logAsio, "ServerTCP_Accept");
-		socketServer->OnAccept();
-	}
+void ProxySocketEvent(CLibSocket *socket, int evt)
+{
+	AddDebugLogLineF(logAsio, CFormat("ProxySocketEvent %s %d") % socket->GetIP() % evt);
+	socket->OnProxyEvent(evt);
+}
 
-	void UDPSocketSend(CMuleUDPSocket * socket)
-	{
-		AddDebugLogLineF(logAsio, "UDPSocketSend");
-		socket->OnSend(0);
-	}
+void ServerTCPAccept(CLibSocketServer *socketServer)
+{
+	AddDebugLogLineF(logAsio, "ServerTCP_Accept");
+	socketServer->OnAccept();
+}
 
-	void UDPSocketReceive(CMuleUDPSocket * socket)
-	{
-		AddDebugLogLineF(logAsio, "UDPSocketReceive");
-		socket->OnReceive(0);
-	}
+void UDPSocketSend(CMuleUDPSocket *socket)
+{
+	AddDebugLogLineF(logAsio, "UDPSocketSend");
+	socket->OnSend(0);
+}
 
+void UDPSocketReceive(CMuleUDPSocket *socket)
+{
+	AddDebugLogLineF(logAsio, "UDPSocketReceive");
+	socket->OnReceive(0);
+}
 
 } // namespace MuleNotify
 
-//
 // Initialize MuleBoostVersion
-//
 wxString MuleBoostVersion = CFormat("%d.%d") % (BOOST_VERSION / 100000) % (BOOST_VERSION / 100 % 1000);

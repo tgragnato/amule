@@ -27,28 +27,81 @@
 #define ED2KPROTOCOLS_H
 
 // For MuleInfoPacket (OLD - DEPRECATED.)
-#define	EMULE_PROTOCOL				0x01
+#define EMULE_PROTOCOL 0x01
 
 // Known protocols
-enum Protocols {
-	OP_EDONKEYHEADER		= 0xE3,
-	OP_EDONKEYPROT			= OP_EDONKEYHEADER,
-	OP_PACKEDPROT			= 0xD4,
-	OP_EMULEPROT			= 0xC5,
+enum Protocols
+{
+	OP_EDONKEYHEADER = 0xE3,
+	OP_EDONKEYPROT = OP_EDONKEYHEADER,
+	OP_PACKEDPROT = 0xD4,
+	OP_EMULEPROT = 0xC5,
 
 	// Reserved for later UDP headers (important for EncryptedDatagramSocket)
 	OP_UDPRESERVEDPROT1 = 0xA3,
 	OP_UDPRESERVEDPROT2 = 0xB2,
 
 	// Kademlia 1/2
-	OP_KADEMLIAHEADER		= 0xE4,
-	OP_KADEMLIAPACKEDPROT	= 0xE5,
+	OP_KADEMLIAHEADER = 0xE4,
+	OP_KADEMLIAPACKEDPROT = 0xE5,
 
 	// Kry tests
-	OP_ED2KV2HEADER			= 0xF4,
-	OP_ED2KV2PACKEDPROT		= 0xF5,
+	OP_ED2KV2HEADER = 0xF4,
+	OP_ED2KV2PACKEDPROT = 0xF5,
 
-	OP_MLDONKEYPROT			= 0x00
+	OP_MLDONKEYPROT = 0x00
 };
+
+// OP_UDPRESERVEDPROT2 frame types.
+//
+// 0xB2 is the one UDP protocol byte not followed by an eD2k opcode: the next byte selects a frame
+// type and the rest is that frame's payload. These are the types eMuleAI defines, and they are a
+// separate namespace from Protocols above -- OP_NATT_FRAME_UTP and OP_MLDONKEYPROT are both 0x00
+// and mean unrelated things at different offsets.
+//
+// aMule implements none of the transports behind them yet; it recognises them so an eMuleAI peer's
+// NAT traversal traffic is dropped as a known frame it cannot serve rather than treated as
+// malformed. See src/ReservedProtocolFrames.h.
+enum ReservedProt2FrameTypes
+{
+	//! Legacy uTP NAT-T frame.
+	OP_NATT_FRAME_UTP = 0x00,
+	//! QUIC NAT-T frame.
+	OP_NATT_FRAME_QUIC = 0x01,
+	//! Direct peer NAT-T capability negotiation.
+	OP_NATT_FRAME_CAPS = 0x02,
+	//! Direct peer NAT-T capability negotiation acknowledgement.
+	OP_NATT_FRAME_CAPS_ACK = 0x03,
+	//! NAT-T key frame.
+	OP_NATT_FRAME_KEY = 0xFF
+};
+
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+// These opcodes belong to different transport namespaces, not Protocols or
+// ReservedProt2FrameTypes. In particular UDP 0xB3 is NOT a TCP buddy request.
+namespace NatServerTcp
+{
+enum Opcode
+{
+	OP_LOWID_HOLEPUNCH_REQUEST = 0x60,
+	OP_LOWID_HOLEPUNCH_INFO = 0x61,
+	OP_LOWID_HOLEPUNCH_FAIL = 0x62
+};
+}
+namespace NatServerUdp
+{
+enum Opcode
+{
+	OP_NATT_KEEPALIVE = 0x9F
+};
+}
+namespace NatPeerUdp
+{
+enum Opcode
+{
+	OP_NATT_HOLEPUNCH = 0xB3
+};
+}
+#endif
 
 #endif // ED2KPROTOCOLS_H

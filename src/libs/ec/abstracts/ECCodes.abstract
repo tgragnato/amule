@@ -27,8 +27,13 @@ Name ECFlags
 DataType uint32
 EC_FLAG_ZLIB		0x00000001
 EC_FLAG_UTF8_NUMBERS	0x00000002
+## Body is AEAD-sealed; see CECSocket::WritePacket. 0x08 was previously
+## inside EC_FLAG_UNKNOWN_MASK, so a peer predating this feature rejects
+## such a packet outright instead of misparsing ciphertext as tags -- the
+## failure is closed, which no other free bit would have given us.
+EC_FLAG_ENCRYPTED	0x00000008
 EC_FLAG_LARGE_TAG_COUNT	0x00000010
-EC_FLAG_UNKNOWN_MASK	0xff7f7f08
+EC_FLAG_UNKNOWN_MASK	0xff7f7f00
 [/Section]
 
 # OpCodes
@@ -149,6 +154,71 @@ EC_OP_SERVER_SET_STATIC_PRIO        0x56
 
 EC_OP_FRIEND                        0x57
 
+EC_OP_VERSION_CHECK                 0x58
+
+EC_OP_SHARED_FILE_SEARCH_KAD_NOTES  0x59
+
+EC_OP_VERIFY_LOCAL_DATA             0x5A
+
+EC_OP_GET_CHAT_MESSAGES             0x5B
+
+EC_OP_CHAT_MESSAGES                 0x5C
+
+EC_OP_GET_SHARED_DIRS               0x5D
+
+EC_OP_SET_SHARED_DIRS               0x5E
+
+EC_OP_SEARCH_REQUEST_MORE           0x5F
+
+EC_OP_SEARCH_LIST                   0x60
+
+EC_OP_GET_CLIENT_HISTORY            0x61
+EC_OP_CLIENT_HISTORY                0x62
+
+## Chat session store (issue #971). The client asks for the session list and
+## everything newer than its cursor in one roundtrip, so an idle connection
+## costs one small packet and a busy one needs no follow-up query.
+EC_OP_GET_CHAT_SESSIONS             0x63
+EC_OP_CHAT_SESSIONS                 0x64
+EC_OP_CHAT_SEND                     0x65
+EC_OP_CHAT_CLOSE_SESSION            0x66
+
+## Re-extract media metadata for the whole share, or for one file by hash
+## (EC_TAG_KNOWNFILE with the hash). Reply carries
+## EC_TAG_KNOWNFILE_MEDIA_QUEUED = how many probes were queued.
+##
+## Deliberately NOT behind a capability tag. A server that does not know it
+## answers EC_OP_FAILED, which the client reports as "not supported" -- the
+## op is user-triggered once, not polled, so an old core sees a single
+## rejected request rather than a repeating one.
+EC_OP_REFRESH_MEDIA_METADATA        0x67
+
+## Set a partfile's A4AF-auto flag to a given value, rather than flipping it.
+## Addressed like every other PARTFILE command (EC_TAG_PARTFILE with the hash)
+## and carries EC_TAG_PARTFILE_A4AFAUTO with the value to store.
+##
+## EC_OP_PARTFILE_SWAP_A4AF_THIS_AUTO maps to SetA4AFAuto(!IsA4AFAuto()), so a
+## caller that cannot see the current value cannot ask for a particular one,
+## and any retried request flips it back. That is fine for a GUI menu item
+## driven by a checkbox the user is looking at, which is why the flip op stays
+## for amulegui, and wrong for an HTTP API, where a library or a browser may
+## repeat a request without the caller knowing.
+##
+## Additive: the flip op is unchanged, so an older client is unaffected, and a
+## core that does not know this one answers EC_OP_FAILED.
+EC_OP_PARTFILE_SET_A4AF_AUTO        0x68
+
+## User-triggered bounded Kad lookup snapshot. Reply contains EC_TAG_KAD_LOOKUP
+## children with typed peer and referral records, formatted in the client's locale.
+## Send only after the server echoes EC_TAG_CAN_KAD_LOOKUPS at login: older
+## cores assert on unknown opcodes.
+EC_OP_GET_KAD_LOOKUPS               0x69
+
+## Delete a complete shared file or completed transfer from disk. Requires
+## KNOWNFILE (MD4), ECID, KNOWNFILE_PATH (directory), PARTFILE_NAME (basename).
+## Identity/path are checked before unlink. NOOP on success; FAILED + STRING
+## on failure, leaving the file shared/listed. Never calls CPartFile::Delete.
+EC_OP_KNOWNFILE_DELETE              0x6A
 [/Section]
 
 [Section Content]
@@ -167,7 +237,7 @@ EC_TAG_LOG_TO_STATUS                      0x0007
 EC_TAG_BOOTSTRAP_IP                       0x0008
 EC_TAG_BOOTSTRAP_PORT                     0x0009
 EC_TAG_CLIENT_ID                          0x000A
-EC_TAG_PASSWD_SALT                        0x000B
+# Retired: EC_TAG_PASSWD_SALT             0x000B
 EC_TAG_CAN_ZLIB                           0x000C
 EC_TAG_CAN_UTF8_NUMBERS                   0x000D
 EC_TAG_CAN_NOTIFY                         0x000E
@@ -177,6 +247,58 @@ EC_TAG_CAN_LARGE_TAG_COUNT                0x0011
 EC_TAG_CAN_PARTIAL_UPDATE                 0x0012
 EC_TAG_FILE_REMOVED                       0x0013
 EC_TAG_PREFER_NO_ZLIB                     0x0014
+EC_TAG_CAN_MULTI_SEARCH                   0x0015
+EC_TAG_CAN_CHAT                           0x0016
+
+EC_TAG_CAN_SHAREDDIRS_CONFIG              0x0017
+EC_TAG_ED2K_CONNECTED_SINCE               0x0018
+EC_TAG_KAD_CONNECTED_SINCE                0x0019
+EC_TAG_CAN_SEARCH_LIST                    0x001A
+EC_TAG_CAN_KAD_LOOKUPS                    0x002A
+## Server accepts EC_SEARCH_ALL; older servers silently treat unknown kinds as local.
+EC_TAG_CAN_SEARCH_ALL                     0x0029
+## Server accepts and validates all six media search filters.
+EC_TAG_CAN_SEARCH_METADATA                0x0035
+EC_TAG_CAN_AEAD                           0x001B
+EC_TAG_AEAD_CIPHER                        0x001C
+EC_TAG_AEAD_CLIENT_NONCE                  0x001D
+EC_TAG_AEAD_SERVER_NONCE                  0x001E
+EC_TAG_CAN_PARTIAL_SEARCH                 0x001F
+EC_TAG_CAN_SEARCH_PROGRESS_UNION          0x0020
+EC_TAG_AEAD_CLIENT_PUBKEY                 0x0021
+EC_TAG_AEAD_SERVER_PUBKEY                 0x0022
+# Retired: EC_TAG_AEAD_CLIENT_CONFIRM      0x0023
+# Retired: EC_TAG_AEAD_SERVER_CONFIRM      0x0024
+EC_TAG_SESSION_ID                         0x0025
+EC_TAG_CAN_CLIENT_HISTORY                 0x0026
+
+## Client speaks the chat session ops (EC_OP_GET_CHAT_SESSIONS and friends).
+## Deliberately distinct from EC_TAG_CAN_CHAT: that tag shipped earlier, on
+## builds that echo it but know none of these opcodes, so reusing it would
+## make such a daemon look capable and earn it an unknown opcode.
+EC_TAG_CAN_CHAT_SESSIONS                  0x0027
+
+## Client understands EC_TAG_CHAT_PEER_HASH: it sends/reads the hash target on
+## EC_OP_CHAT_SEND, EC_OP_CHAT_CLOSE_SESSION and EC_OP_GET_CHAT_MESSAGES, and
+## its own EC_OP_GET_CHAT_SESSIONS listing may include a session with no unique
+## GUI_ID. Deliberately distinct from EC_TAG_CAN_CHAT_SESSIONS: a client that
+## predates the hash tag would merge two such sessions under one legacy id.
+EC_TAG_CAN_CHAT_PEER_HASH                 0x0028
+## Server supports EC_OP_KNOWNFILE_DELETE. Advertised unconditionally in AUTH_OK.
+EC_TAG_CAN_DELETE_COMPLETE                0x002B
+## Optional child of EC_TAG_CONNSTATE: uint8, ED2K = bit 0, Kad = bit 1.
+EC_TAG_NETWORKS_ENABLED                   0x002C
+EC_TAG_SRP_A                              0x002D
+EC_TAG_SRP_B                              0x002E
+EC_TAG_SRP_PROFILE                        0x002F
+EC_TAG_SRP_SALT                           0x0030
+EC_TAG_SRP_CREDENTIAL                     0x0031
+EC_TAG_SRP_M1                             0x0032
+EC_TAG_SRP_M2                             0x0033
+## Child of EC_OP_AUTH_FAIL: an EC_AUTH_FAIL_REASON.
+EC_TAG_AUTH_FAIL_REASON                   0x0034
+## Seconds, only with EC_AUTH_FAIL_RATE_LIMITED. An unsigned integer of variable width.
+EC_TAG_AUTH_RETRY_AFTER                   0x0036
 
 
 EC_TAG_CLIENT_NAME                        0x0100
@@ -211,6 +333,17 @@ EC_TAG_STATS_UL_SPEED                     0x0200
 	EC_TAG_STATS_TOTAL_RECEIVED_BYTES         0x0219
 	EC_TAG_STATS_SHARED_FILE_COUNT            0x021A
 	EC_TAG_STATS_KAD_NODES                    0x021B
+	EC_TAG_STATS_TEMP_FREE_SPACE              0x021C
+	EC_TAG_STATS_INCOMING_FREE_SPACE          0x021D
+## Versioned fixed-size contact histogram. Missing means unsupported.
+	EC_TAG_STATS_KAD_DISTRIBUTION             0x021E
+	EC_TAG_STATS_SESSION_SENT_BYTES           0x021F
+	EC_TAG_STATS_SESSION_RECEIVED_BYTES       0x0220
+	EC_TAG_STATS_ACTIVE_CONNECTIONS           0x0221
+	EC_TAG_STATS_UPTIME_SECONDS               0x0222
+	EC_TAG_STATS_CPU_MILLISECONDS             0x0223
+## Missing where the platform cannot report it.
+	EC_TAG_STATS_RESIDENT_MEMORY_BYTES        0x0224
 
 EC_TAG_PARTFILE                           0x0300
 	EC_TAG_PARTFILE_NAME                      0x0301
@@ -247,6 +380,9 @@ EC_TAG_PARTFILE                           0x0300
 	EC_TAG_PARTFILE_HASHED_PART_COUNT         0x0320
 	EC_TAG_PARTFILE_A4AFAUTO                  0x0321
 	EC_TAG_PARTFILE_A4AF_SOURCES              0x0322
+	EC_TAG_PARTFILE_KAD_COMMENT_SEARCHING     0x0323
+## Smoothed KiB/s for time-remaining estimates; SPEED remains the live bytes/s display.
+	EC_TAG_PARTFILE_SPEED_SMOOTHED             0x0324
 
 EC_TAG_KNOWNFILE                          0x0400
 	EC_TAG_KNOWNFILE_XFERRED                  0x0401
@@ -264,6 +400,22 @@ EC_TAG_KNOWNFILE                          0x0400
 	EC_TAG_KNOWNFILE_COMPLETE_SOURCES         0x040D
 	EC_TAG_KNOWNFILE_COMMENT                  0x040E
 	EC_TAG_KNOWNFILE_RATING                   0x040F
+	EC_TAG_KNOWNFILE_MEDIA_LENGTH             0x0410
+	EC_TAG_KNOWNFILE_MEDIA_BITRATE            0x0411
+	EC_TAG_KNOWNFILE_MEDIA_CODEC              0x0412
+	EC_TAG_KNOWNFILE_MEDIA_ARTIST             0x0413
+	EC_TAG_KNOWNFILE_MEDIA_ALBUM              0x0414
+	EC_TAG_KNOWNFILE_MEDIA_TITLE              0x0415
+	EC_TAG_KNOWNFILE_PATH                     0x0416
+	EC_TAG_KNOWNFILE_UPLOAD_SPEED             0x0417
+	EC_TAG_KNOWNFILE_UPLOADING_COUNT          0x0418
+	EC_TAG_KNOWNFILE_LAST_UPLOAD              0x0419
+	EC_TAG_KNOWNFILE_SHARED_SINCE             0x041A
+	EC_TAG_KNOWNFILE_HASHED_PART_COUNT        0x041B
+	EC_TAG_KNOWNFILE_MEDIA_QUEUED             0x041C
+	EC_TAG_KNOWNFILE_VERIFY_DATE              0x041D
+	EC_TAG_KNOWNFILE_VERIFY_CORRUPT_MD4       0x041E
+	EC_TAG_KNOWNFILE_VERIFY_CORRUPT_AICH      0x041F
 
 EC_TAG_SERVER                             0x0500
 	EC_TAG_SERVER_NAME                        0x0501
@@ -279,6 +431,13 @@ EC_TAG_SERVER                             0x0500
 	EC_TAG_SERVER_VERSION                     0x050B
 	EC_TAG_SERVER_IP                          0x050C
 	EC_TAG_SERVER_PORT                        0x050D
+	EC_TAG_SERVER_COUNTRY                     0x050E
+	EC_TAG_SERVER_FILES_SOFT                  0x050F
+	EC_TAG_SERVER_FILES_HARD                  0x0510
+	EC_TAG_SERVER_TCP_FLAGS                   0x0511
+	EC_TAG_SERVER_UDP_FLAGS                   0x0512
+## Optional flag on EC_OP_FAILED: source-list update refused because a download is active.
+	EC_TAG_SERVER_UPDATE_BUSY                 0x0513
 
 EC_TAG_CLIENT                             0x0600
 	EC_TAG_CLIENT_SOFTWARE                    0x0601
@@ -324,7 +483,28 @@ EC_TAG_CLIENT                             0x0600
 	EC_TAG_CLIENT_OS_INFO                     0x0629
 	EC_TAG_CLIENT_AVAILABLE_PARTS             0x062A
 	EC_TAG_CLIENT_UPLOAD_PART_STATUS          0x062B
+	EC_TAG_CLIENT_IS_FRIEND                   0x062C
+	EC_TAG_CLIENT_SCORE_RATIO                 0x062D
+	EC_TAG_CLIENT_COUNTRY                     0x062E
+# Whether we hold a live socket to this peer right now
+# (CUpDownClient::IsConnected). Every consumer used to infer "online" from a
+# client ECID merely existing, which is true from the moment the daemon starts
+# ATTEMPTING contact -- so an unroutable peer read as online. Carried on the
+# client, and echoed on the friend and chat-session containers, which reference
+# a client by ECID and would otherwise have to guess the same way.
+	EC_TAG_CLIENT_CONNECTED                   0x0632
 
+# Credit-store fields, for the clients history. The rest of a history row
+# reuses the live-client tags above -- a peer's name, address, software and
+# origin mean the same thing whether it is connected now or was seen months ago.
+	EC_TAG_CLIENT_LAST_SEEN                   0x062F
+	EC_TAG_CLIENT_FIRST_SEEN                  0x0630
+	EC_TAG_CLIENT_SESSIONS                    0x0631
+
+# eMuleAI vendor capability word (CT_MOD_MISCOPTIONS) as the peer sent it,
+# already masked to the five defined bits. Additive: a missing tag means an
+# older daemon, which is a distinct third state from "peer advertised nothing".
+	EC_TAG_CLIENT_MOD_CAPABILITIES            0x0633
 EC_TAG_SEARCHFILE                         0x0700
 	EC_TAG_SEARCH_TYPE                        0x0701
 	EC_TAG_SEARCH_NAME                        0x0702
@@ -335,6 +515,42 @@ EC_TAG_SEARCHFILE                         0x0700
 	EC_TAG_SEARCH_AVAILABILITY                0x0707
 	EC_TAG_SEARCH_STATUS                      0x0708
 	EC_TAG_SEARCH_PARENT                      0x0709
+	EC_TAG_SEARCH_LIFECYCLE_STATE             0x070A
+	EC_TAG_SEARCH_LIFECYCLE_KIND              0x070B
+	EC_TAG_SEARCH_RESULT_COUNT                0x070C
+	EC_TAG_SEARCH_LIFECYCLE_PERCENT           0x070D
+	EC_TAG_SEARCH_ID                          0x070E
+	EC_TAG_SEARCH_REF                         0x070F
+	EC_TAG_SEARCH_EXPIRED                     0x0710
+	EC_TAG_SEARCH_CLOSE                       0x0711
+	EC_TAG_SEARCHFILE_CLIENT_ID               0x0712
+	EC_TAG_SEARCHFILE_CLIENT_PORT             0x0713
+	EC_TAG_SEARCHFILE_DIRECTORY               0x0714
+	EC_TAG_SEARCH_BROWSE_STATUS               0x0715
+## Whether a Kad search can still be widened by a later "More" press --
+## `fired || CanReaskMore()`, not "did a reask go out". Emitted on every
+## EC_OP_SEARCH_REQUEST_MORE reply, including the unknown-id path. A peer
+## predating it sends nothing, and absent must read as "this daemon does not
+## report it", never as "exhausted".
+	EC_TAG_SEARCH_MORE_REASKABLE              0x0716
+## Whether this search currently has a running Kad component (including EC_SEARCH_ALL).
+	EC_TAG_SEARCH_KAD_ACTIVE                  0x0717
+## Optional pair on ALL search results. Incremental updates send only changed
+## halves; retain the last-known other half. Without an initial pair the split
+## is unknown, not zero. Aggregate source tags remain unchanged.
+	EC_TAG_SEARCHFILE_ED2K_SOURCES            0x0718
+	EC_TAG_SEARCHFILE_KAD_SOURCES             0x0719
+## Whether this search still owns the active eD2k slot, independent of Kad.
+	EC_TAG_SEARCH_ED2K_ACTIVE                 0x071A
+## Optional SEARCH_START filters, also reported by SEARCH_LIST for recorded parameters.
+## Integers: kbps (0..1000000) and seconds (0..86400); zero means no filter. Out of range is rejected.
+## Strings: metadata terms; empty means no filter.
+	EC_TAG_SEARCH_MIN_BITRATE                 0x071B
+	EC_TAG_SEARCH_MIN_LENGTH                  0x071C
+	EC_TAG_SEARCH_CODEC                       0x071D
+	EC_TAG_SEARCH_TITLE                       0x071E
+	EC_TAG_SEARCH_ALBUM                       0x071F
+	EC_TAG_SEARCH_ARTIST                      0x0720
 
 EC_TAG_FRIEND                             0x0800
 	EC_TAG_FRIEND_NAME                        0x0801
@@ -346,6 +562,36 @@ EC_TAG_FRIEND                             0x0800
 	EC_TAG_FRIEND_REMOVE                      0x0807
 	EC_TAG_FRIEND_FRIENDSLOT                  0x0808
 	EC_TAG_FRIEND_SHARED                      0x0809
+
+## EC_TAG_CHAT carries the message text as its value; EC_TAG_CHAT_CLIENT_ID is
+## the peer's GUI_ID, a uint64 packed as (ip << 16) | port, with the IP in the
+## same byte order as EC_TAG_CLIENT_USER_IP. EC_TAG_CHAT_PEER_HASH is the peer's
+## CMD4Hash: the only target that reaches a peer GUI_ID cannot express -- IPv6,
+## a provisional session, or an ambiguous shared endpoint. A daemon that omits it
+## from a session is one built before this tag existed.
+EC_TAG_CHAT                               0x0900
+	EC_TAG_CHAT_CLIENT_ID                     0x0901
+	EC_TAG_CHAT_SESSION                       0x0902
+	EC_TAG_CHAT_MESSAGE                       0x0903
+	EC_TAG_CHAT_MSG_ID                        0x0904
+	EC_TAG_CHAT_DIRECTION                     0x0905
+	EC_TAG_CHAT_TIMESTAMP                     0x0906
+	EC_TAG_CHAT_PEER_NAME                     0x0907
+	EC_TAG_CHAT_PEER_HASH                     0x0908
+## Optional children of EC_TAG_CHAT_MESSAGE. Kind: 0 text (default), 1 CAPTCHA
+## challenge, 2 CAPTCHA result. Image is a base64-encoded validated BMP string.
+## Status: 0 accepted, 1 failed/retry allowed, 2 failed/no attempts remain.
+## EC_TAG_CHAT_CAPTCHA_IMAGE is also a session child while its challenge is
+## pending, independent of the requested transcript cursor, unless the bitmap
+## is already included in a message child or acknowledged by the request.
+	EC_TAG_CHAT_MESSAGE_KIND                  0x0909
+	EC_TAG_CHAT_CAPTCHA_IMAGE                 0x090A
+	EC_TAG_CHAT_CAPTCHA_STATUS                0x090B
+## Session child: currently pending challenge message id, or 0. Optional on
+## EC_OP_CHAT_SEND: reject an answer unless this exact challenge is pending.
+## On EC_OP_GET_CHAT_SESSIONS, repeated top-level ids acknowledge cached images.
+## Omit acknowledgments after reconnect to recover live images at any cursor.
+	EC_TAG_CHAT_CAPTCHA_ID                    0x090C
 
 EC_TAG_SELECT_PREFS                       0x1000
 
@@ -362,6 +608,11 @@ EC_TAG_SELECT_PREFS                       0x1000
 		EC_TAG_USER_HASH                          0x1202
 		EC_TAG_USER_HOST                          0x1203
 		EC_TAG_GENERAL_CHECK_NEW_VERSION          0x1204
+		EC_TAG_GENERAL_VERSION_CHECK_AVAILABLE    0x1205
+		EC_TAG_GENERAL_VERSION_CHECK_LATEST       0x1206
+		EC_TAG_GENERAL_VERSION_CHECK_OUTDATED     0x1207
+		EC_TAG_GENERAL_VERSION_CHECK_TIMESTAMP    0x1208
+		EC_TAG_GENERAL_UPNP_AVAILABLE             0x1209
 
 	EC_TAG_PREFS_CONNECTIONS                  0x1300
 		EC_TAG_CONN_DL_CAP                        0x1301
@@ -378,6 +629,22 @@ EC_TAG_SELECT_PREFS                       0x1000
 		EC_TAG_CONN_RECONNECT                     0x130C
 		EC_TAG_NETWORK_ED2K                       0x130D
 		EC_TAG_NETWORK_KADEMLIA                   0x130E
+		EC_TAG_CONN_BIND_ADDRESS                  0x130F
+		EC_TAG_CONN_BIND_INTERFACE                0x1310
+		EC_TAG_PROXY_ENABLE                       0x1311
+		EC_TAG_PROXY_TYPE                         0x1312
+		EC_TAG_PROXY_HOST                         0x1313
+		EC_TAG_PROXY_PORT                         0x1314
+		EC_TAG_PROXY_AUTH                         0x1315
+		EC_TAG_PROXY_USER                         0x1316
+		EC_TAG_PROXY_PASSWORD                     0x1317
+		EC_TAG_CONN_UPNP_ENABLED                  0x1318
+		EC_TAG_CONN_UPNP_TCP_PORT                 0x1319
+## Emitted only by ENABLE_IPV6 cores; see EC_Protocol.md for the absent-tag state.
+		EC_TAG_CONN_ADDRESS_FAMILIES              0x131A
+		EC_TAG_CONN_ADVERTISE_IPV6                0x131B
+## The three-valued advertising mode; ADVERTISE_IPV6 is its legacy boolean view.
+		EC_TAG_CONN_ADVERTISE_IPV6_MODE           0x131C
 
 	EC_TAG_PREFS_MESSAGEFILTER                0x1400
 		EC_TAG_MSGFILTER_ENABLED                  0x1401
@@ -386,6 +653,13 @@ EC_TAG_SELECT_PREFS                       0x1000
 		EC_TAG_MSGFILTER_SECURE                   0x1404
 		EC_TAG_MSGFILTER_BY_KEYWORD               0x1405
 		EC_TAG_MSGFILTER_KEYWORDS                 0x1406
+		EC_TAG_MSGFILTER_SHOW_IN_LOG              0x1407
+		EC_TAG_MSGFILTER_FILTER_COMMENTS          0x1408
+		EC_TAG_MSGFILTER_COMMENT_KEYWORDS         0x1409
+## Explicit integer booleans, always returned, optional on SET even at EC_DETAIL_CMD.
+## Missing means an older core/client; never reset these settings on an omitted tag.
+		EC_TAG_MSGFILTER_ADVANCED                0x140A
+		EC_TAG_MSGFILTER_CAPTCHA                 0x140B
 
 	EC_TAG_PREFS_REMOTECTRL                   0x1500
 		EC_TAG_WEBSERVER_AUTORUN                  0x1501
@@ -394,9 +668,26 @@ EC_TAG_SELECT_PREFS                       0x1000
 		EC_TAG_WEBSERVER_USEGZIP                  0x1504
 		EC_TAG_WEBSERVER_REFRESH                  0x1505
 		EC_TAG_WEBSERVER_TEMPLATE                 0x1506
+		EC_TAG_AMULEAPI_AUTORUN                   0x1507
+		EC_TAG_AMULEAPI_PORT                      0x1508
+		EC_TAG_AMULEAPI_PASSWD                    0x1509
+		EC_TAG_AMULEAPI_BIND                      0x150A
+		EC_TAG_AMULEAPI_GUEST_PASSWD              0x150B
+# The EC listener's own settings, read-only. Value tags, never presence: a missing
+# EC_TAG_EXTERNALCONN_PORT means the daemon predates them, not that they are off.
+		EC_TAG_EXTERNALCONN_ENABLED               0x150C
+		EC_TAG_EXTERNALCONN_ADDRESS               0x150D
+		EC_TAG_EXTERNALCONN_INTERFACE             0x150E
+		EC_TAG_EXTERNALCONN_PORT                  0x150F
+		EC_TAG_EXTERNALCONN_UPNP                  0x1510
+		EC_TAG_EXTERNALCONN_REQUIRE_ENCRYPTION    0x1511
+		EC_TAG_EXTERNALCONN_PASSWD_SET            0x1512
+		EC_TAG_EXTERNALCONN_PASSWD                0x1513
 
 	EC_TAG_PREFS_ONLINESIG                    0x1600
 		EC_TAG_ONLINESIG_ENABLED                  0x1601
+		EC_TAG_ONLINESIG_DIRECTORY                0x1602
+		EC_TAG_ONLINESIG_UPDATE                   0x1603
 
 	EC_TAG_PREFS_SERVERS                      0x1700
 		EC_TAG_SERVERS_REMOVE_DEAD                0x1701
@@ -411,6 +702,7 @@ EC_TAG_SELECT_PREFS                       0x1000
 		EC_TAG_SERVERS_AUTOCONN_STATIC_ONLY       0x170A
 		EC_TAG_SERVERS_MANUAL_HIGH_PRIO           0x170B
 		EC_TAG_SERVERS_UPDATE_URL                 0x170C
+		EC_TAG_SERVERS_ED2K_ACCELERATED_PUBLICATION 0x170D
 
 	EC_TAG_PREFS_FILES                        0x1800
 		EC_TAG_FILES_ICH_ENABLED                  0x1801
@@ -423,11 +715,18 @@ EC_TAG_SELECT_PREFS                       0x1000
 		EC_TAG_FILES_START_NEXT_PAUSED            0x1808
 		EC_TAG_FILES_RESUME_SAME_CAT              0x1809
 		EC_TAG_FILES_SAVE_SOURCES                 0x180A
-		EC_TAG_FILES_EXTRACT_METADATA             0x180B
 		EC_TAG_FILES_ALLOC_FULL_SIZE              0x180C
 		EC_TAG_FILES_CHECK_FREE_SPACE             0x180D
 		EC_TAG_FILES_MIN_FREE_SPACE               0x180E
 		EC_TAG_FILES_CREATE_NORMAL                0x180F
+		EC_TAG_FILES_ENDGAME                      0x1810
+		EC_TAG_FILES_MEDIA_METADATA_ENABLED       0x1811
+		EC_TAG_FILES_MEDIA_FFPROBE_PATH           0x1812
+		EC_TAG_FILES_START_NEXT_ALPHA             0x1813
+		EC_TAG_FILES_MMAP_SUPPORTED               0x1814
+		EC_TAG_FILES_MMAP_ENABLED                 0x1815
+		EC_TAG_FILES_SHARED_REVERIFY_DAYS          0x1816
+		EC_TAG_FILES_MEDIA_METADATA_AVAILABLE     0x1817
 
 #	EC_TAG_UNUSED                             0x1900
 #		EC_TAG_UNUSED                             0x1901
@@ -442,6 +741,10 @@ EC_TAG_SELECT_PREFS                       0x1000
 		EC_TAG_DIRECTORIES_SHARED                 0x1A03
 		EC_TAG_DIRECTORIES_SHARE_HIDDEN           0x1A04
 		EC_TAG_DIRECTORIES_AUTO_RESCAN            0x1A05
+		EC_TAG_DIRECTORIES_FOLLOW_SYMLINKS        0x1A06
+		EC_TAG_DIRECTORIES_EXCLUDE_PATTERNS       0x1A07
+		EC_TAG_DIRECTORIES_EXCLUDE_REGEX          0x1A08
+		EC_TAG_DIRECTORIES_ALLOWED_ROOTS          0x1A09
 
 	EC_TAG_PREFS_STATISTICS                   0x1B00
 		EC_TAG_STATSGRAPH_WIDTH                   0x1B01
@@ -453,11 +756,47 @@ EC_TAG_SELECT_PREFS                       0x1000
 		EC_TAG_STAT_NODE_VALUE                    0x1B07
 		EC_TAG_STAT_VALUE_TYPE                    0x1B08
 		EC_TAG_STATTREE_NODEID                    0x1B09
+## Active uploads / active downloads per point — parallel
+## to STATSGRAPH_DATA's connection total, lets amulegui
+## draw monolithic amule's 3-line connection scope.
 		EC_TAG_STATSGRAPH_DATA_CONN               0x1B0A
+## Session totals as of the latest point in the reply.
+## Lets amulegui compute the daemon's
+## kBytesReceived/sTimestamp session average instead of
+## integrating locally from GUI startup.
 		EC_TAG_STATSGRAPH_SESSION_DL              0x1B0B
 		EC_TAG_STATSGRAPH_SESSION_UL              0x1B0C
 		EC_TAG_STATSGRAPH_SESSION_KAD             0x1B0D
 		EC_TAG_STATSGRAPH_SESSION_TIMESPAN        0x1B0E
+## Stable, untranslated machine key for a stat-tree node. Optional
+## subtag of EC_TAG_STATTREE_NODE; legacy consumers skip it (see the
+## STATTREE_NODEID precedent). Lets API clients look a field up by a
+## fixed identifier instead of matching the English label.
+		EC_TAG_STAT_NODE_KEY                      0x1B0F
+## Raw numeric UL:DL ratio (download-per-upload, i.e. received/sent) as
+## a double, so API clients don't parse the composite ratio string.
+## Optional subtags of the ratio's EC_TAG_STATTREE_NODE; legacy
+## consumers skip them. _RATIO is the session ratio, _RATIO_TOTAL the
+## all-time ratio. Present only when computable (both sides > 0).
+		EC_TAG_STAT_NODE_RATIO                    0x1B10
+		EC_TAG_STAT_NODE_RATIO_TOTAL              0x1B11
+## Raw, untranslated machine value for a node whose label is data
+## (client version / OS string). Optional sibling of the display label;
+## legacy consumers skip it. Lets API clients read the value without
+## parsing it out of the composite label.
+		EC_TAG_STAT_NODE_RAW                      0x1B12
+## Stable, locale-independent token for a well-known sentinel *value*
+## (e.g. "never", "not_available"). Optional sub-tag of an
+## EC_TAG_STAT_NODE_VALUE; the English display string stays alongside it
+## (EC_VALUE_STRING) so GUI/legacy consumers are unaffected.
+		EC_TAG_STAT_VALUE_ENUM                    0x1B13
+## Records the daemon holds per resolution range, i.e. how many points
+## it can answer with before it starts repeating a record because the
+## requested spacing is finer than the one it stored. Timestamps are not
+## on the wire, so a client that over-asks cannot tell the repeats apart
+## and would draw them as distinct samples on a wrong time axis. Absent
+## from daemons predating this tag; assume the 560 they were built with.
+		EC_TAG_STATSGRAPH_DEPTH                   0x1B14
 
 	EC_TAG_PREFS_SECURITY                     0x1C00
 		EC_TAG_SECURITY_CAN_SEE_SHARES            0x1C01
@@ -471,6 +810,8 @@ EC_TAG_SELECT_PREFS                       0x1000
 		EC_TAG_SECURITY_OBFUSCATION_SUPPORTED     0x1C09
 		EC_TAG_SECURITY_OBFUSCATION_REQUESTED     0x1C0A
 		EC_TAG_SECURITY_OBFUSCATION_REQUIRED      0x1C0B
+		EC_TAG_IPFILTER_PARANOID                  0x1C0C
+		EC_TAG_IPFILTER_SYSTEM                    0x1C0D
 
 	EC_TAG_PREFS_CORETWEAKS                   0x1D00
 		EC_TAG_CORETW_MAX_CONN_PER_FIVE           0x1D01
@@ -478,9 +819,72 @@ EC_TAG_SELECT_PREFS                       0x1000
 		EC_TAG_CORETW_FILEBUFFER                  0x1D03
 		EC_TAG_CORETW_UL_QUEUE                    0x1D04
 		EC_TAG_CORETW_SRV_KEEPALIVE_TIMEOUT       0x1D05
+		EC_TAG_CORETW_KAD_MAX_SEARCHES            0x1D06
+		EC_TAG_CORETW_KAD_REASK_MS                0x1D07
+		EC_TAG_CORETW_SOURCE_REASK_MS             0x1D08
+## Download write budget in MiB, 1..1024 (default 128).
+		EC_TAG_CORETW_WRITE_BUFFER_LIMIT_MIB      0x1D09
+## Debug messages go to the logfile only. Send only to a core that reports EC_TAG_CORETW_DEBUG_CATEGORIES.
+		EC_TAG_CORETW_VERBOSE_LOGFILE             0x1D0A
+## Every category name, as EC_TAG_STRING children. Read-only. Older cores omit it.
+		EC_TAG_CORETW_DEBUG_CATEGORIES            0x1D0B
+## The enabled category names, as EC_TAG_STRING children. A write replaces the whole set.
+		EC_TAG_CORETW_DEBUG_CATEGORIES_ENABLED    0x1D0C
 
 	EC_TAG_PREFS_KADEMLIA                     0x1E00
 		EC_TAG_KADEMLIA_UPDATE_URL                0x1E01
+		EC_TAG_KADEMLIA_PROTOCOL10                0x1E02
+		EC_TAG_KADEMLIA_STRICT_AICH_PUBLISHERS    0x1E03
+
+	EC_TAG_PREFS_IP2COUNTRY                   0x1F00
+		EC_TAG_IP2COUNTRY_SUPPORTED               0x1F01
+		EC_TAG_IP2COUNTRY_ENABLED                 0x1F02
+		EC_TAG_IP2COUNTRY_SOURCE                  0x1F03
+		EC_TAG_IP2COUNTRY_CUSTOM_URL              0x1F04
+		EC_TAG_IP2COUNTRY_MAXMIND_LICENSE         0x1F05
+		EC_TAG_IP2COUNTRY_AUTO_UPDATE             0x1F06
+		EC_TAG_IP2COUNTRY_LOADED_SOURCE           0x1F07
+		EC_TAG_IP2COUNTRY_DB_PATH                 0x1F08
+		EC_TAG_IP2COUNTRY_DB_LOADED               0x1F09
+		EC_TAG_IP2COUNTRY_DOWNLOADING             0x1F0A
+		EC_TAG_IP2COUNTRY_LAST_RESULT             0x1F0B
+		EC_TAG_IP2COUNTRY_UPDATE_NOW              0x1F0C
+
+	EC_TAG_SHAREDDIR                          0x2000
+		EC_TAG_SHAREDDIR_RECURSIVE                0x2001
+	EC_TAG_SHAREDDIR_REJECTED                 0x2002
+		EC_TAG_SHAREDDIR_ERROR                    0x2003
+
+	EC_TAG_KAD_LOOKUP                         0x2100
+		EC_TAG_KAD_LOOKUP_TARGET                  0x2101
+## Stable LookupType wire value (LookupDiagnostics.h), independent of CSearch.
+		EC_TAG_KAD_LOOKUP_TYPE                    0x2102
+		EC_TAG_KAD_LOOKUP_KEYWORD                 0x2103
+		EC_TAG_KAD_LOOKUP_ACTIVE                  0x2104
+		EC_TAG_KAD_LOOKUP_OVERDUE                 0x2106
+		EC_TAG_KAD_LOOKUP_OMITTED_PEERS           0x2107
+		EC_TAG_KAD_LOOKUP_EVICTED_REFERRALS       0x2108
+		EC_TAG_KAD_LOOKUP_PEER                    0x2110
+			EC_TAG_KAD_LOOKUP_PEER_IP                 0x2111
+			EC_TAG_KAD_LOOKUP_PEER_PORT               0x2112
+			EC_TAG_KAD_LOOKUP_PEER_ID                 0x2113
+			EC_TAG_KAD_LOOKUP_PEER_DISTANCE           0x2114
+			EC_TAG_KAD_LOOKUP_PEER_VERSION            0x2115
+			EC_TAG_KAD_LOOKUP_PEER_REQUESTS           0x2116
+			EC_TAG_KAD_LOOKUP_PEER_REPLIES            0x2117
+			EC_TAG_KAD_LOOKUP_PEER_RTT                0x2118
+			EC_TAG_KAD_LOOKUP_PEER_ITEM_REQUESTS      0x2119
+			EC_TAG_KAD_LOOKUP_PEER_ITEM_REPLIES       0x211A
+			EC_TAG_KAD_LOOKUP_PEER_RESULTS            0x211B
+			EC_TAG_KAD_LOOKUP_PEER_PENDING            0x211C
+		EC_TAG_KAD_LOOKUP_REFERRAL                0x2120
+			EC_TAG_KAD_LOOKUP_REFERRAL_SOURCE_IP       0x2121
+			EC_TAG_KAD_LOOKUP_REFERRAL_SOURCE_PORT     0x2122
+			EC_TAG_KAD_LOOKUP_REFERRAL_PEER_IP         0x2123
+			EC_TAG_KAD_LOOKUP_REFERRAL_PEER_PORT       0x2124
+			EC_TAG_KAD_LOOKUP_REFERRAL_ELAPSED         0x2125
+			EC_TAG_KAD_LOOKUP_REFERRAL_DISTANCE        0x2126
+			EC_TAG_KAD_LOOKUP_REFERRAL_CLOSER          0x2127
 [/Section]
 
 [Section Content]
@@ -496,12 +900,35 @@ EC_DETAIL_INC_UPDATE    0x04
 
 [Section Content]
 Type Enum
+Name EC_AUTH_FAIL_REASON
+DataType uint8
+EC_AUTH_FAIL_CLIENT_TOO_OLD  0x01
+EC_AUTH_FAIL_NO_PASSWORD     0x02
+EC_AUTH_FAIL_RATE_LIMITED    0x03
+EC_AUTH_FAIL_INCOMPATIBLE    0x04
+EC_AUTH_FAIL_REJECTED        0x05
+[/Section]
+
+[Section Content]
+Type Enum
 Name EC_SEARCH_TYPE
 DataType uint8
+## These share their numeric values with CSearchList's own SearchType, which
+## is cast straight to uint8 for EC_TAG_SEARCH_LIFECYCLE_KIND. Keep the two in
+## step: a value that means one thing here and another there is not detectable
+## on the wire.
 EC_SEARCH_LOCAL         0x00
 EC_SEARCH_GLOBAL        0x01
 EC_SEARCH_KAD           0x02
 EC_SEARCH_WEB           0x03
+## A "View Files" browse. Reported by the daemon so a remote GUI can rebuild a
+## browse tab for one it did not start itself; never accepted as the type of a
+## search to start. Daemons predating it simply never send it, and the clients
+## that read the kind compare it for equality rather than switching on it, so
+## an unknown value stays inert on either side of a version mismatch.
+EC_SEARCH_BROWSE        0x04
+## Search all available networks simultaneously (eD2k local + global + Kad).
+EC_SEARCH_ALL           0x05
 [/Section]
 
 [Section Content]
@@ -536,4 +963,5 @@ EC_PREFS_STATISTICS     0x00000400
 EC_PREFS_SECURITY       0x00000800
 EC_PREFS_CORETWEAKS     0x00001000
 EC_PREFS_KADEMLIA       0x00002000
+EC_PREFS_IP2COUNTRY     0x00004000
 [/Section]

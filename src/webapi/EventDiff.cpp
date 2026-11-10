@@ -1,0 +1,1028 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+//
+
+#include "LogDiagnostic.h"
+
+#include "../PeerCapabilities.h" // Needed for CPeerCapabilities::GetApiTokens
+#include "EventDiff.h"
+
+#include "EventBus.h"
+#include "SnapshotJson.h"
+#include "SearchJson.h"      // WriteSearchResultFields, shared with GET /search/{id}/results
+#include "ServerFlagNames.h" // Shared server capability-bit tables, decoded to JSON
+
+#include <common/MediaCodecName.h> // Needed for MediaCodecLabel
+
+#include <JsonWriter.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <cstdlib>
+#include <locale>
+#include <sstream>
+#include <thread>
+#include <type_traits>
+
+namespace webapi
+{
+
+namespace
+{
+
+// All event strings follow CJsonWriter's REST escaping, including DEL and supplementary
+// Unicode characters. The hand-built payloads add their own surrounding quotes.
+std::string EscJson(const std::string &s)
+{
+	CJsonWriter w;
+	w.ValueString(wxString::FromUTF8(s.data(), s.size()));
+	const std::string &quoted = w.GetBuffer();
+	return quoted.substr(1, quoted.size() - 2);
+}
+
+// Each ToJson emits the SAME shape as the matching REST list-item writer in Api.cpp. The contract
+// is "an SSE _added/_updated event carries the full resource -- clients do not need to re-GET to
+// see the moved counters". The Equal functions below compare every field included here, so any
+// movement fires `_updated`.
+
+// `null` when the string was never populated, matching WriteStringOrNull on the REST side.
+// The caller decides what "known" means, since some fields key on a sibling.
+std::string JsonStrOrNull(bool known, const std::string &v)
+{
+	return known ? "\"" + EscJson(v) + "\"" : std::string("null");
+}
+
+// The protocol extensions as the API's token array, from the table the daemon and the desktop GUI
+// read (src/PeerCapabilities.h). Rendered here rather than stored on the row so the mapping has one
+// definition.
+//
+// Empty array, not null: the peer claimed nothing, which is a known answer.
+std::string JsonProtocolExtensions(std::uint32_t bits)
+{
+	CPeerCapabilities caps;
+	caps.SetFromWire(bits);
+	std::string out = "[";
+	bool first = true;
+	for (const std::string &token : caps.GetApiTokens()) {
+		if (!first) {
+			out += ",";
+		}
+		first = false;
+		out += "\"" + token + "\"";
+	}
+	out += "]";
+	return out;
+}
+
+std::string JsonBoolOrNull(bool known, bool v)
+{
+	return known ? std::string(v ? "true" : "false") : std::string("null");
+}
+
+// download_* event payload -- mirrors WriteDownloadObject (Api.cpp)
+// at the wire level. Reads the download sub-block of FileSnapshot.
+std::string ToJsonDownloadEvent(const FileSnapshot &f)
+{
+	std::ostringstream o;
+	o.imbue(std::locale::classic());
+	o << "{"
+	  << "\"hash\":\"" << EscJson(f.hash) << "\""
+	  << ",\"name\":\"" << EscJson(f.name) << "\""
+	  << ",\"ed2k_link\":\"" << EscJson(f.ed2k_link) << "\""
+	  << ",\"size_bytes\":" << f.size << ",\"completed_bytes\":" << f.download.completed_bytes
+	  << ",\"transferred_bytes\":" << f.download.transferred_bytes
+	  << ",\"speed_bytes_per_second\":" << f.download.speed_bytes_per_second << ",\"status\":\""
+	  << EscJson(f.download.status) << "\""
+	  << ",\"priority\":\"" << EscJson(f.download.priority) << "\""
+	  << ",\"priority_auto\":" << (f.download.priority_auto ? "true" : "false")
+	  << ",\"category_index\":" << f.download.category << ",\"sources\":{"
+	  << "\"total\":" << f.download.sources_total << ",\"unavailable\":" << f.download.sources_unavailable
+	  << ",\"transferring\":" << f.download.sources_transferring
+	  << ",\"a4af\":" << f.download.sources_a4af << "}"
+	  << ",\"progress\":{\"percent\":" << JsonDoubleToString(f.download.percent) << "}"
+	  << ",\"kad_comment_lookup_running\":" << (f.download.kad_comment_searching ? "true" : "false")
+	  << ",\"hashed_part_count\":" << f.download.hashed_part_count
+	  << ",\"total_part_count\":" << webapi::PartCountForSize(f.size) << ",\"source_ecids\":[";
+	bool first_a4af = true;
+	for (const std::uint32_t ecid : f.download.a4af_sources) {
+		if (!first_a4af)
+			o << ",";
+		first_a4af = false;
+		o << ecid;
+	}
+	o << "]}";
+	return o.str();
+}
+
+// comments_updated payload -- the GET /downloads/{hash}/comments body plus `hash`. Covers retrieved
+// Kad notes and comments from connected ed2k sources (they share source_comments).
+//
+// A strict superset of the endpoint, deliberately: nothing else in the frame identifies the file,
+// and `kad_comment_lookup_running` is exactly what a client wants while a POST lookup is in flight.
+std::string ToJsonCommentsEvent(const FileSnapshot &f)
+{
+	std::ostringstream o;
+	o.imbue(std::locale::classic());
+	o << "{\"hash\":\"" << EscJson(f.hash) << "\""
+	  << ",\"kad_comment_lookup_running\":" << (f.download.kad_comment_searching ? "true" : "false")
+	  << ",\"total\":" << f.download.source_comments.size() << ",\"comments\":[";
+	bool first = true;
+	for (const auto &c : f.download.source_comments) {
+		if (!first)
+			o << ",";
+		first = false;
+		o << "{\"username\":\"" << EscJson(c.username) << "\""
+		  << ",\"filename\":\"" << EscJson(c.filename) << "\""
+		  << ",\"rating\":" << c.rating << ",\"comment\":\"" << EscJson(c.comment) << "\"}";
+	}
+	o << "]}";
+	return o.str();
+}
+
+// shared_* event payload -- mirrors WriteSharedObject. Reads the
+// shared sub-block of FileSnapshot.
+std::string ToJsonSharedEvent(const FileSnapshot &f)
+{
+	std::ostringstream o;
+	o.imbue(std::locale::classic());
+	o << "{"
+	  << "\"hash\":\"" << EscJson(f.hash) << "\""
+	  << ",\"name\":\"" << EscJson(f.name) << "\""
+	  << ",\"ed2k_link\":\"" << EscJson(f.ed2k_link) << "\""
+	  << ",\"size_bytes\":" << f.size << ",\"priority\":\"" << EscJson(f.shared.priority) << "\""
+	  << ",\"priority_auto\":" << (f.shared.priority_auto ? "true" : "false") << ",\"incomplete\":"
+	  << (f.IsIncompletePartfile() ? "true" : "false")
+	  // Nested to match the REST row: a stated exception to R11, so `sources.complete` is one
+	  // access path across every endpoint that has the concept. The range is detail-only and does
+	  // not ride the event.
+	  << ",\"sources\":{\"complete\":" << f.shared.complete_sources
+	  << "}"
+	  // Flattened (R11), same as the REST row this promises key parity with.
+	  << ",\"uploaded_bytes_session\":" << f.shared.uploaded_bytes_session
+	  << ",\"uploaded_bytes_total\":" << f.shared.uploaded_bytes_total
+	  << ",\"request_count_session\":" << f.shared.request_count_session
+	  << ",\"request_count_total\":" << f.shared.request_count_total
+	  << ",\"accepted_request_count_session\":" << f.shared.accepted_request_count_session
+	  << ",\"accepted_request_count_total\":" << f.shared.accepted_request_count_total
+	  << ",\"upload_speed_bytes_per_second\":" << f.shared.upload_speed_bytes_per_second
+	  << ",\"uploading_client_count\":"
+	  << f.shared.uploading_client_count
+	  // Unix seconds, null when unknown -- never uploaded, or a known.met entry predating the
+	  // field. 0 reads as 1970 rather than "no idea", and a subscriber hydrating from REST would
+	  // see its null flip to 0.
+	  << ",\"last_upload_at\":";
+	if (f.shared.last_upload != 0)
+		o << f.shared.last_upload;
+	else
+		o << "null";
+	o << ",\"shared_since_at\":";
+	if (f.shared.shared_since != 0)
+		o << f.shared.shared_since;
+	else
+		o << "null";
+	o << ",\"hashed_part_count\":" << SharedHashingProgress(f);
+	// Media metadata rides the event because a re-extraction is otherwise invisible: the
+	// refresh endpoints answer 202 with no result, so this is how a client learns a probe
+	// landed. null rather than absent when the file has none, since a subscriber diffing REST
+	// against SSE must not find a key on one side only.
+	o << ",\"media\":";
+	if (f.has_media) {
+		o << "{\"duration_seconds\":" << f.media.duration_seconds
+		  << ",\"bitrate_kilobits_per_second\":" << f.media.bitrate_kilobits_per_second
+		  << ",\"codec\":\"" << EscJson(MediaCodecLabel(f.media.codec)) << "\""
+		  << ",\"artist\":\"" << EscJson(f.media.artist) << "\""
+		  << ",\"album\":\"" << EscJson(f.media.album) << "\""
+		  << ",\"title\":\"" << EscJson(f.media.title) << "\"}";
+	} else {
+		o << "null";
+	}
+	o << "}";
+	return o.str();
+}
+
+std::string ToJson(const ServerSnapshot &s)
+{
+	std::ostringstream o;
+	o.imbue(std::locale::classic());
+	o << "{"
+	  << "\"ecid\":" << s.ecid << ",\"name\":\"" << EscJson(s.name) << "\""
+	  << ",\"description\":\"" << EscJson(s.description) << "\""
+	  << ",\"software_version\":" << JsonStrOrNull(!s.version.empty(), s.version) << ",\"address\":\""
+	  << EscJson(s.address)
+	  << "\""
+	  // The bare IP beside the "ip:port" form, matching the REST row.
+	  << ",\"ip\":\"" << EscJson(s.address.substr(0, s.address.rfind(':'))) << "\""
+	  << ",\"country_code\":"
+	  << (s.country_code.empty() ? std::string("null") : "\"" + EscJson(s.country_code) + "\"")
+	  << ",\"port\":" << s.port << ",\"user_count\":" << s.users << ",\"max_user_count\":" << s.max_users
+	  << ",\"file_count\":" << s.files << ",\"soft_file_limit\":" << s.soft_file_limit
+	  << ",\"hard_file_limit\":" << s.hard_file_limit << ",\"priority\":\"" << EscJson(s.priority) << "\""
+	  << ",\"ping_ms\":" << s.ping_ms << ",\"failed_count\":" << s.failed_count << ",\"permanent\":"
+	  << (s.is_static ? "true" : "false")
+	  // Same fragment builder WriteServerObject uses, so the event payload and
+	  // the REST object stay byte-identical here by construction.
+	  << ",\"tcp_flags\":" << ServerTcpFlagsJson(s.tcp_flags)
+	  << ",\"udp_flags\":" << ServerUdpFlagsJson(s.udp_flags) << "}";
+	return o.str();
+}
+
+std::string ToJson(const FriendSnapshot &f)
+{
+	std::ostringstream o;
+	o.imbue(std::locale::classic());
+	o << "{"
+	  << "\"ecid\":" << f.ecid << ",\"name\":\"" << EscJson(f.name) << "\""
+	  << ",\"user_hash\":\"" << EscJson(f.user_hash)
+	  << "\""
+	  // null, not "" / 0, when the daemon has not reported an address: a subscriber hydrating
+	  // from GET /friends would otherwise see ip flip null -> "" on the first tick that touches
+	  // the row, with no real change.
+	  << ",\"ip\":" << (f.ip.empty() ? std::string("null") : "\"" + EscJson(f.ip) + "\"")
+	  << ",\"port\":" << (f.ip.empty() ? std::string("null") : std::to_string(f.port))
+	  << ",\"client_ecid\":" << (f.client_ecid ? std::to_string(f.client_ecid) : std::string("null"))
+	  << ",\"connected\":" << JsonBoolOrNull(f.has_connected, f.connected)
+	  << ",\"friend_slot\":" << (f.friend_slot ? "true" : "false") << "}";
+	return o.str();
+}
+
+std::string ToJson(const ClientSnapshot &c)
+{
+	std::ostringstream o;
+	o.imbue(std::locale::classic());
+	o << "{"
+	  << "\"ecid\":" << c.ecid << ",\"name\":" << JsonStrOrNull(!c.client_name.empty(), c.client_name)
+	  << ",\"user_hash\":\"" << EscJson(c.user_hash)
+	  << "\""
+	  // An absent address nulls ip/port together, matching WriteClientBaseFields.
+	  << ",\"ip\":" << JsonStrOrNull(!c.ip.empty(), c.ip)
+	  << ",\"port\":" << (c.ip.empty() ? std::string("null") : std::to_string(c.port))
+	  << ",\"country_code\":"
+	  // null, not "", when the lookup has not resolved.
+	  << JsonStrOrNull(!c.country_code.empty(), c.country_code)
+	  << ",\"software\":" << JsonStrOrNull(!c.software.empty(), c.software)
+	  << ",\"software_version\":" << JsonStrOrNull(!c.software_version.empty(), c.software_version)
+	  << ",\"reported_os\":"
+	  << JsonStrOrNull(!c.reported_os.empty(), c.reported_os)
+	  // The three *_state values are enum labels, not free text: the daemon always
+	  // answers, and an unrecognised answer is the "unknown" member.
+	  << ",\"upload_state\":\"" << EscJson(c.upload_state) << "\""
+	  << ",\"download_state\":\"" << EscJson(c.download_state) << "\""
+	  << ",\"ident_state\":\"" << EscJson(c.ident_state) << "\""
+	  << ",\"download_file_name\":" << JsonStrOrNull(!c.download_file_name.empty(), c.download_file_name)
+	  << ",\"upload_file_name\":" << JsonStrOrNull(!c.upload_file_name.empty(), c.upload_file_name)
+	  << ",\"upload_file_hash\":" << JsonStrOrNull(!c.upload_file_hash.empty(), c.upload_file_hash)
+	  << ",\"download_file_hash\":"
+	  << JsonStrOrNull(!c.download_file_hash.empty(), c.download_file_hash)
+	  // Kept flat, not in a sub-object (R11).
+	  << ",\"uploaded_bytes_session\":" << c.uploaded_bytes_session
+	  << ",\"downloaded_bytes_session\":" << c.downloaded_bytes_session
+	  << ",\"uploaded_bytes_total\":" << c.uploaded_bytes_total
+	  << ",\"downloaded_bytes_total\":" << c.downloaded_bytes_total
+	  << ",\"upload_speed_bytes_per_second\":" << c.upload_speed_bytes_per_second
+	  << ",\"download_speed_bytes_per_second\":" << c.download_speed_bytes_per_second
+	  << ",\"upload_queue_position\":" << c.upload_queue_position << ",\"remote_queue_position\":"
+	  << (c.remote_queue_position == kRemoteQueueFullSentinel ? std::string("null")
+								  : std::to_string(c.remote_queue_position))
+	  << ",\"upload_queue_score\":" << c.score
+	  << ",\"obfuscation_state\":" << JsonStrOrNull(!c.obfuscation_state.empty(), c.obfuscation_state)
+	  << ",\"connected\":" << JsonBoolOrNull(c.has_connected, c.connected)
+	  << ",\"protocol_extensions\":" << JsonProtocolExtensions(c.protocol_extensions)
+	  << ",\"friend_slot\":" << (c.friend_slot ? "true" : "false")
+	  << ",\"friend\":" << (c.is_friend ? "true" : "false") << ",\"credit_ratio\":"
+	  << (c.has_credit_ratio ? JsonDoubleToString(c.credit_ratio) : std::string("null"))
+	  << ",\"source_origin\":" << JsonStrOrNull(!c.source_origin.empty(), c.source_origin)
+	  << ",\"parts_offered_count\":"
+	  << (c.has_parts_offered_count ? std::to_string(c.parts_offered_count) : std::string("null"))
+	  << ",\"client_mod_name\":" << JsonStrOrNull(!c.client_mod_name.empty(), c.client_mod_name)
+	  << ",\"shared_files_browsable\":" << (c.view_shared_disabled ? "false" : "true");
+	// null, not omitted: the field only means something for a peer we are downloading from, and
+	// -1 is the in-process sentinel that must never reach the wire. Formatted through the
+	// shared writer rather than `<<`, whose 6-significant-digit default honours LC_NUMERIC and
+	// would emit a comma on an it/de/fr locale, breaking the frame's JSON.
+	o << ",\"part_progress_percent\":"
+	  << (c.part_progress_percent >= 0.0 ? JsonDoubleToString(c.part_progress_percent)
+					     : std::string("null"));
+	o << "}";
+	return o.str();
+}
+
+// Both transports use the same writer, so status_changed is byte-identical to /status for
+// the same dashboard snapshot, including escaping, integer ranges and unknown values.
+std::string ToJsonStatusEvent(const CState::DashboardSnapshot &dashboard)
+{
+	CJsonWriter w;
+	WriteStatusObject(w, dashboard);
+	return w.TakeBuffer();
+}
+
+// Equal compares every field the matching ToJson emits, and any movement fires `_updated` with the
+// full new snapshot. If one set drifts from the other, clients see stale values until the next
+// compared field changes.
+//
+// The download side ignores shared.* and is_shared. The shared side compares only the
+// incomplete predicate across download state, so progress/status changes that keep the
+// same completeness do not emit shared_updated. ecid is in
+// both shapes: an amuled restart under a running amuleapi resurfaces the same hash with a fresh
+// ECID, and clients keyed on ECID need the _updated to invalidate their cached id.
+bool EqualDownload(const FileSnapshot &a, const FileSnapshot &b)
+{
+	return a.ecid == b.ecid && a.hash == b.hash && a.name == b.name && a.ed2k_link == b.ed2k_link &&
+	       a.size == b.size && a.download.priority == b.download.priority &&
+	       a.download.completed_bytes == b.download.completed_bytes &&
+	       a.download.transferred_bytes == b.download.transferred_bytes &&
+	       a.download.speed_bytes_per_second == b.download.speed_bytes_per_second &&
+	       a.download.status == b.download.status &&
+	       a.download.priority_auto == b.download.priority_auto &&
+	       a.download.category == b.download.category &&
+	       a.download.sources_total == b.download.sources_total &&
+	       a.download.sources_unavailable == b.download.sources_unavailable &&
+	       a.download.sources_transferring == b.download.sources_transferring &&
+	       a.download.sources_a4af == b.download.sources_a4af &&
+	       a.download.percent == b.download.percent &&
+	       a.download.kad_comment_searching == b.download.kad_comment_searching &&
+	       a.download.hashed_part_count == b.download.hashed_part_count &&
+	       // The membership, not the `sources_a4af` count beside it: a swap moves
+	       // one client out and another in, so the count never budges.
+	       a.download.a4af_sources == b.download.a4af_sources;
+}
+
+// Comment list equality (deliberately NOT part of EqualDownload -- a comment
+// change drives the separate comments_updated event, not download_updated).
+bool EqualComments(const FileSnapshot &a, const FileSnapshot &b)
+{
+	// The in-flight flag is part of the payload, so it has to be part of the comparison:
+	// without it the true->false edge at the end of a Kad lookup fires no event, and a
+	// `?channels=comments` subscriber keeps its spinner.
+	if (a.download.kad_comment_searching != b.download.kad_comment_searching)
+		return false;
+	const auto &ca = a.download.source_comments;
+	const auto &cb = b.download.source_comments;
+	if (ca.size() != cb.size())
+		return false;
+	for (std::size_t i = 0; i < ca.size(); ++i) {
+		if (ca[i].username != cb[i].username || ca[i].filename != cb[i].filename ||
+			ca[i].rating != cb[i].rating || ca[i].comment != cb[i].comment)
+			return false;
+	}
+	return true;
+}
+bool EqualShared(const FileSnapshot &a, const FileSnapshot &b)
+{
+	return a.IsIncompletePartfile() == b.IsIncompletePartfile() && a.ecid == b.ecid && a.hash == b.hash &&
+	       a.name == b.name && a.ed2k_link == b.ed2k_link && a.size == b.size &&
+	       a.shared.priority == b.shared.priority && a.shared.priority_auto == b.shared.priority_auto &&
+	       a.shared.complete_sources == b.shared.complete_sources &&
+	       a.shared.uploaded_bytes_session == b.shared.uploaded_bytes_session &&
+	       a.shared.uploaded_bytes_total == b.shared.uploaded_bytes_total &&
+	       a.shared.request_count_session == b.shared.request_count_session &&
+	       a.shared.request_count_total == b.shared.request_count_total &&
+	       a.shared.accepted_request_count_session == b.shared.accepted_request_count_session &&
+	       a.shared.accepted_request_count_total == b.shared.accepted_request_count_total &&
+	       a.shared.upload_speed_bytes_per_second == b.shared.upload_speed_bytes_per_second &&
+	       a.shared.uploading_client_count == b.shared.uploading_client_count &&
+	       a.shared.last_upload == b.shared.last_upload &&
+	       a.shared.shared_since == b.shared.shared_since &&
+	       // Media metadata, so a re-extraction emits shared_updated at all. Without these a file
+	       // whose metadata just changed compares EQUAL and the refresh is invisible -- the only
+	       // progress signal the 202-returning refresh endpoints have. These change once per
+	       // probe, not per tick.
+	       a.has_media == b.has_media && a.media.duration_seconds == b.media.duration_seconds &&
+	       a.media.bitrate_kilobits_per_second == b.media.bitrate_kilobits_per_second &&
+	       a.media.codec == b.media.codec && a.media.artist == b.media.artist &&
+	       a.media.album == b.media.album && a.media.title == b.media.title &&
+	       // Through the accessor, not the raw field: a shared download's progress
+	       // lives on the download side, which the raw field would hold back.
+	       SharedHashingProgress(a) == SharedHashingProgress(b);
+}
+bool Equal(const ServerSnapshot &a, const ServerSnapshot &b)
+{
+	return a.name == b.name && a.description == b.description && a.version == b.version &&
+	       a.address == b.address && a.country_code == b.country_code && a.port == b.port &&
+	       a.users == b.users && a.max_users == b.max_users && a.files == b.files &&
+	       a.soft_file_limit == b.soft_file_limit && a.hard_file_limit == b.hard_file_limit &&
+	       a.tcp_flags == b.tcp_flags && a.udp_flags == b.udp_flags && a.priority == b.priority &&
+	       a.ping_ms == b.ping_ms && a.failed_count == b.failed_count && a.is_static == b.is_static;
+}
+bool Equal(const FriendSnapshot &a, const FriendSnapshot &b)
+{
+	// client_ecid is part of the identity here on purpose: it going to 0 is the friend losing
+	// its live peer. connected is compared alongside it, not instead: a peer can go from
+	// linked-but-unreachable to connected unmoved.
+	return a.name == b.name && a.user_hash == b.user_hash && a.ip == b.ip && a.port == b.port &&
+	       a.client_ecid == b.client_ecid && a.friend_slot == b.friend_slot &&
+	       a.connected == b.connected && a.has_connected == b.has_connected;
+}
+bool Equal(const ClientSnapshot &a, const ClientSnapshot &b)
+{
+	return a.client_name == b.client_name && a.user_hash == b.user_hash && a.ip == b.ip &&
+	       a.country_code == b.country_code && a.port == b.port && a.software == b.software &&
+	       a.software_version == b.software_version && a.reported_os == b.reported_os &&
+	       a.upload_state == b.upload_state && a.download_state == b.download_state &&
+	       a.ident_state == b.ident_state && a.download_file_name == b.download_file_name &&
+	       a.upload_file_name == b.upload_file_name && a.upload_file_hash == b.upload_file_hash &&
+	       a.download_file_hash == b.download_file_hash &&
+	       a.uploaded_bytes_session == b.uploaded_bytes_session &&
+	       a.downloaded_bytes_session == b.downloaded_bytes_session &&
+	       a.uploaded_bytes_total == b.uploaded_bytes_total &&
+	       a.downloaded_bytes_total == b.downloaded_bytes_total &&
+	       a.upload_speed_bytes_per_second == b.upload_speed_bytes_per_second &&
+	       a.download_speed_bytes_per_second == b.download_speed_bytes_per_second &&
+	       a.upload_queue_position == b.upload_queue_position &&
+	       a.remote_queue_position == b.remote_queue_position && a.score == b.score &&
+	       a.obfuscation_state == b.obfuscation_state && a.protocol_extensions == b.protocol_extensions &&
+	       a.friend_slot == b.friend_slot && a.is_friend == b.is_friend &&
+	       a.credit_ratio == b.credit_ratio && a.has_credit_ratio == b.has_credit_ratio &&
+	       a.connected == b.connected && a.has_connected == b.has_connected &&
+	       a.source_origin == b.source_origin && a.parts_offered_count == b.parts_offered_count &&
+	       // Without the flag, null -> 0 (the part map arriving and reporting
+	       // zero) compares equal and the row never updates.
+	       a.has_parts_offered_count == b.has_parts_offered_count &&
+	       a.client_mod_name == b.client_mod_name && a.view_shared_disabled == b.view_shared_disabled &&
+	       // Derived from parts_offered_count and the linked file's part count, so it normally
+	       // moves only when a compared field does. The case that needs it in its own right is the
+	       // file going away: the percent drops back to its sentinel while every other field
+	       // holds.
+	       a.part_progress_percent == b.part_progress_percent;
+}
+
+// Generic map-diff helper. Walks both old and new, emitting:
+//  - `<base>_removed` for keys in old missing from new (identity-only)
+//  - `<base>_added`   for keys in new missing from old (full ToJson)
+//  - `<base>_updated` for shared keys whose values differ (full ToJson)
+//
+// Coalesced into one PublishBatch (one lock, one notify_all) so a cold-start diff on a
+// 5K-download library does not fire 5K notify_all cycles inside the refresher loop.
+template <class Map, class IdentityFn>
+void DiffMap(CEventBus &bus,
+	const std::string &base,
+	const Map &old_items,
+	const Map &new_items,
+	IdentityFn removed_id_payload_fn)
+{
+	std::vector<std::pair<std::string, std::string>> batch;
+	batch.reserve(old_items.size() + new_items.size());
+	const std::string removed_name = base + "_removed";
+	const std::string added_name = base + "_added";
+	const std::string updated_name = base + "_updated";
+	for (const auto &kv : old_items) {
+		if (new_items.find(kv.first) == new_items.end()) {
+			batch.emplace_back(removed_name, removed_id_payload_fn(kv.second));
+		}
+	}
+	for (const auto &kv : new_items) {
+		const auto it = old_items.find(kv.first);
+		if (it == old_items.end()) {
+			batch.emplace_back(added_name, ToJson(kv.second));
+		} else if (!Equal(it->second, kv.second)) {
+			batch.emplace_back(updated_name, ToJson(kv.second));
+		}
+	}
+	bus.PublishBatch(batch);
+}
+
+// Hash-keyed file events emit removed payloads as `{"hash":"..."}` so consumers
+// can drop the cache entry without needing the old object.
+std::string RemovedHashPayload(const std::string &hash)
+{
+	return "{\"hash\":\"" + EscJson(hash) + "\"}";
+}
+
+// Every ECID-keyed collection identifies a removed entry the same way, now that
+// each object names its own handle `ecid`.
+template <class Snapshot> std::string RemovedEcidPayload(const Snapshot &item)
+{
+	// The per-type overloads this replaced could only be called with an ECID-keyed snapshot; an
+	// unconstrained template accepts anything with an `.ecid` member, and FileSnapshot has one
+	// while its collections are hash-keyed. Wiring one through DiffMap would compile and emit
+	// the wrong shape.
+	static_assert(!std::is_same<Snapshot, FileSnapshot>::value,
+		"file collections are hash-keyed -- use RemovedHashPayload");
+	std::ostringstream o;
+	o.imbue(std::locale::classic());
+	o << "{\"ecid\":" << item.ecid << "}";
+	return o.str();
+}
+
+// Build an ECID-keyed map from the vector view CState exposes. The cache is a std::map<ECID,
+// Snapshot> internally but the accessor returns a vector, and diffing wants random access by ECID.
+// O(N), N typically <1000.
+template <class Snap> std::map<std::uint32_t, Snap> ByEcid(const std::vector<Snap> &v)
+{
+	std::map<std::uint32_t, Snap> m;
+	for (const auto &x : v)
+		m.emplace(x.ecid, x);
+	return m;
+}
+
+} // namespace
+
+namespace
+{
+
+// Single-writer invariant: only the wxApp refresher tick mutates LastSeenState and publishes diffs.
+// Anything else is a silent concurrency bug -- events get duplicated or dropped depending on thread
+// order. Capture the first caller's thread id and abort hard on any later caller from another
+// thread; hard-abort, not assert, so the check survives -DNDEBUG.
+std::atomic<std::thread::id> g_publisher_thread;
+
+void EnforceSinglePublisher()
+{
+	const std::thread::id self = std::this_thread::get_id();
+	std::thread::id expected;
+	if (g_publisher_thread.compare_exchange_strong(expected, self)) {
+		return; // first caller -- claimed it
+	}
+	if (expected == self)
+		return;
+	webapi::CLogDiagnostic(LogLevel::Error) << "EmitDiffsAndUpdate called from two "
+						   "different threads; this breaks the single-writer "
+						   "invariant on LastSeenState and the EventBus.\n";
+	std::abort();
+}
+
+// Every file event resolves its payload through `prev.files` after the locked walk, which holds
+// only because nothing erases from that map in between: the `gone` sweep runs after the batch is
+// built, and `gone` is disjoint from everything the walk recorded. Unreachable today, but a dropped
+// event is invisible and a lost `shared_removed` leaves a ghost row on every client.
+[[noreturn]] void AbortOnMissingBaseline(const char *event_name, std::uint32_t ecid)
+{
+	webapi::CLogDiagnostic(LogLevel::Error)
+		<< "file diff lost the baseline entry for ECID " << ecid << " while building " << event_name
+		<< "; the prev.files erase has moved ahead of the batch build.\n";
+	std::abort();
+}
+
+} // namespace
+
+// One chat message as the `message` object both the SSE payload and GET /chats/{address}/messages
+// expose. The REST side renders the identical shape through CJsonWriter.
+//
+// `sent_at` nulls on 0 the way WriteIntOrNull does. Nothing the core reports today is unstamped, so
+// this is the two writers agreeing on a shape rather than on a value that flips in the field -- but
+// the snapshot field defaults to 0, and a core that ever omits the tag must not make them diverge.
+std::string ChatMessageJson(const ChatMessageSnapshot &msg)
+{
+	std::string extra;
+	if (msg.kind == 1) {
+		extra = ",\"type\":\"captcha_challenge\",\"captcha_image\":\"" + EscJson(msg.captcha_image) +
+			"\"";
+	} else if (msg.kind == 2) {
+		extra = ",\"type\":\"captcha_result\",\"captcha_status\":" +
+			std::to_string(msg.captcha_status);
+	}
+	return "{\"id\":" + std::to_string(msg.id) + ",\"direction\":\"" + (msg.outgoing ? "out" : "in") +
+	       "\",\"text\":\"" + EscJson(msg.text) + "\"" + extra +
+	       ",\"sent_at\":" + (msg.timestamp != 0 ? std::to_string(msg.timestamp) : std::string("null")) +
+	       "}";
+}
+
+void PublishChatEvents(CEventBus &bus,
+	const std::vector<ChatSessionSnapshot> &new_messages,
+	const std::vector<ChatSessionClosure> &closed)
+{
+	if (new_messages.empty() && closed.empty())
+		return;
+
+	std::vector<std::pair<std::string, std::string>> batch;
+	for (const ChatSessionSnapshot &session : new_messages) {
+		const std::string peer = session.PeerKey();
+		if (session.pending_captcha_changed)
+			batch.emplace_back("chat_session_updated",
+				"{\"address\":\"" + EscJson(peer) + "\",\"hash\":" +
+					(session.peer_hash.empty()
+							? std::string("null")
+							: "\"" + EscJson(session.peer_hash) + "\"") +
+					",\"pending_captcha_id\":" +
+					(session.pending_captcha_id
+							? std::to_string(session.pending_captcha_id)
+							: std::string("null")) +
+					"}");
+		for (const ChatMessageSnapshot &msg : session.messages) {
+			std::string payload =
+				"{\"address\":\"" + EscJson(peer) + "\",\"hash\":" +
+				(session.peer_hash.empty() ? std::string("null")
+							   : "\"" + EscJson(session.peer_hash) + "\"") +
+				",\"ip\":" +
+				(session.ip.empty() ? std::string("null")
+						    : "\"" + EscJson(session.ip) + "\"") +
+				",\"port\":" +
+				(session.ip.empty() ? std::string("null") : std::to_string(session.port)) +
+				",\"name\":\"" + EscJson(session.DisplayName()) +
+				// client_ecid / friend_ecid are null rather than the 0
+				// sentinel, matching the REST row (R10).
+				"\",\"client_ecid\":" +
+				(session.client_ecid ? std::to_string(session.client_ecid)
+						     : std::string("null")) +
+				",\"friend_ecid\":" +
+				(session.friend_ecid ? std::to_string(session.friend_ecid)
+						     : std::string("null")) +
+				",\"message\":" + ChatMessageJson(msg) + "}";
+			batch.emplace_back("chat_message", std::move(payload));
+		}
+	}
+	for (const auto &session : closed) {
+		const std::string hash =
+			session.peer_hash.empty() ? "null" : "\"" + EscJson(session.peer_hash) + "\"";
+		batch.emplace_back("chat_session_closed",
+			"{\"address\":\"" + EscJson(session.address) + "\",\"hash\":" + hash + "}");
+	}
+	bus.PublishBatch(batch);
+}
+
+void EmitStatusDiffAndUpdate(CEventBus &bus, LastSeenState &prev, const CState::DashboardSnapshot &dashboard)
+{
+	EnforceSinglePublisher();
+	std::string payload = ToJsonStatusEvent(dashboard);
+	if (payload != prev.status_payload) {
+		bus.Publish("status_changed", payload);
+		prev.status_payload = std::move(payload);
+	}
+}
+
+void EmitDiffsAndUpdate(CEventBus &bus, LastSeenState &prev, const CState &state)
+{
+	EnforceSinglePublisher();
+	// Snapshot the current state under its read locks. Files are the exception, walked in place
+	// further down: the diff needs the unified map, not a role-filtered view, so it can see a
+	// file that flipped is_shared false->true on an existing ECID and fire `shared_added` for
+	// it.
+	auto new_servers = ByEcid(state.Servers());
+	auto new_friends = ByEcid(state.Friends());
+	auto new_clients = ByEcid(state.Clients());
+	// part_progress_percent is derived, not refreshed: it needs the part count of the file the
+	// peer is a source for, which lives in a different snapshot, so the refresher leaves it at
+	// its sentinel and the REST handlers fill it in per request. Do the same here, or the event
+	// becomes the one payload a subscriber has to re-GET to complete. Computed before Equal()
+	// and the serialiser see the copies, so baseline and payload always agree.
+	for (auto &kv : new_clients) {
+		ComputePartProgressPercent(state, kv.second);
+	}
+	// Read the full dashboard for status_changed -- the payload mirrors the REST /status nested
+	// envelope, which pulls from StatusSnapshot + KadSnapshot + ec_connected. Dashboard() takes
+	// the State lock once for all three, so kad.network cannot be from tick N+1 while ed2k.* is
+	// from tick N.
+	auto new_dashboard = state.Dashboard();
+
+	// Files: role-flag-aware diff, run against the live map rather than a copy. download_*
+	// fires on is_downloading transitions, shared_* on is_shared, and a single tick can fire
+	// both for the same file.
+	//
+	// prev.files is a comparison baseline, not a mirror: an entry is rewritten exactly when a
+	// predicate below reports a difference, so a new predicate has to go into the write-back
+	// condition too, not only the emit condition.
+	{
+		// Decided under the read lock, serialised after it. The payloads are the full
+		// snapshot shape, so a cold-start tick or a shared-files reload builds one per
+		// file; doing that inside the lock would queue the refresher's own writer and every
+		// reader behind it. The walk records only the event and its subject -- a hash for a
+		// removal, an ECID otherwise -- resolved against `prev.files` once the lock is
+		// released, which the write-back below leaves equal to the live entry.
+		enum class Change
+		{
+			DownloadAdded,
+			DownloadUpdated,
+			SharedAdded,
+			SharedUpdated,
+			CommentsUpdated,
+		};
+		std::vector<std::pair<const char *, std::uint32_t>> removed;
+		std::vector<std::pair<Change, std::uint32_t>> changed;
+		// ECIDs to drop from the baseline once the batch is built -- erasing during the
+		// walk would invalidate the iterator, and erasing before the batch would take the
+		// removal payloads' hashes with it.
+		std::vector<std::uint32_t> gone;
+		state.WithFiles([&](const FileMap &files) {
+			// _removed first -- clients can tear down their cache slot
+			// before the _added/_updated for the same ECID lands.
+			for (const auto &kv : prev.files) {
+				const auto it = files.find(kv.first);
+				const bool absent = (it == files.end());
+				if (kv.second.is_downloading && (absent || !it->second.is_downloading)) {
+					removed.emplace_back("download_removed", kv.first);
+				}
+				if (kv.second.is_shared && (absent || !it->second.is_shared)) {
+					removed.emplace_back("shared_removed", kv.first);
+				}
+				if (absent)
+					gone.push_back(kv.first);
+			}
+			// _added / _updated -- gated by the role-flag transition against
+			// the previous tick's is_downloading / is_shared value.
+			for (const auto &entry : files) {
+				const FileSnapshot &now = entry.second;
+				const auto it = prev.files.find(entry.first);
+				const bool known = (it != prev.files.end());
+				const bool was_downloading = known && it->second.is_downloading;
+				const bool was_shared = known && it->second.is_shared;
+				bool moved = !known || was_downloading != now.is_downloading ||
+					     was_shared != now.is_shared;
+				if (now.is_downloading) {
+					if (!was_downloading) {
+						changed.emplace_back(Change::DownloadAdded, entry.first);
+						// The flag counts as comment state, exactly as in
+						// EqualComments. Gating on the list alone means a
+						// download first seen with a Kad lookup already in
+						// flight never announces the lookup.
+						if (!now.download.source_comments.empty() ||
+							now.download.kad_comment_searching) {
+							changed.emplace_back(
+								Change::CommentsUpdated, entry.first);
+						}
+					} else {
+						if (!EqualDownload(it->second, now)) {
+							changed.emplace_back(
+								Change::DownloadUpdated, entry.first);
+							moved = true;
+						}
+						// Independent of download_updated: Kad notes AND source
+						// comments.
+						if (!EqualComments(it->second, now)) {
+							changed.emplace_back(
+								Change::CommentsUpdated, entry.first);
+							moved = true;
+						}
+					}
+				}
+				if (now.is_shared) {
+					if (!was_shared) {
+						changed.emplace_back(Change::SharedAdded, entry.first);
+					} else if (!EqualShared(it->second, now)) {
+						changed.emplace_back(Change::SharedUpdated, entry.first);
+						moved = true;
+					}
+				}
+				if (!moved)
+					continue;
+				if (known)
+					it->second = now;
+				else
+					prev.files.emplace(entry.first, now);
+			}
+		});
+		std::vector<std::pair<std::string, std::string>> batch;
+		batch.reserve(removed.size() + changed.size());
+		for (const auto &r : removed) {
+			// Still in the baseline: `gone` is erased below, once every
+			// payload that reads through it has been built.
+			const auto it = prev.files.find(r.second);
+			if (it == prev.files.end())
+				AbortOnMissingBaseline(r.first, r.second);
+			batch.emplace_back(r.first, RemovedHashPayload(it->second.hash));
+		}
+		for (const auto &c : changed) {
+			// Every recorded change set `moved`, so its entry was written back; `gone`
+			// holds only ECIDs absent from the live map, which these are not.
+			const auto it = prev.files.find(c.second);
+			if (it == prev.files.end())
+				AbortOnMissingBaseline("a file event", c.second);
+			const FileSnapshot &f = it->second;
+			switch (c.first) {
+			case Change::DownloadAdded:
+				batch.emplace_back("download_added", ToJsonDownloadEvent(f));
+				break;
+			case Change::DownloadUpdated:
+				batch.emplace_back("download_updated", ToJsonDownloadEvent(f));
+				break;
+			case Change::SharedAdded:
+				batch.emplace_back("shared_added", ToJsonSharedEvent(f));
+				break;
+			case Change::SharedUpdated:
+				batch.emplace_back("shared_updated", ToJsonSharedEvent(f));
+				break;
+			case Change::CommentsUpdated:
+				batch.emplace_back("comments_updated", ToJsonCommentsEvent(f));
+				break;
+			}
+		}
+		for (const std::uint32_t ecid : gone)
+			prev.files.erase(ecid);
+		bus.PublishBatch(batch);
+	}
+	DiffMap(bus, "server", prev.servers, new_servers, [](const ServerSnapshot &s) {
+		return RemovedEcidPayload(s);
+	});
+	DiffMap(bus, "client", prev.clients, new_clients, [](const ClientSnapshot &c) {
+		return RemovedEcidPayload(c);
+	});
+	// Note for consumers: one PATCH of the friend slot can produce two friend_updated events,
+	// because granting it to one friend clears it on whoever held it before.
+	DiffMap(bus, "friend", prev.friends, new_friends, [](const FriendSnapshot &f) {
+		return RemovedEcidPayload(f);
+	});
+
+	EmitStatusDiffAndUpdate(bus, prev, new_dashboard);
+
+	// Snapshot the new state for next tick's diff baseline.
+	prev.servers = std::move(new_servers);
+	prev.clients = std::move(new_clients);
+	prev.friends = std::move(new_friends);
+
+	// The stable-but-mutable field set for `search_result_updated`. A hit's identity fields
+	// never change for a given ECID, and its source counts churn every tick while the search
+	// runs -- where `search_progress` is already the re-read cue. What is left is the set that
+	// can change AFTER a search finishes, when no other signal exists: download state, and the
+	// Kad-notes cluster. Comparing only these keeps the channel quiet on a running search.
+	const auto result_mutated = [](const SearchResult &a, const SearchResult &b) {
+		if (a.status != b.status || a.already_downloaded != b.already_downloaded ||
+			a.rating != b.rating || a.kad_comment_searching != b.kad_comment_searching ||
+			a.comments.size() != b.comments.size())
+			return true;
+		for (std::size_t i = 0; i < a.comments.size(); ++i) {
+			const auto &ca = a.comments[i];
+			const auto &cb = b.comments[i];
+			if (ca.username != cb.username || ca.filename != cb.filename ||
+				ca.rating != cb.rating || ca.comment != cb.comment)
+				return true;
+		}
+		return false;
+	};
+
+	// Search events. `search_result_added` per new ECID; `search_result_updated` when one of a
+	// held result's stable-but-mutable fields changes; `search_progress` on any percent change
+	// while running and on the running->finished edge. The finished frame (state="finished",
+	// percent=100) IS that terminal search_progress -- there is no separate search_finished.
+	// The first tick after MarkSearchStarted bootstraps the baseline.
+	{
+		// Multi-search: diff every open search independently, keyed by
+		// search_id, and stamp that id on each event so subscribers demux.
+		const auto ids = state.AllSearchIds();
+		for (std::uint32_t sid : ids) {
+			const auto search_now = ByEcid(state.Search(sid));
+			const auto progress_now = state.SearchProgress(sid);
+
+			// Cold start (first tick ever): baseline every pre-existing search silently
+			// so history is not replayed as events. A search appearing LATER has no
+			// prev entry, so its generation (0) differs from the live one and the
+			// progress edge below fires its initial "running" frame.
+			if (!prev.search_initialised) {
+				auto &b = prev.searches[sid];
+				b.results = search_now;
+				b.complete = progress_now.complete;
+				b.kad_active = progress_now.kad_active;
+				b.percent = progress_now.percent;
+				b.generation = progress_now.generation;
+				continue;
+			}
+
+			auto &pstate = prev.searches[sid];
+			// Results do leave an attached search: the union merge erases an ECID the
+			// daemon stopped reporting, and RebuildFoldedResults drops a row folded
+			// into a parent. Without this the row stays on every subscriber's screen
+			// for the life of the search: a finished one publishes no further
+			// search_progress, so nothing hints that a re-read is due.
+			for (const auto &kv : pstate.results) {
+				if (search_now.find(kv.first) != search_now.end())
+					continue;
+				std::ostringstream removed;
+				removed.imbue(std::locale::classic());
+				removed << "{\"search_id\":" << sid << ",\"hash\":\""
+					<< EscJson(kv.second.hash) << "\"}";
+				bus.Publish("search_result_removed", removed.str());
+			}
+			// New and mutated result entries for this search.
+			for (const auto &kv : search_now) {
+				const auto pit = pstate.results.find(kv.first);
+				const bool is_new = pit == pstate.results.end();
+				if (!is_new && !result_mutated(pit->second, kv.second))
+					continue;
+				// `search_id` routes the event to a tab/view; every field after it
+				// comes from the writer GET /search/{id}/results uses, which makes
+				// the documented "byte-for-byte identical to a results-list entry"
+				// promise hold by construction.
+				//
+				// `search_result_updated` carries the identical payload under its
+				// own name rather than re-firing _added with upsert semantics, so a
+				// consumer that only handles _added keeps the behaviour it had.
+				CJsonWriter w;
+				w.BeginObject();
+				w.Key("search_id");
+				w.ValueInt(static_cast<int64_t>(sid));
+				WriteSearchResultFields(w, kv.second);
+				w.EndObject();
+				bus.Publish(is_new ? "search_result_added" : "search_result_updated",
+					w.TakeBuffer());
+			}
+			// search_progress: a percent change while running, the running->finished
+			// edge, or a generation bump (new POST /search, or first observation of
+			// this search_id). The generation trigger catches back-to-back searches
+			// whose whole lifecycle fits inside one refresher tick -- the
+			// percent+complete comparison would see 100->100 / true->true.
+			const bool generation_bumped = progress_now.generation != pstate.generation;
+			const bool finished_edge = progress_now.complete && !pstate.complete;
+			const bool percent_moved = progress_now.percent != pstate.percent;
+			if (generation_bumped || finished_edge || percent_moved ||
+				progress_now.kad_active != pstate.kad_active) {
+				std::ostringstream payload;
+				payload.imbue(std::locale::classic());
+				payload << "{\"search_id\":" << sid << ",\"state\":\""
+					<< (progress_now.complete ? "finished" : "running") << "\""
+					<< ",\"percent\":"
+					<< progress_now.percent
+					// `result_count`: a plural key held an integer while
+					// `results` is an array everywhere else, and GET /search
+					// already calls this number result_count.
+					<< ",\"result_count\":" << search_now.size() << ",\"type\":\""
+					<< EscJson(progress_now.kind) << "\""
+					<< ",\"kad_active\":" << (progress_now.kad_active ? "true" : "false")
+					<< "}";
+				bus.Publish("search_progress", payload.str());
+			}
+			pstate.results = search_now;
+			pstate.complete = progress_now.complete;
+			pstate.kad_active = progress_now.kad_active;
+			pstate.percent = progress_now.percent;
+			pstate.generation = progress_now.generation;
+		}
+		prev.search_initialised = true;
+		// Prune baselines for searches that vanished (closed / EC reset) so prev.searches
+		// cannot grow without bound, and tell subscribers -- without the event a consumer
+		// holding one tab per search only finds out on its next read, and with SSE live it
+		// may never read again.
+		//
+		// This fires only when the SLOT is gone. A search the daemon evicted from its own
+		// ring is retired as finished and kept locally for late reads, so that case is a
+		// terminal search_progress above, never a search_closed.
+		for (auto it = prev.searches.begin(); it != prev.searches.end();) {
+			if (std::find(ids.begin(), ids.end(), it->first) == ids.end()) {
+				std::ostringstream payload;
+				payload.imbue(std::locale::classic());
+				payload << "{\"search_id\":" << it->first << "}";
+				bus.Publish("search_closed", payload.str());
+				it = prev.searches.erase(it);
+			} else {
+				++it;
+			}
+		}
+	}
+
+	// log_appended. The refresher only ever appends, so a size that grew means the tail is new.
+	// First tick records the baseline silently -- clients GET /logs/amule for the history; this
+	// channel is the live tail only.
+	//
+	// `DELETE /logs/amule` empties the buffer, and the clear-generation is what says so. A
+	// shrunk size was the old signal and it misses the case that matters: cleared and refilled
+	// past the old count between two ticks, the size only grows, so the append branch would
+	// publish a mid-buffer slice.
+	//
+	// On that edge subscribers get `resync`, which bypasses `?channels=` so a log-only
+	// subscriber is told too -- and which the HTTP thread could not have published from the
+	// DELETE handler anyway, the bus having a single-publisher invariant only this tick
+	// satisfies.
+	//
+	// Size and tail come from one read: the history is uncapped, so asking AmuleLog() for a
+	// `.size()` that is unchanged on almost every tick copies all of it -- and splitting the
+	// two would let that DELETE land in between.
+	std::size_t log_size = 0;
+	std::uint64_t log_generation = 0;
+	const auto tail = state.AmuleLogFrom(prev.amule_log_count, log_size, &log_generation);
+	if (!prev.amule_log_initialised) {
+		prev.amule_log_count = log_size;
+		prev.amule_log_generation = log_generation;
+		prev.amule_log_initialised = true;
+	} else if (log_generation != prev.amule_log_generation) {
+		bus.Publish("resync", "{\"reason\":\"log_cleared\"}");
+		prev.amule_log_count = log_size;
+		prev.amule_log_generation = log_generation;
+	} else if (log_size < prev.amule_log_count) {
+		// No generation bump, so this is not a clear: the buffer is capped
+		// elsewhere or the daemon replaced it wholesale. Re-point and stay quiet.
+		prev.amule_log_count = log_size;
+	} else if (!tail.empty()) {
+		std::ostringstream payload;
+		payload.imbue(std::locale::classic());
+		payload << "{\"lines\":[";
+		bool first = true;
+		for (const std::string &line : tail) {
+			if (!first)
+				payload << ",";
+			first = false;
+			payload << "\"" << EscJson(line) << "\"";
+		}
+		payload << "]}";
+		bus.Publish("log_appended", payload.str());
+		prev.amule_log_count = prev.amule_log_count + tail.size();
+	}
+}
+
+} // namespace webapi

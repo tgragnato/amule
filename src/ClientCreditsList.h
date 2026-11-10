@@ -26,11 +26,14 @@
 #ifndef CLIENTCREDITSLIST_H
 #define CLIENTCREDITSLIST_H
 
-#include "MD4Hash.h"	// Needed for CMD4Hash
+#include "MD4Hash.h" // Needed for CMD4Hash
 
 #include <map>
+#include <vector>
 
+class CNetworkAddress;
 class CClientCredits;
+class CFile;
 
 class CClientCreditsList
 {
@@ -39,30 +42,62 @@ public:
 	~CClientCreditsList();
 
 	// return signature size, 0 = Failed | use sigkey param for debug only
-	uint8	CreateSignature(CClientCredits* pTarget, uint8_t* pachOutput, uint8 nMaxSize, uint32 ChallengeIP, uint8 byChaIPKind, void* sigkey = NULL);
-	bool	VerifyIdent(CClientCredits* pTarget, const uint8_t* pachSignature, uint8 nInputSize, uint32 dwForIP, uint8 byChaIPKind);
+	uint8 CreateSignature(CClientCredits *pTarget,
+		uint8_t *pachOutput,
+		uint8 nMaxSize,
+		uint32 ChallengeIP,
+		uint8 byChaIPKind,
+		void *sigkey = NULL);
+	//! @a ownIPAsSeen: the IPv4 this peer sees us at, when not our public IP; else 0.
+	bool VerifyIdent(CClientCredits *pTarget,
+		const uint8_t *pachSignature,
+		uint8 nInputSize,
+		const CNetworkAddress &address,
+		uint8 byChaIPKind,
+		uint32 ownIPAsSeen = 0);
 
-	CClientCredits* GetCredit(const CMD4Hash& key);
-	void	Process();
-	uint8	GetPubKeyLen() const			{return m_nMyPublicKeyLen;}
-	const uint8_t*	GetPublicKey() const	{return m_abyMyPublicKey;}
-	bool	CryptoAvailable() const;
-	void	SaveList();
+	CClientCredits *GetCredit(const CMD4Hash &key);
+
+	/**
+	 * Every peer we have ever exchanged data with, for the clients history.
+	 *
+	 * A snapshot rather than access to the map: the caller wants to sort and display it, and
+	 * handing out iterators into the live store would make every future change to how credits
+	 * are held a change to its callers as well. Copying is affordable because this is read once
+	 * when the page is opened, not per refresh -- on a five-month-old node the store holds
+	 * around forty thousand records, and nothing about them changes between one poll and the
+	 * next.
+	 */
+	void GetAllCredits(std::vector<CClientCredits *> &result) const;
+
+	//! How many records the store holds, without materialising them.
+	size_t GetCreditCount() const { return m_mapClients.size(); }
+
+	void Process();
+	uint8 GetPubKeyLen() const { return m_nMyPublicKeyLen; }
+	const uint8_t *GetPublicKey() const { return m_abyMyPublicKey; }
+	bool CryptoAvailable() const;
+	void SaveList();
+
 protected:
-	void	LoadList();
-	void	InitalizeCrypting();
-	bool	CreateKeyPair();
+	void LoadList();
+	//! Optional metadata block after the credit records, see ClientMetaTrailer.
+	void LoadMetaTrailer(CFile &file);
+	void SaveMetaTrailer(CFile &file);
+	void InitalizeCrypting();
+	bool CreateKeyPair();
 #ifdef _DEBUG
-	bool	Debug_CheckCrypting();
+	bool Debug_CheckCrypting();
 #endif
+
 private:
-	typedef std::map<CMD4Hash, CClientCredits*> ClientMap;
-	ClientMap	m_mapClients;
-	uint64		m_nLastSaved;
+	typedef std::map<CMD4Hash, CClientCredits *> ClientMap;
+	ClientMap m_mapClients;
+	uint64 m_nLastSaved;
 	// A void* to avoid having to include the large CryptoPP.h file
-	void*		m_pSignkey;
-	uint8_t		m_abyMyPublicKey[80];
-	uint8		m_nMyPublicKeyLen;
+	void *m_pSignkey;
+	uint8_t m_abyMyPublicKey[80];
+	uint8 m_nMyPublicKeyLen;
 };
 
 #endif // CLIENTCREDITSLIST_H

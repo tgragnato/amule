@@ -1,0 +1,362 @@
+#!/usr/bin/env bash
+#
+# amuleapi 12-downloads-add-patch — download lifecycle mutations.
+#
+# Endpoints landed:
+#   POST  /api/v1/downloads             — add downloads by `links` array
+#   PATCH /api/v1/downloads/{hash}      — status/priority/category
+#
+# Mutate-then-refresh contract: every mutation handler runs
+# RefresherTick inline after the EC roundtrip succeeds, so the
+# response body AND the IMMEDIATE-next GET both reflect post-mutation
+# state. No sleep loops, no stale cache window. This smoke pins that
+# invariant — every PATCH is followed by a no-sleep GET that must
+# show the same state the PATCH response showed.
+#
+# The smoke uses the Ubuntu 24.04.4 ISO ed2k link as its test artifact
+# (provided by the operator). Hash:
+# 0031C9CBA65C50DD2015C184B2CA2C88. The ISO is a stable, well-seeded
+# ed2k file; amuled adds it to m_filelist within ~1 refresher tick.
+# 5b's smoke cleans up via DELETE.
+#
+# Role gate: mutations require ADMIN. Guest tokens get 403 forbidden.
+
+set -u
+set -o pipefail
+
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+
+_on_exit '
+	# Best-effort partfile cleanup so the Ubuntu ISO doesn'\''t survive
+	# a failed run and pin disk on the Windows VM (per
+	# feedback_clean_temp_partfiles_after_test).
+	if [ -n "${ADMIN_TOKEN:-}" ]; then
+		curl -s -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" \
+			"$API/downloads/$TEST_HASH" > /dev/null 2>&1 || true
+	fi
+'
+
+_preflight
+
+echo "amuleapi 12-downloads-add-patch smoke @ $HOST"
+
+ADMIN_TOKEN=$(_login "$ADMIN_PASS")
+[ -n "$ADMIN_TOKEN" ] \
+	|| _die "admin login failed (need --set-admin-pass=$ADMIN_PASS on the daemon)"
+
+GUEST_TOKEN=$(_login "$GUEST_PASS")
+HAVE_GUEST=0
+if [ -n "$GUEST_TOKEN" ]; then
+	HAVE_GUEST=1
+fi
+
+sleep 4
+
+# --- 1. Auth gate (no token → 401). --------------------------------
+_curl -X POST -H "Content-Type: application/json" \
+	-d "{\"links\":[\"$TEST_LINK\"]}" "$API/downloads"
+_assert_status 401 "POST /downloads (no token) → 401"
+
+_curl -X PATCH -H "Content-Type: application/json" \
+	-d '{"action":"pause"}' "$API/downloads/$TEST_HASH"
+_assert_status 401 "PATCH /downloads/{hash} (no token) → 401"
+
+# --- 2. Admin gate (guest → 403). ----------------------------------
+if [ "$HAVE_GUEST" = "1" ]; then
+	_curl -X POST -H "Authorization: Bearer $GUEST_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d "{\"links\":[\"$TEST_LINK\"]}" "$API/downloads"
+	_assert_status 403 "POST /downloads (guest token) → 403"
+	_assert_json_eq '.error.code' forbidden \
+		'POST /downloads guest carries error.code=forbidden'
+
+	_curl -X PATCH -H "Authorization: Bearer $GUEST_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d '{"action":"pause"}' "$API/downloads/$TEST_HASH"
+	_assert_status 403 "PATCH /downloads/{hash} (guest token) → 403"
+
+	# The comments POST drives an unbounded Kad NOTES lookup on the daemon
+	# (EC_OP_SHARED_FILE_SEARCH_KAD_NOTES), so it is a mutation for gating
+	# purposes even though it writes nothing locally. The matching GET is a
+	# plain read and stays open to guests.
+	_curl -X POST -H "Authorization: Bearer $GUEST_TOKEN" \
+		"$API/downloads/$TEST_HASH/comments"
+	_assert_status 403 "POST /downloads/{hash}/comments (guest token) → 403"
+	_assert_json_eq '.error.code' forbidden \
+		'POST downloads comments guest carries error.code=forbidden'
+else
+	echo "    info: no guest password set on daemon; admin-gate test skipped"
+fi
+
+# --- 3. POST /downloads happy: add the test ISO. -------------------
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d "{\"links\":[\"$TEST_LINK\"]}" "$API/downloads"
+_assert_status 202 "POST /downloads (Ubuntu ISO) → 202"
+# Unified per-item envelope (#358): one accepted result keyed by the link.
+_assert_json_eq '.results | length' 1 'POST /downloads returns one result'
+_assert_json_eq '.results[0].ok' true 'POST /downloads results[0].ok==true'
+_assert_json_eq ".results[0].id" "$TEST_LINK" 'POST /downloads results[0].id echoes the link'
+
+# Poll until the new partfile surfaces in /downloads (amuled's ADD_LINK
+# is async — allocation + hashing happen post-roundtrip). Bound at
+# ~5 s with 200 ms steps. Production refresher catches it in ≤1 tick.
+APPEARED=0
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
+	_curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+		"$API/downloads?status=all"
+	if printf '%s' "$CURL_BODY" \
+	   | jq -e --arg h "$TEST_HASH" '.downloads[] | select(.hash == $h)' \
+	   >/dev/null 2>&1; then
+		APPEARED=1
+		break
+	fi
+	sleep 0.2
+done
+if [ "$APPEARED" = "1" ]; then
+	_pass "Ubuntu ISO surfaced in /downloads via async ADD_LINK"
+else
+	_die "Ubuntu ISO never surfaced; ADD_LINK semantics may have shifted"
+fi
+
+# --- 4. POST /downloads error paths. -------------------------------
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"links":["http://not-an-ed2k.com/foo"]}' "$API/downloads"
+_assert_status 400 "POST /downloads (non-ed2k URL) → 400"
+_assert_json_eq '.error.code' bad_request \
+	'POST /downloads invalid URL carries error.code=bad_request'
+
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{}' "$API/downloads"
+_assert_status 400 "POST /downloads (missing links) → 400"
+
+# `links` is the only spelling. The singular `ed2k_link` is refused, not
+# ignored: one input with two spellings, on the endpoint that answers with
+# the bulk `results` envelope even for a single item.
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d "{\"ed2k_link\":\"$TEST_LINK\"}" "$API/downloads"
+_assert_status 400 "POST /downloads (singular ed2k_link) → 400"
+_assert_json_eq '.error.message | test("`links`")' true \
+	'the ed2k_link 400 names `links` as the replacement'
+
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d 'not json' "$API/downloads"
+_assert_status 400 "POST /downloads (malformed JSON) → 400"
+
+# --- 5. PATCH happy paths + no-stale-cache invariant. --------------
+#
+# Save the pre-mutation state so we can restore it at the end.
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/downloads/$TEST_HASH"
+SAVED_STATUS=$(printf '%s' "$CURL_BODY" | jq -r '.status')
+SAVED_PRIORITY=$(printf '%s' "$CURL_BODY" | jq -r '.priority')
+SAVED_CATEGORY=$(printf '%s' "$CURL_BODY" | jq -r '.category')
+echo "    info: saved state status=$SAVED_STATUS priority=$SAVED_PRIORITY category=$SAVED_CATEGORY"
+
+# 5a. PATCH status=paused. Response body must show paused. Immediate
+# GET (no sleep) must also show paused — pins the mutate-then-refresh
+# contract.
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"action":"pause"}' "$API/downloads/$TEST_HASH"
+_assert_status 200 "PATCH /downloads/{hash} status=paused → 200"
+_assert_json_eq '.status' paused \
+	'PATCH response body shows status=paused'
+
+# No sleep — IMMEDIATE GET. Must see the post-mutation value.
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/downloads/$TEST_HASH"
+_assert_json_eq '.status' paused \
+	'IMMEDIATE GET after PATCH paused shows status=paused (no stale cache)'
+
+# 5b. PATCH status=resumed. Same invariant in the opposite direction.
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"action":"resume"}' "$API/downloads/$TEST_HASH"
+_assert_status 200 "PATCH /downloads/{hash} status=resumed → 200"
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/downloads/$TEST_HASH"
+# Resumed maps back to one of the live statuses (downloading / waiting).
+RESUMED=$(printf '%s' "$CURL_BODY" | jq -r '.status')
+if [ "$RESUMED" = "paused" ]; then
+	_fail "IMMEDIATE GET after PATCH resumed" \
+		"still shows status=paused (stale cache)"
+else
+	_pass "IMMEDIATE GET after PATCH resumed shows non-paused (status=$RESUMED)"
+fi
+
+# 5b2. PATCH status=stopped — the stop action (pause + drop all
+# sources + reset the Kad source search). amuleapi surfaces it as the
+# distinct wire status "stopped" (vs "paused", which keeps its
+# sources). Response body + immediate GET must both show it.
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"action":"stop"}' "$API/downloads/$TEST_HASH"
+_assert_status 200 "PATCH /downloads/{hash} status=stopped → 200"
+_assert_json_eq '.status' stopped 'PATCH response body shows status=stopped'
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/downloads/$TEST_HASH"
+_assert_json_eq '.status' stopped \
+	'IMMEDIATE GET after PATCH stopped shows status=stopped (no stale cache)'
+
+# 5b3. Resume clears the stopped state (ResumeFile clears both the
+# paused and stopped flags), so the next GET must be neither.
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"action":"resume"}' "$API/downloads/$TEST_HASH"
+_assert_status 200 "PATCH status=resumed (clear stop) → 200"
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/downloads/$TEST_HASH"
+UNSTOPPED=$(printf '%s' "$CURL_BODY" | jq -r '.status')
+if [ "$UNSTOPPED" = "stopped" ] || [ "$UNSTOPPED" = "paused" ]; then
+	_fail "IMMEDIATE GET after resume-from-stopped" \
+		"still inactive (status=$UNSTOPPED) — resume did not clear stop"
+else
+	_pass "IMMEDIATE GET after resume-from-stopped shows active status ($UNSTOPPED)"
+fi
+
+# 5c. PATCH priority=high. Response + immediate GET both show high.
+# Downloads support low/normal/high/auto only (very_low and release are
+# shared/upload-side levels — rejected below in section 6).
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"priority":"high"}' "$API/downloads/$TEST_HASH"
+_assert_status 200 "PATCH priority=high → 200"
+_assert_json_eq '.priority' high 'PATCH response shows priority=high'
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/downloads/$TEST_HASH"
+_assert_json_eq '.priority' high \
+	'IMMEDIATE GET after PATCH priority=high shows priority=high'
+
+# 5d. Combined PATCH — status + priority + category in one body.
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"action":"pause","priority":"low","category_index":0}' \
+	"$API/downloads/$TEST_HASH"
+_assert_status 200 "PATCH combined (action+priority+category_index) → 200"
+_assert_json_eq '.status'   paused 'combined PATCH response status=paused'
+_assert_json_eq '.priority' low    'combined PATCH response priority=low'
+_assert_json_eq '.category_index' 0      'combined PATCH response category_index=0'
+
+# `category_index` says "must be a non-negative integer", so it has to mean it:
+# a fractional value is a 400, not truncated to 2, so it enforces what its
+# own message promises, the same as my_rating.
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"category_index":2.9}' "$API/downloads/$TEST_HASH"
+_assert_status 400 "PATCH category_index=2.9 -> 400 (not truncated to 2)"
+_assert_json_eq '.error.code' bad_request 'fractional category_index carries error.code=bad_request'
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/downloads/$TEST_HASH"
+_assert_json_eq '.status'   paused 'IMMEDIATE GET after combined PATCH status=paused'
+_assert_json_eq '.priority' low    'IMMEDIATE GET after combined PATCH priority=low'
+
+# --- 6. PATCH error paths. -----------------------------------------
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{}' "$API/downloads/$TEST_HASH"
+_assert_status 400 "PATCH empty body → 400"
+
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"priority":"bogus"}' "$API/downloads/$TEST_HASH"
+_assert_status 400 "PATCH unknown priority enum → 400"
+
+# Downloads reject the shared/upload-only levels: very_low and release
+# are not valid download priorities (the daemon would clamp them to
+# normal), so the API refuses them rather than silently downgrading.
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"priority":"very_low"}' "$API/downloads/$TEST_HASH"
+_assert_status 400 "PATCH priority=very_low (shared-only) → 400"
+
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"priority":"release"}' "$API/downloads/$TEST_HASH"
+_assert_status 400 "PATCH priority=release (shared-only) → 400"
+
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"status":"flapped"}' "$API/downloads/$TEST_HASH"
+_assert_status 400 "PATCH unknown status enum → 400"
+
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"action":"pause"}' "$API/downloads/baadbaadbaadbaadbaadbaadbaadbaad"
+_assert_status 404 "PATCH unknown hash → 404"
+
+# --- 7. Restore the pre-mutation state so the Ubuntu ISO ends up
+# in roughly the state it started in. (5b's smoke will clean it up
+# via DELETE.)
+RESTORE_STATUS=$SAVED_STATUS
+case "$RESTORE_STATUS" in
+	downloading|waiting|hashing|completing|allocating) RESTORE_STATUS=resumed ;;
+	paused|completed|erroneous|insufficient_disk) RESTORE_STATUS=paused ;;
+	*) RESTORE_STATUS=resumed ;;
+esac
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d "{\"status\":\"$RESTORE_STATUS\",\"priority\":\"$SAVED_PRIORITY\",\"category\":$SAVED_CATEGORY}" \
+	"$API/downloads/$TEST_HASH"
+_assert_status 200 "PATCH (restore pre-mutation state) → 200"
+
+# --- 8. Magnet and upper-case links, then removed again. ----------
+# amuled converts a magnet itself; the API only checks the scheme, in any case.
+_add_and_remove() {
+	local link=$1 hash=$2 label=$3 seen=0
+	_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d "{\"links\":[\"$link\"]}" "$API/downloads"
+	_assert_status 202 "POST /downloads ($label) → 202"
+	_assert_json_eq '.results[0].ok' true "POST /downloads ($label) results[0].ok==true"
+	for _ in $(seq 1 25); do
+		_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/downloads?status=all"
+		if printf '%s' "$CURL_BODY" \
+		   | jq -e --arg h "$hash" '.downloads[] | select(.hash == $h)' >/dev/null 2>&1; then
+			seen=1
+			break
+		fi
+		sleep 0.2
+	done
+	if [ "$seen" = "1" ]; then
+		_pass "$label surfaced in /downloads"
+	else
+		_fail "$label never surfaced in /downloads"
+	fi
+	_curl -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" "$API/downloads/$hash"
+	_assert_status 204 "DELETE /downloads/{$label} → 204"
+}
+MAGNET_HASH="3f1c2a9d8e7b6a5f4e3d2c1b0a998877"
+_add_and_remove "magnet:?xt=urn:ed2k:$MAGNET_HASH&xl=1048576&dn=amuleapi-regtest-magnet.bin" \
+	"$MAGNET_HASH" "magnet"
+UPPER_HASH="3f1c2a9d8e7b6a5f4e3d2c1b0a998866"
+_add_and_remove "ED2K://|file|amuleapi-regtest-upper.bin|1048576|$UPPER_HASH|/" \
+	"$UPPER_HASH" "upper-case ED2K://"
+
+# --- category_index must name a category the daemon has. -----------
+# A completing download reads its category's path, so an index past the list is refused rather
+# than stored. The test daemon has only category 0.
+CAT_HASH="3f1c2a9d8e7b6a5f4e3d2c1b0a998855"
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+	-d "{\"links\":[\"ed2k://|file|amuleapi-regtest-cat.bin|1048576|$CAT_HASH|/\"]}" "$API/downloads"
+_assert_status 202 "POST /downloads (category fixture) → 202"
+for _ in $(seq 1 25); do
+	_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/downloads/$CAT_HASH"
+	[ "$CURL_STATUS" = "200" ] && break
+	sleep 0.2
+done
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+	-d '{"category_index":200}' "$API/downloads/$CAT_HASH"
+_assert_status 400 "PATCH category_index past the category list → 400"
+_assert_json_eq '.error.code' amuled_rejected 'unknown category_index .error.code == amuled_rejected'
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/downloads/$CAT_HASH"
+_assert_json_eq '.category_index' 0 'refused category_index left the download in category 0'
+_curl -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" "$API/downloads/$CAT_HASH"
+_assert_status 204 "DELETE /downloads/{category fixture} → 204"
+
+# --- Summary. -----------------------------------------------------
+_summary

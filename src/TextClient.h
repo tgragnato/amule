@@ -28,28 +28,29 @@
 
 #include "ExternalConnector.h"
 
-#include <map>
-
-
+#include <vector>
 
 class CEC_SearchFile_Tag;
 
-class SearchFile {
-	public:
-		wxString sFileName;
-		unsigned long lFileSize;
-		CMD4Hash  nHash;
-		wxString  sHash;
-		long lSourceCount;
-		bool bPresent;
+class SearchFile
+{
+public:
+	wxString sFileName;
+	// Must be 64-bit: `unsigned long` is 32 bits on LLP64 (Windows 64-bit), so amulecmd mis-
+	// displayed any shared file > 4 GiB. The search EC tag carries the size as uint64.
+	uint64 lFileSize;
+	CMD4Hash nHash;
+	wxString sHash;
+	long lSourceCount;
+	bool bPresent;
 
-		SearchFile(const CEC_SearchFile_Tag *);
+	SearchFile(const CEC_SearchFile_Tag *);
 
-		static class SearchInfo *GetContainerInstance();
-		CMD4Hash ID() { return nHash; }
+	static class SearchInfo *GetContainerInstance();
+	CMD4Hash ID() { return nHash; }
 };
 
-typedef std::map<unsigned long int,SearchFile*> CResultMap;
+typedef std::vector<SearchFile> CResultList;
 
 wxString ECv2_Response2String(CECPacket *response);
 
@@ -63,16 +64,68 @@ public:
 
 private:
 	// other command line switches
-	void OnInitCmdLine(wxCmdLineParser& amuleweb_parser);
-	bool OnCmdLineParsed(wxCmdLineParser& parser);
-	void TextShell(const wxString& prompt);
-	void ShowResults(CResultMap results_map);
+	void OnInitCmdLine(wxCmdLineParser &amuleweb_parser);
+	bool OnCmdLineParsed(wxCmdLineParser &parser);
+	void TextShell(const wxString &prompt);
+	void ShowResults(const CResultList &results);
+	void StoreResults(const CECPacket &reply);
 	bool m_HasCmdOnCmdLine;
 	wxString m_CmdString;
+
+	/**
+	 * Print list fields separated by spaces, as before, instead of tabs.
+	 *
+	 * The rows carry client names and file names, both of which routinely contain spaces, so
+	 * nothing reading a space-separated row can split it back into fields (discussion #161).
+	 * Tabs are the default; this restores the previous output byte for byte.
+	 */
+	bool m_spaceSeparated = false;
+
+	/**
+	 * The separator to print where @a legacy used to be printed.
+	 *
+	 * ONLY separators go through here. Column padding stays as it is, values that merely
+	 * contain punctuation (`12/34` source counts, `5(7)` request counts) stay one field, and
+	 * translated values (file status, priority) are still translated -- a parser wanting stable
+	 * text still wants LC_ALL=C, or the REST API.
+	 */
+	wxString Sep(const wxString &legacy) const { return m_spaceSeparated ? legacy : wxString("\t"); }
+
+	/**
+	 * A value on its way into a field, with the active separator taken out of it.
+	 *
+	 * File names, client names and server names reach here from the network or the filesystem,
+	 * and nothing strips control characters on the way. A name carrying the separator splits
+	 * into two fields and shifts every later field of that row -- the bug tabs were introduced
+	 * to fix, since names routinely contain spaces. A tab inside a name is the same bug, only
+	 * rarer.
+	 *
+	 * Space-separated mode keeps the tab: that mode reproduces the older output byte for byte,
+	 * and a name containing a space is the ambiguity it opts back into.
+	 *
+	 * A newline is replaced in BOTH modes. It does not blur a field boundary, it fabricates a
+	 * whole record out of one -- every list command ends its rows with a newline, and `show dl`
+	 * and `show ul` also use it to structure a record. CRLF collapses to a single space rather
+	 * than two.
+	 *
+	 * Only separators are replaced. A value is never truncated, escaped or reworded.
+	 */
+	wxString Field(const wxString &value) const
+	{
+		wxString out(value);
+		out.Replace("\r\n", " ");
+		out.Replace("\n", " ");
+		out.Replace("\r", " ");
+		if (!m_spaceSeparated) {
+			out.Replace("\t", " ");
+		}
+		return out;
+	}
 	virtual int OnRun();
 
-	int	m_last_cmd_id;
-	CResultMap	m_Results_map;
+	int m_last_cmd_id;
+	// The last results listed or fetched; `download <n>` indexes into it.
+	CResultList m_results;
 };
 
 #endif // TEXTCLIENT_H

@@ -19,90 +19,72 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
 #ifndef TESTCASE_H
 #define TESTCASE_H
 
-
 #include <wx/string.h>
 #include <list>
-
 
 namespace muleunit
 {
 
 class Test;
 
-typedef std::list<Test*> TestList;
-
+typedef std::list<Test *> TestList;
 
 /**
- * A TestCase is a collection of unit tests (instance of Test) and is
- * always specified by the first parameter of a Test declaration.
+ * A TestCase is a collection of unit tests (instances of Test), always named by the first parameter
+ * of a Test declaration.
  */
 class TestCase
 {
 public:
-
 	/**
-	 * Main TestCase constructor.
-	 *
-	 * @param name TestCase name
+	 * Main TestCase constructor. @param name TestCase name
 	 */
-	TestCase(const wxString& name);
+	TestCase(const wxString &name);
 
 	virtual ~TestCase();
 
 	/**
-	 * Add a Test to the Test list. This method is used by TestRegistry.
-	 *
-	 * @param test Test instance to add to the Test list.
+	 * Add a Test to the Test list. Used by TestRegistry. @param test Test instance to add.
 	 */
 	void addTest(Test *test);
 
 	/**
-	 * Get the Test list.
-	 *
-	 * @return Test list
+	 * Get the Test list. @return Test list
 	 */
-	const TestList& getTests() const;
+	const TestList &getTests() const;
 
 	/**
-	 * Execute all Tests in the Test list of this TestCase, returning false if there were failures.
+	 * Execute all Tests in this TestCase's list, returning false if there were failures.
 	 */
 	bool run();
 
 	/**
-	 * Get the Test list size (number of Tests in this TestCase).
-	 *
-	 * @return The Test list size
+	 * Get the Test list size, i.e. the number of Tests in this TestCase.
 	 */
 	int getTestsCount() const;
 
 	/**
-	 * Get the total number of failures reported by all Tests.
-	 *
-	 * @return The total number of failures reported by all Tests. 0
-	 * if no test were run or if no failures were reported.
+	 * @return The total number of failures reported by all Tests, 0 if no test ran or none
+	 * failed.
 	 */
 	int getFailuresCount() const;
 
 	/**
-	 * Get the total number of successes reported by all Tests.
-	 *
-	 * @return The total number of successes reported by all Tests. 0
-	 * if no test were run or if no successes were reported.
+	 * @return The total number of successes reported by all Tests, 0 if no test ran or none
+	 * succeeded.
 	 */
 	int getSuccessesCount() const;
 
 	/**
-	 * Get the TestCase name. This name is specified by the first parameter
-	 * of the Test declaration. For example, if a test was declared as
-	 * TEST(TESTCASE1, TEST1), the TestCase name would be "TESTCASE1".
+	 * Get the TestCase name: the first parameter of the Test declaration. For a test declared
+	 * as TEST(TESTCASE1, TEST1) the TestCase name is "TESTCASE1".
 	 *
 	 * @return The name of the TestCase
 	 */
-	const wxString& getName() const;
+	const wxString &getName() const;
 
 protected:
 	int m_failuresCount;
@@ -114,6 +96,5 @@ private:
 	void runTests(Test *test);
 };
 
-} // MuleUnit ns
+} // namespace muleunit
 #endif // TESTCASE_H
-

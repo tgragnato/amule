@@ -26,22 +26,30 @@
 #ifndef AMULEDLG_H
 #define AMULEDLG_H
 
+#include "WindowGeometry.h"
+
+#include "config.h" // for ENABLE_VERSION_CHECK (gates the startup version-check members)
 
 #include <wx/archive.h>
+#include <wx/bmpbndl.h>
 #include <wx/filename.h>
-#include <wx/frame.h>			// Needed for wxFrame
-#include <wx/imaglist.h>
+#include <wx/frame.h> // Needed for wxFrame
 #include <wx/timer.h>
 #include <wx/wfstream.h>
 #include <wx/zipstrm.h>
 
-#include "Types.h"			// Needed for uint32
+#include <vector>
+
+#include "ClientNameCell.h" // Needed for CClientImages
+#include "Types.h"          // Needed for uint32
 #include "StatisticsDlg.h"
 
 class wxTimerEvent;
 class wxTextCtrl;
+class wxNotebook;
+class wxStaticText;
+class CVersionCheck;
 
-class CIP2Country;
 class CTransferWnd;
 class CServerWnd;
 class CSharedFilesWnd;
@@ -50,31 +58,29 @@ class CChatWnd;
 class CKadDlg;
 class PrefsUnifiedDlg;
 
-
 class CMuleTrayIcon;
 
-struct PageType {
-	wxWindow* page;
+struct PageType
+{
+	wxWindow *page;
 	wxString name;
 };
 
-#define MP_RESTORE	4001
-#define MP_CONNECT	4002
-#define MP_DISCONNECT	4003
-#define MP_EXIT		4004
+#define MP_RESTORE 4001
+#define MP_CONNECT 4002
+#define MP_DISCONNECT 4003
+#define MP_EXIT 4004
 
+#define DEFAULT_SIZE_X 800
+#define DEFAULT_SIZE_Y 600
 
-#define DEFAULT_SIZE_X  800
-#define DEFAULT_SIZE_Y  600
-
-
-enum ClientSkinEnum {
+enum ClientSkinEnum
+{
 	Client_Green_Smiley = 0,
 	Client_Red_Smiley,
 	Client_Yellow_Smiley,
 	Client_Grey_Smiley,
 	Client_White_Smiley,
-	Client_ExtendedProtocol_Smiley,
 	Client_SecIdent_Smiley,
 	Client_BadGuy_Smiley,
 	Client_CreditsGrey_Smiley,
@@ -100,72 +106,173 @@ enum ClientSkinEnum {
 	CLIENT_SKIN_SIZE
 };
 
+// Indexes into CamuleDlg::m_tblist. Must match the order of the
+// Add_Skin_Icon("Toolbar_...") calls in Apply_Toolbar_Skin.
+enum ToolbarSkinEnum
+{
+	Toolbar_Network = 0,
+	Toolbar_Transfers,
+	Toolbar_Search,
+	Toolbar_Shared,
+	Toolbar_Messages,
+	Toolbar_Clients,
+	Toolbar_Stats,
+	Toolbar_Prefs,
+	Toolbar_Import,
+	Toolbar_About,
+	Toolbar_Blink,
+	// Add items here.
+	TOOLBAR_SKIN_SIZE
+};
 
 // CamuleDlg Dialogfeld
 class CamuleDlg : public wxFrame
 {
 public:
-	CamuleDlg(
-		wxWindow *pParent = NULL,
+	CamuleDlg(wxWindow *pParent = NULL,
 		const wxString &title = "",
 		wxPoint where = wxDefaultPosition,
-		wxSize dlg_size = wxSize(DEFAULT_SIZE_X,DEFAULT_SIZE_Y));
+		wxSize dlg_size = wxSize(DEFAULT_SIZE_X, DEFAULT_SIZE_Y));
 	~CamuleDlg();
 
-	void AddLogLine(const wxString& line);
-	void AddServerMessageLine(wxString& message);
+	void AddLogLine(const wxString &line);
+	// The GUI client's own log. In amulegui this is a separate "aMuleGUI Log"
+	// tab; in the monolithic build it is the same tab as AddLogLine().
+	void AddGuiLogLine(const wxString &line);
+	void AddServerMessageLine(wxString &message);
 	void ResetLog(int id);
 
-	void ShowUserCount(const wxString& info = "");
-	void ShowConnectionState(bool skinChanged = false);
-	void ShowTransferRate();
+	// Bracket a burst of AddLogLine() calls so the log view is repainted and scrolled once for
+	// the whole batch instead of per line (issue #445 -- a remote-GUI first-sync backlog is
+	// thousands of lines).
+	void BeginLogBatch();
+	void EndLogBatch();
 
-	bool StatisticsWindowActive()
-		{ return (m_activewnd == static_cast<wxWindow*>(m_statisticswnd)); }
+	// Last values pushed by ShowCoreVersion, so the click handler can build
+	// the dialog without re-reading the EC connection.
+	wxString m_coreVersion;
+	wxString m_coreEndpoint;
+	wxString m_coreEncryption;
+	bool m_coreEncrypted = false;
+
+	void ShowUserCount(const wxString &info = "");
+	// Reveal and populate the status-bar core-version field. `coreVersion` is what the core
+	// reported over EC; `endpoint` is the host:port it was reached on. amulegui only.
+	void ShowCoreVersion(const wxString &coreVersion,
+		const wxString &endpoint,
+		const wxString &encryption,
+		bool encrypted);
+	// Details dialog for the status-bar core-version field. A dialog rather than a tooltip: the
+	// bar shifts sideways whenever the speed text changes width, which cancels a hover before
+	// it can fire.
+	void OnCoreVersionClicked(wxMouseEvent &event);
+	void ShowConnectionState();
+	void ShowTransferRate();
+	void ShowPreferences();
+
+	bool StatisticsWindowActive() { return (m_activewnd == static_cast<wxWindow *>(m_statisticswnd)); }
 
 	/* Returns the active dialog. Needed to check what to redraw. */
-	enum DialogType {
+	enum DialogType
+	{
 		DT_TRANSFER_WND,
 		DT_NETWORKS_WND,
 		DT_SEARCH_WND,
 		DT_SHARED_WND,
 		DT_CHAT_WND,
 		DT_STATS_WND,
-		DT_KAD_WND	// this one is still unused
+		DT_CLIENTS_WND,
+		DT_KAD_WND // this one is still unused
 	};
-	DialogType GetActiveDialog()
-		{ return m_nActiveDialog; }
-	void SetActiveDialog(DialogType type, wxWindow* dlg);
+	DialogType GetActiveDialog() { return m_nActiveDialog; }
+	void SetActiveDialog(DialogType type, wxWindow *dlg);
 
-	/**
-	 * Helper function for deciding if a certain dlg is visible.
-	 *
-	 * @return True if the dialog is visible to the user, false otherwise.
-	 */
-	bool IsDialogVisible( DialogType dlg )
+	// Programmatically switch to the Search panel exactly as clicking the Search toolbar button
+	// would -- panel, toolbar button state, ED2K-links handler and the handler's bookkeeping
+	// all stay consistent. Used when a "View Files" browse opens a tab from another panel.
+	void ShowSearchWindow();
+
+	/// True if the dialog is visible to the user.
+	bool IsDialogVisible(DialogType dlg)
 	{
 		return m_nActiveDialog == dlg && m_is_safe_state /* && !IsIconized() */;
 	}
 
-	void ShowED2KLinksHandler( bool show );
+	/**
+	 * Makes the main window visible, and applies the settings that only take effect once it is
+	 * (the toolbar re-realize, start-minimized).
+	 *
+	 * Called from the constructor on amulegui. The monolithic build calls it when the startup
+	 * splash closes instead, so the window appears ready rather than sitting unresponsive
+	 * behind the splash. Idempotent: does nothing if the window is already shown.
+	 */
+	void ShowStartupWindow();
+
+	void ShowED2KLinksHandler(bool show);
 
 	void DlgShutDown();
-	void OnClose(wxCloseEvent& evt);
-	void OnBnConnect(wxCommandEvent& evt);
+	void OnClose(wxCloseEvent &evt);
+	void OnBnConnect(wxCommandEvent &evt);
 
-	bool SafeState()	{ return m_is_safe_state; }
+	bool SafeState() { return m_is_safe_state; }
 
 	void LaunchUrl(const wxString &url);
 
 	void CreateSystray();
+	// Turns the tray icon off for a preference change; RemoveSystray() is for shutdown.
+	void HideSystray();
 	void RemoveSystray();
 
-	void StartGuiTimer()	{ gui_timer->Start(100); }
-	void StopGuiTimer()	{ gui_timer->Stop(); }
+	/**
+	 * Refreshes the free-space label of whichever panel is on screen.
+	 *
+	 * Driven by the GUI timer, and again when a panel becomes active so it does not show the
+	 * figure it had when it was last visible until the next tick.
+	 */
+	void UpdateFreeSpaceLabels();
 
 	/**
-	 * This function ensures that _all_ list widgets are properly sorted.
+	 * Writes a free-space figure into @a label, red when @a warn. FREE_SPACE_UNKNOWN empties
+	 * the label rather than printing a size, so an unreachable mount shows nothing instead of
+	 * "0 bytes free".
+	 *
+	 * @a separatorLabel is the "|" joining this figure to the field before it, in a label of
+	 * its own because a wxStaticText colours all or nothing -- kept here rather than at the
+	 * call sites so it is set and cleared with the figure it belongs to, and never left
+	 * trailing the field before it when there is nothing to show. Panels that show the figure
+	 * on its own pass nothing.
 	 */
+	static void SetFreeSpaceLabel(
+		wxStaticText *label, sint64 freeSpace, bool warn, wxStaticText *separatorLabel = nullptr);
+
+	/**
+	 * Brings the main window back from every state that hides it.
+	 *
+	 * The one restore path, shared by the tray icon (click, menu), the duplicate-launch
+	 * RAISE_DIALOG signal and the macOS Dock-reopen handler of both applications. Written once
+	 * because the hidden states compose: the window can be hidden (Show(false) via HideOnClose
+	 * or minimize-to-tray), iconized to the Dock/taskbar, merely behind another application's
+	 * window, or -- on macOS -- any of those with the Dock icon dropped as well.
+	 */
+	void RestoreMainWindow();
+
+	/**
+	 * Hides the main window, leaving the tray icon as the way back.
+	 *
+	 * The counterpart of RestoreMainWindow(), and the reason both are here: on macOS the hide
+	 * has a second half (dropping NSApp to accessory so no Dock icon is left behind) that every
+	 * hide path has to perform and every show path has to undo.
+	 *
+	 * Named for the tray where its counterpart is not, because every caller of this one really
+	 * is a tray path -- the tray menu, and minimize-to-tray, which only runs when the icon
+	 * exists. The close-button HideOnClose path deliberately does not come here; see OnClose().
+	 */
+	void HideToTray();
+
+	void StartGuiTimer() { gui_timer->Start(100); }
+	void StopGuiTimer() { gui_timer->Stop(); }
+
+	/// Ensures that _all_ list widgets are properly sorted.
 	void InitSort();
 
 	void SetMessageBlink(bool state) { m_BlinkMessages = state; }
@@ -173,37 +280,47 @@ public:
 
 	void DoNetworkRearrange();
 
-	CIP2Country*		m_IP2Country;
-	void IP2CountryDownloadFinished(uint32 result);
-	void EnableIP2Country();
-
-	wxWindow*		m_activewnd;
-	CTransferWnd*		m_transferwnd;
-	CServerWnd*		m_serverwnd;
-	CSharedFilesWnd*	m_sharedfileswnd;
-	CSearchDlg*		m_searchwnd;
-	CChatWnd*		m_chatwnd;
-	CStatisticsDlg*		m_statisticswnd;
-	CKadDlg*		m_kademliawnd;
+	wxWindow *m_activewnd;
+	wxWindow *m_contentPanel = nullptr;
+	uint32 m_contentPaints = 0;
+	CTransferWnd *m_transferwnd;
+	CServerWnd *m_serverwnd;
+	CSharedFilesWnd *m_sharedfileswnd;
+	CSearchDlg *m_searchwnd;
+	CChatWnd *m_chatwnd;
+	class CClientsWnd *m_clientswnd;
+	CStatisticsDlg *m_statisticswnd;
+	CKadDlg *m_kademliawnd;
 	//! Pointer to the current preference dialog, if any.
-	PrefsUnifiedDlg*	m_prefsDialog;
+	PrefsUnifiedDlg *m_prefsDialog;
 
-	int			m_srv_split_pos;
+	int m_srv_split_pos;
 
-	wxImageList m_imagelist;
-	wxImageList m_tblist;
+	CWindowGeometry m_windowGeometry;
+
+	CClientImages m_clientImages;
+	// Toolbar icons as resolution-aware bundles (the 32x32 art plus a smooth 2x upscale). The
+	// executable is per-monitor-DPI aware, so a plain 32px wxBitmap would be drawn at 32
+	// PHYSICAL pixels -- tiny and blurry on hi-DPI screens.
+	std::vector<wxBitmapBundle> m_tblist;
 
 protected:
-	void OnToolBarButton(wxCommandEvent& ev);
-	void OnAboutButton(wxCommandEvent& ev);
-	void OnPrefButton(wxCommandEvent& ev);
-	void OnImportButton(wxCommandEvent& ev);
-	void OnMinimize(wxIconizeEvent& evt);
-	void OnShow(wxShowEvent& evt);
-	void OnBnClickedFast(wxCommandEvent& evt);
-	void OnGUITimer(wxTimerEvent& evt);
-	void OnMainGUISizeChange(wxSizeEvent& evt);
-	void OnExit(wxCommandEvent& evt);
+	void OnToolBarButton(wxCommandEvent &ev);
+	void OnAboutButton(wxCommandEvent &ev);
+	void OnPrefButton(wxCommandEvent &ev);
+	void OnImportButton(wxCommandEvent &ev);
+	void OnMinimize(wxIconizeEvent &evt);
+	void OnShow(wxShowEvent &evt);
+	void OnBnClickedFast(wxCommandEvent &evt);
+	void OnGUITimer(wxTimerEvent &evt);
+	void LogGuiHeartbeat();
+	void OnMainGUISizeChange(wxSizeEvent &evt);
+	void OnMainGUIIdle(wxIdleEvent &evt);
+	void OnMainGUIMaximize(wxMaximizeEvent &evt);
+	// Stash the current (non-iconized) pos / size / maximized state so SaveGUIPrefs can fall
+	// back to the last good geometry if the user exits from a minimized window.
+	void CacheLastShownGeometry();
+	void OnExit(wxCommandEvent &evt);
 
 private:
 	//! Specifies if the prefs-dialog was shown before minimizing.
@@ -211,21 +328,50 @@ private:
 	wxToolBar *m_wndToolbar;
 	wxTimer *gui_timer;
 	CMuleTrayIcon *m_wndTaskbarNotifier;
+	// Kept by HideSystray() for CreateSystray() to show again; see HideSystray().
+	CMuleTrayIcon *m_hiddenTaskbarNotifier;
 	DialogType m_nActiveDialog;
 	bool m_is_safe_state;
 	bool m_BlinkMessages;
+
+	//! Shared append logic for both log views (ID_LOGVIEW / ID_GUILOGVIEW).
+	//! Lines starting with '!' are critical (bold + status bar).
+	void AddLogLineToView(const wxString &line, int viewId);
 	int m_CurrentBlinkBitmap;
 	uint32 m_last_iconizing;
+	// The "new version available" popup is shown at most once per session;
+	// the daily periodic re-check must not re-pop within the same run.
+	bool m_versionPopupShown = false;
+
+#if defined(ENABLE_VERSION_CHECK) && defined(CLIENT_GUI)
+	// amulegui-only: it is not a CamuleApp and has no core version-check engine, so the remote
+	// GUI runs its own CVersionCheck. The monolithic app drives the popup from the shared core
+	// engine instead. Owned, created lazily by StartupVersionCheck() when the preference is on.
+	CVersionCheck *m_startupVersionCheck = nullptr;
+	time_t m_lastGuiVersionCheck = 0;
+	void StartupVersionCheck();
+	void OnStartupVersionCheckDone(wxCommandEvent &evt);
+#endif // ENABLE_VERSION_CHECK && CLIENT_GUI
 
 public:
-	// Track iconize state from wxIconizeEvent::IsIconized(), which is
-	// reliable across platforms — unlike wxFrame::IsIconized() which
-	// can return false on wxGTK after a minimize-button click while
-	// the OS still has the window iconized. Tray menu and DoShowHide
-	// consult this to decide whether the window is "visible to the
-	// user" so the "Show aMule"/"Hide aMule" label and the click
-	// action stay in sync with reality.
+	// Show the "a new version is available" popup: at most once per session, and never for a
+	// version the user muted via the dialog's "Don't ask again" checkbox, which is recorded
+	// per-version so a newer release still asks. Called from the core engine in the monolithic
+	// app and from OnStartupVersionCheckDone in amulegui.
+	void ShowVersionAvailable(const wxString &latest);
+
+	// Track iconize state from wxIconizeEvent::IsIconized(), which is reliable across platforms
+	// -- unlike wxFrame::IsIconized(), which can return false on wxGTK after a minimize click
+	// while the OS still has the window iconized. The tray menu and DoShowHide consult this to
+	// keep the "Show aMule" / "Hide aMule" label and the click action in step with reality.
 	bool IsTrayLogicallyIconized() const { return m_iconized_logical; }
+
+	/// Whether the user can actually see the window. Both halves are needed and neither is
+	/// enough: minimized to Dock/taskbar keeps IsShown() true while nothing is on screen, and
+	/// hidden to tray leaves the iconized bit clear while the frame is gone. Used by the tray
+	/// menu to label Show/Hide, and by amulegui to decide whether a modal is worth putting up
+	/// (issue #806).
+	bool IsVisibleToUser() const { return IsShown() && !m_iconized_logical; }
 
 private:
 	bool m_iconized_logical = false;
@@ -233,11 +379,21 @@ private:
 	std::vector<wxString> m_clientSkinNames;
 	bool m_GeoIPavailable;
 
-	WX_DECLARE_STRING_HASH_MAP(wxZipEntry*, ZipCatalog);
+	WX_DECLARE_STRING_HASH_MAP(wxZipEntry *, ZipCatalog);
 	ZipCatalog cat;
 
-	PageType m_logpages[4];
+	// Network-conditional log tabs (Server Info / ED2K Info / Kad Info), captured by the
+	// control each page hosts rather than by notebook index: the tab layout differs between the
+	// monolithic build and amulegui, and index-based tracking silently broke Kad Info when the
+	// "aMuleGUI Log" tab was inserted. DoNetworkRearrange() shows and hides these by identity.
+	PageType m_logServerInfo;
+	PageType m_logED2KInfo;
+	PageType m_logKadInfo;
 	PageType m_networkpages[2];
+
+	// Finds the notebook page hosting the control ctrlId and captures its window and tab label.
+	// Used to track the network-conditional log tabs by identity instead of position.
+	PageType CaptureLogPage(wxNotebook *notebook, wxWindowID ctrlId);
 
 	bool LoadGUIPrefs(bool override_pos, bool override_size);
 	bool SaveGUIPrefs();
@@ -247,10 +403,9 @@ private:
 	void Apply_Clients_Skin();
 	void Apply_Toolbar_Skin(wxToolBar *wndToolbar);
 	bool Check_and_Init_Skin();
-	void Add_Skin_Icon(const wxString &iconName, const wxBitmap &stdIcon, bool useSkins);
-	void ToogleED2KLinksHandler();
+	void Add_Skin_Icon(const wxString &iconName, const wxBitmapBundle &stdIcon, bool useSkins);
 	void SetMessagesTool();
-	void OnKeyPressed(wxKeyEvent& evt);
+	void OnKeyPressed(wxKeyEvent &evt);
 
 	wxDECLARE_EVENT_TABLE();
 };

@@ -38,17 +38,17 @@
 Example tree:
 	FileSize: 19506000 Bytes = 18,6 MB
 
-              X(18,6 MB)						MasterHash
-             /          \
-          X(18,55)       \
-         /        \       \
+	      X(18,6 MB)						MasterHash
+	     /          \
+	  X(18,55)       \
+	 /        \       \
   X(9,28)         X(9,28)  X(0,05MB)				PartHashs
  /     \         /     \          \
 X(4,75) X(4,57) X(4,57) X(4,57)    X(4,75)
 [...............]
 X(180KB)   X(180KB)  [...] X(140KB) | X(180KB) X(180KB) [...]	BlockHashs
-                                    v
-                                    Border between first and second Part (9.28MB)
+				    v
+				    Border between first and second Part (9.28MB)
 
 HashsIdentifier:
 When sending hashes, they are sent with a 16bit identifier which specifies its position in the
@@ -65,28 +65,30 @@ Example
  / \   \
 x  _X_  x	        0000000000000110
 
-
-Version 2 of AICH also supports 32bit identifiers to support large files, check CAICHHashSet::CreatePartRecoveryData
+Version 2 of AICH also supports 32bit identifiers to support large files, check
+CAICHHashSet::CreatePartRecoveryData
 */
 
-#ifndef __SHAHAHSET_H__
-#define __SHAHAHSET_H__
+#ifndef SHAHASHSET_H
+#define SHAHASHSET_H
 
 #include <deque>
 #include <set>
-#include <unordered_set>
+#include <unordered_map>
 
-#include <wx/thread.h>		// Needed for wxMutex
+#include <wx/thread.h> // Needed for wxMutex
 
 #include "Types.h"
 #include "ClientRef.h"
+#include "NetworkAddress.h" // Needed for SigningKey
 
-#define HASHSIZE			20
-#define KNOWN2_MET_FILENAME		"known2_64.met"
-#define OLD_KNOWN2_MET_FILENAME		"known2.met"
-#define KNOWN2_MET_VERSION		0x02
+#define HASHSIZE 20
+#define KNOWN2_MET_FILENAME "known2_64.met"
+#define OLD_KNOWN2_MET_FILENAME "known2.met"
+#define KNOWN2_MET_VERSION 0x02
 
-enum EAICHStatus {
+enum EAICHStatus
+{
 	AICH_ERROR = 0,
 	AICH_EMPTY,
 	AICH_UNTRUSTED,
@@ -101,43 +103,42 @@ class CMemFile;
 class CPartFile;
 class CUpDownClient;
 
-
 /////////////////////////////////////////////////////////////////////////////////////////
-///CAICHHash
+/// CAICHHash
 class CAICHHash
 {
 private:
 	uint8_t m_abyBuffer[HASHSIZE];
 
 public:
-	CAICHHash()				{ memset(m_abyBuffer, 0, HASHSIZE); }
-	CAICHHash(CFileDataIO* file)		{ Read(file); }
-	CAICHHash(uint8_t* data)		{ Read(data); }
-	CAICHHash(const CAICHHash& k1)		{ *this = k1; }
+	CAICHHash() { memset(m_abyBuffer, 0, HASHSIZE); }
+	CAICHHash(CFileDataIO *file) { Read(file); }
+	CAICHHash(uint8_t *data) { Read(data); }
+	CAICHHash(const CAICHHash &k1) { *this = k1; }
 	~CAICHHash() {}
-	CAICHHash& operator=(const CAICHHash& k1)
-	{
-		memcpy(m_abyBuffer, k1.m_abyBuffer, HASHSIZE);
-		return *this;
-	}
-	friend bool operator==(const CAICHHash& k1,const CAICHHash& k2)
+	// Defaulted: member-wise copy of the POD hash buffer, self-assignment-safe.
+	CAICHHash &operator=(const CAICHHash &k1) = default;
+	friend bool operator==(const CAICHHash &k1, const CAICHHash &k2)
 	{
 		return memcmp(k1.m_abyBuffer, k2.m_abyBuffer, HASHSIZE) == 0;
 	}
-	friend bool operator!=(const CAICHHash& k1,const CAICHHash& k2)	{ return !(k1 == k2); }
-	void Read(CFileDataIO* file);
-	void Write(CFileDataIO* file) const;
-	void Read(uint8_t* data)		{ memcpy(m_abyBuffer, data, HASHSIZE); }
+	friend bool operator!=(const CAICHHash &k1, const CAICHHash &k2) { return !(k1 == k2); }
+	void Read(CFileDataIO *file);
+	void Write(CFileDataIO *file) const;
+	void Read(uint8_t *data) { memcpy(m_abyBuffer, data, HASHSIZE); }
 	wxString GetString() const;
-	uint8_t* GetRawHash()			{ return m_abyBuffer; }
-	const uint8_t* GetRawHash() const	{ return m_abyBuffer; }
-	static uint32 GetHashSize()		{ return HASHSIZE;}
+	uint8_t *GetRawHash() { return m_abyBuffer; }
+	const uint8_t *GetRawHash() const { return m_abyBuffer; }
+	static uint32 GetHashSize() { return HASHSIZE; }
 	unsigned int DecodeBase32(const wxString &base32);
 };
 
-namespace std {
-template <> struct hash<CAICHHash> {
-	size_t operator()(const CAICHHash& h) const noexcept {
+namespace std
+{
+template <> struct hash<CAICHHash>
+{
+	size_t operator()(const CAICHHash &h) const noexcept
+	{
 		// Root hashes already have ~uniform bit distribution; any 8
 		// contiguous bytes make a perfectly fine size_t-sized hash.
 		size_t v;
@@ -145,178 +146,237 @@ template <> struct hash<CAICHHash> {
 		return v;
 	}
 };
-}
+} // namespace std
 
 /////////////////////////////////////////////////////////////////////////////////////////
-///CAICHHashAlgo
+/// CAICHHashAlgo
 class CAICHHashAlgo
 {
 public:
 	virtual ~CAICHHashAlgo() {};
 	virtual void Reset() = 0;
-	virtual void Add(const void* pData, uint32 nLength) = 0;
-	virtual void Finish(CAICHHash& Hash) = 0;
-	virtual void GetHash(CAICHHash& Hash) = 0;
+	virtual void Add(const void *pData, uint32 nLength) = 0;
+	virtual void Finish(CAICHHash &Hash) = 0;
+	virtual void GetHash(CAICHHash &Hash) = 0;
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////
-///CAICHHashTree
+/// CAICHHashTree
 class CAICHHashTree
 {
 	friend class CAICHHashSet;
+
 private:
 	CAICHHash m_Hash;
-	uint64 m_nDataSize;	// size of data which is covered by this hash
-	uint64 m_nBaseSize;	// blocksize on which the lowest hash is based on
-	bool m_bIsLeftBranch;	// left or right branch of the tree
-	bool m_bHashValid;	// the hash is valid and not empty
-	CAICHHashTree* m_pLeftTree;
-	CAICHHashTree* m_pRightTree;
+	uint64 m_nDataSize;   // size of data which is covered by this hash
+	uint64 m_nBaseSize;   // blocksize on which the lowest hash is based on
+	bool m_bIsLeftBranch; // left or right branch of the tree
+	bool m_bHashValid;    // the hash is valid and not empty
+	CAICHHashTree *m_pLeftTree;
+	CAICHHashTree *m_pRightTree;
 
 public:
 	CAICHHashTree(uint64 nDataSize, bool bLeftBranch, uint64 nBaseSize);
 	~CAICHHashTree();
 
-	const CAICHHash &GetHash() const	{ return m_Hash; }
-	uint64 GetNDataSize() const		{ return m_nDataSize; }
-	uint64 GetNBaseSize() const		{ return m_nBaseSize; }
-	bool GetIsLeftBranch() const		{ return m_bIsLeftBranch; }
-	bool GetHashValid() const		{ return m_bHashValid; }
+	const CAICHHash &GetHash() const { return m_Hash; }
+	uint64 GetNDataSize() const { return m_nDataSize; }
+	uint64 GetNBaseSize() const { return m_nBaseSize; }
+	bool GetIsLeftBranch() const { return m_bIsLeftBranch; }
+	bool GetHashValid() const { return m_bHashValid; }
 
-	void SetBlockHash(uint64 nSize, uint64 nStartPos, CAICHHashAlgo* pHashAlg);
-	bool ReCalculateHash(CAICHHashAlgo* hashalg, bool bDontReplace );
-	bool VerifyHashTree(CAICHHashAlgo* hashalg, bool bDeleteBadTrees);
-	CAICHHashTree* FindHash(uint64 nStartPos, uint64 nSize)
+	void SetBlockHash(uint64 nSize, uint64 nStartPos, CAICHHashAlgo *pHashAlg);
+	bool ReCalculateHash(CAICHHashAlgo *hashalg, bool bDontReplace);
+	bool VerifyHashTree(CAICHHashAlgo *hashalg, bool bDeleteBadTrees);
+	CAICHHashTree *FindHash(uint64 nStartPos, uint64 nSize)
 	{
 		uint8 buffer = 0;
 		return FindHash(nStartPos, nSize, &buffer);
 	}
+	const CAICHHashTree *FindExistingHash(uint64 nStartPos, uint64 nSize) const
+	{
+		uint8 buffer = 0;
+		return FindExistingHash(nStartPos, nSize, &buffer);
+	}
 
 protected:
-	CAICHHashTree* FindHash(uint64 nStartPos, uint64 nSize, uint8* nLevel);
-	bool CreatePartRecoveryData(uint64 nStartPos, uint64 nSize,
-		CFileDataIO* fileDataOut, uint32 wHashIdent, bool b32BitIdent);
-	void WriteHash(CFileDataIO* fileDataOut, uint32 wHashIdent, bool b32BitIdent) const;
-	bool WriteLowestLevelHashs(CFileDataIO* fileDataOut,
-		uint32 wHashIdent, bool bNoIdent, bool b32BitIdent) const;
-	bool LoadLowestLevelHashs(CFileDataIO* fileInput);
-	bool SetHash(CFileDataIO* fileInput, uint32 wHashIdent, sint8 nLevel = (-1), bool bAllowOverwrite = true);
+	CAICHHashTree *FindHash(uint64 nStartPos, uint64 nSize, uint8 *nLevel);
+	const CAICHHashTree *FindExistingHash(uint64 nStartPos, uint64 nSize, uint8 *nLevel) const;
+	bool CreatePartRecoveryData(uint64 nStartPos,
+		uint64 nSize,
+		CFileDataIO *fileDataOut,
+		uint32 wHashIdent,
+		bool b32BitIdent);
+	void WriteHash(CFileDataIO *fileDataOut, uint32 wHashIdent, bool b32BitIdent) const;
+	bool WriteLowestLevelHashs(
+		CFileDataIO *fileDataOut, uint32 wHashIdent, bool bNoIdent, bool b32BitIdent) const;
+	bool LoadLowestLevelHashs(CFileDataIO *fileInput);
+	bool SetHash(
+		CFileDataIO *fileInput, uint32 wHashIdent, sint8 nLevel = (-1), bool bAllowOverwrite = true);
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////
-///CAICHUntrustedHashs
-class CAICHUntrustedHash {
+/// CAICHUntrustedHashs
+class CAICHUntrustedHash
+{
 public:
 	CAICHUntrustedHash() = default;
-	CAICHUntrustedHash(const CAICHUntrustedHash&) = default;
-	CAICHUntrustedHash& operator=(const CAICHUntrustedHash& k1)
+	CAICHUntrustedHash(const CAICHUntrustedHash &) = default;
+	CAICHUntrustedHash &operator=(const CAICHUntrustedHash &k1)
 	{
 		m_adwIpsSigning = k1.m_adwIpsSigning;
-		m_Hash = k1.m_Hash ;
+		m_kadSigning = k1.m_kadSigning;
+		m_Hash = k1.m_Hash;
 		return *this;
 	}
-	bool AddSigningIP(uint32 dwIP);
+	// Addresses are in peer byte order, as opposed to Kad wire order.
+	static constexpr uint32 SigningSubnet(uint32 ip) { return ip & 0x00F0FFFF; }
+	//! Set in every IPv6 key. SigningSubnet() clears the top byte, so no IPv4 key has it.
+	static constexpr uint32 kIPv6KeyBit = 0x80000000u;
+	/**
+	 * The signing key for a source of any family. IPv4 signs per /20, as above; an IPv6 source
+	 * per /48, a site, folded into a key with kIPv6KeyBit set, so the two cannot meet. Without
+	 * this every IPv6 source shared key 0. A key is stored as given: masked again as a /20, an
+	 * IPv6 key would lose that bit and land on some IPv4 subnet's key.
+	 */
+	static uint32 SigningKey(const CNetworkAddress &address)
+	{
+		uint32 ipv4 = 0;
+		if (address.ToIPv4NetworkOrder(ipv4)) {
+			return SigningSubnet(ipv4);
+		}
+		if (!address.IsIPv6()) {
+			return 0;
+		}
+		uint32 hash = 2166136261u; // FNV-1a over the /48
+		for (unsigned i = 0; i < 6; ++i) {
+			hash = (hash ^ address.GetOctets()[i]) * 16777619u;
+		}
+		return hash | kIPv6KeyBit;
+	}
+	//! @a key is a SigningKey() or a SigningSubnet().
+	bool AddSigningKey(uint32 key, bool testOnly = false);
 
 	CAICHHash m_Hash;
 	std::set<uint32> m_adwIpsSigning;
+	// The subset of m_adwIpsSigning backed only by a replayed Kad search result. A Kad
+	// responder relays a publisher's claim and is weaker evidence than a download source,
+	// so a source in the same /20 may take such a slot over.
+	std::set<uint32> m_kadSigning;
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////
-///CAICHUntrustedHashs
-class CAICHRequestedData {
+/// CAICHUntrustedHashs
+class CAICHRequestedData
+{
 public:
 	CAICHRequestedData()
 	{
 		m_nPart = 0;
 		m_pPartFile = NULL;
 	}
-	CAICHRequestedData(const CAICHRequestedData&) = default;
-	CAICHRequestedData& operator=(const CAICHRequestedData& k1)
-	{
-		m_nPart = k1.m_nPart;
-		m_pPartFile = k1.m_pPartFile;
-		m_pClient = k1.m_pClient;
-		return *this;
-	}
+	CAICHRequestedData(const CAICHRequestedData &) = default;
+	// Defaulted: member-wise copy (CClientRef::operator= guards self-assignment).
+	CAICHRequestedData &operator=(const CAICHRequestedData &) = default;
 	uint16 m_nPart;
-	CPartFile* m_pPartFile;
+	CPartFile *m_pPartFile;
 	CClientRef m_pClient;
 };
-
 
 using namespace std;
 
 typedef std::list<CAICHRequestedData> CAICHRequestedDataList;
 
 /////////////////////////////////////////////////////////////////////////////////////////
-///CAICHHashSet
+/// CAICHHashSet
 class CAICHHashSet
 {
 private:
-	CKnownFile* m_pOwner;
+	CKnownFile *m_pOwner;
+	// The owner's file name for log lines, or empty without an owner.
+	wxString OwnerName() const;
 	EAICHStatus m_eStatus;
 	deque<CAICHUntrustedHash> m_aUntrustedHashs;
+
+	//! @a key is a signing key, stored as given.
+	void HashReceived(const CAICHHash &Hash, uint32 key, bool fromKad);
 
 public:
 	static CAICHRequestedDataList m_liRequestedData;
 	CAICHHashTree m_pHashTree;
 
-	CAICHHashSet(CKnownFile* pOwner);
+	CAICHHashSet(CKnownFile *pOwner);
 	~CAICHHashSet(void);
-	bool CreatePartRecoveryData(uint64 nPartStartPos, CFileDataIO* fileDataOut, bool bDbgDontLoad = false);
-	bool ReadRecoveryData(uint64 nPartStartPos, CMemFile* fileDataIn);
+	bool CreatePartRecoveryData(
+		uint64 nPartStartPos, CFileDataIO *fileDataOut, bool bDbgDontLoad = false);
+	bool ReadRecoveryData(uint64 nPartStartPos, CMemFile *fileDataIn);
 	bool ReCalculateHash(bool bDontReplace = false);
 	bool VerifyHashTree(bool bDeleteBadTrees);
-	void UntrustedHashReceived(const CAICHHash& Hash, uint32 dwFromIP);
+	// A root reported by a download source, or an eD2k server root that Kad evidence disputes.
+	void UntrustedHashReceived(const CAICHHash &Hash, uint32 dwFromIP)
+	{
+		HashReceived(Hash, CAICHUntrustedHash::SigningSubnet(dwFromIP), false);
+	}
+	void UntrustedHashReceived(const CAICHHash &Hash, const CNetworkAddress &from)
+	{
+		HashReceived(Hash, CAICHUntrustedHash::SigningKey(from), false);
+	}
+	// A root replayed from a Kad search result, attributed to its responder's /20.
+	void KadHashReceived(const CAICHHash &hash, uint32 responderSubnet)
+	{
+		HashReceived(hash, CAICHUntrustedHash::SigningSubnet(responderSubnet), true);
+	}
 	bool IsPartDataAvailable(uint64 nPartStartPos);
-	void SetStatus(EAICHStatus bNewValue)	{ m_eStatus = bNewValue; }
-	EAICHStatus GetStatus()	const		{ return m_eStatus; }
+	void SetStatus(EAICHStatus bNewValue) { m_eStatus = bNewValue; }
+	EAICHStatus GetStatus() const { return m_eStatus; }
 
 	void FreeHashSet();
 	void SetFileSize(uint64 nSize);
 
-	CAICHHash& GetMasterHash()		{ return m_pHashTree.m_Hash; }
-	void SetMasterHash(const CAICHHash& Hash, EAICHStatus eNewStatus);
-	bool HasValidMasterHash()		{ return m_pHashTree.m_bHashValid; }
+	CAICHHash &GetMasterHash() { return m_pHashTree.m_Hash; }
+	void SetMasterHash(const CAICHHash &Hash, EAICHStatus eNewStatus);
+	bool HasValidMasterHash() { return m_pHashTree.m_bHashValid; }
 
 	bool SaveHashSet();
 	bool LoadHashSet(); // only call directly when debugging
 
-	static CAICHHashAlgo* GetNewHashAlgo();
-	static void ClientAICHRequestFailed(CUpDownClient* pClient);
-	static void RemoveClientAICHRequest(const CUpDownClient* pClient);
-	static bool IsClientRequestPending(const CPartFile* pForFile, uint16 nPart);
+	static CAICHHashAlgo *GetNewHashAlgo();
+	static void ClientAICHRequestFailed(CUpDownClient *pClient);
+	static void RemoveClientAICHRequest(const CUpDownClient *pClient);
+	static bool IsClientRequestPending(const CPartFile *pForFile, uint16 nPart);
 
-	// Pointer-value strip of any pending AICH-recovery request entry
-	// whose m_pPartFile == `file`. Called from MuleNotify::
-	// KnownFileBeingDestroyed before a CKnownFile / CPartFile is
-	// freed so the existing IsPartFile() guard in
-	// ClientAICHRequestFailed can't be spoofed by allocator reuse of
-	// the same address.
-	static void DropReferencesTo(const CKnownFile* file);
-	static CAICHRequestedData GetAICHReqDetails(const  CUpDownClient* pClient);
+	// Pointer-value strip of any pending AICH-recovery request entry whose m_pPartFile ==
+	// `file`. Called from MuleNotify::KnownFileBeingDestroyed before the file is freed, so the
+	// IsPartFile() guard in ClientAICHRequestFailed cannot be spoofed by allocator reuse of the
+	// same address.
+	static void DropReferencesTo(const CKnownFile *file);
+	static CAICHRequestedData GetAICHReqDetails(const CUpDownClient *pClient);
 	void DbgTest();
 
-	void SetOwner(CKnownFile* owner)	{ m_pOwner = owner; }
+	void SetOwner(CKnownFile *owner) { m_pOwner = owner; }
 
-	// Drop the in-memory dedup cache used by SaveHashSet. Call after anything
-	// mutates known2.met outside SaveHashSet (e.g. CAICHSyncTask's corruption
-	// truncation path) so the cache doesn't hold ghost entries.
+	// Drop the in-memory dedup cache used by SaveHashSet. Call after anything mutates
+	// known2.met outside SaveHashSet (CAICHSyncTask's corruption truncation path, say) so the
+	// cache does not hold ghost entries.
 	static void InvalidateRootHashCache();
 
 private:
-	// Cache of every root hash currently stored in known2.met. Populated
-	// lazily on first SaveHashSet call (or refilled after invalidation).
-	// Replaces the per-call linear file walk that made SaveHashSet O(N)
-	// per call / O(N^2) over a bulk-hash batch.
-	static wxMutex			s_rootHashCacheMutex;
-	static std::unordered_set<CAICHHash> s_rootHashCache;
-	static bool			s_rootHashCacheLoaded;
+	// Cache mapping every root hash currently stored in known2.met to the byte offset of its
+	// entry's root-hash position, populated lazily on the first SaveHashSet or LoadHashSet
+	// call.
+	//
+	// For SaveHashSet it replaces the per-call linear file walk that made the dedup check O(N)
+	// per call and O(N^2) over a bulk-hash batch. For LoadHashSet, and the AICH request path
+	// that calls it, the cached offset lets it seek straight to the matching entry, making that
+	// path O(1) and closing the DoS amplification noted in #166.
+	static wxMutex s_rootHashCacheMutex;
+	static std::unordered_map<CAICHHash, uint64> s_rootHashCache;
+	static bool s_rootHashCacheLoaded;
 
 	// Caller must hold s_rootHashCacheMutex.
 	static void LoadRootHashCacheLocked();
 };
 
-#endif  //__SHAHAHSET_H__
+#endif // SHAHASHSET_H
 
 // File_checked_for_headers

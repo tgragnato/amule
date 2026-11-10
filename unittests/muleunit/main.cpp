@@ -31,13 +31,10 @@ wxString GetFullMuleVersion()
 	return "UnitTest";
 }
 
-
 unsigned s_disableAssertions = 0;
 
-
-static void MuleUnitAssertHandler(const wxString& file, int line,
-                                  const wxString& /*func*/, const wxString& cond,
-                                  const wxString& msg)
+static void MuleUnitAssertHandler(
+	const wxString &file, int line, const wxString & /*func*/, const wxString &cond, const wxString &msg)
 {
 	if (s_disableAssertions) {
 		return;
@@ -55,31 +52,25 @@ static void MuleUnitAssertHandler(const wxString& file, int line,
 	throw CAssertFailureException(desc, file, line);
 }
 
-
 class UnitTestApp : public wxAppConsole
 {
 public:
-	bool OnInit() override {
+	bool OnInit() override
+	{
 		// In Release builds (NDEBUG), wxIMPLEMENT_APP_CONSOLE auto-calls
-		// wxDISABLE_DEBUG_SUPPORT(), which nulls wxTheAssertHandler. Without
-		// re-enabling, wxASSERT short-circuits before reaching OnAssertFailure
-		// and ASSERT_RAISES tests fail on platforms where wxDEBUG_LEVEL >= 1
-		// at compile time (Linux, mingw-w64). Install our handler explicitly.
+		// wxDISABLE_DEBUG_SUPPORT(), which nulls wxTheAssertHandler. Without re-enabling
+		// it, wxASSERT short-circuits before reaching OnAssertFailure and ASSERT_RAISES
+		// tests fail on platforms where wxDEBUG_LEVEL >= 1 at compile time (Linux,
+		// mingw-w64). Install our handler explicitly.
 		wxSetAssertHandler(MuleUnitAssertHandler);
 		return wxAppConsole::OnInit();
 	}
 
-	int OnRun() override {
-		return (TestRegistry::runAndPrint() ? 0 : 1);
-	}
+	int OnRun() override { return (TestRegistry::runAndPrint() ? 0 : 1); }
 
 #ifndef __WXMSW__
-	void OnUnhandledException() override {
-		::OnUnhandledException();
-	}
+	void OnUnhandledException() override { ::OnUnhandledException(); }
 #endif
-
 };
-
 
 IMPLEMENT_APP_CONSOLE(UnitTestApp);

@@ -25,113 +25,132 @@
 #ifndef MULEVERSION_H
 #define MULEVERSION_H
 
-#include "config.h"		// Needed for VERSION
+#include "config.h" // Needed for VERSION
 
 #define MULEVERSION_RETVAL_BEGIN	wxString ver(
 #define MULEVERSION_RETVAL_END		);
-#define MULEVERSION_BOOST_VERSION	ver += " and Boost " + MuleBoostVersion;
-#define MULEVERSION_ADD_BEGIN		ver +=
-#define MULEVERSION_ADD_END		;
-#define MULEVERSION_RETURN_RESULT	return ver;
+#define MULEVERSION_BOOST_VERSION ver += " and Boost " + MuleBoostVersion;
+#define MULEVERSION_ADD_BEGIN ver +=
+#define MULEVERSION_ADD_END ;
+#define MULEVERSION_RETURN_RESULT return ver;
 
 /**
- * Version of Boost aMule is compiled with.
- *
- * Defined in LibSocketAsio.cpp.
+ * Version of Boost aMule is compiled with. Defined in LibSocketAsio.cpp.
  */
 extern wxString MuleBoostVersion;
 
+/**
+ * The build's version in the short form exchanged over EC and shown in the UI.
+ *
+ * `VERSION` alone cannot identify a development build: on any untagged build it is the literal
+ * string "GIT", so every snapshot reports the same value and two revisions look identical. The
+ * revision lives in GITDATE, which CMake sets from `git describe`.
+ *
+ * On a tagged release CMake unsets GITDATE (config.h.cm renders `#undef GITDATE`), so this returns
+ * exactly VERSION -- e.g. "3.0.1" -- and the appended part compiles away. Only development builds
+ * gain the suffix, e.g. "GIT rev. 3.0.1-773-g500293ba3".
+ *
+ * Deliberately shorter than GetMuleVersion(): that one describes the whole build for debugging (wx
+ * toolkit, Boost, debug flag) and is far too long for a status-bar field or a protocol tag. Both
+ * the core that reports this over EC and the client that compares it against its own build call
+ * this, so the two can never disagree.
+ */
+inline wxString GetShortMuleVersion()
+{
+	return wxString(VERSION)
+#ifdef GITDATE
+	       + " " GITDATE
+#endif
+		;
+}
 
 /**
- * Returns a description of the version of aMule being used.
+ * A description of the aMule version in use, including wx information.
  *
- * @return A detailed description of the aMule version, including wx information.
- *
- * Use this rather than just using the VERSION or CURRENT_VERSION_LONG
- * constants, when displaying information to the user. The purpose is to
- * help with debugging.
+ * Prefer this to the VERSION or CURRENT_VERSION_LONG constants when showing information to the
+ * user: it is meant to help with debugging.
  */
 inline wxString GetMuleVersion()
 {
 	MULEVERSION_RETVAL_BEGIN
-		VERSION
-		" compiled with "
+	VERSION
+	" compiled with "
 
 // Figure out the toolkit used by wxWidgets...
 #if defined(__WXGTK__)
-#	if defined(__WXGTK3__)
-#		define MULEVERSION_WXTOOLKIT	"GTK3"
-#	elif defined(__WXGTK2__)
-#		define MULEVERSION_WXTOOLKIT	"GTK2"
-#	else
-#		define MULEVERSION_WXTOOLKIT	"GTK"
-#	endif
+#if defined(__WXGTK3__)
+#define MULEVERSION_WXTOOLKIT "GTK3"
+#elif defined(__WXGTK2__)
+#define MULEVERSION_WXTOOLKIT "GTK2"
+#else
+#define MULEVERSION_WXTOOLKIT "GTK"
+#endif
 #elif defined(__WXOSX__)
-#	if defined(__WXOSX_CARBON__)
-#		define MULEVERSION_WXTOOLKIT	"OSX Carbon"
-#	elif defined(__WXOSX_COCOA__)
-#		define MULEVERSION_WXTOOLKIT	"OSX Cocoa"
-#	elif defined(__WXOSX_IPHONE__)
-#		define MULEVERSION_WXTOOLKIT	"OSX iPhone"
-#	else
-#		define MULEVERSION_WXTOOLKIT	"OSX"
-#	endif
+#if defined(__WXOSX_CARBON__)
+#define MULEVERSION_WXTOOLKIT "OSX Carbon"
+#elif defined(__WXOSX_COCOA__)
+#define MULEVERSION_WXTOOLKIT "OSX Cocoa"
+#elif defined(__WXOSX_IPHONE__)
+#define MULEVERSION_WXTOOLKIT "OSX iPhone"
+#else
+#define MULEVERSION_WXTOOLKIT "OSX"
+#endif
 #elif defined(__WXCOCOA__)
-#		define MULEVERSION_WXTOOLKIT	"Cocoa"
+#define MULEVERSION_WXTOOLKIT "Cocoa"
 #elif defined(__WXMAC__)
-#		define MULEVERSION_WXTOOLKIT	"Mac"
+#define MULEVERSION_WXTOOLKIT "Mac"
 #elif defined(__NANOX__)
-#		define MULEVERSION_WXTOOLKIT	"NanoX"
+#define MULEVERSION_WXTOOLKIT "NanoX"
 #elif defined(__WXMOTIF__)
-#		define MULEVERSION_WXTOOLKIT	"Motif"
+#define MULEVERSION_WXTOOLKIT "Motif"
 #elif defined(__WXMGL__)
-#		define MULEVERSION_WXTOOLKIT	"MGL"
+#define MULEVERSION_WXTOOLKIT "MGL"
 #elif defined(__WXPM__)
-#		define MULEVERSION_WXTOOLKIT	"PM"
+#define MULEVERSION_WXTOOLKIT "PM"
 #elif defined(__WXDFB__)
-#		define MULEVERSION_WXTOOLKIT	"DirectFB"
+#define MULEVERSION_WXTOOLKIT "DirectFB"
 #elif defined(__WXX11__)
-#		define MULEVERSION_WXTOOLKIT	"X11"
+#define MULEVERSION_WXTOOLKIT "X11"
 #endif
 
 // ...and describe it.
 #if defined(__WXBASE__)
-		"wxBase"
-#	ifdef MULEVERSION_WXTOOLKIT
-		"(" MULEVERSION_WXTOOLKIT ")"
-#	endif
+	"wxBase"
+#ifdef MULEVERSION_WXTOOLKIT
+	"(" MULEVERSION_WXTOOLKIT ")"
+#endif
 #elif defined(__WXUNIVERSAL__)
-		"wxUniversal"
-#	ifdef MULEVERSION_WXTOOLKIT
-		"(" MULEVERSION_WXTOOLKIT ")"
-#	endif
+	"wxUniversal"
+#ifdef MULEVERSION_WXTOOLKIT
+	"(" MULEVERSION_WXTOOLKIT ")"
+#endif
 #else
-#	ifdef MULEVERSION_WXTOOLKIT
-		"wx" MULEVERSION_WXTOOLKIT
-#	else
-		"wxWidgets"
-#	endif
+#ifdef MULEVERSION_WXTOOLKIT
+	"wx" MULEVERSION_WXTOOLKIT
+#else
+	"wxWidgets"
+#endif
 #endif
 
-		// wxWidgets version
-		" v" wxSTRINGIZE_T(wxMAJOR_VERSION) "." wxSTRINGIZE_T(wxMINOR_VERSION) "." wxSTRINGIZE_T(wxRELEASE_NUMBER)
-	MULEVERSION_RETVAL_END
+	// wxWidgets version
+	" v" wxSTRINGIZE_T(wxMAJOR_VERSION) "." wxSTRINGIZE_T(wxMINOR_VERSION) "." wxSTRINGIZE_T(
+		wxRELEASE_NUMBER) MULEVERSION_RETVAL_END
 
-	// Describe Boost version, if compiled with Boost.Asio
-	MULEVERSION_BOOST_VERSION
+		// Describe Boost version, if compiled with Boost.Asio
+		MULEVERSION_BOOST_VERSION
 
 #if defined(__DEBUG__) || defined(GITDATE)
-	MULEVERSION_ADD_BEGIN
-#	ifdef __DEBUG__
+		MULEVERSION_ADD_BEGIN
+#ifdef __DEBUG__
 		" (Debugging)"
-#	endif
-#	ifdef GITDATE
+#endif
+#ifdef GITDATE
 		" (Snapshot: " GITDATE ")"
-#	endif
-	MULEVERSION_ADD_END
+#endif
+		MULEVERSION_ADD_END
 #endif
 
-	MULEVERSION_RETURN_RESULT
+		MULEVERSION_RETURN_RESULT
 }
 
 #undef MULEVERSION_RETVAL_BEGIN

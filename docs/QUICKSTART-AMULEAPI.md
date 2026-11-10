@@ -1,0 +1,523 @@
+# amuleapi — quick start
+
+amuleapi gives aMule an HTTP interface: a JSON REST API and a live event
+stream, so other programs can drive a running `amuled`. It connects to
+amuled the same way `amulecmd` does and listens on its own port, so it can
+run alongside `amuleweb`.
+
+> aMule's older web frontend, **amuleweb**, is **deprecated** — it may be removed in aMule 3.2 or later (it is not being removed yet). amuleapi is its intended replacement.
+
+Endpoint details are in [`docs/api/REFERENCE.md`](api/REFERENCE.md), and the
+event stream in [`docs/api/EVENTS.md`](api/EVENTS.md).
+
+## Let aMule start it
+
+The simplest setup, and the safest: aMule launches amuleapi for you and
+hands it a one-off login token, so amuleapi never needs a copy of your EC
+password.
+
+In the GUI, under *Preferences → Remote Controls*, tick **Run amuleapi
+(REST API) on startup** and set the listening interface, HTTP port and admin
+password. A remote amulegui can do the same over EC. That is all — amuleapi
+then starts and stops with aMule.
+
+Headless, with no GUI: stop amuled (it rewrites `amule.conf` when it exits),
+add this to `amule.conf`, and set a password:
+
+```ini
+[AmuleApi]
+Enabled=1
+BindAddress=127.0.0.1
+HttpPort=4713
+```
+
+```sh
+amuleapi --set-admin-pass-stdin
+```
+
+The password command writes its file and exits. It needs no path, because
+amuleapi looks in the same place amuled does. Start amuled and amuleapi
+comes up with it.
+
+An admin password is required before you can bind anything other than
+`127.0.0.1` — amuleapi refuses to start otherwise.
+
+## Running it yourself
+
+If you start amuleapi by hand, give it amuled's EC password once:
+
+```sh
+amuleapi --set-ec-pass-stdin
+```
+
+It asks for the password without echoing it, stores its MD5 digest as
+`[EC]/PasswordMD5` in `amuleapi.conf`, and exits. Then just run `amuleapi`.
+You can also copy the digest from `[EC]/Password` in `remote.conf`, or put the
+plain password in `[EC]/Password` instead. Set only one of the two: amuleapi
+refuses to start if both are nonempty. The digest logs in to amuled just like the
+password, so keep the file private.
+
+There is no `--password` option. A password on the command line stays visible
+through `ps` for as long as amuleapi runs, and ends up in shell history, unit
+files and wrapper scripts. amuleapi uses the token when aMule starts it, and
+`amuleapi.conf` when you start it yourself.
+
+`--host` and `--port` point at amuled (default `127.0.0.1:4712`). amuleapi's
+own HTTP port is separate — `4713` by default, and that is the one REST
+clients use.
+
+aMule ships no systemd or launchd units. Wrap the command in your own if you
+want one.
+
+## Passwords
+
+Two roles: **admin** (full control) and **guest** (read-only, off unless you
+give it a password). Set them from the preferences panel, or:
+
+```sh
+amuleapi --set-admin-pass-stdin
+amuleapi --set-guest-pass-stdin
+```
+
+Each command asks for the new password twice without echoing it. A script can
+pipe it in instead, with no confirmation:
+
+```sh
+printf '%s\n' "$PW" | amuleapi --set-admin-pass-stdin
+```
+
+`--set-admin-pass=<plain>` and `--set-guest-pass=<plain>` also work, but expose
+the password in process arguments and shell history.
+
+An empty guest password turns guest access off; EOF or failed input leaves it
+unchanged. Passwords are stored so they cannot be read back, only replaced.
+That is why the preference fields open blank, and why leaving one empty keeps
+the current password. Changes apply at the next login, with no restart.
+
+Guest is read-only, not a sandbox: it can see the daemon's incoming, temp and
+shared folder paths, this node's user hash, the configured proxy user, and the
+raw amuled log with the peer addresses and filenames in it. Hand a guest
+password to someone you would give read access to the machine, and not to
+anyone else.
+
+If amuleapi runs on a different machine from aMule, set its password there:
+the preferences panel only writes the file on aMule's own host.
+
+## Files
+
+amuleapi keeps its files beside amuled's, in the same folder:
+
+| Platform | Folder                                 |
+| -------- | -------------------------------------- |
+| Linux    | `~/.aMule/`                            |
+| macOS    | `~/Library/Application Support/aMule/` |
+| Windows  | `%APPDATA%\aMule\`                     |
+
+Use `--config-dir` to point somewhere else.
+
+| File                  | What it is                                                          |
+| --------------------- | ------------------------------------------------------------------- |
+| `amuleapi.conf`       | Settings — see [below](#amuleapiconf).                              |
+| `amuleapi-passwords`  | The admin and guest passwords.                                      |
+| `amuleapi-jwt-secret` | Signs login tokens. Delete it to sign everyone out.                 |
+| `amuleapi-ec-token`   | The one-off login token, when aMule starts amuleapi. Lasts seconds. |
+| `amuleapi.log`        | A copy of the console output. `--no-log-file` turns it off.         |
+
+All are readable only by you.
+
+## Checking it works
+
+```sh
+# Is it up? /health is the probe: no login, and it answers from amuleapi's own
+# state without waiting on amuled, so it stays fast even when the daemon is
+# busy. The body also tells you whether the link to amuled is up.
+curl -s http://127.0.0.1:4713/api/v1/health
+
+# Log in, then use the token.
+TOKEN=$(curl -s -X POST "http://127.0.0.1:4713/api/v1/auth/login?include_token=true" \
+    -H 'Content-Type: application/json' \
+    -d '{"password":"mySecret123"}' | jq -r .token)
+
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:4713/api/v1/status
+
+# Which versions are these? /version answers without a login too, but it only
+# reports the daemon's update-availability to a caller that has one.
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:4713/api/v1/version
+```
+
+Browsers should call `/auth/login` *without* `?include_token=true` — they get a
+cookie instead, which keeps the token out of reach of page scripts.
+
+## Reaching it from another machine
+
+Keep `BindAddress` on `127.0.0.1` and put a reverse proxy in front. The proxy
+holds the certificate and speaks HTTPS to the outside world; amuleapi stays on
+loopback, where nothing else can reach it.
+
+With [Caddy](https://caddyserver.com) that is the entire config file, and the
+certificate is obtained and renewed for you:
+
+```caddy
+api.example.com {
+    reverse_proxy 127.0.0.1:4713
+}
+```
+
+nginx needs a little more, and `proxy_http_version 1.1` is not optional — the
+default breaks the event stream:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name api.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/api.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:4713;
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-Host $http_host;
+    }
+}
+```
+
+nginx sends amuleapi its own address as `Host`, so `X-Forwarded-Host` passes the
+name the browser used. amuleapi needs it to recognise a browser's own writes
+when the browser does not send `Sec-Fetch-Site`.
+
+`certbot --nginx` will get you those two certificate files.
+
+Either way you need a domain name pointing at the machine, with ports 80 and
+443 reachable — that is how the certificate authority checks you own the name.
+Event streams need no extra buffering or timeout settings: amuleapi already
+sends the header that turns nginx buffering off, and its 15-second heartbeat
+keeps idle connections from being dropped. File downloads from
+`/shared/{hash}/content` send the same header, so nginx streams them straight
+through instead of spooling a gigabyte to its own disk first. A proxy that
+ignores `X-Accel-Buffering` wants `proxy_buffering off;` in that location.
+
+### Sharing a hostname with other apps
+
+To serve amuleapi under a path, such as `https://home.example.com/amule/`, set
+the path in `amuleapi.conf`:
+
+```ini
+[Server]
+BasePath=/amule
+```
+
+Then forward that path to amuleapi. With Caddy:
+
+```caddy
+home.example.com {
+    redir /amule /amule/
+    reverse_proxy /amule/* 127.0.0.1:4713
+}
+```
+
+With nginx, inside your existing `server` block:
+
+```nginx
+location /amule/ {
+    proxy_pass http://127.0.0.1:4713;
+    proxy_http_version 1.1;
+    proxy_set_header X-Forwarded-Host $http_host;
+}
+```
+
+amuleapi accepts requests with the prefix and without it, so a proxy that
+strips the prefix (Caddy's `handle_path`, or nginx's `proxy_pass` with a
+trailing `/`) works too. No cookie or header rewriting is needed.
+
+On a home network, with no domain name, an SSH tunnel does the same job with
+no certificate at all:
+
+```sh
+ssh -N -L 4713:127.0.0.1:4713 you@your-amule-box
+```
+
+The API is then at `http://127.0.0.1:4713` on your own machine.
+
+### Signing in at the proxy
+
+If the proxy already asks users to sign in (nginx basic auth, or a single
+sign-on service such as Authelia, Authentik or oauth2-proxy), amuleapi can take
+the user name from a header the proxy sets and skip its own login form:
+
+```ini
+[Auth]
+ProxyAuthHeader=Remote-User
+ProxyAuthTrustedAddresses=127.0.0.1,::1
+ProxyAuthRole=admin
+ProxyAuthLogoutUrl=https://auth.example.com/logout
+```
+
+amuleapi reads the header only on connections from an address in
+`ProxyAuthTrustedAddresses`, so list the proxy and nothing else. If the proxy
+runs on another host or in another container, list that address. amuleapi
+refuses to start when the header is set and the list is empty. Every user the
+proxy lets in gets `ProxyAuthRole`. `ProxyAuthLogoutUrl` is optional: when it is
+set, the WebUI sign-out goes there. Without it, sign-out ends the amuleapi
+session, and the next page load starts a new one from the header. When a
+session ends on its own, for example after 24 hours, the WebUI asks for a new
+one before it shows the password form.
+
+**The proxy must replace the header on every request.** If it passes on a
+header the browser sent, anyone can sign in as anyone. nginx's
+`proxy_set_header` replaces it, as in the examples below. Password login keeps
+working, and a session started from the header ends as soon as a request
+arrives without the same user name.
+
+nginx basic auth:
+
+```nginx
+location / {
+    auth_basic           "aMule";
+    auth_basic_user_file /etc/nginx/amule.htpasswd;
+
+    proxy_pass http://127.0.0.1:4713;
+    proxy_http_version 1.1;
+    proxy_set_header X-Forwarded-Host $http_host;
+    proxy_set_header Remote-User $remote_user;
+}
+```
+
+nginx with a forward-auth service (`auth_request`), shown for Authelia on port
+9091. Other services differ in the URL and the name of the header they return:
+
+```nginx
+location / {
+    auth_request /internal/auth;
+    auth_request_set $auth_user $upstream_http_remote_user;
+    error_page 401 =302 https://auth.example.com/?rd=$scheme://$http_host$request_uri;
+
+    proxy_pass http://127.0.0.1:4713;
+    proxy_http_version 1.1;
+    proxy_set_header X-Forwarded-Host $http_host;
+    proxy_set_header Remote-User $auth_user;
+}
+
+location = /internal/auth {
+    internal;
+    proxy_pass http://127.0.0.1:9091/api/authz/auth-request;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header X-Original-Method $request_method;
+    proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
+}
+```
+
+amuleapi has no TLS listener of its own. If the proxy runs on another machine
+and you want the link between the two authenticated with client certificates,
+put a TLS sidecar such as ghostunnel or stunnel in front of amuleapi and trust
+the sidecar's address.
+
+## `amuleapi.conf`
+
+Created with sensible defaults on first run. Your edits and comments survive
+restarts.
+
+```ini
+[Server]
+BindAddress=127.0.0.1     ; who can reach the API
+Port=4713                 ; amuleapi's own HTTP port
+AllowCORS=0               ; see CORS below
+CorsOriginAllowlist=      ; origins allowed to log in cross-origin
+StaticRoot=               ; folder to serve a web frontend from
+BasePath=                 ; path prefix behind a proxy, e.g. /amule
+
+[EC]
+Host=127.0.0.1            ; where amuled is
+Port=4712
+PasswordMD5=              ; EC digest; set with --set-ec-pass-stdin
+
+[Auth]
+LoginFailureWindowSeconds=60
+LoginFailureThreshold=5   ; this many bad logins...
+LoginLockoutSeconds=300   ; ...locks that address out for this long
+TokenFailureWindowSeconds=60
+TokenFailureThreshold=30  ; same, for rejected tokens on any other endpoint
+TokenLockoutSeconds=300
+ProxyAuthHeader=          ; user header from a signed-in proxy, e.g. Remote-User
+ProxyAuthTrustedAddresses= ; the proxy's addresses, e.g. 127.0.0.1,::1
+ProxyAuthRole=admin       ; role for every user the proxy lets in
+ProxyAuthLogoutUrl=       ; where the WebUI sign-out goes
+
+[Streaming]
+EventBusRingCapacity=16384
+MaxConcurrentFileResponses=6   ; simultaneous downloads from /shared/{hash}/content
+```
+
+`MaxConcurrentFileResponses` is how many clients can be pulling file content
+out of amuleapi at once; over it, the extra requests get a `503` telling them
+to retry rather than joining an unbounded queue. It accepts `1` to `256` and
+falls back to `6` for anything else. Six is sized for one mechanical disk that
+aMule is already hashing and uploading from — raise it on an SSD-backed box
+with several devices in the house, lower it on a Pi that downloads to the same
+USB disk it serves from. Note that it is a budget for the whole machine, not
+per client: behind a reverse proxy every request arrives from one address, so
+there is nothing to divide it up by.
+
+`--bind`, `--http-port`, `--host`, `--port` and `--config-dir` override the
+matching settings for one run.
+
+## Web frontend
+
+amuleapi serves a web frontend at `/` when it can find one. Leave `StaticRoot` empty and it looks for an `amuleapi-static` folder in the usual places: inside the macOS `.app` bundle, next to its own executable, at the path it was configured with at build time, and in the platform's shared-data directory. A package install and the Linux static tarball both need no configuration — open `http://127.0.0.1:4713/` and it is there. If nothing is found, `/` answers 404 and the REST API still works; an API-only deployment needs no frontend.
+
+"Next to its own executable" is what makes the Linux static tarball work: it extracts to three binaries and an `amuleapi-static/` folder beside them, and amuleapi finds that folder wherever you put the directory. Keep them together and rename nothing. Note that this is the directory the binary lives in, not the directory you happen to run it from -- starting the daemon from elsewhere changes nothing.
+
+To serve the frontend from a location of your own, or to keep a modified copy separate from the installed one, copy the folder somewhere readable and point `StaticRoot` at it:
+
+```ini
+[Server]
+StaticRoot=/opt/amule/amuleapi-static
+```
+
+Copy it as a unit and leave the layout alone. The page loads its stylesheet, its modules, the translations and the images by relative path, so moving or renaming anything inside the folder breaks it.
+
+## CORS
+
+Off by default, so only pages served from the same origin can call the API.
+To allow others:
+
+```ini
+[Server]
+AllowCORS=1
+CorsOriginAllowlist=https://your-app.example.com, http://localhost:5173
+```
+
+The allowlist is comma-separated and matched exactly against the browser's
+`Origin`: scheme, host and port, no path and no wildcards. So
+`https://example.com` does not cover `https://www.example.com`, and two ports
+on one host are two entries.
+
+**List the origins you actually use.** Leaving the allowlist empty still
+accepts any origin, but only for anonymous requests: a cross-origin page
+cannot then send the session cookie or a bearer token, because amuleapi
+withholds `Access-Control-Allow-Credentials` on that path. Otherwise any site
+your browser visits could call the API as you. A web frontend that logs in
+needs its origin listed.
+
+## What you get
+
+Everything under `/api/v1/`, with full details in
+[`docs/api/REFERENCE.md`](api/REFERENCE.md):
+
+- **Downloads** — the queue: add, pause, cancel, clear completed, plus
+  comments, filenames and alternate sources.
+- **Shared files** — list, verify, and the shared folders.
+- **Clients** — who you are connected to, and browsing their shared files.
+- **Servers** — the ed2k server list, connecting, and refreshing it.
+- **Network** — connect and disconnect ed2k and Kad.
+- **Search** — start a search, read results, download one.
+- **Categories**, **preferences**, **logs** and **statistics**.
+
+Lists take `limit`, `offset`, `sort`, `order` and `after` (a keyset anchor for
+paging). `limit` defaults to 100, so a list request returns the first page
+unless it asks for more — see [`docs/api/REFERENCE.md`](api/REFERENCE.md). Bulk
+actions report each item's outcome separately rather than one overall result.
+
+`GET /api/v1/events` streams changes as they happen and can resume where it
+left off after a dropped connection — see
+[`docs/api/EVENTS.md`](api/EVENTS.md).
+
+## Worth knowing
+
+- **Keep `BindAddress` on `127.0.0.1` unless you need otherwise.** amuleapi
+  starts a thread per event-stream listener, so exposing it directly to a
+  network is not something to do casually. For remote access, put a reverse
+  proxy in front — see [above](#reaching-it-from-another-machine).
+- **An admin token can do anything aMule can**, including asking amuled to
+  fetch a server list from a URL you supply. Treat the admin password like
+  the password to the machine.
+- **Changing a download folder needs the daemon to allow it first.** The
+  incoming, temporary and shared folders, and a category's `save_path`, can
+  only be pointed at folders under a list the daemon keeps locally in
+  `allowed-remote-dirs.dat` (one absolute path per line, in the config
+  folder above). The list is **empty by default**, so out of the box every
+  such change is refused with `403 path_not_allowed` — `GET /preferences`
+  reports the current list as the read-only `directories.allowed_remote_roots`.
+  On a daemon-only install (a container, or the Android port, with no
+  monolithic aMule whose GUI edits the list for you) add the folders you want
+  to permit to that file and restart amuled. The online-signature folder is
+  daemon-local in the same spirit: a `PATCH` that would change it answers
+  `400 read_only_field` (sending the current value back is accepted). The
+  reserved `files.ffprobe_path` behaves the same way.
+
+## Prometheus metrics
+
+Metrics default to disabled in amuleapi. Configure the dedicated read-only endpoint
+by generating a random token (for example, `openssl rand -hex 32`), adding it to
+`amuleapi.conf`, and restarting amuleapi:
+
+```ini
+[Metrics]
+Enabled=1
+Token=REPLACE_WITH_YOUR_RANDOM_64_CHARACTER_HEX_TOKEN
+```
+
+Without a token, amuleapi starts normally and `/metrics` returns 404; no metrics
+aggregation runs. Set `Enabled=1` with a valid token to opt in; `Enabled=0` disables
+metrics even with a token. With `Enabled=1`, an empty or malformed token logs a
+warning and leaves metrics off while the API starts normally.
+This setting is local to amuleapi: other EC clients do not request or enable metrics.
+
+An active endpoint requires a 32–256 character bearer token. Keep the config and
+the scraper's token file private. This credential only grants access to metrics;
+API session cookies and JWTs cannot authenticate a scrape. Rotation requires
+changing the configuration and restarting amuleapi. The independent authentication
+limiter defaults to 30 failures per 60 seconds and a 300 second lockout; configure
+`FailureThreshold`, `FailureWindowSeconds`, and `LockoutSeconds` under `[Metrics]`
+with positive integer values to change these limits. Remote scrapes should use the
+same TLS reverse proxy as the API.
+
+Prometheus configuration (the credentials file contains just the token):
+
+```yaml
+scrape_configs:
+  - job_name: amule
+    scrape_interval: 15s
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/amule-metrics-token
+    static_configs:
+      - targets: ['127.0.0.1:4713']
+```
+
+For an OpenTelemetry Collector distribution with the Prometheus receiver:
+
+```yaml
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: amule
+          scrape_interval: 15s
+          authorization:
+            credentials_file: /etc/otelcol/secrets/amule-metrics-token
+          static_configs:
+            - targets: ['127.0.0.1:4713']
+```
+
+Add this receiver to the Collector's existing metrics pipeline. When using
+`[Server]/BasePath=/amule`, set `metrics_path: /amule/metrics` in either scraper.
+The endpoint emits Prometheus text 0.0.4; native OpenMetrics negotiation and OTLP
+push are outside this endpoint's scope. See the [metrics contract](api/REFERENCE.md#get-metrics)
+for the available measurements and failure behavior.
+
+### Grafana dashboard
+
+[`api/grafana-dashboard.json`](api/grafana-dashboard.json) is a ready-made Grafana
+dashboard for these metrics. To use it:
+
+1. In Grafana, open **Dashboards > New > Import** and upload the file.
+2. Pick your Prometheus data source in the **Data source** list at the top.
+3. **Job** lists the scrape jobs that collect amuleapi metrics; pick yours if you
+   have more than one. **Instance** defaults to all.
+
+The dashboard shows connection status, CPU and memory use, transfer rates and totals, downloads by
+status, clients and queues, free disk space, and eD2k and Kad network figures.
+Values the daemon does not report show as "No data", not as 0.

@@ -26,39 +26,49 @@
 #ifndef ED2KLINK_H
 #define ED2KLINK_H
 
+#include <memory>
 
-#include "MD4Hash.h"		// Needed for CMD4Hash
-#include "SHAHashSet.h"		// Needed for CAICHHash
-
-
+#include "MD4Hash.h"    // Needed for CMD4Hash
+#include "SHAHashSet.h" // Needed for CAICHHash
 
 class CMemFile;
-
 
 class CED2KLink
 {
 public:
-	typedef enum { kServerList, kServer , kFile , kInvalid } LinkType;
+	typedef enum
+	{
+		kServerList,
+		kServer,
+		kFile,
+		kInvalid
+	} LinkType;
 
-	static CED2KLink* CreateLinkFromUrl(const wxString& link);
+	/**
+	 * Parses a link, accepting percent-encoded '|' delimiters. Throws a wxString describing the
+	 * problem if the link is not one.
+	 */
+	static CED2KLink *CreateLinkFromUrl(const wxString &link);
 
 	LinkType GetKind() const;
 	virtual wxString GetLink() const = 0;
 
-	virtual	~CED2KLink();
+	virtual ~CED2KLink();
 
 protected:
-	CED2KLink( LinkType type );
+	CED2KLink(LinkType type);
 
 private:
-	LinkType	m_type;
-};
+	//! Parses a link exactly as given; CreateLinkFromUrl() drives the retry.
+	static CED2KLink *ParseLink(const wxString &link);
 
+	LinkType m_type;
+};
 
 class CED2KFileLink : public CED2KLink
 {
 	friend class CED2KLink;
-	CED2KFileLink(const wxString& link);
+	CED2KFileLink(const wxString &link);
 
 public:
 	virtual ~CED2KFileLink();
@@ -67,16 +77,16 @@ public:
 
 	wxString GetName() const;
 	uint64 GetSize() const;
-	const CMD4Hash& GetHashKey() const;
+	const CMD4Hash &GetHashKey() const;
 
 	// AICH data
-	bool	HasValidAICHHash() const;
-	const CAICHHash&	GetAICHHash() const;
+	bool HasValidAICHHash() const;
+	const CAICHHash &GetAICHHash() const;
 
-	CMemFile* m_hashset;
+	std::unique_ptr<CMemFile> m_hashset;
 
 	/**
-	 * Structure used to store sources found in file links.
+	 * Stores sources found in file links.
 	 */
 	struct SED2KLinkSource
 	{
@@ -94,22 +104,21 @@ public:
 	CED2KLinkSourceList m_sources;
 
 private:
-	CED2KFileLink(); // Not defined
-	CED2KFileLink(const CED2KFileLink&); // Not defined
-	CED2KFileLink& operator=(const CED2KFileLink&); // Not defined
+	CED2KFileLink();                                 // Not defined
+	CED2KFileLink(const CED2KFileLink &);            // Not defined
+	CED2KFileLink &operator=(const CED2KFileLink &); // Not defined
 
-	wxString	m_name;
-	uint64		m_size;
-	CMD4Hash	m_hash;
-	bool		m_bAICHHashValid;
-	CAICHHash	m_AICHHash;
+	wxString m_name;
+	uint64 m_size;
+	CMD4Hash m_hash;
+	bool m_bAICHHashValid;
+	CAICHHash m_AICHHash;
 };
-
 
 class CED2KServerLink : public CED2KLink
 {
 	friend class CED2KLink;
-	CED2KServerLink(const wxString& link);
+	CED2KServerLink(const wxString &link);
 
 public:
 	virtual wxString GetLink() const;
@@ -118,33 +127,31 @@ public:
 	uint16 GetPort() const;
 
 private:
-	CED2KServerLink(); // Not defined
-	CED2KServerLink(const CED2KServerLink&); // Not defined
-	CED2KServerLink& operator=(const CED2KServerLink&); // Not defined
+	CED2KServerLink();                                   // Not defined
+	CED2KServerLink(const CED2KServerLink &);            // Not defined
+	CED2KServerLink &operator=(const CED2KServerLink &); // Not defined
 
 	uint32 m_ip;
 	uint16 m_port;
 };
 
-
 class CED2KServerListLink : public CED2KLink
 {
 	friend class CED2KLink;
-	CED2KServerListLink(const wxString& link);
+	CED2KServerListLink(const wxString &link);
 
 public:
 	virtual wxString GetLink() const;
 
-	const wxString& GetAddress() const;
+	const wxString &GetAddress() const;
 
 private:
-	CED2KServerListLink(); // Not defined
-	CED2KServerListLink(const CED2KFileLink&); // Not defined
-	CED2KServerListLink& operator=(const CED2KFileLink&); // Not defined
+	CED2KServerListLink();                                 // Not defined
+	CED2KServerListLink(const CED2KFileLink &);            // Not defined
+	CED2KServerListLink &operator=(const CED2KFileLink &); // Not defined
 
 	wxString m_address;
 };
-
 
 #endif
 // File_checked_for_headers

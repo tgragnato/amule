@@ -26,13 +26,9 @@
 #ifndef CLIENTREF_H
 #define CLIENTREF_H
 
-//
-// Clients are stored in many places. To prevent problems when a client gets deleted
-// and later a pointer to a deleted client is referenced, clients are now stored in
-// this class only. It uses reference counting in the client which deletes the client only
-// after the last reference has been unlinked.
-// Also the class is used as abstraction layer for the CUpDownClient class.
-//
+// Clients are stored in many places. To stop a pointer to a deleted client being referenced
+// later, clients are now stored only in this class, which reference-counts and deletes the client
+// after the last reference is unlinked. It also serves as an abstraction layer for CUpDownClient.
 
 #include <list>
 #include <set>
@@ -59,21 +55,28 @@ class CMD4Hash;
 #define CCLIENTREF(a, b) CClientRef(a)
 #endif
 
-class CClientRef {
+class CClientRef
+{
 
-	CUpDownClient * m_client;
+	CUpDownClient *m_client;
 #ifdef DEBUG_ZOMBIE_CLIENTS
-	wxString	m_from;
+	wxString m_from;
 #endif
 
 public:
-	CClientRef()	{ m_client = NULL; }
-	CClientRef(const CClientRef&);
-	CClientRef(CUpDownClient * client LINKED_FROM);
+	CClientRef() { m_client = NULL; }
+	CClientRef(const CClientRef &);
+	CClientRef(CUpDownClient *client LINKED_FROM);
 	CClientRef(const class CEC_UpDownClient_Tag *);
-	~CClientRef()	{ Unlink(); }
-	CClientRef& operator = (const CClientRef& ref)
+	~CClientRef() { Unlink(); }
+	CClientRef &operator=(const CClientRef &ref)
 	{
+		// Self-assignment would be a use-after-free: Link() Unlinks the current client
+		// first, and if this holds the last reference that deletes it, leaving ref.m_client
+		// dangling before it is re-Linked.
+		if (this == &ref) {
+			return *this;
+		}
 #ifdef DEBUG_ZOMBIE_CLIENTS
 		m_from = "assigned from " + ref.m_from;
 		Link(ref.m_client, m_from);
@@ -83,15 +86,14 @@ public:
 		return *this;
 	}
 
+	// For sets and maps
+	bool operator<(const CClientRef &other) const { return m_client < other.m_client; }
+	bool operator==(const CClientRef &other) const { return m_client == other.m_client; }
+	bool operator!=(const CClientRef &other) const { return m_client != other.m_client; }
 
-// For sets and maps
-	bool operator <  (const CClientRef & other) const { return m_client < other.m_client; }
-	bool operator == (const CClientRef & other) const { return m_client == other.m_client; }
-	bool operator != (const CClientRef & other) const { return m_client != other.m_client; }
-
-	void swap(CClientRef & other)
+	void swap(CClientRef &other)
 	{
-		CUpDownClient * c =	m_client;
+		CUpDownClient *c = m_client;
 		m_client = other.m_client;
 		other.m_client = c;
 #ifdef DEBUG_ZOMBIE_CLIENTS
@@ -99,95 +101,98 @@ public:
 #endif
 	}
 
-	void Link(CUpDownClient * client LINKED_FROM);
+	void Link(CUpDownClient *client LINKED_FROM);
 	void Unlink();
-	bool IsLinked() const		{ return m_client != NULL; }
+	bool IsLinked() const { return m_client != NULL; }
 
 	// Return client, no matter if it was deleted
-	CUpDownClient * GetClient() const	{ return m_client; }
+	CUpDownClient *GetClient() const { return m_client; }
 	// Check if client was deleted, if yes unlink and return zero
-	CUpDownClient * GetClientChecked();
+	CUpDownClient *GetClientChecked();
 	// Check if client was deleted, if yes unlink
-	CClientRef&		GetRef();
+	CClientRef &GetRef();
 
 	void Safe_Delete();
 
-// Wrapper methods
-	void				ClearUploadFileID() const;		// only wrapper const
-	uint32				ECID() const;
-	bool				ExtProtocolAvailable() const;
-	uint16				GetAvailablePartCount() const;
-	const wxString&		GetClientFilename() const;
-	const wxString&		GetClientModString() const;
-	const wxString&		GetClientOSInfo() const;
-	uint8				GetClientSoft() const;
-	const wxString&		GetClientVerString() const;
-	uint64				GetDownloadedTotal() const;
-	uint8				GetDownloadState() const;
-	CFriend*			GetFriend() const;
-	bool				GetFriendSlot() const;
-	wxString			GetFullIP() const;
-	uint16				GetKadPort() const;
-	float				GetKBpsDown() const;
-	uint32				GetIP() const;
-	uint16				GetLastDownloadingPart() const;
-	uint16				GetNextRequestedPart() const;
-	uint8				GetObfuscationStatus() const;
-	uint16				GetOldRemoteQueueRank() const;
-	const BitVector&	GetPartStatus() const;
-	uint16				GetRemoteQueueRank() const;
-	CPartFile*			GetRequestFile() const;
-	uint32				GetScore() const;
-	double				GetScoreRatio() const;
-	uint32				GetServerIP() const;
-	const wxString		GetServerName() const;
-	uint16				GetServerPort() const;
-	const wxString&		GetSoftStr() const;
-	const wxString&		GetSoftVerStr() const;
-	int					GetSourceFrom() const;	// ESourceFrom
-	wxString			GetSecureIdentTextStatus() const;
-	uint64				GetTransferredDown() const;
-	uint64				GetTransferredUp() const;
-	uint16				GetUDPPort() const;
-	uint32				GetUploadDatarate() const;
-	uint64				GetUploadedTotal() const;
-	const CKnownFile*	GetUploadFile() const;
-	uint16				GetUploadQueueWaitingPosition() const;
-	uint8				GetUploadState() const;
-	size_t				GetUpPartCount() const;
-	const CMD4Hash&		GetUserHash() const;
-	uint32				GetUserIDHybrid() const;
-	const wxString&		GetUserName() const;
-	uint16_t			GetUserPort() const;
-	uint32				GetVersion() const;
-	bool				HasDisabledSharedFiles() const;
-	bool				HasLowID() const;
-	bool				IsBadGuy() const;
-	bool				IsFriend() const;
-	bool				IsIdentified() const;
-	bool				IsRemoteQueueFull() const;
-	bool				IsUpPartAvailable(uint16 iPart) const;
-	void				RequestSharedFileList() const;
-	void				SetCommentDirty(bool bDirty = true) const;		// only wrapper const
-	void				SetFriend(CFriend* newfriend) const;			// only wrapper const
-	void				SetFriendSlot(bool bNV) const;					// only wrapper const
-	bool				SwapToAnotherFile(bool bIgnoreNoNeeded, bool ignoreSuspensions, bool bRemoveCompletely, CPartFile* toFile = NULL) const;	// only wrapper const
-
+	// Wrapper methods
+	void ClearUploadFileID() const; // only wrapper const
+	uint32 ECID() const;
+	bool ExtProtocolAvailable() const;
+	uint16 GetAvailablePartCount() const;
+	const wxString &GetClientFilename() const;
+	const wxString &GetClientModString() const;
+	const wxString &GetClientOSInfo() const;
+	uint8 GetClientSoft() const;
+	const wxString &GetClientVerString() const;
+	uint64 GetDownloadedTotal() const;
+	uint8 GetDownloadState() const;
+	CFriend *GetFriend() const;
+	bool GetFriendSlot() const;
+	wxString GetFullIP() const;
+	uint16 GetKadPort() const;
+	float GetKBpsDown() const;
+	float GetDisplayKBpsDown() const;
+	uint32 GetIP() const;
+	uint16 GetLastDownloadingPart() const;
+	uint16 GetNextRequestedPart() const;
+	uint8 GetObfuscationStatus() const;
+	uint16 GetOldRemoteQueueRank() const;
+	const BitVector &GetPartStatus() const;
+	uint16 GetRemoteQueueRank() const;
+	CPartFile *GetRequestFile() const;
+	uint32 GetScore() const;
+	double GetScoreRatio() const;
+	double GetCreditRatio() const;
+	uint32 GetServerIP() const;
+	const wxString GetServerName() const;
+	uint16 GetServerPort() const;
+	const wxString &GetSoftStr() const;
+	const wxString &GetSoftVerStr() const;
+	int GetSourceFrom() const; // ESourceFrom
+	wxString GetSecureIdentTextStatus() const;
+	wxString GetModCapabilitiesText() const;
+	uint64 GetTransferredDown() const;
+	uint64 GetTransferredUp() const;
+	uint16 GetUDPPort() const;
+	uint32 GetUploadDatarate() const;
+	uint32 GetDisplayUploadDatarate() const;
+	uint64 GetUploadedTotal() const;
+	const CKnownFile *GetUploadFile() const;
+	uint16 GetUploadQueueWaitingPosition() const;
+	uint8 GetUploadState() const;
+	size_t GetUpPartCount() const;
+	const CMD4Hash &GetUserHash() const;
+	uint32 GetUserIDHybrid() const;
+	const wxString &GetUserName() const;
+	uint16_t GetUserPort() const;
+	uint32 GetVersion() const;
+	bool HasDisabledSharedFiles() const;
+	bool HasLowID() const;
+	bool IsBadGuy() const;
+	bool IsFriend() const;
+	bool IsIdentified() const;
+	bool IsRemoteQueueFull() const;
+	bool IsUpPartAvailable(uint16 iPart) const;
+	void RequestSharedFileList() const;
+	void SetCommentDirty(bool bDirty = true) const; // only wrapper const
+	void SetFriend(CFriend *newfriend) const;       // only wrapper const
+	void SetFriendSlot(bool bNV) const;             // only wrapper const
+	bool SwapToAnotherFile(bool bIgnoreNoNeeded,
+		bool ignoreSuspensions,
+		bool bRemoveCompletely,
+		CPartFile *toFile = NULL) const; // only wrapper const
 };
 
 // efficient std::swap for it
 namespace std
 {
-    template<> inline void swap(CClientRef& a, CClientRef& b)
-	{
-		a.swap(b);
-	}
+template <> inline void swap(CClientRef &a, CClientRef &b)
+{
+	a.swap(b);
 }
-
+} // namespace std
 
 typedef std::list<CClientRef> CClientRefList;
-typedef std::set<CClientRef>  CClientRefSet;
-
+typedef std::set<CClientRef> CClientRefSet;
 
 #endif
-

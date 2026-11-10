@@ -25,25 +25,25 @@
 #ifndef MULETHREAD_H
 #define MULETHREAD_H
 
+#include <atomic>
 #include <wx/thread.h>
-
 
 class CMuleThread : public wxThread
 {
 public:
 	//! @see wxThread::wxThread
 	CMuleThread(wxThreadKind kind = wxTHREAD_DETACHED)
-		: wxThread(kind),
-		m_stop(false) {}
+	: wxThread(kind)
+	, m_stop(false)
+	{
+	}
 
 	/**
 	 * Stops the thread.
 	 *
-	 * For detached threads, this function is equivalent
-	 * to Delete, but is also usable for joinable threads,
-	 * where Delete should not be used, due to crashes
-	 * experienced in that case. In the case of joinable
-	 * threads, Wait is called rather than Delete.
+	 * For detached threads this is equivalent to Delete, but it is also usable for joinable
+	 * threads, where Delete should not be used because of crashes experienced in that case;
+	 * those call Wait instead.
 	 *
 	 * @see wxThread::Delete
 	 */
@@ -60,14 +60,14 @@ public:
 	//! Returns true if Delete or Stop has been called.
 	virtual bool TestDestroy()
 	{
-		// m_stop is checked last, because some functionality is
-		// dependent upon wxThread::TestDestroy() being called,
-		// for instance Pause().
+		// m_stop is checked last, because some functionality depends on
+		// wxThread::TestDestroy() being called -- Pause(), for instance.
 		return wxThread::TestDestroy() || m_stop;
 	}
+
 private:
 	//! Is set if Stop is called.
-	bool	m_stop;
+	std::atomic<bool> m_stop;
 };
 
 #endif

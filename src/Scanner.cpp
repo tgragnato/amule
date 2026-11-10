@@ -1,3 +1,4 @@
+// clang-format off
 #line 2 "Scanner.cpp"
 
 #line 4 "Scanner.cpp"
@@ -547,14 +548,6 @@ char *yytext;
 #include <wx/string.h>
 
 #include "libs/common/StringFunctions.h"
-
-#ifdef _MSC_VER
-#define isatty(DUMMY) 0
-#endif
-
-#if defined(_MSC_VER) && (_MSC_VER >= 1800) 
-#include <algorithm> // for std::min and std::max 
-#endif
 
 #ifdef _DEBUG
 #define new DEBUG_NEW

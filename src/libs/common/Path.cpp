@@ -23,124 +23,119 @@
 //
 
 #include "Path.h"
-#include "StringFunctions.h"		// Needed for filename2char()
+#include "StringFunctions.h" // Needed for filename2char()
 
 #include <wx/file.h>
+#include <wx/filefn.h> // Needed for wxRename
+#include <wx/log.h>    // Needed for wxSysErrorMsgStr
 #include <wx/utils.h>
 #include <wx/filename.h>
-#include <algorithm>	// Needed for std::min
+#include <wx/tokenzr.h> // Needed for the ".." component scan in IsContainedIn
+#include <algorithm>    // Needed for std::min
+#include <cstdlib>      // Needed for realpath/free in CanonicalForContainment (POSIX)
+#ifdef __APPLE__
+#include <unistd.h> // pathconf / _PC_CASE_SENSITIVE for the per-volume case check in IsContainedIn
+#endif
 
+#include <sys/stat.h> // Needed for ::stat in GetFileStat
 
-// Windows has case-insensitive paths, so we use a
-// case-insensitive cmp for that platform. TODO:
-// Perhaps it would be better to simply lowercase
-// m_filesystem in the constructor ...
-#define PATHCMP(a, b)		wxStrcmp(a, b)
-#define PATHNCMP(a, b, n)	wxStrncmp(a, b, n)
-
+#define PATHCMP(a, b) wxStrcmp(a, b)
+#define PATHNCMP(a, b, n) wxStrncmp(a, b, n)
 
 ////////////////////////////////////////////////////////////
 // Helper functions
 
-
 /** Creates a deep copy of the string, avoiding its ref. counting. */
-inline wxString DeepCopy(const wxString& str)
+inline wxString DeepCopy(const wxString &str)
 {
 	return wxString(str.c_str(), str.Length());
 }
 
-
-static wxString Demangle(const wxCharBuffer& fn, const wxString& filename)
+static wxString Demangle(const wxCharBuffer &fn, const wxString &filename)
 {
 	wxString result = wxConvUTF8.cMB2WC(fn);
 
 	// FIXME: Is this actually needed for osx/msw?
 	if (!result) {
-		// We only try to further demangle if the current locale is
-		// UTF-8, C or POSIX. This is because in any other case, the
-		// current locale is probably the best choice for printing.
+		// Demangle further only for UTF-8, C and POSIX locales. For anything
+		// else the current locale is probably the best choice for printing.
 		static wxFontEncoding enc = wxLocale::GetSystemEncoding();
 
 		switch (enc) {
-			// SYSTEM is needed for ANSI encodings such as
-			// "POSIX" and "C", which are only 7bit.
-			case wxFONTENCODING_SYSTEM:
-			case wxFONTENCODING_UTF8:
-				result = wxConvISO8859_1.cMB2WC(fn);
-				break;
+		// SYSTEM is needed for ANSI encodings such as
+		// "POSIX" and "C", which are only 7bit.
+		case wxFONTENCODING_SYSTEM:
+		case wxFONTENCODING_UTF8:
+			result = wxConvISO8859_1.cMB2WC(fn);
+			break;
 
-			default:
-				// Nothing to do, the filename is probably Ok.
-				result = DeepCopy(filename);
+		default:
+			// Nothing to do, the filename is probably Ok.
+			result = DeepCopy(filename);
 		}
 	}
 
 	return result;
 }
 
-
 /** Splits a full path into its path and filename component. */
-inline void DoSplitPath(const wxString& strPath, wxString* path, wxString* name)
+inline void DoSplitPath(const wxString &strPath, wxString *path, wxString *name)
 {
-	bool hasExt = false;
-	wxString ext, vol;
-
-	wxString* pVol = (path ? &vol : NULL);
-	wxString* pExt = (name ? &ext : NULL);
-
-	wxFileName::SplitPath(strPath, pVol, path, name, pExt, &hasExt);
-
-	if (hasExt && pExt) {
-		*name += "." + ext;
+	if (path) {
+		// This overload rejoins the volume itself: "C:" for a drive, but "\\server" for a UNC path.
+		wxFileName::SplitPath(strPath, path, nullptr, nullptr);
 	}
 
-	if (path && vol.Length()) {
-		*path = vol + wxFileName::GetVolumeSeparator() + *path;
+	if (name) {
+		bool hasExt = false;
+		wxString ext;
+		wxFileName::SplitPath(strPath, nullptr, nullptr, name, &ext, &hasExt);
+		if (hasExt) {
+			*name += "." + ext;
+		}
 	}
 }
 
-
 /** Removes invalid chars from a filename. */
-static wxString DoCleanup(const wxString& filename, bool keepSpaces, bool isFAT32)
+static wxString DoCleanup(const wxString &filename, bool keepSpaces, bool isFAT32)
 {
 	wxString result;
 	for (size_t i = 0; i < filename.Length(); i++) {
 		const wxChar c = filename[i];
 
 		switch (c) {
-			case '/':
+		case '/':
+			continue;
+
+		case '\"':
+		case '*':
+		case '<':
+		case '>':
+		case '?':
+		case '|':
+		case '\\':
+		case ':':
+			if (isFAT32) {
 				continue;
+			}
 
-			case '\"':
-			case '*':
-			case '<':
-			case '>':
-			case '?':
-			case '|':
-			case '\\':
-			case ':':
-				if (isFAT32) {
-					continue;
-				}
-
-			/* fall through */
-			default:
-				if ((c == ' ') && !keepSpaces) {
-					result += "%20";
-				} else if (c >= 32) {
-					// Many illegal for filenames in windows
-					// below the 32th char (which is space).
-					result += filename[i];
-				}
+		/* fall through */
+		default:
+			if ((c == ' ') && !keepSpaces) {
+				result += "%20";
+			} else if (c >= 32) {
+				// Many illegal for filenames in windows
+				// below the 32th char (which is space).
+				result += filename[i];
+			}
 		}
 	}
 
 	return result;
 }
 
-
 /** Does the actual work of adding a postfix ... */
-static wxString DoAddPostfix(const wxString& src, const wxString& postfix)
+static wxString DoAddPostfix(const wxString &src, const wxString &postfix)
 {
 	wxFileName fn(src);
 
@@ -150,7 +145,7 @@ static wxString DoAddPostfix(const wxString& src, const wxString& postfix)
 }
 
 /** Removes the last extension of a filename. */
-static wxString DoRemoveExt(const wxString& path)
+static wxString DoRemoveExt(const wxString &path)
 {
 	// Using wxFilename which handles paths, etc.
 	wxFileName tmp(path);
@@ -159,74 +154,77 @@ static wxString DoRemoveExt(const wxString& path)
 	return tmp.GetFullPath();
 }
 
-
 /** Readies a path for use with wxAccess.. */
-static wxString DoCleanPath(const wxString& path)
+static wxString DoCleanPath(const wxString &path)
 {
 	return path;
 }
 
-
-/** Returns true if the two paths are equal. */
-static bool IsSameAs(const wxString& a, const wxString& b)
+/**
+ * The canonical form IsSameAs() reduces a path to before comparing it.
+ *
+ * Computed once per path rather than twice per comparison. Grouping by this
+ * string is equivalent to comparing pairwise, which lets CSharedFileList answer
+ * a browse without re-deriving the grouping per directory (issue #898).
+ *
+ * Only for paths with a separator; bare filenames use PATHCMP.
+ */
+static wxString NormalizedKey(const wxString &path)
 {
-	// Fast path for bare filenames (no directory separator on either
-	// path).  Search results stream in as bare filenames from FT_FILENAME
-	// tags, and CSearchFile::AddChild's filename-dedup path
-	// (other->GetFileName() == file->GetFileName()) lands here on every
-	// duplicate result; without this fast path the call falls through to
-	// wxFileName::Normalize, which insists on a cwd argument and triggers
-	// wxGetCwd() — and wxGetCwd() emits a wxLogSysError on macOS bundles
-	// whose recorded CWD has been removed (App translocation, deleted
-	// launching shell, etc.) for every comparison.
-	if (a.find_first_of(wxFileName::GetPathSeparators()) == wxString::npos
-		&& b.find_first_of(wxFileName::GetPathSeparators()) == wxString::npos) {
-		return PATHCMP(a.c_str(), b.c_str()) == 0;
-	}
-
-	// Cache the current directory only when at least one of the paths
-	// is relative — wxFileName::Normalize ignores the cwd argument
-	// for absolute paths.  Skipping wxGetCwd() in the absolute-only
-	// case (which is essentially every aMule call site: shared dirs,
-	// Temp, Incoming, partfile paths) avoids the wxLogSysError
-	// "Failed to get the working directory" that wxGetCwd() emits on
-	// macOS bundles whose recorded CWD has been removed (App
-	// translocation, deleted launching shell, etc.).
+	// Only relative paths need the cwd: Normalize ignores it for absolute ones.
+	// Skipping wxGetCwd() there (nearly every call site) avoids the wxLogSysError
+	// it emits on macOS bundles whose recorded CWD is gone.
 	wxString cwd;
-	if (!wxIsAbsolutePath(a) || !wxIsAbsolutePath(b)) {
+	if (!wxIsAbsolutePath(path)) {
 		cwd = wxGetCwd();
 	}
 
-	// We normalize everything, except env. variables, which
-	// can cause problems when the string is not encodable
-	// using wxConvLibc which wxWidgets uses for the purpose.
-	// wxPATH_NORM_ALL is deprecated in wx3 — use explicit flags instead (excluding wxPATH_NORM_ENV_VARS)
-	const int flags = wxPATH_NORM_DOTS | wxPATH_NORM_TILDE | wxPATH_NORM_CASE | wxPATH_NORM_ABSOLUTE | wxPATH_NORM_LONG | wxPATH_NORM_SHORTCUT;
+	// Normalize all but env variables, which break when the string is not
+	// encodable with wxConvLibc. Explicit flags: wxPATH_NORM_ALL is gone in wx3.
+	const int flags = wxPATH_NORM_DOTS | wxPATH_NORM_TILDE | wxPATH_NORM_CASE | wxPATH_NORM_ABSOLUTE |
+			  wxPATH_NORM_LONG | wxPATH_NORM_SHORTCUT;
 
-	// Let wxFileName handle the tricky stuff involved in actually
-	// comparing two paths ... Currently, a path ending with a path-
-	// separator will be unequal to the same path without a path-
-	// separator, which is probably for the best, but can could
-	// lead to some unexpected behavior.
-	wxFileName fn1(a);
-	wxFileName fn2(b);
-
-	fn1.Normalize(flags, cwd);
-	fn2.Normalize(flags, cwd);
-
-	return (fn1.GetFullPath() == fn2.GetFullPath());
+	// wxFileName does the hard part. Note a trailing separator makes a path
+	// unequal to the same path without one.
+	wxFileName fn(path);
+	fn.Normalize(flags, cwd);
+	return fn.GetFullPath();
 }
 
+/** Returns true if the two paths are equal. */
+static bool IsSameAs(const wxString &a, const wxString &b)
+{
+	// Fast path for bare filenames. Search results arrive as bare FT_FILENAME
+	// strings and CSearchFile::AddChild dedups on every duplicate, so without
+	// this each one falls through to Normalize and triggers wxGetCwd().
+	if (a.find_first_of(wxFileName::GetPathSeparators()) == wxString::npos &&
+		b.find_first_of(wxFileName::GetPathSeparators()) == wxString::npos) {
+		return PATHCMP(a.c_str(), b.c_str()) == 0;
+	}
+
+	// Identical strings normalise identically, so both calls below are known
+	// to agree before either runs.
+	if (a == b) {
+		return true;
+	}
+
+	// An empty path equals only another empty path, already answered above.
+	// Falling through would normalise "" against the process cwd, making an
+	// unset path compare equal to whatever directory aMule sits in. A
+	// CKnownFile from known.met has no directory until the share scan stamps one.
+	if (a.empty() || b.empty()) {
+		return false;
+	}
+
+	return NormalizedKey(a) == NormalizedKey(b);
+}
 
 ////////////////////////////////////////////////////////////
 // CPath implementation
 
-CPath::CPath()
-{
-}
+CPath::CPath() {}
 
-
-CPath::CPath(const wxString& filename)
+CPath::CPath(const wxString &filename)
 {
 	// Equivalent to the default constructor ...
 	if (!filename) {
@@ -235,19 +233,15 @@ CPath::CPath(const wxString& filename)
 
 	wxCharBuffer fn = filename2char(filename);
 	if (fn.data()) {
-		// Filename is valid in the current locale. This means that
-		// it either originated from a (wx)system-call, or from a
-		// user with a properly setup system.
+		// Valid in the current locale, so it came from a system call or a
+		// correctly configured system.
 		m_filesystem = DeepCopy(filename);
-		m_printable  = Demangle(fn, filename);
+		m_printable = Demangle(fn, filename);
 	} else {
-		// It's not a valid filename in the current locale, so we'll
-		// have to do some magic. This ensures that the filename is
-		// saved as UTF8, even if the system is not unicode enabled,
-		// preserving the original filename till the user has fixed
-		// his system ...
+		// Invalid in the current locale: save as UTF-8 even on a non-unicode
+		// system, preserving the original until the user fixes their setup.
 		fn = filename.utf8_str();
-		m_filesystem = wxConvFileName->cMB2WC(fn);
+		m_filesystem = wxConvFile.cMB2WC(fn);
 
 		// There's no need to try to unmangle the filename here.
 		m_printable = DeepCopy(filename);
@@ -257,32 +251,27 @@ CPath::CPath(const wxString& filename)
 	wxASSERT(m_printable.Length());
 }
 
-
-CPath::CPath(const CPath& other)
-	: m_printable(DeepCopy(other.m_printable))
-	, m_filesystem(DeepCopy(other.m_filesystem))
-{}
-
-
-
-CPath CPath::FromUniv(const wxString& path)
+CPath::CPath(const CPath &other)
+: m_printable(DeepCopy(other.m_printable))
+, m_filesystem(DeepCopy(other.m_filesystem))
 {
-	wxCharBuffer fn = path.mb_str(wxConvISO8859_1);
-	return CPath(wxConvFileName->cMB2WC(fn));
 }
 
-
-wxString CPath::ToUniv(const CPath& path)
+CPath CPath::FromUniv(const wxString &path)
 {
-	// The logic behind this is that by saving the filename
-	// as a raw bytestream, we can always recreate the on-disk filename,
-	// as if we had read it using wx functions.
-	wxCharBuffer fn = path.m_filesystem.mb_str(*wxConvFileName);
+	wxCharBuffer fn = path.mb_str(wxConvISO8859_1);
+	return CPath(wxConvFile.cMB2WC(fn));
+}
+
+wxString CPath::ToUniv(const CPath &path)
+{
+	// Saved as a raw bytestream so the on-disk filename can always be
+	// recreated, as if read through wx.
+	wxCharBuffer fn = path.m_filesystem.mb_str(wxConvFile);
 	return wxConvISO8859_1.cMB2WC(fn);
 }
 
-
-CPath& CPath::operator=(const CPath& other)
+CPath &CPath::operator=(const CPath &other)
 {
 	if (this != &other) {
 		m_printable = DeepCopy(other.m_printable);
@@ -292,24 +281,20 @@ CPath& CPath::operator=(const CPath& other)
 	return *this;
 }
 
-
-bool CPath::operator==(const CPath& other) const
+bool CPath::operator==(const CPath &other) const
 {
 	return ::IsSameAs(m_filesystem, other.m_filesystem);
 }
 
-
-bool CPath::operator!=(const CPath& other) const
+bool CPath::operator!=(const CPath &other) const
 {
 	return !(*this == other);
 }
 
-
-bool CPath::operator<(const CPath& other) const
+bool CPath::operator<(const CPath &other) const
 {
 	return PATHCMP(m_filesystem.c_str(), other.m_filesystem.c_str()) < 0;
 }
-
 
 bool CPath::IsOk() const
 {
@@ -317,18 +302,15 @@ bool CPath::IsOk() const
 	return m_printable.Length() && m_filesystem.Length();
 }
 
-
 bool CPath::FileExists() const
 {
 	return wxFileName::FileExists(m_filesystem);
 }
 
-
 bool CPath::DirExists() const
 {
 	return wxFileName::DirExists(DoCleanPath(m_filesystem));
 }
-
 
 bool CPath::IsDir(EAccess mode) const
 {
@@ -344,7 +326,6 @@ bool CPath::IsDir(EAccess mode) const
 	return true;
 }
 
-
 bool CPath::IsFile(EAccess mode) const
 {
 	if (!wxFileName::FileExists(m_filesystem)) {
@@ -358,14 +339,12 @@ bool CPath::IsFile(EAccess mode) const
 	return true;
 }
 
-
 wxString CPath::GetRaw() const
 {
 	// Copy as c-strings to ensure that the CPath objects can safely
 	// be passed across threads (avoiding wxString ref. counting).
 	return DeepCopy(m_filesystem);
 }
-
 
 wxString CPath::GetPrintable() const
 {
@@ -374,12 +353,10 @@ wxString CPath::GetPrintable() const
 	return DeepCopy(m_printable);
 }
 
-
 wxString CPath::GetExt() const
 {
 	return wxFileName(m_filesystem).GetExt();
 }
-
 
 CPath CPath::GetPath() const
 {
@@ -390,7 +367,6 @@ CPath CPath::GetPath() const
 	return path;
 }
 
-
 CPath CPath::GetFullName() const
 {
 	CPath path;
@@ -398,9 +374,7 @@ CPath CPath::GetFullName() const
 	::DoSplitPath(m_filesystem, NULL, &path.m_filesystem);
 
 	return path;
-
 }
-
 
 sint64 CPath::GetFileSize() const
 {
@@ -414,15 +388,52 @@ sint64 CPath::GetFileSize() const
 	return wxInvalidOffset;
 }
 
+bool CPath::GetFileStat(time_t &mtime, sint64 &size) const
+{
+	const wxCharBuffer path = m_filesystem.mb_str(wxConvFile);
+	if (!path.data()) {
+		return false;
+	}
 
-bool CPath::IsSameDir(const CPath& other) const
+	struct stat st;
+	if (::stat(path.data(), &st) != 0) {
+		return false;
+	}
+
+	// Same predicate wxFileExists() applies, explicit because it is what makes
+	// the single stat a drop-in: a directory or broken link must still fail.
+	if (!S_ISREG(st.st_mode)) {
+		return false;
+	}
+
+	mtime = st.st_mtime;
+	size = (sint64)st.st_size;
+	return true;
+}
+
+wxString CPath::GetDirKey() const
+{
+	// The reduction IsSameDir() performs before comparing: strip the trailing
+	// separator, then canonicalise. Equal keys exactly when IsSameDir() calls
+	// them the same directory, so a caller can group instead of comparing
+	// every pair (issue #898).
+	wxString stripped = m_filesystem;
+	if (stripped.Length()) {
+		stripped = StripSeparators(stripped, wxString::trailing);
+	}
+
+	// NormalizedKey() and not IsSameAs()'s bare-filename fast path: a bare name
+	// is made absolute against the cwd here, as IsSameAs() does once the other
+	// side has a separator. Keying every path alike keeps the grouping consistent.
+	return NormalizedKey(stripped);
+}
+
+bool CPath::IsSameDir(const CPath &other) const
 {
 	wxString a = m_filesystem;
 	wxString b = other.m_filesystem;
 
-	// This check is needed to avoid trouble in the
-	// case where one path is empty, and the other
-	// points to the root dir.
+	// Guards the case where one path is empty and the other is the root dir.
 	if (a.Length() && b.Length()) {
 		a = StripSeparators(a, wxString::trailing);
 		b = StripSeparators(b, wxString::trailing);
@@ -431,8 +442,7 @@ bool CPath::IsSameDir(const CPath& other) const
 	return ::IsSameAs(a, b);
 }
 
-
-CPath CPath::JoinPaths(const CPath& other) const
+CPath CPath::JoinPaths(const CPath &other) const
 {
 	if (!IsOk()) {
 		return CPath(other);
@@ -448,7 +458,6 @@ CPath CPath::JoinPaths(const CPath& other) const
 	return joinedPath;
 }
 
-
 CPath CPath::Cleanup(bool keepSpaces, bool isFAT32) const
 {
 	CPath result;
@@ -458,8 +467,7 @@ CPath CPath::Cleanup(bool keepSpaces, bool isFAT32) const
 	return result;
 }
 
-
-CPath CPath::AddPostfix(const wxString& postfix) const
+CPath CPath::AddPostfix(const wxString &postfix) const
 {
 	wxASSERT(postfix.IsAscii());
 
@@ -470,8 +478,7 @@ CPath CPath::AddPostfix(const wxString& postfix) const
 	return result;
 }
 
-
-CPath CPath::AppendExt(const wxString& ext) const
+CPath CPath::AppendExt(const wxString &ext) const
 {
 	wxASSERT(ext.IsAscii());
 
@@ -493,7 +500,6 @@ CPath CPath::AppendExt(const wxString& ext) const
 	return result;
 }
 
-
 CPath CPath::RemoveExt() const
 {
 	CPath result;
@@ -503,23 +509,204 @@ CPath CPath::RemoveExt() const
 	return result;
 }
 
+bool CPath::IsBareFileName() const
+{
+	if (!IsOk()) {
+		return false;
+	}
+	// "." and ".." are directory entries, not file names.
+	const wxString printable = GetPrintable();
+	if (printable == wxT(".") || printable == wxT("..")) {
+		return false;
+	}
+	// Reject any path separator outright rather than rely on normalisation: the raw string is what
+	// gets joined onto a directory and handed to rename(), so a single embedded '/' (or '\' on a
+	// Windows daemon) is what lets a name traverse out of its folder. Both are checked because a
+	// remote client may send either. This is stricter than "resolves inside the folder" on purpose
+	// -- a legitimate rename never needs a separator.
+	const wxString raw = GetRaw();
+	return printable.find(wxT('/')) == wxString::npos && printable.find(wxT('\\')) == wxString::npos &&
+	       raw.find(wxT('/')) == wxString::npos && raw.find(wxT('\\')) == wxString::npos;
+}
+
+// A path with a ".." in any component. Such a component is never needed for a remote folder, and
+// it cannot be judged lexically: the kernel resolves ".." AFTER following a symlink, so
+// "<root>/link/../x" cancels to "<root>/x" on paper while the filesystem lands it wherever <link>
+// points. IsContainedIn() refuses it outright rather than trying to reason about it.
+static bool HasParentDirComponent(const wxString &raw)
+{
+	wxStringTokenizer tok(raw, wxFileName::GetPathSeparators());
+	while (tok.HasMoreTokens()) {
+		if (tok.GetNextToken() == wxT("..")) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Resolve symlinks (POSIX) or symlinks and junctions (Windows) in an existing directory to its
+// real location. Returns false when the path cannot be resolved. Normalize() does neither.
+static bool ResolveExistingDir(const wxString &existingDir, wxString &out)
+{
+#ifdef __WXMSW__
+	// FILE_FLAG_BACKUP_SEMANTICS is required to obtain a handle to a *directory*; the share mode
+	// is permissive so an in-use folder still opens. GetFinalPathNameByHandleW walks every
+	// junction and symlink in the path.
+	HANDLE h = ::CreateFileW(existingDir.wc_str(),
+		0,
+		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		nullptr,
+		OPEN_EXISTING,
+		FILE_FLAG_BACKUP_SEMANTICS,
+		nullptr);
+	if (h == INVALID_HANDLE_VALUE) {
+		return false;
+	}
+	wchar_t buf[32768];
+	const DWORD n = ::GetFinalPathNameByHandleW(
+		h, buf, (DWORD)WXSIZEOF(buf), FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+	::CloseHandle(h);
+	if (n == 0 || n >= WXSIZEOF(buf)) {
+		return false;
+	}
+	wxString resolved(buf, n);
+	// GetFinalPathNameByHandleW returns the \\?\ long-path prefix; strip it so the result compares
+	// against ordinary roots. \\?\UNC\server\share -> \\server\share, \\?\C:\dir -> C:\dir.
+	if (resolved.StartsWith(wxT("\\\\?\\UNC\\"))) {
+		resolved = wxT("\\\\") + resolved.Mid(8);
+	} else if (resolved.StartsWith(wxT("\\\\?\\"))) {
+		resolved = resolved.Mid(4);
+	}
+	out = resolved;
+	return true;
+#else
+	char *resolved = realpath(existingDir.fn_str(), nullptr);
+	if (resolved == nullptr) {
+		return false;
+	}
+	out = wxString(resolved, wxConvFile);
+	free(resolved);
+	return true;
+#endif
+}
+
+// wxFileName::DirName(...).GetFullPath() always ends in a path separator. Drop it so a stored folder
+// round-trips the value a client sent (/tmp/x, not /tmp/x/), while keeping the separator for a bare
+// root (/ or C:\), which is not a usable path without it.
+static wxString WithoutTrailingDirSeparator(const wxString &fullPath)
+{
+	const wxString stripped = StripSeparators(fullPath, wxString::trailing);
+	// Empty (a Unix "/") or a bare volume ("C:") means it was a root -- keep the original form.
+	if (stripped.IsEmpty() || stripped.Last() == wxT(':')) {
+		return fullPath;
+	}
+	return stripped;
+}
+
+CPath CPath::CanonicalForContainment(bool requireResolved) const
+{
+	if (!IsOk()) {
+		return CPath();
+	}
+	// Make absolute and fold case / short names, but DELIBERATELY do not collapse "." / ".."
+	// lexically (no wxPATH_NORM_DOTS): a symlinked escape must be resolved by the filesystem,
+	// below, not cancelled out on the string first. Callers refuse ".." before relying on this
+	// (see IsContainedIn); "." is harmless and the symlink resolution drops it. Treated as a
+	// directory path throughout -- every caller passes a folder (incoming / temp / shared /
+	// category / online-signature).
+	wxFileName fn = wxFileName::DirName(GetRaw());
+	wxString cwd;
+	if (!fn.IsAbsolute()) {
+		cwd = wxGetCwd();
+	}
+	fn.Normalize(wxPATH_NORM_ABSOLUTE | wxPATH_NORM_LONG | wxPATH_NORM_CASE, cwd);
+
+	// Resolve symlinks / junctions, which Normalize() does not. The resolver needs an existing
+	// path, so resolve the deepest existing ancestor and re-append the components below it -- a
+	// not-yet-created incoming/temp/category folder is the normal case. This is what stops a
+	// symlinked (POSIX) or junctioned (Windows) folder from pointing outside the configured roots.
+	wxFileName existing = fn;
+	wxArrayString tail;
+	while (existing.GetDirCount() > 0 && !existing.DirExists()) {
+		tail.Insert(existing.GetDirs().Last(), 0);
+		existing.RemoveLastDir();
+	}
+	wxString resolved;
+	if (ResolveExistingDir(existing.GetFullPath(), resolved)) {
+		wxFileName real = wxFileName::DirName(resolved);
+		for (size_t i = 0; i < tail.GetCount(); ++i) {
+			real.AppendDir(tail[i]);
+		}
+		return CPath(WithoutTrailingDirSeparator(real.GetFullPath()));
+	}
+
+	// The symlinks/junctions could not be resolved (a broken link, a permission wall, a symlink
+	// loop). A caller that only stores the path (the default) keeps the normalized-but-unresolved
+	// form, but the containment check asks for requireResolved so it refuses rather than comparing
+	// a path whose real location is unknown.
+	if (requireResolved) {
+		return CPath();
+	}
+	return CPath(WithoutTrailingDirSeparator(fn.GetFullPath()));
+}
+
+#ifdef __APPLE__
+// Whether the volume holding `dir` (or its nearest existing ancestor) is case-insensitive. macOS
+// mounts case-sensitive and case-insensitive volumes side by side, so this is a per-path property,
+// not a compile-time one -- hence it is scoped to the containment check rather than the global
+// PATHCMP macro, which would also make operator< and StartsWith case-insensitive everywhere.
+// pathconf needs a real path, so walk up to an existing ancestor; fold case only when the FS is
+// DEFINITELY case-insensitive (pathconf returns 0), treating 1 and an error (-1) as case-sensitive
+// so an unknown volume fails closed rather than widening the match.
+static bool VolumeIsCaseInsensitive(const wxString &dir)
+{
+	wxFileName fn = wxFileName::DirName(dir);
+	while (fn.GetDirCount() > 0 && !fn.DirExists()) {
+		fn.RemoveLastDir();
+	}
+	return pathconf(fn.GetFullPath().fn_str(), _PC_CASE_SENSITIVE) == 0;
+}
+#endif
+
+bool CPath::IsContainedIn(const CPath &root) const
+{
+	// Refuse ".." outright: no remote folder needs it, and it cannot be judged lexically against a
+	// path that may contain symlinks (see HasParentDirComponent).
+	if (!IsOk() || HasParentDirComponent(GetRaw())) {
+		return false;
+	}
+	// requireResolved: if the symlinks/junctions cannot be resolved, refuse rather than compare an
+	// unresolved path.
+	const CPath self = CanonicalForContainment(true);
+	const CPath base = root.CanonicalForContainment(true);
+	if (!self.IsOk() || !base.IsOk()) {
+		return false;
+	}
+#ifdef __APPLE__
+	// realpath() already returns the on-disk case, so an existing root and candidate compare
+	// correctly case-sensitively; the gap is a root (or tail) that does not exist yet, whose case
+	// is whatever the client typed. On a case-insensitive volume, match case-insensitively so the
+	// check does not fail closed; on a case-sensitive one, keep the exact comparison so it does not
+	// fail open.
+	if (VolumeIsCaseInsensitive(base.GetRaw())) {
+		return CPath(self.GetRaw().Lower()).StartsWith(CPath(base.GetRaw().Lower()));
+	}
+#endif
+	// StartsWith is a whole-component, case-correct prefix test that also treats an exact match as a
+	// prefix, so this is true when the path equals a root or lies inside it.
+	return self.StartsWith(base);
+}
 
 CPath CPath::RemoveAllExt() const
 {
 	// Loop until all extensions are removed.
 	//
-	// The termination test compares the underlying filesystem strings
-	// directly rather than going through CPath::operator!=. The latter
-	// routes through IsSameAs() / wxFileName::Normalize(), which
-	// resolves relative paths via wxGetCwd().  When the process's
-	// recorded working directory has been deleted (routine on macOS
-	// bundles whose launching shell's CWD has been removed) wxGetCwd()
-	// emits a wxLogSysError("Failed to get the working directory...")
-	// for every call, and CDownloadListCtrl::DrawFileItem reaches this
-	// loop on every paint of every download row.  Plain string
-	// equality is the right comparison here anyway: we only need to
-	// know whether RemoveExt() changed the buffer, not whether two
-	// filesystem locations refer to the same node.
+	// Compares the filesystem strings directly rather than CPath::operator!=,
+	// which routes through wxFileName::Normalize() and so wxGetCwd(). When the
+	// recorded working directory has been deleted (routine on macOS bundles)
+	// that logs an error on every call, and CDownloadListCtrl::DrawFileItem
+	// reaches this loop on every paint of every row. Plain equality is also the
+	// right test: we only need to know whether RemoveExt() changed the buffer.
 	CPath last, current = RemoveExt();
 	do {
 		last = current;
@@ -529,21 +716,19 @@ CPath CPath::RemoveAllExt() const
 	return current;
 }
 
-
-bool CPath::StartsWith(const CPath& other) const
+bool CPath::StartsWith(const CPath &other) const
 {
-	// It doesn't make sense comparing invalid paths,
-	// especially since if 'other' was empty, it would
-	// be considered a prefix of any path.
+	// Comparing invalid paths makes no sense: an empty 'other' would count as a
+	// prefix of any path.
 	if ((IsOk() && other.IsOk()) == false) {
 		return false;
 	}
 
-	// Adding an separator to avoid partial matches, such as
-	// "/usr/bi" matching "/usr/bin". TODO: Paths should be
-	// normalized first (in the constructor).
+	// Separator added to avoid partial matches, e.g. "/usr/bi" against
+	// "/usr/bin". TODO: normalize paths in the constructor instead.
 	const wxString a = StripSeparators(m_filesystem, wxString::trailing) + wxFileName::GetPathSeparator();
-	const wxString b = StripSeparators(other.m_filesystem, wxString::trailing) + wxFileName::GetPathSeparator();
+	const wxString b =
+		StripSeparators(other.m_filesystem, wxString::trailing) + wxFileName::GetPathSeparator();
 
 	if (a.Length() < b.Length()) {
 		// Cannot possibly be a prefix.
@@ -554,32 +739,42 @@ bool CPath::StartsWith(const CPath& other) const
 	return PATHNCMP(a.c_str(), b.c_str(), checkLen) == 0;
 }
 
-
-bool CPath::CloneFile(const CPath& src, const CPath& dst, bool overwrite)
-{
-	return ::wxCopyFile(src.m_filesystem, dst.m_filesystem, overwrite);
-}
-
-
-bool CPath::RemoveFile(const CPath& file)
+bool CPath::RemoveFile(const CPath &file)
 {
 	return ::wxRemoveFile(file.m_filesystem);
 }
 
-
-bool CPath::RenameFile(const CPath& src, const CPath& dst, bool overwrite)
+bool CPath::RenameFile(const CPath &src, const CPath &dst, bool overwrite)
 {
 	return ::wxRenameFile(src.m_filesystem, dst.m_filesystem, overwrite);
 }
 
+bool CPath::ReplaceEntry(const CPath &src, const CPath &dst, wxString *detail)
+{
+	if (detail) {
+		detail->clear();
+	}
+	// wxRenameFile falls back to copying after a failed rename, which can remove or truncate
+	// the existing destination before failing. Replacement must leave it intact.
+	if (::wxRename(src.m_filesystem, dst.m_filesystem) == 0) {
+		return true;
+	}
+	if (detail) {
+		*detail = wxSysErrorMsgStr();
+	}
+	return false;
+}
 
-bool CPath::BackupFile(const CPath& src, const wxString& appendix)
+bool CPath::BackupFile(const CPath &src, const wxString &appendix)
 {
 	wxASSERT(appendix.IsAscii());
 
 	CPath dst = CPath(src.m_filesystem + appendix);
 
-	if (CPath::CloneFile(src, dst, true)) {
+	// Small same-directory .met/config backup, so wxCopyFile's 4 KiB buffer is
+	// fine. Large copies use CFile::CloneFile; mulecommon deliberately has no
+	// dependency on the CFile layer (amule-org/amule#11).
+	if (::wxCopyFile(src.m_filesystem, dst.m_filesystem, true)) {
 		// Try to ensure that the backup gets physically written
 		wxFile backupFile;
 		if (backupFile.Open(dst.m_filesystem)) {
@@ -592,44 +787,37 @@ bool CPath::BackupFile(const CPath& src, const wxString& appendix)
 	return false;
 }
 
-
-bool CPath::RemoveDir(const CPath& file)
+bool CPath::RemoveDir(const CPath &file)
 {
 	return ::wxRmdir(file.m_filesystem);
 }
 
-
-bool CPath::MakeDir(const CPath& file)
+bool CPath::MakeDir(const CPath &file)
 {
 	return ::wxMkdir(file.m_filesystem);
 }
 
-
-bool CPath::FileExists(const wxString& file)
+bool CPath::FileExists(const wxString &file)
 {
 	return CPath(file).FileExists();
 }
 
-
-bool CPath::DirExists(const wxString& path)
+bool CPath::DirExists(const wxString &path)
 {
 	return CPath(path).DirExists();
 }
 
-
-sint64 CPath::GetFileSize(const wxString& file)
+sint64 CPath::GetFileSize(const wxString &file)
 {
 	return CPath(file).GetFileSize();
 }
 
-
-time_t CPath::GetModificationTime(const CPath& file)
+time_t CPath::GetModificationTime(const CPath &file)
 {
 	return ::wxFileModificationTime(file.m_filesystem);
 }
 
-
-sint64 CPath::GetFreeSpaceAt(const CPath& path)
+sint64 CPath::GetFreeSpaceAt(const CPath &path)
 {
 	wxLongLong free;
 	if (::wxGetDiskSpace(path.m_filesystem, NULL, &free)) {
@@ -638,7 +826,6 @@ sint64 CPath::GetFreeSpaceAt(const CPath& path)
 
 	return wxInvalidOffset;
 }
-
 
 wxString CPath::TruncatePath(size_t length, bool isFilePath) const
 {
@@ -652,7 +839,7 @@ wxString CPath::TruncatePath(size_t length, bool isFilePath) const
 	// If the path is a file name, then prefer to remove from the path, rather than the filename
 	if (isFilePath) {
 		wxString path = wxFileName(file).GetPath();
-		file          = wxFileName(file).GetFullName();
+		file = wxFileName(file).GetFullName();
 
 		if (path.Length() >= length) {
 			path.Clear();
@@ -663,7 +850,7 @@ wxString CPath::TruncatePath(size_t length, bool isFilePath) const
 			int pathlen = (int)(length - file.Length() - 6);
 
 			if (pathlen > 0) {
-				path = "[...]" + path.Right( pathlen );
+				path = "[...]" + path.Right(pathlen);
 			} else {
 				path.Clear();
 			}
@@ -683,7 +870,6 @@ wxString CPath::TruncatePath(size_t length, bool isFilePath) const
 	return file;
 }
 
-
 wxString StripSeparators(wxString path, wxString::stripType type)
 {
 	wxASSERT((type == wxString::leading) || (type == wxString::trailing));
@@ -702,8 +888,7 @@ wxString StripSeparators(wxString path, wxString::stripType type)
 	return path;
 }
 
-
-wxString JoinPaths(const wxString& path, const wxString& file)
+wxString JoinPaths(const wxString &path, const wxString &file)
 {
 	if (path.IsEmpty()) {
 		return file;
@@ -711,7 +896,6 @@ wxString JoinPaths(const wxString& path, const wxString& file)
 		return path;
 	}
 
-	return StripSeparators(path, wxString::trailing)
-	   + wxFileName::GetPathSeparator()
-	   + StripSeparators(file, wxString::leading);
+	return StripSeparators(path, wxString::trailing) + wxFileName::GetPathSeparator() +
+	       StripSeparators(file, wxString::leading);
 }

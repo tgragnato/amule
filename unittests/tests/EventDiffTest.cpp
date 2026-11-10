@@ -1,0 +1,2789 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+//
+
+#include <muleunit/test.h>
+
+#include "EventBus.h"
+#include "EventDiff.h"
+#include "ServerFlagNames.h"
+#include "State.h"
+#include "SnapshotJson.h"
+
+#include <JsonWriter.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <map>
+#include <functional>
+#include <locale>
+#include <string>
+#include <vector>
+
+using namespace muleunit;
+using namespace webapi;
+
+DECLARE_SIMPLE(EventDiff)
+
+// Drain `bus` non-blockingly and return every event newer than `since` in id order. Drain is a
+// replay from a cursor, not a consume: draining from 0 twice yields the same events twice, so a
+// test asserting that a later tick emitted *nothing* has to carry the cursor forward.
+static std::vector<Event> DrainSince(CEventBus &bus, std::uint64_t since)
+{
+	std::vector<Event> out;
+	bus.Drain(since, std::chrono::milliseconds(0), out);
+	return out;
+}
+
+// Drain `bus` non-blockingly and return all events in id order.
+static std::vector<Event> DrainAll(CEventBus &bus)
+{
+	return DrainSince(bus, 0);
+}
+
+// log_appended cold start: the first tick must not emit log_appended for pre-existing lines.
+// Clients GET /api/v1/logs/amule for the history; the event channel is live-tail only.
+TEST(EventDiff, LogAppendedColdStartSilent)
+{
+	CState state;
+	state.AppendAmuleLog({ "old line 1\n", "old line 2\n" });
+	CEventBus bus;
+	LastSeenState prev;
+
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	const auto drained = DrainAll(bus);
+	for (const auto &ev : drained) {
+		ASSERT_TRUE(ev.name != "log_appended");
+	}
+	// The baseline counter must equal the pre-existing log size, so the next tick's diff sees
+	// zero new lines until amuled actually logs something.
+	ASSERT_EQUALS(static_cast<std::size_t>(2), prev.amule_log_count);
+	ASSERT_TRUE(prev.amule_log_initialised);
+}
+
+// After cold-start, a single appended line publishes exactly one
+// log_appended event with the new line in `lines`.
+TEST(EventDiff, LogAppendedFiresOnSingleNewLine)
+{
+	CState state;
+	state.AppendAmuleLog({ "old line\n" });
+	CEventBus bus;
+	LastSeenState prev;
+
+	// Tick 1: baseline.
+	EmitDiffsAndUpdate(bus, prev, state);
+	// Tick 2: amuled appended a fresh line. Expect log_appended.
+	state.AppendAmuleLog({ "new line\n" });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	const auto drained = DrainAll(bus);
+	int log_events = 0;
+	std::string payload;
+	for (const auto &ev : drained) {
+		if (ev.name == "log_appended") {
+			++log_events;
+			payload = ev.data;
+		}
+	}
+	ASSERT_EQUALS(1, log_events);
+	// Payload must contain the new line content and NOT the old one.
+	ASSERT_TRUE(payload.find("new line") != std::string::npos);
+	ASSERT_TRUE(payload.find("old line") == std::string::npos);
+	// Counter advanced to 2.
+	ASSERT_EQUALS(static_cast<std::size_t>(2), prev.amule_log_count);
+}
+
+// A batch of multiple new lines lands in one event with a `lines`
+// array -- never N separate events. Bus traffic ≪ line traffic.
+TEST(EventDiff, LogAppendedBatchesMultipleLinesIntoOneEvent)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+
+	EmitDiffsAndUpdate(bus, prev, state); // cold-start, log is empty
+	state.AppendAmuleLog({ "A\n", "B\n", "C\n" });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	const auto drained = DrainAll(bus);
+	int log_events = 0;
+	std::string payload;
+	for (const auto &ev : drained) {
+		if (ev.name == "log_appended") {
+			++log_events;
+			payload = ev.data;
+		}
+	}
+	ASSERT_EQUALS(1, log_events);
+	ASSERT_TRUE(payload.find("\"A") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"B") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"C") != std::string::npos);
+	ASSERT_EQUALS(static_cast<std::size_t>(3), prev.amule_log_count);
+}
+
+// Idle ticks (no new lines) must not publish log_appended.
+TEST(EventDiff, LogAppendedSilentOnIdleTick)
+{
+	CState state;
+	state.AppendAmuleLog({ "baseline\n" });
+	CEventBus bus;
+	LastSeenState prev;
+
+	EmitDiffsAndUpdate(bus, prev, state);
+	(void)DrainAll(bus); // discard cold-start events
+
+	EmitDiffsAndUpdate(bus, prev, state); // idle
+	EmitDiffsAndUpdate(bus, prev, state); // idle
+
+	const auto drained = DrainAll(bus);
+	for (const auto &ev : drained) {
+		ASSERT_TRUE(ev.name != "log_appended");
+	}
+}
+
+// JSON escaping: a line containing characters that need escaping (backslash, double quote, control
+// chars) must produce a valid JSON payload. The EscJson helper backing this is the same one the
+// snapshot payloads use; covering it here pins the contract for the log path specifically.
+TEST(EventDiff, LogAppendedEscapesJsonHazards)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	// A line with: a quote, a backslash, a control char.
+	state.AppendAmuleLog({ std::string("hi \"quoted\\path\" \x01 done\n") });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	const auto drained = DrainAll(bus);
+	std::string payload;
+	for (const auto &ev : drained) {
+		if (ev.name == "log_appended")
+			payload = ev.data;
+	}
+	// The raw characters must NOT appear unescaped in the payload: `\"` must become `\\\"`,
+	// `\\` must become `\\\\`, `\x01` must be `\\u0001`.
+	ASSERT_TRUE(payload.find("\\\"") != std::string::npos);
+	ASSERT_TRUE(payload.find("\\\\") != std::string::npos);
+	ASSERT_TRUE(payload.find("\\u0001") != std::string::npos);
+}
+
+// Truncation case (DELETE /logs/amule shrinks the vector): the diff
+// must silently resync the baseline counter without publishing.
+TEST(EventDiff, LogAppendedSilentOnTruncation)
+{
+	CState state;
+	state.AppendAmuleLog({ "a\n", "b\n", "c\n" });
+	CEventBus bus;
+	LastSeenState prev;
+
+	EmitDiffsAndUpdate(bus, prev, state);
+	ASSERT_EQUALS(static_cast<std::size_t>(3), prev.amule_log_count);
+
+	// Force a smaller log: rebuild State with a shorter vector.
+	CState state2;
+	state2.AppendAmuleLog({ "a\n" });
+	EmitDiffsAndUpdate(bus, prev, state2);
+
+	const auto drained = DrainAll(bus);
+	for (const auto &ev : drained) {
+		ASSERT_TRUE(ev.name != "log_appended");
+	}
+	ASSERT_EQUALS(static_cast<std::size_t>(1), prev.amule_log_count);
+}
+
+// PR #646 / issue #115: upload_file_name -- the partfile a peer is downloading FROM us -- is part
+// of the base client field set, so it must ride the client_added SSE payload. Otherwise the WebUI
+// clients table has no way to fill the File column for an upload-only peer and shows a blank "--".
+// Drives one status change through the real emit path and returns the status_changed payload, so
+// these assert what a subscriber actually sees rather than reaching into EventDiff's internals.
+namespace
+{
+std::string EmitStatusAndGetPayload(const StatusSnapshot &next)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state); // baseline tick
+	state.WriteStatus(next);
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &ev : DrainAll(bus)) {
+		if (ev.name == "status_changed")
+			payload = ev.data;
+	}
+	return payload;
+}
+} // namespace
+
+// Each visible field must trigger an update by itself. The same snapshot must give the
+// HTTP writer and the event path identical bytes; another unchanged tick must stay silent.
+TEST(EventDiff, StatusFieldsTriggerExactlyOneMatchingEvent)
+{
+	using Change = std::function<void(StatusSnapshot &, KadSnapshot &)>;
+	const std::vector<Change> changes = {
+		[](StatusSnapshot &s, KadSnapshot &) { s.search_all_supported = true; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.ed2k_state = "connecting"; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.ed2k_high_id = true; },
+		[](StatusSnapshot &s, KadSnapshot &) {
+			s.ed2k_user_id = 0x04030201;
+			s.ed2k_public_ip = "1.2.3.4"; // Refresher derives the address from this id.
+		},
+		[](StatusSnapshot &s, KadSnapshot &) { s.ed2k_connected_since = 1700000001; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.server_name = "changed"; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.server_ip = "5.6.7.9"; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.server_port = 4662; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.has_ed2k_network = false; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.ed2k_users = 1; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.ed2k_files = 2; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.kad_state = "connecting"; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.has_kad_firewalled_tcp = false; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.kad_firewalled_tcp = true; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.kad_connected_since = 1700000002; },
+		[](StatusSnapshot &, KadSnapshot &k) { k.has_network = false; },
+		[](StatusSnapshot &, KadSnapshot &k) { k.users = 3; },
+		[](StatusSnapshot &, KadSnapshot &k) { k.files = 4; },
+		[](StatusSnapshot &, KadSnapshot &k) { k.nodes = 5; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.download_bytes_per_second = 1234; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.upload_bytes_per_second = 5678; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.download_overhead_bytes_per_second = 123; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.upload_overhead_bytes_per_second = 456; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.temp_free_bytes = 0; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.incoming_free_bytes = 9876543210LL; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.ul_queue_len = 42; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.total_src_count = 43; },
+	};
+	for (const auto &change : changes) {
+		CState state;
+		StatusSnapshot s;
+		s.server_ip = "5.6.7.8";
+		s.server_port = 4661;
+		s.has_ed2k_network = true;
+		s.has_kad_firewalled_tcp = true;
+		KadSnapshot k;
+		k.has_network = true;
+		state.WriteStatus(s);
+		state.WriteKad(k);
+		CEventBus bus;
+		LastSeenState prev;
+		EmitDiffsAndUpdate(bus, prev, state);
+		const auto cursor = bus.NewestId();
+		change(s, k);
+		state.WriteStatus(s);
+		state.WriteKad(k);
+		EmitDiffsAndUpdate(bus, prev, state);
+		CJsonWriter expected;
+		WriteStatusObject(expected, state.Dashboard());
+		int count = 0;
+		for (const auto &event : DrainSince(bus, cursor)) {
+			if (event.name == "status_changed") {
+				++count;
+				ASSERT_EQUALS(expected.GetBuffer(), event.data);
+			}
+		}
+		ASSERT_EQUALS(1, count);
+		const auto unchanged = bus.NewestId();
+		EmitDiffsAndUpdate(bus, prev, state);
+		ASSERT_TRUE(DrainSince(bus, unchanged).empty());
+	}
+}
+
+// Hidden measurements may keep changing after disconnect. Only a change to the published
+// representation should notify subscribers; making those values visible must still notify once.
+TEST(EventDiff, HiddenStatusChangesStaySilentUntilVisible)
+{
+	using Change = std::function<void(StatusSnapshot &, KadSnapshot &)>;
+	const std::vector<Change> changes = {
+		[](StatusSnapshot &s, KadSnapshot &) { s.ed2k_users = 11; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.ed2k_files = 12; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.server_name = "hidden"; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.server_port = 4661; },
+		[](StatusSnapshot &s, KadSnapshot &) { s.kad_firewalled_tcp = true; },
+		[](StatusSnapshot &, KadSnapshot &k) { k.users = 21; },
+		[](StatusSnapshot &, KadSnapshot &k) { k.files = 22; },
+		[](StatusSnapshot &, KadSnapshot &k) { k.nodes = 23; },
+	};
+	for (const auto &change : changes) {
+		CState state;
+		StatusSnapshot s;
+		KadSnapshot k;
+		CEventBus bus;
+		LastSeenState prev;
+		EmitDiffsAndUpdate(bus, prev, state);
+		const auto cursor = bus.NewestId();
+		CJsonWriter baseline;
+		WriteStatusObject(baseline, state.Dashboard());
+
+		change(s, k);
+		state.WriteStatus(s);
+		state.WriteKad(k);
+		CJsonWriter hidden;
+		WriteStatusObject(hidden, state.Dashboard());
+		ASSERT_EQUALS(baseline.GetBuffer(), hidden.GetBuffer());
+		EmitDiffsAndUpdate(bus, prev, state);
+		EmitDiffsAndUpdate(bus, prev, state);
+		ASSERT_TRUE(DrainSince(bus, cursor).empty());
+
+		s.has_ed2k_network = true;
+		s.server_ip = "5.6.7.8";
+		s.has_kad_firewalled_tcp = true;
+		k.has_network = true;
+		state.WriteStatus(s);
+		state.WriteKad(k);
+		CJsonWriter visible;
+		WriteStatusObject(visible, state.Dashboard());
+		EmitDiffsAndUpdate(bus, prev, state);
+		const auto events = DrainSince(bus, cursor);
+		ASSERT_EQUALS(static_cast<std::size_t>(1), events.size());
+		ASSERT_EQUALS(std::string("status_changed"), events.front().name);
+		ASSERT_EQUALS(visible.GetBuffer(), events.front().data);
+		const auto visible_cursor = bus.NewestId();
+		EmitDiffsAndUpdate(bus, prev, state);
+		ASSERT_TRUE(DrainSince(bus, visible_cursor).empty());
+	}
+}
+
+TEST(EventDiff, StatusColdStartAndEcReconnectKeepDashboardContract)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+	for (int tick = 0; tick < 3; ++tick) {
+		if (tick == 1)
+			state.MarkTickSuccess();
+		if (tick == 2)
+			state.MarkTickFailure();
+		const auto cursor = bus.NewestId();
+		EmitDiffsAndUpdate(bus, prev, state);
+		const auto d = state.Dashboard();
+		CJsonWriter expected;
+		WriteStatusObject(expected, d);
+		int count = 0;
+		for (const auto &event : DrainSince(bus, cursor)) {
+			if (event.name == "status_changed") {
+				++count;
+				ASSERT_EQUALS(expected.GetBuffer(), event.data);
+			}
+		}
+		ASSERT_EQUALS(1, count);
+	}
+}
+
+TEST(EventDiff, StatusOnlyFailurePreservesCollectionBaselines)
+{
+	CState state;
+	state.MutateDownloads([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 1;
+		f.hash = "8b54a3c28b54a3c28b54a3c28b54a3c2";
+		f.name = "cached file";
+		f.is_downloading = true;
+		files.emplace(f.ecid, f);
+	});
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &clients) {
+		ClientSnapshot c;
+		c.ecid = 2;
+		c.client_name = "cached client";
+		clients.emplace(c.ecid, c);
+	});
+	state.MutateServers([](std::map<std::uint32_t, ServerSnapshot> &servers) {
+		ServerSnapshot s;
+		s.ecid = 3;
+		s.name = "cached server";
+		servers.emplace(s.ecid, s);
+	});
+	state.MutateFriends([](std::map<std::uint32_t, FriendSnapshot> &friends) {
+		FriendSnapshot f;
+		f.ecid = 4;
+		f.name = "cached friend";
+		friends.emplace(f.ecid, f);
+	});
+	state.MarkTickSuccess();
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	// A failed retry may clear lists or apply some changes before a later EC operation fails.
+	// Those partial collection changes must not advance the subscriber's baseline.
+	state.ResetLists();
+	state.MutateFriends([](std::map<std::uint32_t, FriendSnapshot> &friends) {
+		friends.at(4).name = "partially refreshed friend";
+	});
+	state.MarkTickFailure();
+	CJsonWriter expected;
+	WriteStatusObject(expected, state.Dashboard());
+	ASSERT_TRUE(expected.GetBuffer().find("\"ec_connected\":false") != std::string::npos);
+	for (int attempt = 0; attempt < 2; ++attempt) {
+		const auto cursor = bus.NewestId();
+		EmitStatusDiffAndUpdate(bus, prev, state.Dashboard());
+		const auto events = DrainSince(bus, cursor);
+		if (attempt == 0) {
+			ASSERT_EQUALS(static_cast<std::size_t>(1), events.size());
+			ASSERT_EQUALS(std::string("status_changed"), events.front().name);
+			ASSERT_EQUALS(expected.GetBuffer(), events.front().data);
+		} else {
+			ASSERT_TRUE(events.empty());
+		}
+		ASSERT_EQUALS(static_cast<std::size_t>(1), prev.files.size());
+		ASSERT_EQUALS(std::string("cached file"), prev.files.at(1).name);
+		ASSERT_EQUALS(static_cast<std::size_t>(1), prev.clients.size());
+		ASSERT_EQUALS(std::string("cached client"), prev.clients.at(2).client_name);
+		ASSERT_EQUALS(static_cast<std::size_t>(1), prev.servers.size());
+		ASSERT_EQUALS(std::string("cached server"), prev.servers.at(3).name);
+		ASSERT_EQUALS(static_cast<std::size_t>(1), prev.friends.size());
+		ASSERT_EQUALS(std::string("cached friend"), prev.friends.at(4).name);
+	}
+}
+
+// A later rejected tick can carry new dashboard data while collections remain unpublished.
+// Recovery must compare those collections with the last complete tick, not the partial cache.
+TEST(EventDiff, StatusOnlyChangesAndRecoveryKeepIndependentBaselines)
+{
+	CState state;
+	state.MutateServers([](std::map<std::uint32_t, ServerSnapshot> &servers) {
+		ServerSnapshot server;
+		server.ecid = 7;
+		server.name = "before failure";
+		servers.emplace(server.ecid, server);
+	});
+	state.MarkTickSuccess();
+	const auto snapshot_at = state.SnapshotAt();
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+	state.ResetLists();
+	state.MarkTickFailure();
+	EmitStatusDiffAndUpdate(bus, prev, state.Dashboard());
+	const auto failed_cursor = bus.NewestId();
+
+	StatusSnapshot partial = state.Status();
+	partial.ed2k_state = "connecting";
+	state.WriteStatus(partial);
+	state.MarkTickFailure();
+	EmitStatusDiffAndUpdate(bus, prev, state.Dashboard());
+	EmitStatusDiffAndUpdate(bus, prev, state.Dashboard());
+	const auto changed = DrainSince(bus, failed_cursor);
+	ASSERT_EQUALS(static_cast<std::size_t>(1), changed.size());
+	ASSERT_EQUALS(std::string("status_changed"), changed.front().name);
+	ASSERT_TRUE(changed.front().data.find("\"ec_connected\":false") != std::string::npos);
+	ASSERT_TRUE(changed.front().data.find("\"state\":\"connecting\"") != std::string::npos);
+	ASSERT_EQUALS(snapshot_at, state.SnapshotAt());
+	ASSERT_EQUALS(std::string("before failure"), prev.servers.at(7).name);
+
+	const auto recovery_cursor = bus.NewestId();
+	state.MarkTickSuccess();
+	EmitDiffsAndUpdate(bus, prev, state);
+	const auto recovered = DrainSince(bus, recovery_cursor);
+	ASSERT_EQUALS(static_cast<std::size_t>(2), recovered.size());
+	ASSERT_EQUALS(std::string("server_removed"), recovered[0].name);
+	ASSERT_EQUALS(std::string("{\"ecid\":7}"), recovered[0].data);
+	ASSERT_EQUALS(std::string("status_changed"), recovered[1].name);
+	ASSERT_TRUE(recovered[1].data.find("\"ec_connected\":true") != std::string::npos);
+	ASSERT_TRUE(prev.servers.empty());
+	const auto unchanged_cursor = bus.NewestId();
+	EmitDiffsAndUpdate(bus, prev, state);
+	ASSERT_TRUE(DrainSince(bus, unchanged_cursor).empty());
+}
+
+namespace
+{
+class GroupedNumbers : public std::numpunct<char>
+{
+	char do_thousands_sep() const override { return ','; }
+	std::string do_grouping() const override { return "\3"; }
+};
+
+class ScopedGroupedLocale
+{
+public:
+	ScopedGroupedLocale()
+	: m_previous(std::locale())
+	{
+		std::locale::global(std::locale(m_previous, new GroupedNumbers));
+	}
+	~ScopedGroupedLocale() { std::locale::global(m_previous); }
+
+private:
+	std::locale m_previous;
+};
+} // namespace
+
+// The old stream-based event writer inherited numeric grouping from the global locale and
+// could output an invalid JSON integer such as 1,234 while the HTTP body still said 1234.
+TEST(EventDiff, StatusIntegerFormattingIgnoresGlobalLocale)
+{
+	ScopedGroupedLocale locale;
+	StatusSnapshot s;
+	s.download_bytes_per_second = 1234567;
+	s.server_name = "\"服务器\"\n\\\t";
+	s.server_ip = "5.6.7.8";
+	const std::string payload = EmitStatusAndGetPayload(s);
+	ASSERT_TRUE(payload.find("\"download_speed_bytes_per_second\":1234567") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"server_name\":\"\\\"服务器\\\"\\n\\\\\\t\"") != std::string::npos);
+}
+
+TEST(EventDiff, CollectionIntegerFormattingIgnoresGlobalLocale)
+{
+	ScopedGroupedLocale locale;
+	CState state;
+	ClientSnapshot client;
+	client.ecid = 1234567;
+	state.MutateClients(
+		[&](std::map<std::uint32_t, ClientSnapshot> &clients) { clients[client.ecid] = client; });
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+	std::string payload;
+	for (const auto &event : DrainAll(bus)) {
+		if (event.name == "client_added")
+			payload = event.data;
+	}
+	ASSERT_TRUE(payload.find("\"ecid\":1234567,") != std::string::npos);
+	const auto cursor = bus.NewestId();
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &clients) { clients.clear(); });
+	EmitDiffsAndUpdate(bus, prev, state);
+	const auto events = DrainSince(bus, cursor);
+	ASSERT_EQUALS(static_cast<std::size_t>(1), events.size());
+	ASSERT_EQUALS(std::string("client_removed"), events.front().name);
+	ASSERT_EQUALS(std::string("{\"ecid\":1234567}"), events.front().data);
+}
+
+TEST(EventDiff, CollectionStringsUseRestEscapes)
+{
+	CState state;
+	ClientSnapshot client;
+	client.ecid = 1;
+	client.client_name = "服务器 😀\x7f\"\\\n\b\f\r\t\x01";
+	state.MutateClients(
+		[&](std::map<std::uint32_t, ClientSnapshot> &clients) { clients[client.ecid] = client; });
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+	std::string payload;
+	for (const auto &event : DrainAll(bus)) {
+		if (event.name == "client_added")
+			payload = event.data;
+	}
+	CJsonWriter rest;
+	rest.BeginObject();
+	rest.Key("name");
+	rest.ValueString(wxString::FromUTF8(client.client_name.c_str()));
+	rest.EndObject();
+	const std::string field = rest.GetBuffer().substr(1, rest.GetBuffer().size() - 2);
+	ASSERT_TRUE(payload.find(field) != std::string::npos);
+	ASSERT_TRUE(payload.find("\\ud83d\\ude00\\u007f") != std::string::npos);
+}
+
+// The free-space sentinel must reach the SSE payload as JSON null, never as a number. amuled's
+// FREE_SPACE_UNKNOWN is -1 and its EC serializer casts it to uint64, so the wire carries
+// 0xFFFFFFFFFFFFFFFF; emitting that unsigned would tell a consumer 17 exabytes are free, and 0
+// would read as a full disk. The same rule as the REST body, asserted so the two cannot drift
+// apart.
+TEST(EventDiff, StatusEventSerialisesUnknownFreeSpaceAsNull)
+{
+	StatusSnapshot s;
+	s.temp_free_bytes = -1;
+	s.incoming_free_bytes = 48318382080LL;
+
+	const std::string payload = EmitStatusAndGetPayload(s);
+
+	ASSERT_TRUE(payload.find("\"temp_free_bytes\":null") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"incoming_free_bytes\":48318382080") != std::string::npos);
+	// The unsigned reading of the sentinel must appear nowhere.
+	ASSERT_TRUE(payload.find("18446744073709551615") == std::string::npos);
+}
+
+// high_id is positive-sense precisely so the disconnected case does not read
+// as a firewall verdict, and the id/public_ip pair rides the same payload.
+TEST(EventDiff, StatusEventCarriesIdentityFields)
+{
+	StatusSnapshot s;
+	s.ed2k_state = "connected";
+	s.ed2k_high_id = true;
+	s.ed2k_user_id = 1234567890u;
+	s.ed2k_public_ip = "210.2.150.73";
+	s.download_overhead_bytes_per_second = 8700;
+
+	const std::string payload = EmitStatusAndGetPayload(s);
+
+	ASSERT_TRUE(payload.find("\"high_id\":true") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"user_id\":1234567890") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"public_ip\":\"210.2.150.73\"") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"download_overhead_bytes_per_second\":8700") != std::string::npos);
+	// The retired spellings must not linger anywhere in the payload. A bare
+	// "id" would also match inside "user_id", so the quoted key is the test.
+	ASSERT_TRUE(payload.find("low_id") == std::string::npos);
+	ASSERT_TRUE(payload.find("\"id\":") == std::string::npos);
+}
+
+// A measured Kad firewall verdict must reach subscribers when it changes.
+TEST(EventDiff, StatusEventFiresWhenOnlyKadFirewalledTcpMoved)
+{
+	StatusSnapshot s;
+	s.kad_firewalled_tcp = true;
+	// The verdict only means anything while Kad is connected, so the payload prints it as a
+	// bool only when it was actually measured. Without this the field is `null` and the
+	// assertion below is about the wrong thing.
+	s.has_kad_firewalled_tcp = true;
+
+	const std::string payload = EmitStatusAndGetPayload(s);
+
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"firewalled_tcp\":true") != std::string::npos);
+	// The unqualified `firewalled` spelling must not appear anywhere in the payload.
+	ASSERT_TRUE(payload.find("\"firewalled\":") == std::string::npos);
+}
+
+// On disconnect, the bool keeps its last reading but becomes unknown in the payload.
+// Subscribers must receive that transition to null.
+TEST(EventDiff, StatusEventFiresWhenTheKadFirewallVerdictBecomesUnknown)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state); // baseline tick
+
+	StatusSnapshot measured;
+	measured.kad_firewalled_tcp = true;
+	measured.has_kad_firewalled_tcp = true;
+	state.WriteStatus(measured);
+	EmitDiffsAndUpdate(bus, prev, state);
+	DrainAll(bus);
+
+	// Kad drops. The bool is deliberately left true -- exactly the stale reading the gate has
+	// to suppress, and comparing values alone would see no change at all here.
+	StatusSnapshot dropped;
+	dropped.kad_firewalled_tcp = true;
+	dropped.has_kad_firewalled_tcp = false;
+	state.WriteStatus(dropped);
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &ev : DrainAll(bus)) {
+		if (ev.name == "status_changed")
+			payload = ev.data;
+	}
+
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"firewalled_tcp\":null") != std::string::npos);
+}
+
+// The same edge for the Kad network figures: the counts keep their last reading but become
+// null in the payload. Subscribers must receive that transition.
+TEST(EventDiff, StatusEventFiresWhenTheKadNetworkFiguresBecomeUnknown)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state); // baseline tick
+
+	KadSnapshot measured;
+	measured.users = 45793;
+	measured.files = 4945644;
+	measured.nodes = 499;
+	measured.has_network = true;
+	state.WriteKad(measured);
+	EmitDiffsAndUpdate(bus, prev, state);
+	DrainAll(bus);
+
+	// Kad drops; the counts underneath are untouched, as the daemon leaves
+	// them. Only has_network moves.
+	KadSnapshot dropped = measured;
+	dropped.has_network = false;
+	state.WriteKad(dropped);
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &ev : DrainAll(bus)) {
+		if (ev.name == "status_changed")
+			payload = ev.data;
+	}
+
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"node_count\":null") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"node_count\":499") == std::string::npos);
+}
+
+// A tick where only the overhead moved still has to fire: the field is in the REST body, so if the
+// SSE twin stays silent the two diverge until something else happens to move.
+TEST(EventDiff, StatusEventFiresWhenOnlyOverheadMoved)
+{
+	StatusSnapshot s;
+	s.download_overhead_bytes_per_second = 8700;
+
+	const std::string payload = EmitStatusAndGetPayload(s);
+
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"download_overhead_bytes_per_second\":8700") != std::string::npos);
+}
+
+// EVENTS.md promises this payload is "identical to the REST /status envelope", and both
+// connected_since timestamps are part of that envelope. They were missing from the event, so a
+// subscriber could never learn when the daemon connected without falling back to a poll.
+TEST(EventDiff, StatusEventCarriesBothConnectedSince)
+{
+	StatusSnapshot s;
+	s.ed2k_state = "connected";
+	s.kad_state = "connected";
+	s.ed2k_connected_since = 1751000000ull;
+	s.kad_connected_since = 1751000042ull;
+
+	const std::string payload = EmitStatusAndGetPayload(s);
+
+	ASSERT_TRUE(payload.find("\"connected_since_at\":1751000000") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"connected_since_at\":1751000042") != std::string::npos);
+}
+
+// A reconnect can leave every other field identical -- same server, same id, idle transfer rates --
+// and move only the timestamp. Without it in Equal() that tick emits nothing and subscribers keep
+// showing the old uptime.
+TEST(EventDiff, StatusEventFiresWhenOnlyConnectedSinceMoved)
+{
+	StatusSnapshot s;
+	s.ed2k_connected_since = 1751000000ull;
+
+	const std::string payload = EmitStatusAndGetPayload(s);
+
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"connected_since_at\":1751000000") != std::string::npos);
+}
+
+TEST(EventDiff, ClientAddedCarriesUploadFileName)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+
+	// Tick 1: baseline with no clients.
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	// Tick 2: a peer we are uploading to appears.
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &cache) {
+		ClientSnapshot c;
+		c.ecid = 10;
+		c.client_name = "peer-up";
+		c.upload_state = "uploading";
+		c.upload_file_name = "upload.iso";
+		cache.emplace(c.ecid, c);
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	const auto drained = DrainAll(bus);
+	int added = 0;
+	std::string payload;
+	for (const auto &ev : drained) {
+		if (ev.name == "client_added") {
+			++added;
+			payload = ev.data;
+		}
+	}
+	ASSERT_EQUALS(1, added);
+	ASSERT_TRUE(payload.find("upload_file_name") != std::string::npos);
+	ASSERT_TRUE(payload.find("upload.iso") != std::string::npos);
+}
+
+// Regression guard for the EventDiff.cpp Equal() half of PR #646: Equal() must compare every field
+// ToJson emits (see the note above Equal()), so a change to upload_file_name alone still fires
+// client_updated. Before the fix the field was in neither, and an upload-file change would have
+// been dropped -- the SSE-backed table would keep showing the stale filename.
+TEST(EventDiff, ClientUpdatedFiresOnUploadFileNameChange)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+
+	// Baseline: no clients.
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	// A peer appears, uploading "a.iso" from us (client_added).
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &cache) {
+		ClientSnapshot c;
+		c.ecid = 10;
+		c.client_name = "peer-up";
+		c.upload_state = "uploading";
+		c.upload_file_name = "a.iso";
+		cache.emplace(c.ecid, c);
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	// Only upload_file_name changes -> must fire client_updated.
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &cache) {
+		cache.at(10).upload_file_name = "b.iso";
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	const auto drained = DrainAll(bus);
+	int updated = 0;
+	std::string payload;
+	for (const auto &ev : drained) {
+		if (ev.name == "client_updated") {
+			++updated;
+			payload = ev.data;
+		}
+	}
+	ASSERT_EQUALS(1, updated);
+	ASSERT_TRUE(payload.find("b.iso") != std::string::npos);
+}
+
+// The same ToJson/Equal contract for the friends-list flag issue #1475 put on the list rows.
+// Adding a peer to the friends list changes nothing else about it, so an is_friend the
+// comparator ignored would leave every subscriber rendering the peer as a stranger until
+// some unrelated field moved.
+TEST(EventDiff, ClientUpdatedFiresOnFriendChange)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &cache) {
+		ClientSnapshot c;
+		c.ecid = 11;
+		c.client_name = "peer-stranger";
+		cache.emplace(c.ecid, c);
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	// Only the friends-list membership changes -> must fire client_updated.
+	state.MutateClients(
+		[](std::map<std::uint32_t, ClientSnapshot> &cache) { cache.at(11).is_friend = true; });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	const auto drained = DrainAll(bus);
+	int updated = 0;
+	std::string payload;
+	for (const auto &ev : drained) {
+		if (ev.name == "client_updated") {
+			++updated;
+			payload = ev.data;
+		}
+	}
+	ASSERT_EQUALS(1, updated);
+	// The key, not just the value: friend_slot is the other boolean in the payload and
+	// carries the opposite meaning.
+	ASSERT_TRUE(payload.find("\"friend\":true") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"friend_slot\":false") != std::string::npos);
+}
+
+// credit_ratio rides the same promotion as friend (issue #1474): the peer lists render it, so it
+// has to reach the diff payload, and a comparator that ignored it would leave a subscriber showing
+// the modifier a peer had when it connected. null and a number are different answers -- a daemon
+// that never sent the tag is not a peer whose history earns exactly 1.
+TEST(EventDiff, ClientUpdatedFiresOnCreditRatioChange)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &cache) {
+		ClientSnapshot c;
+		c.ecid = 12;
+		c.client_name = "peer-credits";
+		c.credit_ratio = 2.5;
+		c.has_credit_ratio = true;
+		cache.emplace(c.ecid, c);
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	state.MutateClients(
+		[](std::map<std::uint32_t, ClientSnapshot> &cache) { cache.at(12).credit_ratio = 3.25; });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	const auto drained = DrainAll(bus);
+	int updated = 0;
+	std::string payload;
+	for (const auto &ev : drained) {
+		if (ev.name == "client_updated") {
+			++updated;
+			payload = ev.data;
+		}
+	}
+	ASSERT_EQUALS(1, updated);
+	ASSERT_TRUE(payload.find("\"credit_ratio\":3.25") != std::string::npos);
+}
+
+// The tag going missing is a change in its own right: without has_credit_ratio in the comparator,
+// a peer whose ratio was 1.0 and then stopped being reported keeps rendering 1.0 forever.
+TEST(EventDiff, ClientCreditRatioNullsWhenTheDaemonStopsSendingIt)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &cache) {
+		ClientSnapshot c;
+		c.ecid = 13;
+		c.client_name = "peer-dropping-tag";
+		c.credit_ratio = 1.0;
+		c.has_credit_ratio = true;
+		cache.emplace(c.ecid, c);
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &cache) {
+		cache.at(13).has_credit_ratio = false;
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	const auto drained = DrainAll(bus);
+	std::string payload;
+	for (const auto &ev : drained) {
+		if (ev.name == "client_updated") {
+			payload = ev.data;
+		}
+	}
+	ASSERT_TRUE(payload.find("\"credit_ratio\":null") != std::string::npos);
+}
+
+// The same contract as the client test above, for the capability bitmasks issue #974 added: a
+// server announcing its flags after the first UDP status reply has to fire exactly one
+// server_updated, and the payload has to carry the decoded object, not just the raw bitmask.
+TEST(EventDiff, ServerUpdatedFiresOnTcpFlagsChange)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	// A freshly added server, before any UDP status reply came back:
+	// nothing announced, so every bit is clear.
+	state.MutateServers([](std::map<std::uint32_t, ServerSnapshot> &cache) {
+		ServerSnapshot s;
+		s.ecid = 5;
+		s.name = "srv";
+		cache.emplace(s.ecid, s);
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	// The reply lands and the server announces what it supports.
+	state.MutateServers([](std::map<std::uint32_t, ServerSnapshot> &cache) {
+		cache.at(5).tcp_flags = SRV_TCPFLG_COMPRESSION | SRV_TCPFLG_RELATEDSEARCH;
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	const auto drained = DrainAll(bus);
+	int updated = 0;
+	std::string payload;
+	for (const auto &ev : drained) {
+		if (ev.name == "server_updated") {
+			++updated;
+			payload = ev.data;
+		}
+	}
+	ASSERT_EQUALS(1, updated);
+	ASSERT_TRUE(payload.find("\"related_search\":true") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"compression\":true") != std::string::npos);
+	// A bit that was not announced is present and false, never absent:
+	// consumers are documented as never having to test for the key.
+	ASSERT_TRUE(payload.find("\"unicode\":false") != std::string::npos);
+}
+
+// The peer-version key must be spelled the same on the event bus as in the REST list item.
+// `WriteServerObject` spells it `software_version`, and the SSE twin must match: if it spelled the
+// same value differently, a client hydrating from GET /servers and then applying server_updated
+// diffs would get the version under two keys and could not merge them. Equal() compares
+// s.version either way, so nothing failed loudly -- which is why this is pinned by name rather than
+// left to the shape assertions above.
+TEST(EventDiff, ServerPayloadSpellsTheVersionKeyLikeRest)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+
+	EmitDiffsAndUpdate(bus, prev, state);
+	state.MutateServers([](std::map<std::uint32_t, ServerSnapshot> &cache) {
+		ServerSnapshot s;
+		s.ecid = 7;
+		s.name = "srv";
+		s.version = "17.15";
+		cache.emplace(s.ecid, s);
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &ev : DrainAll(bus)) {
+		if (ev.name == "server_added") {
+			payload = ev.data;
+		}
+	}
+
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"software_version\":\"17.15\"") != std::string::npos);
+	// And not under a bare `version` spelling. Quoted so it cannot match inside
+	// "software_version" itself.
+	ASSERT_TRUE(payload.find("\"version\":") == std::string::npos);
+}
+
+// The publishing limits move independently of the flags and are likewise
+// carried in the payload rather than requiring a re-GET.
+TEST(EventDiff, ServerUpdatedFiresOnFileLimitChange)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	state.MutateServers([](std::map<std::uint32_t, ServerSnapshot> &cache) {
+		ServerSnapshot s;
+		s.ecid = 6;
+		s.name = "srv";
+		cache.emplace(s.ecid, s);
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	state.MutateServers([](std::map<std::uint32_t, ServerSnapshot> &cache) {
+		cache.at(6).soft_file_limit = 1000;
+		cache.at(6).hard_file_limit = 5000;
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	const auto drained = DrainAll(bus);
+	int updated = 0;
+	std::string payload;
+	for (const auto &ev : drained) {
+		if (ev.name == "server_updated") {
+			++updated;
+			payload = ev.data;
+		}
+	}
+	ASSERT_EQUALS(1, updated);
+	ASSERT_TRUE(payload.find("\"soft_file_limit\":1000") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"hard_file_limit\":5000") != std::string::npos);
+}
+
+// The flags object is built by one shared helper so the REST writer (Api.cpp, CJsonWriter) and this
+// SSE writer emit the same bytes. Pin the exact shape: key order follows the wire-bit order,
+// bitmask leads.
+TEST(EventDiff, ServerFlagsJsonShape)
+{
+	ASSERT_EQUALS(std::string("{\"bitmask\":0,\"compression\":false,\"new_tags\":false,"
+				  "\"unicode\":false,\"related_search\":false,"
+				  "\"type_tag_integer\":false,\"large_files\":false,"
+				  "\"tcp_obfuscation\":false}"),
+		webapi::ServerTcpFlagsJson(0));
+
+	// An unnamed bit survives in `bitmask` even though no boolean
+	// describes it -- that is what the field is there for.
+	ASSERT_TRUE(webapi::ServerUdpFlagsJson(0x8000u).find("\"bitmask\":32768") != std::string::npos);
+}
+
+// search_result_updated: the fields that change after the search ends. The window this closes: a
+// finished search stops emitting search_progress, so a hit downloaded from it, or a Kad notes
+// lookup landing afterwards, used to be invisible until someone re-read the endpoint.
+namespace
+{
+// Seed one result and baseline it, so each case below starts from "the
+// subscriber already holds this row".
+void SeedOneResult(CState &state, CEventBus &bus, LastSeenState &prev)
+{
+	state.MarkSearchStarted(42, "global", "ubuntu");
+	EmitDiffsAndUpdate(bus, prev, state); // cold-start baseline
+	state.MutateSearch(42, [](std::map<std::uint32_t, SearchResult> &cache) {
+		SearchResult r;
+		r.ecid = 7;
+		r.hash = "8b54a3c28b54a3c28b54a3c28b54a3c2";
+		r.name = "ubuntu.iso";
+		r.size = 4096;
+		r.status = "new";
+		cache.emplace(r.ecid, r);
+	});
+	EmitDiffsAndUpdate(bus, prev, state); // the _added
+}
+
+std::size_t CountEvent(CEventBus &bus, const char *name)
+{
+	std::size_t n = 0;
+	for (const auto &e : DrainAll(bus))
+		if (e.name == name)
+			++n;
+	return n;
+}
+} // namespace
+
+// search_result_removed: the row the API stopped serving. Every other collection emits a _removed;
+// the search diff walked only the current results, so a row that left the result space stayed on
+// every subscriber's screen for the life of the search. On a finished search no further
+// search_progress fires either, so nothing prompted a re-read.
+TEST(EventDiff, SearchResultRemovedFiresWhenAResultLeavesTheSearch)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+	SeedOneResult(state, bus, prev);
+	ASSERT_EQUALS(static_cast<size_t>(1), CountEvent(bus, "search_result_added"));
+
+	// The daemon stops reporting it: the union merge erases the ECID, or the
+	// fold makes it a child of another row.
+	state.MutateSearch(42, [](std::map<std::uint32_t, SearchResult> &cache) { cache.erase(7); });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	ASSERT_EQUALS(static_cast<size_t>(1), CountEvent(bus, "search_result_removed"));
+	// Counts are cumulative over the run: still the one _added from the seed,
+	// and the row was not announced as an update on its way out.
+	ASSERT_EQUALS(static_cast<size_t>(1), CountEvent(bus, "search_result_added"));
+	ASSERT_EQUALS(static_cast<size_t>(0), CountEvent(bus, "search_result_updated"));
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus))
+		if (e.name == "search_result_removed")
+			payload = e.data;
+	// Identity only, scoped by the search that owned the row.
+	ASSERT_EQUALS(
+		std::string("{\"search_id\":42,\"hash\":\"8b54a3c28b54a3c28b54a3c28b54a3c2\"}"), payload);
+
+	// Idempotent: with the baseline updated, a further tick adds no second
+	// removal (the count is cumulative, so it must still read exactly one).
+	EmitDiffsAndUpdate(bus, prev, state);
+	ASSERT_EQUALS(static_cast<size_t>(1), CountEvent(bus, "search_result_removed"));
+}
+
+// A row that stays put must not be announced as removed.
+TEST(EventDiff, SearchResultRemovedSilentWhileTheResultRemains)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+	SeedOneResult(state, bus, prev);
+
+	state.MutateSearch(
+		42, [](std::map<std::uint32_t, SearchResult> &cache) { cache[7].status = "downloaded"; });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	ASSERT_EQUALS(static_cast<size_t>(0), CountEvent(bus, "search_result_removed"));
+}
+
+// DELETE /logs/amule empties the buffer. The old signal was a shrunk size, which misses the case
+// that matters: cleared and refilled past the old count between two ticks, the size only grows, so
+// the append branch published a mid-buffer slice as though it were the tail and never published
+// what came before it. The clear-generation catches both shapes.
+TEST(EventDiff, LogClearPublishesResyncRatherThanAMidBufferSlice)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+
+	state.AppendAmuleLog({ "one\n", "two\n" });
+	EmitDiffsAndUpdate(bus, prev, state); // cold-start baseline, silent
+	ASSERT_EQUALS(static_cast<size_t>(0), CountEvent(bus, "log_appended"));
+
+	// Cleared, then refilled past the old length before the next tick: three
+	// lines where there were two, so the size alone reads as growth.
+	state.ClearAmuleLog();
+	state.AppendAmuleLog({ "A\n", "B\n", "C\n" });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	ASSERT_EQUALS(static_cast<size_t>(1), CountEvent(bus, "resync"));
+	// No log_appended: publishing "C" alone as the tail is exactly the bug.
+	ASSERT_EQUALS(static_cast<size_t>(0), CountEvent(bus, "log_appended"));
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus))
+		if (e.name == "resync")
+			payload = e.data;
+	ASSERT_EQUALS(std::string("{\"reason\":\"log_cleared\"}"), payload);
+
+	// The baseline moved to the refilled buffer, so the next append is a
+	// clean tail again and no second resync fires.
+	state.AppendAmuleLog({ "D\n" });
+	EmitDiffsAndUpdate(bus, prev, state);
+	ASSERT_EQUALS(static_cast<size_t>(1), CountEvent(bus, "resync"));
+	ASSERT_EQUALS(static_cast<size_t>(1), CountEvent(bus, "log_appended"));
+	for (const auto &e : DrainAll(bus))
+		if (e.name == "log_appended")
+			payload = e.data;
+	ASSERT_TRUE(payload.find("D") != std::string::npos);
+	ASSERT_TRUE(payload.find("C") == std::string::npos);
+}
+
+// A clear that leaves the buffer smaller is the same edge, and must not be
+// mistaken for the old silent-truncation path.
+TEST(EventDiff, LogClearToASmallerBufferAlsoPublishesResync)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+
+	state.AppendAmuleLog({ "one\n", "two\n", "three\n" });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	state.ClearAmuleLog();
+	state.AppendAmuleLog({ "X\n" });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	ASSERT_EQUALS(static_cast<size_t>(1), CountEvent(bus, "resync"));
+	ASSERT_EQUALS(static_cast<size_t>(0), CountEvent(bus, "log_appended"));
+}
+
+TEST(EventDiff, SearchResultUpdatedFiresWhenADownloadStateChanges)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+	SeedOneResult(state, bus, prev);
+	ASSERT_EQUALS(static_cast<size_t>(1), CountEvent(bus, "search_result_added"));
+	ASSERT_EQUALS(static_cast<size_t>(0), CountEvent(bus, "search_result_updated"));
+
+	// You start downloading the hit. On a finished search nothing else would
+	// ever tell a subscriber this.
+	state.MutateSearch(42, [](std::map<std::uint32_t, SearchResult> &cache) {
+		cache[7].status = "downloaded";
+		cache[7].already_downloaded = true;
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	ASSERT_EQUALS(static_cast<size_t>(1), CountEvent(bus, "search_result_updated"));
+	// Still exactly one _added: the row was not re-announced as new.
+	ASSERT_EQUALS(static_cast<size_t>(1), CountEvent(bus, "search_result_added"));
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus))
+		if (e.name == "search_result_updated")
+			payload = e.data;
+	// Same shape as _added, search_id first, carrying the new values.
+	ASSERT_TRUE(payload.compare(0, 15, "{\"search_id\":42") == 0);
+	ASSERT_TRUE(payload.find("\"status\":\"downloaded\"") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"already_downloaded\":true") != std::string::npos);
+}
+
+TEST(EventDiff, SearchResultUpdatedFiresWhenKadNotesLand)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+	SeedOneResult(state, bus, prev);
+
+	// The lookup starts...
+	state.MutateSearch(42,
+		[](std::map<std::uint32_t, SearchResult> &cache) { cache[7].kad_comment_searching = true; });
+	EmitDiffsAndUpdate(bus, prev, state);
+	ASSERT_EQUALS(static_cast<size_t>(1), CountEvent(bus, "search_result_updated"));
+
+	// ...and lands, bringing a note and the rating it aggregates into.
+	state.MutateSearch(42, [](std::map<std::uint32_t, SearchResult> &cache) {
+		cache[7].kad_comment_searching = false;
+		cache[7].rating = 4;
+		SearchResult::Comment c;
+		c.username = "alice";
+		c.filename = "ubuntu.iso";
+		c.rating = 4;
+		c.comment = "good";
+		cache[7].comments.push_back(c);
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+	ASSERT_EQUALS(static_cast<size_t>(2), CountEvent(bus, "search_result_updated"));
+}
+
+// The reason this is a restricted comparator rather than a full struct compare: source counts move
+// on essentially every tick of a running search, and search_progress is already the re-read cue for
+// them. Pushing them per result would make this the loudest channel on the bus.
+TEST(EventDiff, SearchResultUpdatedIgnoresSourceCountChurn)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+	SeedOneResult(state, bus, prev);
+
+	state.MutateSearch(42, [](std::map<std::uint32_t, SearchResult> &cache) {
+		cache[7].source_count = 99;
+		cache[7].complete_source_count = 42;
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	ASSERT_EQUALS(static_cast<size_t>(0), CountEvent(bus, "search_result_updated"));
+}
+
+// A quiet tick must not emit: the comparator has to be a real comparison, not
+// "we saw this row again".
+TEST(EventDiff, SearchResultUpdatedStaysSilentOnAnUnchangedResult)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+	SeedOneResult(state, bus, prev);
+
+	EmitDiffsAndUpdate(bus, prev, state);
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	ASSERT_EQUALS(static_cast<size_t>(0), CountEvent(bus, "search_result_updated"));
+	ASSERT_EQUALS(static_cast<size_t>(1), CountEvent(bus, "search_result_added"));
+}
+
+// search_result_added is the results-list entry, verbatim. EVENTS.md promises the payload is byte
+// for byte a GET /search/{id}/results entry with `search_id` prepended. That used to be two hand-
+// written serialisers kept in step by review, and they had already drifted apart. Both now go
+// through WriteSearchResultFields, so this pins the fields the event MUST carry -- including the
+// two the hand-rolled copy had been missing.
+TEST(EventDiff, SearchResultAddedCarriesTheFullResultsEntry)
+{
+	CState state;
+	state.MarkSearchStarted(42, "browse", "SomePeerNick");
+
+	CEventBus bus;
+	LastSeenState prev;
+	// First tick baselines the (empty) slot: cold start never replays
+	// history as events.
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	state.MutateSearch(42, [](std::map<std::uint32_t, SearchResult> &cache) {
+		SearchResult r;
+		r.ecid = 7;
+		r.hash = "8b54a3c28b54a3c28b54a3c28b54a3c2";
+		r.name = "peer-shared.iso";
+		r.size = 4096;
+		r.source_count = 3;
+		r.complete_source_count = 1;
+		r.status = "new";
+		r.type = "iso";
+		r.directory = "Incoming/ISOs";
+		SearchResult::Child c;
+		c.ecid = 8;
+		c.name = "peer-shared-copy.iso";
+		c.hash = r.hash;
+		c.directory = "Backup/ISOs";
+		r.children.push_back(c);
+		cache.emplace(r.ecid, r);
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "search_result_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	// search_id leads, so a consumer can demux before parsing the rest.
+	ASSERT_TRUE(payload.compare(0, 15, "{\"search_id\":42") == 0);
+	// The browse-only folder, on the result and on its child.
+	ASSERT_TRUE(payload.find("\"directory\":\"Incoming/ISOs\"") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"directory\":\"Backup/ISOs\"") != std::string::npos);
+	// The two fields the previously hand-rolled event payload omitted
+	// while the REST writer emitted them.
+	ASSERT_TRUE(payload.find("\"kad_comment_lookup_running\":false") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"comments\":[]") != std::string::npos);
+}
+
+// search_closed fires when a slot disappears. A subscriber holding one view per search otherwise
+// only learns the search is gone by 404ing on a later read -- and with SSE live it may never read
+// again.
+TEST(EventDiff, SearchClosedFiresOnceWhenTheSlotIsFreed)
+{
+	CState state;
+	state.MarkSearchStarted(42, "global", "ubuntu");
+	state.MarkSearchStarted(43, "kad", "debian");
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state); // baseline: both known
+
+	// The bus replays from the start on every drain, so count over the
+	// whole history rather than treating a drain as "what is new".
+	auto CountClosed = [&bus]() {
+		std::size_t n = 0;
+		std::string last;
+		for (const auto &e : DrainAll(bus)) {
+			if (e.name == "search_closed") {
+				++n;
+				last = e.data;
+			}
+		}
+		return std::make_pair(n, last);
+	};
+	ASSERT_EQUALS(static_cast<size_t>(0), CountClosed().first);
+
+	state.CloseSearch(42);
+	EmitDiffsAndUpdate(bus, prev, state);
+	const auto after_close = CountClosed();
+	ASSERT_EQUALS(static_cast<size_t>(1), after_close.first);
+	ASSERT_EQUALS(std::string("{\"search_id\":42}"), after_close.second);
+
+	// Further ticks stay silent: the baseline was pruned with the event, so a freed search is
+	// announced exactly once and its surviving sibling is never swept up with it.
+	EmitDiffsAndUpdate(bus, prev, state);
+	EmitDiffsAndUpdate(bus, prev, state);
+	ASSERT_EQUALS(static_cast<size_t>(1), CountClosed().first);
+	ASSERT_TRUE(state.HasSearch(43));
+}
+
+// The client payload carries part_progress_percent. EVENTS.md promises an `_updated` subscriber
+// gets the full new state and never has to re-GET. This field was the one exception on the client
+// resource: it is derived rather than refreshed -- it needs the part count of the linked download,
+// which lives in a different snapshot -- so the diff pass never computed it and the payload
+// silently lacked a key the REST row had.
+//
+// #1159 section 1. ClientSnapshot carries has_parts_offered_count precisely so a peer that never
+// reported its part map can be told apart from one reporting zero -- and zero is a real answer,
+// being what a fresh source looks like before its map arrives. The field was emitted
+// unconditionally, so nothing read the flag and both cases went out as 0.
+TEST(EventDiff, ClientEventEmitsNullAvailablePartsWhenTheMapIsUnreported)
+{
+	CState state;
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &clients) {
+		ClientSnapshot c;
+		c.ecid = 71;
+		c.client_name = "no-map";
+		// has_parts_offered_count stays false: the tag never arrived.
+		clients.emplace(c.ecid, c);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "client_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"parts_offered_count\":null") != std::string::npos);
+}
+
+// ...and a peer that did report zero still says zero.
+TEST(EventDiff, ClientEventEmitsZeroAvailablePartsWhenTheMapSaysZero)
+{
+	CState state;
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &clients) {
+		ClientSnapshot c;
+		c.ecid = 72;
+		c.client_name = "empty-map";
+		c.parts_offered_count = 0;
+		c.has_parts_offered_count = true;
+		clients.emplace(c.ecid, c);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "client_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"parts_offered_count\":0") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"parts_offered_count\":null") == std::string::npos);
+}
+
+// The comparator has to see the flag too. null -> 0 is a visible change; with
+// only the value compared it reads as equal and the row never updates.
+TEST(EventDiff, ClientUpdateFiresWhenThePartMapFinallyArrivesReportingZero)
+{
+	CState state;
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &clients) {
+		ClientSnapshot c;
+		c.ecid = 73;
+		c.client_name = "late-map";
+		clients.emplace(c.ecid, c);
+	});
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+	DrainAll(bus);
+
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &clients) {
+		auto it = clients.find(73);
+		it->second.parts_offered_count = 0;
+		it->second.has_parts_offered_count = true;
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	bool updated = false;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "client_updated")
+			updated = true;
+	}
+	ASSERT_TRUE(updated);
+}
+
+// #1159 section 9. amuled sends 0xffff for "that peer's queue is full" rather than a position, so
+// relaying it verbatim rendered "position 65535" and sorted full queues to the far end as if they
+// were merely very distant.
+TEST(EventDiff, ClientEventEmitsNullRemoteQueueRankWhenTheQueueIsFull)
+{
+	CState state;
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &clients) {
+		ClientSnapshot full;
+		full.ecid = 74;
+		full.client_name = "full-queue";
+		full.remote_queue_position = kRemoteQueueFullSentinel;
+		clients.emplace(full.ecid, full);
+
+		ClientSnapshot ranked;
+		ranked.ecid = 75;
+		ranked.client_name = "ranked";
+		ranked.remote_queue_position = 12;
+		clients.emplace(ranked.ecid, ranked);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string full_payload, ranked_payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name != "client_added")
+			continue;
+		if (e.data.find("full-queue") != std::string::npos)
+			full_payload = e.data;
+		if (e.data.find("ranked") != std::string::npos)
+			ranked_payload = e.data;
+	}
+	ASSERT_TRUE(!full_payload.empty());
+	ASSERT_TRUE(full_payload.find("\"remote_queue_position\":null") != std::string::npos);
+	// A real position is still a number.
+	ASSERT_TRUE(!ranked_payload.empty());
+	ASSERT_TRUE(ranked_payload.find("\"remote_queue_position\":12") != std::string::npos);
+}
+
+TEST(EventDiff, ClientEventCarriesPartProgressPercent)
+{
+	CState state;
+	// A 4-part file (3 * PARTSIZE + a byte) the peer is a source for, holding
+	// 3 of its 4 chunks.
+	state.MutateDownloads([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 1;
+		f.hash = "8b54a3c28b54a3c28b54a3c28b54a3c2";
+		f.name = "four-parts.iso";
+		f.size = kPartSizeBytes * 3 + 1;
+		f.is_downloading = true;
+		files.emplace(f.ecid, f);
+	});
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &clients) {
+		ClientSnapshot c;
+		c.ecid = 7;
+		c.client_name = "peer";
+		c.download_file_hash = "8b54a3c28b54a3c28b54a3c28b54a3c2";
+		c.parts_offered_count = 3;
+		c.has_parts_offered_count = true;
+		clients.emplace(c.ecid, c);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "client_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	// 3 of 4 parts. Asserting the prefix rather than the full double keeps
+	// this independent of ostream's default precision.
+	ASSERT_TRUE(payload.find("\"part_progress_percent\":75") != std::string::npos);
+}
+
+TEST(EventDiff, ClientEventNullsPartProgressPercentWithNoLinkedFile)
+{
+	// A peer that only downloads FROM us has no meaningful denominator, so the field is null --
+	// the same rule the REST row follows since #1160 section 1, where an unknown value is null
+	// rather than an absent key. The -1 sentinel is in-process only and must never reach the
+	// wire.
+	CState state;
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &clients) {
+		ClientSnapshot c;
+		c.ecid = 8;
+		c.client_name = "leech";
+		clients.emplace(c.ecid, c);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "client_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"part_progress_percent\":null") != std::string::npos);
+	ASSERT_TRUE(payload.find("-1") == std::string::npos);
+}
+
+// `media` is null, never absent, on a shared event whose file has no metadata. The event promises
+// key parity with the /shared row, and that row reports the key unconditionally -- a subscriber
+// diffing the two must not find `media` on one side only. This drifted once already: the REST
+// writer moved to null while this one kept skipping the key, and only a live parity check caught
+// it.
+TEST(EventDiff, SharedEventNullsMediaWithNoMetadata)
+{
+	CState state;
+	state.MutateShared([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 12;
+		f.hash = "1212121212121212121212121212bbbb";
+		f.name = "no-metadata.bin";
+		f.size = kPartSizeBytes;
+		f.is_shared = true;
+		f.has_media = false;
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "shared_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"media\":null") != std::string::npos);
+}
+
+// ...and the object itself when there is one, so the null above is the
+// no-value answer rather than the writer having lost the field.
+TEST(EventDiff, SharedEventCarriesMediaWhenPresent)
+{
+	CState state;
+	state.MutateShared([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 13;
+		f.hash = "1313131313131313131313131313cccc";
+		f.name = "clip.mkv";
+		f.size = kPartSizeBytes;
+		f.is_shared = true;
+		f.has_media = true;
+		f.media.duration_seconds = 5400;
+		f.media.bitrate_kilobits_per_second = 1500;
+		f.media.codec = "h264";
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "shared_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"media\":{\"duration_seconds\":5400") != std::string::npos);
+	// The label, not the raw codec id: the desktop shows "H.264" for this file and the API agrees.
+	ASSERT_TRUE(payload.find("\"codec\":\"H.264\"") != std::string::npos);
+}
+
+// Hashing progress on the shared side (issue #1054). amuled emits one tag kind per ECID, so a file
+// that is both downloading and shared arrives only as EC_TAG_PARTFILE and its hashing progress
+// lands in the download sub-block. SharedHashingProgress() is the fallback every shared-side
+// consumer goes through; these pin that the SSE payload and the equality test use it too, since a
+// shared row that never updates is the failure this hides behind.
+TEST(EventDiff, SharedEventCarriesHashingProgressFromTheSharedSide)
+{
+	CState state;
+	state.MutateShared([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 11;
+		f.hash = "1111111111111111111111111111aaaa";
+		f.name = "complete.iso";
+		f.size = kPartSizeBytes * 4;
+		f.is_shared = true;
+		f.shared.hashing_progress = 2;
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "shared_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"hashed_part_count\":2") != std::string::npos);
+}
+
+TEST(EventDiff, SharedEventFallsBackToTheDownloadSideHashingProgress)
+{
+	// The shared partfile case: shared.hashing_progress stays 0 because the tag never arrived
+	// on the KNOWNFILE variant, and the accessor reads across to the download sub-block.
+	CState state;
+	state.MutateShared([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 12;
+		f.hash = "2222222222222222222222222222bbbb";
+		f.name = "in-progress.iso";
+		f.size = kPartSizeBytes * 4;
+		f.is_shared = true;
+		f.is_downloading = true;
+		f.download.hashed_part_count = 3;
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "shared_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"hashed_part_count\":3") != std::string::npos);
+}
+
+TEST(EventDiff, SharedUpdatedFiresWhenOnlyHashingProgressMoved)
+{
+	// EqualShared compares through the accessor, so a hash advancing on the download side of a
+	// shared partfile still pushes shared_updated. Comparing the raw shared field would hold
+	// every tick of it back.
+	CState state;
+	state.MutateShared([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 13;
+		f.hash = "3333333333333333333333333333cccc";
+		f.name = "verifying.iso";
+		f.size = kPartSizeBytes * 4;
+		f.is_shared = true;
+		f.is_downloading = true;
+		f.download.hashed_part_count = 1;
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state); // cold start: shared_added
+	DrainAll(bus);
+
+	state.MutateShared([](FileMap &files) { files.find(13)->second.download.hashed_part_count = 2; });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "shared_updated")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"hashed_part_count\":2") != std::string::npos);
+}
+
+TEST(EventDiff, DownloadUpdatedFiresWhenOnlyHashingProgressMoved)
+{
+	// The download side needs the same treatment: hashing_progress must be compared in
+	// EqualDownload, not treated as GET /downloads/{hash}-only, so a Verify Local Data pass
+	// produces a download_updated.
+	CState state;
+	state.MutateDownloads([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 14;
+		f.hash = "4444444444444444444444444444dddd";
+		f.name = "checking.iso";
+		f.size = kPartSizeBytes * 4;
+		f.is_downloading = true;
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+	DrainAll(bus);
+
+	state.MutateDownloads([](FileMap &files) { files.find(14)->second.download.hashed_part_count = 5; });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "download_updated")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"hashed_part_count\":5") != std::string::npos);
+}
+
+// The A4AF membership rides download_updated, and the predicate compares the list rather than the
+// count that summarises it. A swap moves one client out and another in, so `sources_a4af` never
+// moves -- comparing only the count left the panel showing the client that had already left.
+TEST(EventDiff, DownloadUpdatedFiresWhenTheA4afSourceSetSwapsAtAConstantCount)
+{
+	CState state;
+	state.MutateDownloads([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 15;
+		f.hash = "5555555555555555555555555555eeee";
+		f.name = "parked.iso";
+		f.size = kPartSizeBytes * 2;
+		f.is_downloading = true;
+		f.download.sources_a4af = 2;
+		f.download.a4af_sources = { 7, 9 };
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+	DrainAll(bus);
+
+	state.MutateDownloads(
+		[](FileMap &files) { files.find(15)->second.download.a4af_sources = { 7, 11 }; });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "download_updated")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"source_ecids\":[7,11]") != std::string::npos);
+}
+
+// R10: the key is always there. A download with no A4AF sources reports an
+// empty array, so a client can index it without first testing for the key.
+TEST(EventDiff, DownloadEventCarriesAnEmptySourceEcidsArrayWithNoA4afSources)
+{
+	CState state;
+	state.MutateDownloads([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 16;
+		f.hash = "6666666666666666666666666666ffff";
+		f.name = "lonely.iso";
+		f.size = kPartSizeBytes;
+		f.is_downloading = true;
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "download_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"source_ecids\":[]") != std::string::npos);
+}
+
+// A file leaving the map fires download_removed carrying its hash, and drops out of the baseline --
+// the `gone` erase. Without it the baseline would grow without bound across a session and keep re-
+// firing the removal every tick.
+TEST(EventDiff, DownloadRemovedFiresWhenTheFileLeavesTheMap)
+{
+	CState state;
+	state.MutateDownloads([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 21;
+		f.hash = "3333333333333333333333333333cccc";
+		f.name = "gone.iso";
+		f.size = kPartSizeBytes * 2;
+		f.is_downloading = true;
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state); // baseline: download_added
+	DrainAll(bus);
+	ASSERT_EQUALS(static_cast<std::size_t>(1), prev.files.size());
+
+	// FileMap::erase is iterator-only -- it keeps the hash index in step.
+	state.MutateDownloads([](FileMap &files) { files.erase(files.find(21)); });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	int removed_events = 0;
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "download_removed") {
+			++removed_events;
+			payload = e.data;
+		}
+	}
+	ASSERT_EQUALS(1, removed_events);
+	ASSERT_TRUE(payload.find("3333333333333333333333333333cccc") != std::string::npos);
+	// Baseline entry erased, so a third tick stays silent.
+	ASSERT_TRUE(prev.files.empty());
+	const std::uint64_t cursor = bus.NewestId();
+	EmitDiffsAndUpdate(bus, prev, state);
+	ASSERT_TRUE(DrainSince(bus, cursor).empty());
+}
+
+// The share flag clearing on a file that stays in the map fires shared_removed without erasing the
+// baseline entry: the ECID is still live, only that role ended.
+TEST(EventDiff, SharedRemovedFiresWhenOnlyTheRoleFlagClears)
+{
+	CState state;
+	state.MutateShared([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 22;
+		f.hash = "4444444444444444444444444444dddd";
+		f.name = "unshared.iso";
+		f.size = kPartSizeBytes * 2;
+		f.is_shared = true;
+		f.is_downloading = true;
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+	DrainAll(bus);
+
+	state.MutateShared([](FileMap &files) { files.find(22)->second.is_shared = false; });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	int shared_removed = 0, download_removed = 0;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "shared_removed")
+			++shared_removed;
+		if (e.name == "download_removed")
+			++download_removed;
+	}
+	ASSERT_EQUALS(1, shared_removed);
+	// The download role is untouched, so nothing tears down that side.
+	ASSERT_EQUALS(0, download_removed);
+	// Entry stays in the baseline, with the cleared flag written back.
+	ASSERT_EQUALS(static_cast<std::size_t>(1), prev.files.size());
+	ASSERT_TRUE(!prev.files.find(22)->second.is_shared);
+}
+
+// One ECID swapping roles in a single tick emits both families, removed first: a client tearing
+// down its download slot must not see the shared_added for the same file arrive before the
+// download_removed.
+TEST(EventDiff, RoleFlipEmitsRemovedBeforeAdded)
+{
+	CState state;
+	state.MutateDownloads([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 23;
+		f.hash = "5555555555555555555555555555eeee";
+		f.name = "completed.iso";
+		f.size = kPartSizeBytes * 2;
+		f.is_downloading = true;
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+	DrainAll(bus);
+
+	// The download finished: it stops being a download and starts being shared.
+	state.MutateDownloads([](FileMap &files) {
+		FileSnapshot &f = files.find(23)->second;
+		f.is_downloading = false;
+		f.is_shared = true;
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	int removed_at = -1, added_at = -1, i = 0;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "download_removed")
+			removed_at = i;
+		if (e.name == "shared_added")
+			added_at = i;
+		++i;
+	}
+	ASSERT_TRUE(removed_at >= 0);
+	ASSERT_TRUE(added_at >= 0);
+	ASSERT_TRUE(removed_at < added_at);
+}
+
+// The write-back trap: a role flag flipping is itself enough to refresh the whole baseline entry,
+// so fields the *other* role's predicate never compared cannot reach the payload stale. Here the
+// download sub-block moves during the same tick that is_downloading goes false->true; the
+// download_added must carry the new value, not the one the entry was parked with while it was
+// shared-only.
+TEST(EventDiff, RoleFlipRefreshesFieldsTheOtherRoleNeverCompared)
+{
+	CState state;
+	state.MutateShared([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 24;
+		f.hash = "6666666666666666666666666666ffff";
+		f.name = "reshared.iso";
+		f.size = kPartSizeBytes * 4;
+		f.is_shared = true;
+		f.download.completed_bytes = 111;
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state); // shared_added; download side never compared
+	DrainAll(bus);
+
+	state.MutateShared([](FileMap &files) {
+		FileSnapshot &f = files.find(24)->second;
+		f.is_downloading = true;
+		f.download.completed_bytes = 999;
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "download_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("999") != std::string::npos);
+	ASSERT_TRUE(payload.find("111") == std::string::npos);
+	// And the baseline now carries it, so the next tick is silent.
+	ASSERT_EQUALS(static_cast<std::uint64_t>(999), prev.files.find(24)->second.download.completed_bytes);
+}
+
+// comments_updated payload. EVENTS.md promises the payload is the GET /downloads/{hash}/comments
+// body plus `hash`, and it must carry `kad_comment_lookup_running`: a client that follows the
+// document and feeds the event into the view it built from the endpoint would otherwise lose
+// the in-flight-lookup flag -- exactly the flag it needs while a POST /downloads/{hash}/comments
+// Kad lookup runs.
+TEST(EventDiff, CommentsUpdatedIsASupersetOfTheRestBody)
+{
+	CState state;
+	state.MutateDownloads([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 41;
+		f.hash = "5555555555555555555555555555eeee";
+		f.name = "commented.iso";
+		f.size = kPartSizeBytes * 2;
+		f.is_downloading = true;
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state); // cold start: download_added
+	DrainAll(bus);
+
+	// A Kad lookup is in flight AND a note has landed, so the event fires with the flag still
+	// true -- the state a client is most likely to render, and the one the missing key made
+	// unrepresentable.
+	state.MutateDownloads([](FileMap &files) {
+		FileSnapshot &f = files.find(41)->second;
+		f.download.kad_comment_searching = true;
+		FileSnapshot::DownloadSide::SourceComment c;
+		c.username = "alice";
+		c.filename = "commented.iso";
+		c.rating = 5;
+		c.comment = "great quality";
+		f.download.source_comments.push_back(c);
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "comments_updated")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	// The endpoint's three keys...
+	ASSERT_TRUE(payload.find("\"total\":1") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"kad_comment_lookup_running\":true") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"comments\":[") != std::string::npos);
+	// ...plus the one the event adds, because nothing else in the frame
+	// identifies the file.
+	ASSERT_TRUE(payload.find("\"hash\":\"5555555555555555555555555555eeee\"") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"username\":\"alice\"") != std::string::npos);
+}
+
+// And the flag tracks false, so a client can see the lookup finish.
+TEST(EventDiff, CommentsUpdatedReportsAnIdleKadLookup)
+{
+	CState state;
+	state.MutateDownloads([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 42;
+		f.hash = "6666666666666666666666666666ffff";
+		f.name = "quiet.iso";
+		f.size = kPartSizeBytes;
+		f.is_downloading = true;
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+	DrainAll(bus);
+
+	state.MutateDownloads([](FileMap &files) {
+		FileSnapshot &f = files.find(42)->second;
+		FileSnapshot::DownloadSide::SourceComment c;
+		c.username = "Kad user";
+		c.rating = 4;
+		f.download.source_comments.push_back(c);
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "comments_updated")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"kad_comment_lookup_running\":false") != std::string::npos);
+}
+
+// The Kad lookup finishing is a comments_updated in its own right. The flag rides in the payload,
+// so if EqualComments ignores it the true->false edge produces no event and a ?channels=comments
+// subscriber's in-flight indicator never clears.
+TEST(EventDiff, CommentsUpdatedFiresWhenOnlyTheKadFlagClears)
+{
+	CState state;
+	state.MutateDownloads([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 43;
+		f.hash = "7777777777777777777777777777aaaa";
+		f.name = "searching.iso";
+		f.size = kPartSizeBytes;
+		f.is_downloading = true;
+		f.download.kad_comment_searching = true;
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state); // cold start
+	DrainAll(bus);
+
+	// The lookup ends. No comment arrived, so source_comments is untouched
+	// and ONLY the flag moves.
+	state.MutateDownloads(
+		[](FileMap &files) { files.find(43)->second.download.kad_comment_searching = false; });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "comments_updated")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"kad_comment_lookup_running\":false") != std::string::npos);
+}
+
+// Cold start with a lookup already running. The mirror of
+// CommentsUpdatedFiresWhenOnlyTheKadFlagClears: there the finished edge never arrived, here the
+// starting state never arrives, and a ?channels=comments subscriber that joined after the download
+// appeared would never learn a lookup was in flight.
+TEST(EventDiff, CommentsUpdatedFiresWhenAFileArrivesMidKadLookup)
+{
+	CState state;
+	state.MutateDownloads([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 44;
+		f.hash = "8888888888888888888888888888bbbb";
+		f.name = "arrived-searching.iso";
+		f.size = kPartSizeBytes;
+		f.is_downloading = true;
+		// No comments yet -- only the in-flight flag.
+		f.download.kad_comment_searching = true;
+		files.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "comments_updated")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"kad_comment_lookup_running\":true") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"total\":0") != std::string::npos);
+}
+
+// #1290 item 5. The live client payload spelled "unknown" as a raw "" for its optional strings
+// while WriteKnownClientObject nulled the very same keys, so one peer described by both objects
+// disagreed with itself. R10 says an unknown value is null and never a sentinel; "" is a sentinel.
+TEST(EventDiff, ClientEventNullsOptionalStringsThatNeverArrived)
+{
+	CState state;
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &clients) {
+		ClientSnapshot c;
+		c.ecid = 73;
+		// Every optional string left at its default: a peer we have seen
+		// but that has told us nothing about itself yet.
+		clients.emplace(c.ecid, c);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "client_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	const char *const nulled[] = { "name",
+		"software",
+		"software_version",
+		"reported_os",
+		"download_file_name",
+		"upload_file_name",
+		"upload_file_hash",
+		"download_file_hash",
+		"obfuscation_state",
+		"source_origin",
+		"client_mod_name" };
+	for (const char *key : nulled) {
+		ASSERT_TRUE(payload.find(std::string("\"") + key + "\":null") != std::string::npos);
+		ASSERT_TRUE(payload.find(std::string("\"") + key + "\":\"\"") == std::string::npos);
+	}
+}
+
+// The states are enum labels, not free text: the daemon always answers, and an answer outside the
+// enum is the "unknown" member. Nulling them would have invented a third case the wire cannot
+// express.
+TEST(EventDiff, ClientEventKeepsTheStateEnumsAsStrings)
+{
+	CState state;
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &clients) {
+		ClientSnapshot c;
+		c.ecid = 74;
+		c.upload_state = "uploading";
+		c.download_state = "downloading";
+		c.ident_state = "identified";
+		clients.emplace(c.ecid, c);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "client_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"upload_state\":\"uploading\"") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"download_state\":\"downloading\"") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"ident_state\":\"identified\"") != std::string::npos);
+}
+
+// #1290 follow-up. The friend's reachability is not `client_ecid != 0`, which is true from the moment
+// the daemon starts TRYING to reach a peer -- that would read a friend it can never reach as
+// connected. The field carries EC_TAG_CLIENT_CONNECTED, and a daemon that never sends it leaves the answer
+// unknown rather than guessing "offline".
+TEST(EventDiff, FriendEventReportsReachabilityNotClientObjectExistence)
+{
+	CState state;
+	state.MutateFriends([](std::map<std::uint32_t, FriendSnapshot> &friends) {
+		FriendSnapshot f;
+		f.ecid = 91;
+		f.name = "linked-but-unreachable";
+		// A live client object exists -- the daemon is trying -- but no
+		// socket is up, so this friend is not connected.
+		f.client_ecid = 4242;
+		f.connected = false;
+		f.has_connected = true;
+		friends.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "friend_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"connected\":false") != std::string::npos);
+	// The retired spelling must be gone, not shadowed (R6: one key for the
+	// quantity /clients, /known_clients and /chats also carry).
+	ASSERT_TRUE(payload.find("\"online\"") == std::string::npos);
+	// The live peer is still reported, so a consumer can still join on it.
+	ASSERT_TRUE(payload.find("\"client_ecid\":4242") != std::string::npos);
+}
+
+// A daemon that does not report connectivity leaves it unknown: null, not a
+// guessed false. R10 -- an unknown value is null and never a sentinel.
+TEST(EventDiff, FriendEventNullsConnectedWhenTheDaemonNeverReportedIt)
+{
+	CState state;
+	state.MutateFriends([](std::map<std::uint32_t, FriendSnapshot> &friends) {
+		FriendSnapshot f;
+		f.ecid = 92;
+		f.name = "no-connectivity-tag";
+		f.client_ecid = 77;
+		// has_connected stays false: the tag never arrived.
+		friends.emplace(f.ecid, f);
+	});
+
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "friend_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"connected\":null") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"online\"") == std::string::npos);
+}
+
+// The connected flag has to be in Equal too, or a peer that finishes connecting never fires an
+// update: the ecid does not move on that edge, and the indicator would sit wrong until something
+// else about the peer changed.
+TEST(EventDiff, ClientConnectingFiresAnUpdateEvenThoughTheEcidIsUnchanged)
+{
+	CState state;
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &clients) {
+		ClientSnapshot c;
+		c.ecid = 93;
+		c.connected = false;
+		c.has_connected = true;
+		clients.emplace(c.ecid, c);
+	});
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+	DrainAll(bus);
+
+	state.MutateClients(
+		[](std::map<std::uint32_t, ClientSnapshot> &clients) { clients[93].connected = true; });
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "client_updated")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"connected\":true") != std::string::npos);
+}
+
+// `sent_at` on the chat_message payload has to spell an unstamped message the way the REST row does
+// -- null, not the 0 that renders as 1970 -- or a client that hydrates history from GET
+// /chats/{address}/messages and then live-updates from the stream sees the same absent timestamp
+// two ways.
+//
+// Unreachable through the daemon today: CChatSessionStore::Append stamps every message it stores
+// and the history reply carries the tag unconditionally, so no live core produces the 0. That is
+// exactly why it is pinned here rather than in the curl suite, which cannot manufacture one.
+TEST(EventDiff, ChatMessageSentAtIsNullWhenUnstamped)
+{
+	CEventBus bus;
+	ChatSessionSnapshot session;
+	session.gui_id = 7;
+	session.ip = "203.0.113.42";
+	session.port = 4662;
+	ChatMessageSnapshot unstamped;
+	unstamped.id = 91;
+	unstamped.text = "no timestamp";
+	unstamped.timestamp = 0;
+	session.messages.push_back(unstamped);
+
+	PublishChatEvents(bus, { session }, {});
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "chat_message")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"sent_at\":null") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"sent_at\":0") == std::string::npos);
+}
+
+// The stamped case still emits the number, so nulling the 0 did not turn every
+// timestamp into null.
+TEST(EventDiff, ChatMessageSentAtIsTheStampWhenPresent)
+{
+	CEventBus bus;
+	ChatSessionSnapshot session;
+	session.gui_id = 8;
+	session.ip = "203.0.113.43";
+	session.port = 4662;
+	ChatMessageSnapshot stamped;
+	stamped.id = 92;
+	stamped.text = "stamped";
+	stamped.timestamp = 1786652714;
+	session.peer_hash = "ab000000000000000000000000000000";
+	session.messages.push_back(stamped);
+
+	PublishChatEvents(bus, { session }, {});
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "chat_message")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"sent_at\":1786652714") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"address\":\"203.0.113.43:4662\"") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"hash\":\"ab000000000000000000000000000000\"") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"name\":\"AB000000000000000000000000000000\"") != std::string::npos);
+}
+
+TEST(EventDiff, ChatClosuresPreserveAddressAndActualHash)
+{
+	CEventBus bus;
+	const std::string hash = "ab000000000000000000000000000000";
+	// A route transition and a normal identified closure share this payload contract.
+	PublishChatEvents(bus,
+		{},
+		{
+			{ "10.0.0.1:4662", hash },
+			{ hash, hash },
+			{ "10.0.0.2:4662", "" },
+		});
+	const auto events = DrainAll(bus);
+	ASSERT_EQUALS(static_cast<size_t>(3), events.size());
+	for (const auto &event : events)
+		ASSERT_EQUALS(std::string("chat_session_closed"), event.name);
+	ASSERT_EQUALS("{\"address\":\"10.0.0.1:4662\",\"hash\":\"" + hash + "\"}", events[0].data);
+	ASSERT_EQUALS("{\"address\":\"" + hash + "\",\"hash\":\"" + hash + "\"}", events[1].data);
+	ASSERT_EQUALS(std::string("{\"address\":\"10.0.0.2:4662\",\"hash\":null}"), events[2].data);
+}
+
+// The server row's `software_version` is null when the server has reported none, matching
+// WriteServerObject on the REST side -- the two are promised to be byte-identical, and a raw ""
+// here would be the third spelling of "unknown" beside the nulls /clients and /known_clients
+// already emit.
+TEST(EventDiff, ServerSoftwareVersionIsNullWhenUnreported)
+{
+	CState state;
+	state.MutateServers([](std::map<std::uint32_t, ServerSnapshot> &servers) {
+		ServerSnapshot s;
+		s.ecid = 5;
+		s.address = "203.0.113.5:4242";
+		s.port = 4242;
+		s.version.clear();
+		servers.emplace(s.ecid, s);
+	});
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+
+	std::string payload;
+	for (const auto &e : DrainAll(bus)) {
+		if (e.name == "server_added")
+			payload = e.data;
+	}
+	ASSERT_TRUE(!payload.empty());
+	ASSERT_TRUE(payload.find("\"software_version\":null") != std::string::npos);
+	ASSERT_TRUE(payload.find("\"software_version\":\"\"") == std::string::npos);
+}
+
+TEST(EventDiff, AllKadComponentEndEmitsWithoutPercentChange)
+{
+	CState state;
+	CEventBus bus;
+	LastSeenState prev;
+	state.MarkSearchStarted(42, "all", "ubuntu");
+	SearchProgressSnapshot s = state.SearchProgress(42);
+	s.kad_active = true;
+	s.percent = 20;
+	state.WriteSearchProgress(42, s);
+	EmitDiffsAndUpdate(bus, prev, state);
+	const auto baseline = DrainAll(bus);
+	const auto cursor = baseline.empty() ? 0 : baseline.back().id;
+	s.kad_active = false;
+	state.WriteSearchProgress(42, s);
+	EmitDiffsAndUpdate(bus, prev, state);
+	const auto events = DrainSince(bus, cursor);
+	ASSERT_EQUALS(size_t(1), events.size());
+	ASSERT_EQUALS(std::string("search_progress"), events[0].name);
+	ASSERT_TRUE(events[0].data.find("\"kad_active\":false") != std::string::npos);
+}
+
+TEST(EventDiff, ChatCaptchaEventsCarryImagesAndAllResultStatuses)
+{
+	CEventBus bus;
+	ChatSessionSnapshot session;
+	session.gui_id = 7;
+	session.ip = "203.0.113.42";
+	session.port = 4662;
+	ChatMessageSnapshot challenge;
+	challenge.id = 1;
+	challenge.kind = 1;
+	challenge.captcha_image = "Qk0=";
+	session.messages.push_back(challenge);
+	for (std::uint8_t status = 0; status <= 2; ++status) {
+		ChatMessageSnapshot result;
+		result.id = status + 2;
+		result.kind = 2;
+		result.captcha_status = status;
+		session.messages.push_back(result);
+	}
+	PublishChatEvents(bus, { session }, {});
+	const auto events = DrainAll(bus);
+	ASSERT_EQUALS(static_cast<size_t>(4), events.size());
+	ASSERT_TRUE(events[0].data.find("\"type\":\"captcha_challenge\"") != std::string::npos);
+	ASSERT_TRUE(events[0].data.find("\"captcha_image\":\"Qk0=\"") != std::string::npos);
+	for (size_t i = 1; i < events.size(); ++i) {
+		ASSERT_TRUE(events[i].data.find("\"type\":\"captcha_result\"") != std::string::npos);
+		ASSERT_TRUE(events[i].data.find("\"captcha_status\":" + std::to_string(i - 1)) !=
+			    std::string::npos);
+	}
+}
+
+TEST(EventDiff, ChatCaptchaExpiryEmitsSessionUpdateWithoutMessage)
+{
+	CEventBus bus;
+	ChatSessionSnapshot change;
+	change.peer_hash = "0123456789abcdef0123456789abcdef";
+	change.pending_captcha_changed = true;
+	PublishChatEvents(bus, { change }, {});
+	const auto events = DrainAll(bus);
+	ASSERT_EQUALS(static_cast<size_t>(1), events.size());
+	ASSERT_EQUALS(std::string("chat_session_updated"), events[0].name);
+	ASSERT_TRUE(events[0].data.find("\"pending_captcha_id\":null") != std::string::npos);
+	ASSERT_TRUE(events[0].data.find(change.peer_hash) != std::string::npos);
+}
+
+TEST(EventDiff, SharedCompletenessUpdatesWithoutUploadChanges)
+{
+	CState state;
+	state.MutateShared([](FileMap &files) {
+		FileSnapshot f;
+		f.ecid = 41;
+		f.hash = "11111111111111111111111111111111";
+		f.is_shared = true;
+		f.is_downloading = true;
+		f.download.status = "paused";
+		files.emplace(f.ecid, f);
+	});
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+	std::uint64_t cursor = 0;
+	bool added = false;
+	for (const auto &e : DrainAll(bus)) {
+		cursor = e.id;
+		if (e.name == "shared_added") {
+			added = true;
+			ASSERT_TRUE(e.data.find("\"incomplete\":true") != std::string::npos);
+		}
+	}
+	ASSERT_TRUE(added);
+
+	// Remaining incomplete must not add noisy shared updates for download-only changes.
+	for (const std::string status : { "downloading", "completing", "completed" }) {
+		state.MutateShared(
+			[&status](FileMap &files) { files.find(41)->second.download.status = status; });
+		EmitDiffsAndUpdate(bus, prev, state);
+		int updated = 0;
+		for (const auto &e : DrainSince(bus, cursor)) {
+			cursor = e.id;
+			if (e.name == "shared_updated") {
+				++updated;
+				ASSERT_TRUE(e.data.find("\"incomplete\":false") != std::string::npos);
+			}
+		}
+		ASSERT_EQUALS(status == "completed" ? 1 : 0, updated);
+	}
+	// Clear completed keeps the file complete and must not disable deletion again.
+	state.MutateShared([](FileMap &files) { files.SetDownloading(files.find(41), false); });
+	EmitDiffsAndUpdate(bus, prev, state);
+	for (const auto &e : DrainSince(bus, cursor)) {
+		cursor = e.id;
+		ASSERT_TRUE(e.name != "shared_updated");
+	}
+	// A shared-only record gaining a downloading role must disable complete-file actions.
+	state.MutateShared([](FileMap &files) {
+		auto it = files.find(41);
+		files.SetDownloading(it, true);
+		it->second.download.status = "paused";
+	});
+	EmitDiffsAndUpdate(bus, prev, state);
+	int updated = 0;
+	for (const auto &e : DrainSince(bus, cursor)) {
+		if (e.name == "shared_updated") {
+			++updated;
+			ASSERT_TRUE(e.data.find("\"incomplete\":true") != std::string::npos);
+		}
+	}
+	ASSERT_EQUALS(1, updated);
+}
+
+TEST(EventDiff, ClientAddressFieldsFollowRestOrder)
+{
+	CState state;
+	state.MutateClients([](std::map<std::uint32_t, ClientSnapshot> &clients) {
+		ClientSnapshot c;
+		c.ecid = 1;
+		c.ip = "1.2.3.4";
+		c.port = 4662;
+		c.country_code = "us";
+		clients.emplace(c.ecid, c);
+	});
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+	for (const auto &event : DrainAll(bus)) {
+		if (event.name == "client_added") {
+			ASSERT_TRUE(
+				event.data.find("\"ip\":\"1.2.3.4\",\"port\":4662,\"country_code\":\"us\"") !=
+				std::string::npos);
+			return;
+		}
+	}
+	ASSERT_TRUE(false);
+}
+
+TEST(EventDiff, CaptchaMessageFieldsFollowRestOrder)
+{
+	ChatSessionSnapshot session;
+	session.ip = "1.2.3.4";
+	session.port = 4662;
+	ChatMessageSnapshot msg;
+	msg.id = 1;
+	msg.text = "test";
+	msg.timestamp = 1234567;
+	msg.kind = 1;
+	msg.captcha_image = "Qk0=";
+	session.messages.push_back(msg);
+	msg.id = 2;
+	msg.kind = 2;
+	msg.captcha_status = 1;
+	session.messages.push_back(msg);
+	CEventBus bus;
+	PublishChatEvents(bus, { session }, {});
+	const auto events = DrainAll(bus);
+	ASSERT_EQUALS(static_cast<std::size_t>(2), events.size());
+	ASSERT_TRUE(
+		events[0].data.find(
+			"\"message\":{\"id\":1,\"direction\":\"in\",\"text\":\"test\",\"type\":\"captcha_"
+			"challenge\",\"captcha_image\":\"Qk0=\",\"sent_at\":1234567}") != std::string::npos);
+	ASSERT_TRUE(events[1].data.find(
+			    "\"message\":{\"id\":2,\"direction\":\"in\",\"text\":\"test\",\"type\":\"captcha_"
+			    "result\",\"captcha_status\":1,\"sent_at\":1234567}") != std::string::npos);
+}
+
+// Exercise every caller of the common event escaper, on creation and later updates.
+// Numeric grouping must not leak into payloads built with streams either.
+TEST(EventDiff, EventFamiliesKeepRestEscapingAndLocaleOnUpdates)
+{
+	ScopedGroupedLocale locale;
+	CState state;
+	const std::uint32_t id = 1234567;
+	state.MarkSearchStarted(id, "browse", "peer");
+	CEventBus bus;
+	LastSeenState prev;
+	EmitDiffsAndUpdate(bus, prev, state);
+	for (bool update : { false, true }) {
+		const std::string text =
+			std::string("quoted\"\\\t\n\x01\x7f服务器😀") + (update ? " changed" : "");
+		const auto cursor = bus.NewestId();
+		state.MutateDownloads([&](FileMap &files) {
+			FileSnapshot f;
+			f.ecid = id;
+			f.hash = "8b54a3c28b54a3c28b54a3c28b54a3c2";
+			f.name = text;
+			f.size = id;
+			f.is_downloading = f.is_shared = true;
+			f.download.source_comments.push_back({ text, text, 1, text });
+			const auto existing = files.find(id);
+			if (existing != files.end())
+				files.erase(existing);
+			files.emplace(id, f);
+		});
+		state.MutateClients([&](std::map<std::uint32_t, ClientSnapshot> &clients) {
+			ClientSnapshot c;
+			c.ecid = id;
+			c.client_name = text;
+			clients[id] = c;
+		});
+		state.MutateServers([&](std::map<std::uint32_t, ServerSnapshot> &servers) {
+			ServerSnapshot s;
+			s.ecid = id;
+			s.name = text;
+			servers[id] = s;
+		});
+		state.MutateFriends([&](std::map<std::uint32_t, FriendSnapshot> &friends) {
+			FriendSnapshot f;
+			f.ecid = id;
+			f.name = text;
+			friends[id] = f;
+		});
+		state.MutateSearch(id, [&](std::map<std::uint32_t, SearchResult> &results) {
+			SearchResult r;
+			r.ecid = id;
+			r.name = text;
+			r.status = update ? "downloading" : "new";
+			results[id] = r;
+		});
+		state.AppendAmuleLog({ text });
+		EmitDiffsAndUpdate(bus, prev, state);
+		ChatSessionSnapshot session;
+		session.name = text;
+		ChatMessageSnapshot message;
+		message.id = id;
+		message.text = text;
+		session.messages.push_back(message);
+		PublishChatEvents(bus, { session }, {});
+		const auto events = DrainSince(bus, cursor);
+		const std::string suffix = update ? "_updated" : "_added";
+		for (const std::string &name : { "download" + suffix,
+			     "shared" + suffix,
+			     "client" + suffix,
+			     "server" + suffix,
+			     "friend" + suffix,
+			     "search_result" + suffix,
+			     std::string("comments_updated"),
+			     std::string("log_appended"),
+			     std::string("chat_message") }) {
+			const auto event = std::find_if(
+				events.begin(), events.end(), [&](const Event &e) { return e.name == name; });
+			ASSERT_TRUE(event != events.end());
+			ASSERT_TRUE(
+				event->data.find("quoted\\\"\\\\\\t\\n\\u0001\\u007f服务器\\ud83d\\ude00") !=
+				std::string::npos);
+			ASSERT_TRUE(event->data.find("1,234,567") == std::string::npos);
+		}
+	}
+	// The remaining streamed numeric payloads are search progress, result removal and closure.
+	auto cursor = bus.NewestId();
+	SearchProgressSnapshot progress;
+	progress.percent = 42;
+	state.WriteSearchProgress(id, progress);
+	state.MutateSearch(id, [](std::map<std::uint32_t, SearchResult> &results) { results.clear(); });
+	EmitDiffsAndUpdate(bus, prev, state);
+	state.CloseSearch(id);
+	EmitDiffsAndUpdate(bus, prev, state);
+	std::map<std::string, std::string> payloads;
+	for (const auto &event : DrainSince(bus, cursor))
+		payloads[event.name] = event.data;
+	for (const char *name : { "search_progress", "search_result_removed", "search_closed" }) {
+		ASSERT_TRUE(payloads.count(name) == 1);
+		ASSERT_TRUE(payloads[name].find("\"search_id\":1234567") != std::string::npos);
+		ASSERT_TRUE(payloads[name].find("1,234") == std::string::npos);
+	}
+}

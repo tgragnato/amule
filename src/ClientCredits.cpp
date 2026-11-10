@@ -23,118 +23,122 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include "ClientCredits.h"	// Interface declarations
+#include "ClientCredits.h" // Interface declarations
+#include "PeerAddressing.h"
 
 #include <cmath>
 
-#include "GetTickCount.h"	// Needed for GetTickCount64
-#include "Logger.h"			// Needed for Add(Debug)LogLine
+#include "GetTickCount.h" // Needed for GetTickCount64
+#include "Logger.h"       // Needed for Add(Debug)LogLine
 
 CreditStruct::CreditStruct()
-	: uploaded(0),
-	  downloaded(0),
-	  nLastSeen(0),
-	  nReserved3(0),
-	  nKeySize(0)
+: uploaded(0)
+, downloaded(0)
+, nLastSeen(0)
+, nReserved3(0)
+, nKeySize(0)
 {
 	memset(abySecureIdent, 0, MAXPUBKEYSIZE);
 }
 
-
-CClientCredits::CClientCredits(CreditStruct* in_credits)
+CClientCredits::CClientCredits(CreditStruct *in_credits)
 {
 	m_pCredits = in_credits;
 	InitalizeIdent();
 	m_dwUnSecureWaitTime = 0;
 	m_dwSecureWaitTime = 0;
-	m_dwWaitTimeIP = 0;
+	m_waitTimeAddress = CNetworkAddress::Absent();
 }
 
-
-CClientCredits::CClientCredits(const CMD4Hash& key)
+CClientCredits::CClientCredits(const CMD4Hash &key)
 {
 	m_pCredits = new CreditStruct();
 	m_pCredits->key = key;
 
 	InitalizeIdent();
 	m_dwUnSecureWaitTime = m_dwSecureWaitTime = ::GetTickCount64();
-	m_dwWaitTimeIP = 0;
+	m_waitTimeAddress = CNetworkAddress::Absent();
 }
-
 
 CClientCredits::~CClientCredits()
 {
 	delete m_pCredits;
 }
 
-
-void CClientCredits::AddDownloaded(uint32 bytes, uint32 dwForIP, bool cryptoavail)
+void CClientCredits::AddDownloaded(uint32 bytes, const CNetworkAddress &address, bool cryptoavail)
 {
-	switch (GetCurrentIdentState(dwForIP)) {
-		case IS_IDFAILED:
-		case IS_IDBADGUY:
-		case IS_IDNEEDED:
-			if (cryptoavail) {
-				return;
-			}
-			break;
-		case IS_NOTAVAILABLE:
-		case IS_IDENTIFIED:
-			break;
+	switch (GetCurrentIdentState(address)) {
+	case IS_IDFAILED:
+	case IS_IDBADGUY:
+	case IS_IDNEEDED:
+		if (cryptoavail) {
+			return;
+		}
+		break;
+	case IS_NOTAVAILABLE:
+	case IS_IDENTIFIED:
+		break;
 	}
 
 	m_pCredits->downloaded += bytes;
 }
 
-
-void CClientCredits::AddUploaded(uint32 bytes, uint32 dwForIP, bool cryptoavail)
+void CClientCredits::AddUploaded(uint32 bytes, const CNetworkAddress &address, bool cryptoavail)
 {
-	switch (GetCurrentIdentState(dwForIP)) {
-		case IS_IDFAILED:
-		case IS_IDBADGUY:
-		case IS_IDNEEDED:
-			if (cryptoavail) {
-				return;
-			}
-			break;
-		case IS_NOTAVAILABLE:
-		case IS_IDENTIFIED:
-			break;
+	switch (GetCurrentIdentState(address)) {
+	case IS_IDFAILED:
+	case IS_IDBADGUY:
+	case IS_IDNEEDED:
+		if (cryptoavail) {
+			return;
+		}
+		break;
+	case IS_NOTAVAILABLE:
+	case IS_IDENTIFIED:
+		break;
 	}
 
 	m_pCredits->uploaded += bytes;
 }
-
 
 uint64 CClientCredits::GetUploadedTotal() const
 {
 	return m_pCredits->uploaded;
 }
 
-
-uint64	CClientCredits::GetDownloadedTotal() const
+uint64 CClientCredits::GetDownloadedTotal() const
 {
 	return m_pCredits->downloaded;
 }
 
-
-float CClientCredits::GetScoreRatio(uint32 dwForIP, bool cryptoavail)
+float CClientCredits::GetScoreRatio(const CNetworkAddress &address, bool cryptoavail) const
 {
 	// check the client ident status
-	switch (GetCurrentIdentState(dwForIP)) {
-		case IS_IDFAILED:
-		case IS_IDBADGUY:
-		case IS_IDNEEDED:
-			if (cryptoavail) {
-				// bad guy - no credits for you
-				return 1.0f;
-			}
-			break;
-		case IS_NOTAVAILABLE:
-		case IS_IDENTIFIED:
-			break;
+	switch (GetCurrentIdentState(address)) {
+	case IS_IDFAILED:
+	case IS_IDBADGUY:
+	case IS_IDNEEDED:
+		if (cryptoavail) {
+			// bad guy - no credits for you
+			return 1.0f;
+		}
+		break;
+	case IS_NOTAVAILABLE:
+	case IS_IDENTIFIED:
+		break;
 	}
 
+	return GetCreditRatio();
+}
+
+// The credit modifier without the identity gate above: what the peer's transfer history alone
+// earns it. This is the display value, shown by every peer list and by the API. Scoring calls
+// GetScoreRatio, which gates it -- a peer that has not proved itself is worth 1.0 to the queue,
+// but saying so in a Ratio column would only repeat what the Ident column already shows, and it
+// would swing to 1.0 for the second or two a reconnecting peer spends in IS_IDNEEDED. It also
+// has no identity to check in the credit store, where the record outlives every connection.
+float CClientCredits::GetCreditRatio() const
+{
 	if (GetDownloadedTotal() < 1000000) {
 		return 1.0f;
 	}
@@ -160,111 +164,144 @@ float CClientCredits::GetScoreRatio(uint32 dwForIP, bool cryptoavail)
 	return result;
 }
 
+void CClientCredits::UpdateMeta(const wxString &name,
+	uint32 ip,
+	uint16 port,
+	uint16 kadPort,
+	uint32 version,
+	uint8 clientSoft,
+	const wxString &modVersion,
+	uint8 sourceFrom,
+	uint8 obfuscation,
+	bool countSession)
+{
+	const uint32 now = time(nullptr);
+	if (m_meta.firstSeen == 0) {
+		// First sighting since this peer got a credit record. For a peer we already had
+		// credits for before the metadata existed, "first" means the first time we could
+		// record it, not the start of the relationship -- nLastSeen is the only older
+		// evidence and it says nothing about when things began.
+		m_meta.firstSeen = now;
+	}
+	if (countSession) {
+		m_meta.sessions++;
+	}
+
+	// Last known wins: a peer that renamed itself or moved address is better described by what
+	// it looks like now than by what it looked like once. An empty name is not an update -- it
+	// means the handshake carried none.
+	if (!name.IsEmpty()) {
+		m_meta.name = name;
+	}
+	m_meta.lastIP = ip;
+	m_meta.lastPort = port;
+	m_meta.kadPort = kadPort;
+	m_meta.version = version;
+	m_meta.clientSoft = clientSoft;
+	m_meta.modVersion = modVersion;
+	m_meta.sourceFrom = sourceFrom;
+	m_meta.obfuscation = obfuscation;
+}
 
 void CClientCredits::SetLastSeen()
 {
 	m_pCredits->nLastSeen = time(NULL);
 }
 
-
 void CClientCredits::InitalizeIdent()
 {
-	if (m_pCredits->nKeySize == 0 ){
-		memset(m_abyPublicKey,0,80); // for debugging
+	if (m_pCredits->nKeySize == 0) {
+		memset(m_abyPublicKey, 0, 80); // for debugging
 		m_nPublicKeyLen = 0;
 		m_identState = IS_NOTAVAILABLE;
-	}
-	else{
+	} else {
 		m_nPublicKeyLen = m_pCredits->nKeySize;
 		memcpy(m_abyPublicKey, m_pCredits->abySecureIdent, m_nPublicKeyLen);
 		m_identState = IS_IDNEEDED;
 	}
 	m_dwCryptRndChallengeFor = 0;
 	m_dwCryptRndChallengeFrom = 0;
-	m_dwIdentIP = 0;
+	m_identAddress = CNetworkAddress::Absent();
 }
 
-
-void CClientCredits::Verified(uint32 dwForIP)
+bool CClientCredits::Verified(const CNetworkAddress &address)
 {
-	m_dwIdentIP = dwForIP;
+	if (address.IsAbsent()) {
+		return false; // No endpoint to bind the verified identity to.
+	}
+	m_identAddress = PeerAddressing::IndexKey(address);
 	// client was verified, copy the keyto store him if not done already
-	if (m_pCredits->nKeySize == 0){
+	if (m_pCredits->nKeySize == 0) {
 		m_pCredits->nKeySize = m_nPublicKeyLen;
 		memcpy(m_pCredits->abySecureIdent, m_abyPublicKey, m_nPublicKeyLen);
-		if (GetDownloadedTotal() > 0){
+		if (GetDownloadedTotal() > 0) {
 			// for security reason, we have to delete all prior credits here
 			// in order to save this client, set 1 byte
 			m_pCredits->downloaded = 1;
 			m_pCredits->uploaded = 1;
-			AddDebugLogLineN( logCredits, "Credits deleted due to new SecureIdent" );
+			AddDebugLogLineN(logCredits, "Credits deleted due to new SecureIdent");
 		}
 	}
 	m_identState = IS_IDENTIFIED;
+	return true;
 }
 
-
-bool CClientCredits::SetSecureIdent(const uint8_t* pachIdent, uint8 nIdentLen)
+bool CClientCredits::SetSecureIdent(const uint8_t *pachIdent, uint8 nIdentLen)
 { // verified Public key cannot change, use only if there is not public key yet
-	if (MAXPUBKEYSIZE < nIdentLen || m_pCredits->nKeySize != 0 ) {
+	if (MAXPUBKEYSIZE < nIdentLen || m_pCredits->nKeySize != 0) {
 		return false;
 	}
-	memcpy(m_abyPublicKey,pachIdent, nIdentLen);
+	memcpy(m_abyPublicKey, pachIdent, nIdentLen);
 	m_nPublicKeyLen = nIdentLen;
 	m_identState = IS_IDNEEDED;
 	return true;
 }
 
-
-EIdentState	CClientCredits::GetCurrentIdentState(uint32 dwForIP) const
+EIdentState CClientCredits::GetCurrentIdentState(const CNetworkAddress &address) const
 {
 	if (m_identState != IS_IDENTIFIED)
 		return m_identState;
-	else{
-		if (dwForIP == m_dwIdentIP)
+	else {
+		if (PeerAddressing::IndexKey(address) == m_identAddress)
 			return IS_IDENTIFIED;
 		else
 			return IS_IDBADGUY;
-			// mod note: clients which just reconnected after an IP change and have to ident yet will also have this state for 1-2 seconds
-			//		 so don't try to spam such clients with "bad guy" messages (besides: spam messages are always bad)
+		// mod note: clients that just reconnected after an IP change and have yet to ident
+		// also hold this state for 1-2 seconds, so do not spam them with "bad guy"
+		// messages. (Besides: spam messages are always bad.)
 	}
 }
 
-
-uint64 CClientCredits::GetSecureWaitStartTime(uint32 dwForIP)
+uint64 CClientCredits::GetSecureWaitStartTime(const CNetworkAddress &address)
 {
 	if (m_dwUnSecureWaitTime == 0 || m_dwSecureWaitTime == 0)
-		SetSecWaitStartTime(dwForIP);
+		SetSecWaitStartTime(address);
 
-	if (m_pCredits->nKeySize != 0){	// this client is a SecureHash Client
-		if (GetCurrentIdentState(dwForIP) == IS_IDENTIFIED){ // good boy
+	if (m_pCredits->nKeySize != 0) {                              // this client is a SecureHash Client
+		if (GetCurrentIdentState(address) == IS_IDENTIFIED) { // good boy
 			return m_dwSecureWaitTime;
-		}
-		else{	// not so good boy
-			if (dwForIP == m_dwWaitTimeIP){
+		} else { // not so good boy
+			if (PeerAddressing::IndexKey(address) == m_waitTimeAddress) {
 				return m_dwUnSecureWaitTime;
-			}
-			else{	// bad boy
-				// this can also happen if the client has not identified himself yet, but will do later - so maybe he is not a bad boy :) .
+			} else { // bad boy
+				// this can also happen if the client has not identified himself yet, but will
+				// do later - so maybe he is not a bad boy :) .
 
 				m_dwUnSecureWaitTime = ::GetTickCount64();
-				m_dwWaitTimeIP = dwForIP;
+				m_waitTimeAddress = PeerAddressing::IndexKey(address);
 				return m_dwUnSecureWaitTime;
 			}
 		}
-	}
-	else{	// not a SecureHash Client - handle it like before for now (no security checks)
+	} else { // not a SecureHash Client - handle it like before for now (no security checks)
 		return m_dwUnSecureWaitTime;
 	}
 }
 
-
-void CClientCredits::SetSecWaitStartTime(uint32 dwForIP)
+void CClientCredits::SetSecWaitStartTime(const CNetworkAddress &address)
 {
-	m_dwUnSecureWaitTime = m_dwSecureWaitTime = ::GetTickCount64()-1;
-	m_dwWaitTimeIP = dwForIP;
+	m_dwUnSecureWaitTime = m_dwSecureWaitTime = ::GetTickCount64() - 1;
+	m_waitTimeAddress = PeerAddressing::IndexKey(address);
 }
-
 
 void CClientCredits::ClearWaitStartTime()
 {

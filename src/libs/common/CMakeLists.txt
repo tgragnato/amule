@@ -1,9 +1,14 @@
 add_library (mulecommon STATIC
 	FileFunctions.cpp
 	Format.cpp
+	LocaleInit.cpp
 	MD5Sum.cpp
+	MediaCodecName.cpp
 	MuleDebug.cpp
 	Path.cpp
+	PasswordInput.cpp
+	ProcessUsage.cpp
+	RateLimiter.cpp
 	strerror_r.c
 	StringFunctions.cpp
 	TextFile.cpp

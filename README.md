@@ -38,4 +38,4 @@ Features
 Compiling
 ---------
 
-In general, compiling aMule should be as easy as running `cmake .` and `make`.
+In general, compiling aMule should be as easy as running `cmake -B build` and `cmake --build build -j"$(nproc)"`.

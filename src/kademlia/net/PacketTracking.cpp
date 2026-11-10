@@ -26,19 +26,21 @@
 
 #include "PacketTracking.h"
 #include "../kademlia/Kademlia.h"
-#include "../../amule.h"
 #include "../../Logger.h"
 #include "../../OtherFunctions.h"
 #include "../../NetworkFunctions.h"
-#include "../../ClientList.h"
 #include "../../GetTickCount.h"
 #include <common/Macros.h>
 #include <protocol/kad/Client2Client/UDP.h>
 #include <protocol/kad2/Client2Client/UDP.h>
 
-
 using namespace Kademlia;
 
+namespace
+{
+constexpr size_t MAX_TRACKED_IPS = 10000;
+constexpr size_t MAX_OUTGOING_REQUESTS = 4096;
+} // namespace
 
 CPacketTracking::~CPacketTracking()
 {
@@ -47,8 +49,8 @@ CPacketTracking::~CPacketTracking()
 
 void CPacketTracking::AddTrackedOutPacket(uint32_t ip, uint8_t opcode)
 {
-	// this tracklist tacks _outgoing_ request packets, to make sure incoming answer packets were requested
-	// only track packets which we actually check for later
+	// this tracklist tacks _outgoing_ request packets, to make sure incoming answer packets were
+	// requested only track packets which we actually check for later
 	if (!IsTrackedOutListRequestPacket(opcode)) {
 		return;
 	}
@@ -56,7 +58,8 @@ void CPacketTracking::AddTrackedOutPacket(uint32_t ip, uint8_t opcode)
 	TrackPackets_Struct track = { ip, now, opcode };
 	listTrackedRequests.push_front(track);
 	while (!listTrackedRequests.empty()) {
-		if (now - listTrackedRequests.back().inserted > SEC2MS(180)) {
+		if (now - listTrackedRequests.back().inserted >= SEC2MS(180) ||
+			listTrackedRequests.size() > MAX_OUTGOING_REQUESTS) {
 			listTrackedRequests.pop_back();
 		} else {
 			break;
@@ -67,22 +70,22 @@ void CPacketTracking::AddTrackedOutPacket(uint32_t ip, uint8_t opcode)
 bool CPacketTracking::IsTrackedOutListRequestPacket(uint8_t opcode) noexcept
 {
 	switch (opcode) {
-	 case KADEMLIA2_BOOTSTRAP_REQ:
-	 case KADEMLIA2_HELLO_REQ:
-	 case KADEMLIA2_HELLO_RES:
-	 case KADEMLIA2_REQ:
-	 case KADEMLIA_SEARCH_NOTES_REQ:
-	 case KADEMLIA2_SEARCH_NOTES_REQ:
-	 case KADEMLIA_PUBLISH_REQ:
-	 case KADEMLIA2_PUBLISH_KEY_REQ:
-	 case KADEMLIA2_PUBLISH_SOURCE_REQ:
-	 case KADEMLIA2_PUBLISH_NOTES_REQ:
-	 case KADEMLIA_FINDBUDDY_REQ:
-	 case KADEMLIA_CALLBACK_REQ:
-	 case KADEMLIA2_PING:
-		 return true;
-	 default:
-		 return false;
+	case KADEMLIA2_BOOTSTRAP_REQ:
+	case KADEMLIA2_HELLO_REQ:
+	case KADEMLIA2_HELLO_RES:
+	case KADEMLIA2_REQ:
+	case KADEMLIA_SEARCH_NOTES_REQ:
+	case KADEMLIA2_SEARCH_NOTES_REQ:
+	case KADEMLIA_PUBLISH_REQ:
+	case KADEMLIA2_PUBLISH_KEY_REQ:
+	case KADEMLIA2_PUBLISH_SOURCE_REQ:
+	case KADEMLIA2_PUBLISH_NOTES_REQ:
+	case KADEMLIA_FINDBUDDY_REQ:
+	case KADEMLIA_CALLBACK_REQ:
+	case KADEMLIA2_PING:
+		return true;
+	default:
+		return false;
 	}
 }
 
@@ -90,11 +93,12 @@ bool CPacketTracking::IsOnOutTrackList(uint32_t ip, uint8_t opcode, bool dontRem
 {
 #ifdef __DEBUG__
 	if (!IsTrackedOutListRequestPacket(opcode)) {
-		wxFAIL;	// code error / bug
+		wxFAIL; // code error / bug
 	}
 #endif
 	uint64_t now = ::GetTickCount64();
-	for (TrackedPacketList::iterator it = listTrackedRequests.begin(); it != listTrackedRequests.end(); ++it) {
+	for (TrackedPacketList::iterator it = listTrackedRequests.begin(); it != listTrackedRequests.end();
+		++it) {
 		if (it->ip == ip && it->opcode == opcode && now - it->inserted < SEC2MS(180)) {
 			if (!dontRemove) {
 				listTrackedRequests.erase(it);
@@ -105,71 +109,73 @@ bool CPacketTracking::IsOnOutTrackList(uint32_t ip, uint8_t opcode, bool dontRem
 	return false;
 }
 
-bool CPacketTracking::InTrackListIsAllowedPacket(uint32_t ip, uint8_t opcode, bool /*bValidSenderkey*/)
+CPacketTracking::IncomingPacket CPacketTracking::InTrackListIsAllowedPacket(
+	uint32_t ip, uint8_t opcode, bool validReceiverKey)
 {
-	// this tracklist tacks _incoming_ request packets and acts as a general flood protection by dropping
-	// too frequent requests from a single IP, avoiding response floods, processing time DOS attacks and slowing down
-	// other possible attacks/behavior (scanning indexed files, fake publish floods, etc)
+	// This tracklist tracks _incoming_ request packets and acts as general flood protection,
+	// dropping too-frequent requests from a single IP. That avoids response floods and
+	// processing-time DOS attacks, and slows other possible attacks such as scanning indexed
+	// files or fake publish floods.
 
-	// first figure out if this is a request packet to be tracked and its timelimits
-	// timelimits are chosen by estimating the max. frequency of such packets on normal operation (+ buffer)
-	// (those limits are not meant to be fine to be used by normal usage, but only supposed to be a flood detection)
+	// First figure out whether this is a request packet to be tracked, and its time limits. The
+	// limits come from the estimated maximum frequency of such packets in normal operation,
+	// plus a buffer -- they are flood detection, not a guide to normal usage.
 
 	uint32_t allowedPacketsPerMinute;
-	DEBUG_ONLY( const uint8_t dbgOrgOpcode = opcode; )
+	DEBUG_ONLY(const uint8_t dbgOrgOpcode = opcode;)
 
 	switch (opcode) {
-		case KADEMLIA2_BOOTSTRAP_REQ:
-			allowedPacketsPerMinute = 2;
-			break;
-		case KADEMLIA2_HELLO_REQ:
-			allowedPacketsPerMinute = 3;
-			break;
-		case KADEMLIA2_REQ:
-			allowedPacketsPerMinute = 10;
-			break;
-		case KADEMLIA2_SEARCH_NOTES_REQ:
-			allowedPacketsPerMinute = 3;
-			break;
-		case KADEMLIA2_SEARCH_KEY_REQ:
-			allowedPacketsPerMinute = 3;
-			break;
-		case KADEMLIA2_SEARCH_SOURCE_REQ:
-			allowedPacketsPerMinute = 3;
-			break;
-		case KADEMLIA2_PUBLISH_KEY_REQ:
-			allowedPacketsPerMinute = 3;
-			break;
-		case KADEMLIA2_PUBLISH_SOURCE_REQ:
-			allowedPacketsPerMinute = 2;
-			break;
-		case KADEMLIA2_PUBLISH_NOTES_REQ:
-			allowedPacketsPerMinute = 2;
-			break;
-		case KADEMLIA_FIREWALLED2_REQ:
-			opcode = KADEMLIA_FIREWALLED_REQ;
-		/* fall through */
-		case KADEMLIA_FIREWALLED_REQ:
-			allowedPacketsPerMinute = 2;
-			break;
-		case KADEMLIA_FINDBUDDY_REQ:
-			allowedPacketsPerMinute = 2;
-			break;
-		case KADEMLIA_CALLBACK_REQ:
-			allowedPacketsPerMinute = 1;
-			break;
-		case KADEMLIA2_PING:
-			allowedPacketsPerMinute = 2;
-			break;
-		default:
-			// not any request packets, so it's a response packet - no further checks on this point
-			return true;
+	case KADEMLIA2_BOOTSTRAP_REQ:
+		allowedPacketsPerMinute = 2;
+		break;
+	case KADEMLIA2_HELLO_REQ:
+		allowedPacketsPerMinute = 3;
+		break;
+	case KADEMLIA2_REQ:
+		allowedPacketsPerMinute = 10;
+		break;
+	case KADEMLIA2_SEARCH_NOTES_REQ:
+		allowedPacketsPerMinute = 3;
+		break;
+	case KADEMLIA2_SEARCH_KEY_REQ:
+		allowedPacketsPerMinute = 3;
+		break;
+	case KADEMLIA2_SEARCH_SOURCE_REQ:
+		allowedPacketsPerMinute = 3;
+		break;
+	case KADEMLIA2_PUBLISH_KEY_REQ:
+		allowedPacketsPerMinute = 3;
+		break;
+	case KADEMLIA2_PUBLISH_SOURCE_REQ:
+		allowedPacketsPerMinute = 2;
+		break;
+	case KADEMLIA2_PUBLISH_NOTES_REQ:
+		allowedPacketsPerMinute = 2;
+		break;
+	case KADEMLIA_FIREWALLED2_REQ:
+		opcode = KADEMLIA_FIREWALLED_REQ;
+	/* fall through */
+	case KADEMLIA_FIREWALLED_REQ:
+		allowedPacketsPerMinute = 2;
+		break;
+	case KADEMLIA_FINDBUDDY_REQ:
+		allowedPacketsPerMinute = 2;
+		break;
+	case KADEMLIA_CALLBACK_REQ:
+		allowedPacketsPerMinute = 1;
+		break;
+	case KADEMLIA2_PING:
+		allowedPacketsPerMinute = 2;
+		break;
+	default:
+		// not any request packets, so it's a response packet - no further checks on this point
+		return IncomingPacket::Allowed;
 	}
 
-	const uint32_t secondsPerPacket = 60 / allowedPacketsPerMinute;
+	const uint32_t intervalMs = 60000 / allowedPacketsPerMinute;
+	const uint32_t floodThreshold = allowedPacketsPerMinute * 5;
 	const uint64_t currentTick = ::GetTickCount64();
 
-	// time for cleaning up?
 	if (currentTick - lastTrackInCleanup > MIN2MS(12)) {
 		InTrackListCleanup();
 	}
@@ -178,6 +184,16 @@ bool CPacketTracking::InTrackListIsAllowedPacket(uint32_t ip, uint8_t opcode, bo
 	TrackedPacketInMap::iterator it2 = m_mapTrackPacketsIn.find(ip);
 	TrackPacketsIn_Struct *trackEntry;
 	if (it2 == m_mapTrackPacketsIn.end()) {
+		// Most entries expire within a minute; clean early rather than refuse peers until
+		// the 12-minute cleanup.
+		if (m_mapTrackPacketsIn.size() >= MAX_TRACKED_IPS &&
+			currentTick - lastTrackInCleanup > MIN2MS(1)) {
+			InTrackListCleanup();
+		}
+		// Do not evict live quotas: address churn must not reset an abuser's budget.
+		if (m_mapTrackPacketsIn.size() >= MAX_TRACKED_IPS) {
+			return IncomingPacket::Drop;
+		}
 		trackEntry = new TrackPacketsIn_Struct();
 		trackEntry->m_ip = ip;
 		m_mapTrackPacketsIn[ip] = trackEntry;
@@ -186,46 +202,63 @@ bool CPacketTracking::InTrackListIsAllowedPacket(uint32_t ip, uint8_t opcode, bo
 	}
 
 	// search specific request tracks
-	for (TrackPacketsIn_Struct::TrackedRequestList::iterator it = trackEntry->m_trackedRequests.begin(); it != trackEntry->m_trackedRequests.end(); ++it) {
+	for (TrackPacketsIn_Struct::TrackedRequestList::iterator it = trackEntry->m_trackedRequests.begin();
+		it != trackEntry->m_trackedRequests.end();
+		++it) {
 		if (it->m_opcode == opcode) {
-			// already tracked requests with this opcode, remove already expired request counts
-			if (it->m_count > 0 && currentTick - it->m_firstAdded > SEC2MS(secondsPerPacket)) {
-				uint32_t removeCount = (currentTick - it->m_firstAdded) / SEC2MS(secondsPerPacket);
-				if (removeCount > it->m_count) {
-					it->m_count = 0;
-					it->m_firstAdded = currentTick; // for the packet we just process
+			const auto charge = [currentTick, intervalMs, floodThreshold](
+						    uint32_t &count, uint64_t &first) {
+				const uint64_t drained = (currentTick - first) / intervalMs;
+				if (drained >= count) {
+					count = 0;
+					first = currentTick;
 				} else {
-					it->m_count -= removeCount;
-					it->m_firstAdded += static_cast<uint64_t>(SEC2MS(secondsPerPacket)) * removeCount;
+					count -= static_cast<uint32_t>(drained);
+					first += drained * intervalMs;
 				}
+				count = std::min(count + 1, floodThreshold + 1);
+			};
+			// All packets consume the drop budget. Only keyed packets consume the ban
+			// budget, so spoofed traffic cannot prime an honest peer's next packet to ban it.
+			charge(it->m_count, it->m_firstAdded);
+			if (validReceiverKey) {
+				charge(it->m_verifiedCount, it->m_verifiedFirstAdded);
 			}
-			// we increase the counter in any case, even if we drop the packet later
-			it->m_count++;
 			// remember only for easier cleanup
-			trackEntry->m_lastExpire = std::max(trackEntry->m_lastExpire, it->m_firstAdded + static_cast<uint64_t>(SEC2MS(secondsPerPacket)) * it->m_count);
+			trackEntry->m_lastExpire = std::max(trackEntry->m_lastExpire,
+				currentTick + static_cast<uint64_t>(intervalMs) * it->m_count);
 
 			if (CKademlia::IsRunningInLANMode() && ::IsLanIP(wxUINT32_SWAP_ALWAYS(ip))) {
-				return true;	// no flood detection in LAN mode
+				return IncomingPacket::Allowed; // no flood detection in LAN mode
 			}
 
 			// now the actual check if this request is allowed
-			if (it->m_count > allowedPacketsPerMinute * 5) {
-				// this is so far above the limit that it has to be an intentional flood / misuse in any case
-				// so we take the next higher punishment and ban the IP
-				AddDebugLogLineN(logKadPacketTracking, CFormat("Massive request flood detected for opcode 0x%X (0x%X) from IP %s - Banning IP") % opcode % dbgOrgOpcode % KadIPToString(ip));
-				theApp->clientlist->AddBannedClient(wxUINT32_SWAP_ALWAYS(ip));
-				return false; // drop packet
+			if (validReceiverKey && it->m_verifiedCount > floodThreshold) {
+				// this is so far above the limit that it has to be an intentional flood /
+				// misuse. The listener applies the ban and routing expiry for keyed traffic.
+#ifdef __DEBUG__
+				AddDebugLogLineN(logKadPacketTracking,
+					CFormat("Massive request flood detected for opcode 0x%X (0x%X) from "
+						"IP %s") %
+						opcode % dbgOrgOpcode % KadIPToString(ip));
+#endif
+				return IncomingPacket::MassiveFlood; // drop packet
 			} else if (it->m_count > allowedPacketsPerMinute) {
 				// over the limit, drop the packet but do nothing else
 				if (!it->m_dbgLogged) {
 					it->m_dbgLogged = true;
-					AddDebugLogLineN(logKadPacketTracking, CFormat("Request flood detected for opcode 0x%X (0x%X) from IP %s - Dropping packets with this opcode") % opcode % dbgOrgOpcode % KadIPToString(ip));
+#ifdef __DEBUG__
+					AddDebugLogLineN(logKadPacketTracking,
+						CFormat("Request flood detected for opcode 0x%X (0x%X) from "
+							"IP %s - Dropping packets with this opcode") %
+							opcode % dbgOrgOpcode % KadIPToString(ip));
+#endif
 				}
-				return false; // drop packet
+				return IncomingPacket::Drop; // drop packet
 			} else {
 				it->m_dbgLogged = false;
 			}
-			return true;
+			return IncomingPacket::Allowed;
 		}
 	}
 
@@ -235,35 +268,45 @@ bool CPacketTracking::InTrackListIsAllowedPacket(uint32_t ip, uint8_t opcode, bo
 	curTrackedRequest.m_dbgLogged = false;
 	curTrackedRequest.m_firstAdded = currentTick;
 	curTrackedRequest.m_count = 1;
+	curTrackedRequest.m_verifiedCount = validReceiverKey ? 1 : 0;
+	curTrackedRequest.m_verifiedFirstAdded = currentTick;
 	// remember only for easier cleanup
-	trackEntry->m_lastExpire = std::max(trackEntry->m_lastExpire, currentTick + SEC2MS(secondsPerPacket));
+	trackEntry->m_lastExpire = std::max(trackEntry->m_lastExpire, currentTick + intervalMs);
 	trackEntry->m_trackedRequests.push_back(curTrackedRequest);
-	return true;
+	return IncomingPacket::Allowed;
 }
 
 void CPacketTracking::InTrackListCleanup()
 {
 	const uint64_t currentTick = ::GetTickCount64();
-	DEBUG_ONLY( const uint32_t dbgOldSize = m_mapTrackPacketsIn.size(); )
+	DEBUG_ONLY(const uint32_t dbgOldSize = m_mapTrackPacketsIn.size();)
 	lastTrackInCleanup = currentTick;
-	for (TrackedPacketInMap::iterator it = m_mapTrackPacketsIn.begin(); it != m_mapTrackPacketsIn.end();) {
+	for (TrackedPacketInMap::iterator it = m_mapTrackPacketsIn.begin();
+		it != m_mapTrackPacketsIn.end();) {
 		TrackedPacketInMap::iterator it2 = it++;
 		if (it2->second->m_lastExpire < currentTick) {
 			delete it2->second;
 			m_mapTrackPacketsIn.erase(it2);
 		}
 	}
-	AddDebugLogLineN(logKadPacketTracking, CFormat("Cleaned up Kad Incoming Requests Tracklist, entries before: %u, after %u") % dbgOldSize % m_mapTrackPacketsIn.size());
+#ifdef __DEBUG__
+	AddDebugLogLineN(logKadPacketTracking,
+		CFormat("Cleaned up Kad Incoming Requests Tracklist, entries before: %u, after %u") %
+			dbgOldSize % m_mapTrackPacketsIn.size());
+#endif
 }
 
-void CPacketTracking::AddLegacyChallenge(const CUInt128& contactID, const CUInt128& challengeID, uint32_t ip, uint8_t opcode)
+void CPacketTracking::AddLegacyChallenge(
+	const CUInt128 &contactID, const CUInt128 &challengeID, uint32_t ip, uint8_t opcode)
 {
 	uint64_t now = ::GetTickCount64();
 	TrackChallenge_Struct sTrack = { ip, now, opcode, contactID, challengeID };
 	listChallengeRequests.push_front(sTrack);
 	while (!listChallengeRequests.empty()) {
 		if (now - listChallengeRequests.back().inserted > SEC2MS(180)) {
-			AddDebugLogLineN(logKadPacketTracking, "Challenge timed out, client not verified - " + KadIPToString(listChallengeRequests.back().ip));
+			AddDebugLogLineN(logKadPacketTracking,
+				"Challenge timed out, client not verified - " +
+					KadIPToString(listChallengeRequests.back().ip));
 			listChallengeRequests.pop_back();
 		} else {
 			break;
@@ -271,11 +314,13 @@ void CPacketTracking::AddLegacyChallenge(const CUInt128& contactID, const CUInt1
 	}
 }
 
-bool CPacketTracking::IsLegacyChallenge(const CUInt128& challengeID, uint32_t ip, uint8_t opcode, CUInt128& contactID)
+bool CPacketTracking::IsLegacyChallenge(
+	const CUInt128 &challengeID, uint32_t ip, uint8_t opcode, CUInt128 &contactID)
 {
 	uint64_t now = ::GetTickCount64();
-	DEBUG_ONLY( bool warning = false; )
-	for (TrackChallengeList::iterator it = listChallengeRequests.begin(); it != listChallengeRequests.end();) {
+	DEBUG_ONLY(bool warning = false;)
+	for (TrackChallengeList::iterator it = listChallengeRequests.begin();
+		it != listChallengeRequests.end();) {
 		TrackChallengeList::iterator it2 = it++;
 		if (it2->ip == ip && it2->opcode == opcode && now - it2->inserted < SEC2MS(180)) {
 			wxASSERT(it2->challenge != 0 || opcode == KADEMLIA2_PING);
@@ -284,13 +329,14 @@ bool CPacketTracking::IsLegacyChallenge(const CUInt128& challengeID, uint32_t ip
 				listChallengeRequests.erase(it2);
 				return true;
 			} else {
-				DEBUG_ONLY( warning = true; )
+				DEBUG_ONLY(warning = true;)
 			}
 		}
 	}
 #ifdef __DEBUG__
 	if (warning) {
-		AddDebugLogLineN(logKadPacketTracking, "Wrong challenge answer received, client not verified (" + KadIPToString(ip) + ")");
+		AddDebugLogLineN(logKadPacketTracking,
+			"Wrong challenge answer received, client not verified (" + KadIPToString(ip) + ")");
 	}
 #endif
 	return false;
@@ -299,7 +345,9 @@ bool CPacketTracking::IsLegacyChallenge(const CUInt128& challengeID, uint32_t ip
 bool CPacketTracking::HasActiveLegacyChallenge(uint32_t ip) const
 {
 	uint64_t now = ::GetTickCount64();
-	for (TrackChallengeList::const_iterator it = listChallengeRequests.begin(); it != listChallengeRequests.end(); ++it) {
+	for (TrackChallengeList::const_iterator it = listChallengeRequests.begin();
+		it != listChallengeRequests.end();
+		++it) {
 		if (it->ip == ip && now - it->inserted <= SEC2MS(180)) {
 			return true;
 		}

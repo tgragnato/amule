@@ -23,7 +23,6 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
 #ifndef FILEFUNCTIONS_H
 #define FILEFUNCTIONS_H
 
@@ -32,33 +31,40 @@
 
 #include <wx/dir.h>
 
+#include <vector>
 
 // Dir iterator: needed because wxWidget's wxFindNextFile and
 // wxFindFirstFile are bugged like hell.
 class CDirIterator : private wxDir
 {
 public:
-	enum FileType {
+	enum FileType
+	{
 		FileNoHidden = wxDIR_FILES,
-		DirNoHidden  = wxDIR_DIRS,
+		DirNoHidden = wxDIR_DIRS,
 		File = wxDIR_FILES | wxDIR_HIDDEN,
-		Dir  = wxDIR_DIRS  | wxDIR_HIDDEN,
-		Any  = wxDIR_FILES | wxDIR_DIRS   | wxDIR_HIDDEN
+		Dir = wxDIR_DIRS | wxDIR_HIDDEN,
+		Any = wxDIR_FILES | wxDIR_DIRS | wxDIR_HIDDEN
 	};
 
-	CDirIterator(const CPath& dir);
+	CDirIterator(const CPath &dir);
 	~CDirIterator();
 
-	// extraFlags is OR'd into the wxDir search flags on top of `type`,
-	// so callers that need wxDIR_NO_FOLLOW (or any other wx flag) can
-	// pass it through without this common library knowing about
-	// application-level preferences.
-	CPath GetFirstFile(FileType type, const wxString& mask = "", int extraFlags = 0);
+	// False when the directory could not be opened, e.g. without read permission.
+	using wxDir::IsOpened;
+
+	// extraFlags is OR'd into the wxDir search flags on top of `type`, so a caller needing
+	// wxDIR_NO_FOLLOW (or any other wx flag) can pass it through without this common library
+	// knowing about application-level preferences.
+	CPath GetFirstFile(FileType type, const wxString &mask = "", int extraFlags = 0);
 	CPath GetNextFile();
 
-	bool HasSubDirs(const wxString& spec = "");
+	bool HasSubDirs(const wxString &spec = "");
 };
 
+// The subdirectory names CDirIterator(dir) lists for Dir, hidden ones and symlinks to folders
+// included, without its stat() per entry: that cost one stat per file just to skip the file.
+std::vector<CPath> ListSubdirectories(const CPath &dir);
 
 //! Filetypes understood by UnpackArchive
 enum EFileType
@@ -69,6 +75,8 @@ enum EFileType
 	EFT_Zip,
 	//! GZip archives, will be unpacked
 	EFT_GZip,
+	//! Tar archive, will be unpacked
+	EFT_Tar,
 	//! Met file, will be left unchanged.
 	EFT_Met,
 	//! Unknown filetype, will be left unchanged.
@@ -77,23 +85,41 @@ enum EFileType
 	EFT_Error
 };
 
-
 typedef std::pair<bool, EFileType> UnpackResult;
 
 /**
  * Unpacks a single file from an archive, replacing the archive.
  *
  * @param file The archive.
- * @param files An array of filenames (terminated by a NULL entry) which should be unpacked.
- * @return The first value is true if the archive was unpacked, the second is the resulting filetype.
+ * @param files Filenames to unpack, terminated by a NULL entry. Wildcards (`*.mmdb`) are allowed.
+ * @return True if the archive was unpacked, plus the resulting filetype.
  *
- * If the file specified is not an archive, it will be left unchanged and
- * the file-type returned. If it is a GZip archive, the archive will be
- * unpacked and the new file will replace the archive. If the archive is a
- * Zip archive, the first file found matching any in the files array (case-
- * insensitive) will be unpacked and overwrite the archive.
+ * A file that is not an archive is left unchanged and its type returned. A GZip archive is unpacked
+ * and replaced by the new file. In a Zip or Tar archive the first file whose name, without its
+ * folder, matches any in @a files (case-insensitively) is unpacked over the archive. A member
+ * larger than 256 MiB, or nesting deeper than three archives, fails the unpack.
  */
-UnpackResult UnpackArchive(const CPath& file, const char* files[]);
+UnpackResult UnpackArchive(const CPath &file, const char *files[]);
+
+/**
+ * Restrict @a file to owner read/write (0600) if it is currently looser.
+ *
+ * For config files holding credentials. aMule's own configs are created with whatever the umask
+ * allows -- 0644 on macOS, and 0664 under the 0002 umask Debian and Ubuntu ship, which leaves the
+ * file group-*writable*.
+ *
+ * Called at startup rather than at creation so existing installs are fixed on the first run of a
+ * version that does this, not just new ones. Safe to repeat: it stats first and only acts when
+ * something needs tightening. wxFileConfig replaces the file on save but carries the mode across,
+ * so one call holds.
+ *
+ * No-op on Windows, which has no POSIX mode bits; there the file is protected by the profile
+ * directory's ACL, the same compromise Credentials.cpp makes.
+ *
+ * @return true only when permissions were actually tightened, so the caller can say so once; this
+ *         library sits below the logger.
+ */
+bool RestrictToOwner(const CPath &file);
 
 #endif
 // File_checked_for_headers

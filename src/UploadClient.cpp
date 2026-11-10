@@ -23,39 +23,57 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include "updownclient.h"		// Needed for CUpDownClient
+#include "updownclient.h" // Needed for CUpDownClient
 
 #include <protocol/Protocols.h>
 #include <protocol/ed2k/Client2Client/TCP.h>
 
 #include <zlib.h>
 
-#include "ClientCredits.h"	// Needed for CClientCredits
-#include "Packet.h"		// Needed for CPacket
-#include "MemFile.h"		// Needed for CMemFile
-#include "UploadQueue.h"	// Needed for CUploadQueue
-#include "DownloadQueue.h"	// Needed for CDownloadQueue
-#include "PartFile.h"		// Needed for PR_POWERSHARE
-#include "ClientTCPSocket.h"	// Needed for CClientTCPSocket
-#include "SharedFileList.h"	// Needed for CSharedFileList
-#include "amule.h"		// Needed for theApp
-#include "ClientList.h"
-#include "Statistics.h"		// Needed for theStats
-#include "Logger.h"
-#include "ScopedPtr.h"		// Needed for CScopedArray
-#include "GuiEvents.h"		// Needed for Notify_*
-#include "FileArea.h"		// Needed for CFileArea
-#include "UploadDiskIOThread.h"	// Needed for CUploadDiskIOThread
+#include <memory> // Needed for std::unique_ptr
 
+#include "ClientCredits.h"   // Needed for CClientCredits
+#include "Packet.h"          // Needed for CPacket
+#include "MemFile.h"         // Needed for CMemFile
+#include "UploadQueue.h"     // Needed for CUploadQueue
+#include "DownloadQueue.h"   // Needed for CDownloadQueue
+#include "PartFile.h"        // Needed for PR_POWERSHARE
+#include "ClientTCPSocket.h" // Needed for CClientTCPSocket
+#include "SharedFileList.h"  // Needed for CSharedFileList
+#include "amule.h"           // Needed for theApp
+#include "ClientList.h"
+#include "Statistics.h" // Needed for theStats
+#include "Logger.h"
+#include "ScopedPtr.h"          // Needed for CScopedArray
+#include "GuiEvents.h"          // Needed for Notify_*
+#include "FileArea.h"           // Needed for CFileArea
+#include "UploadDiskIOThread.h" // Needed for CUploadDiskIOThread
 
 //	members of CUpDownClient
 //	which are mainly used for uploading functions
 
+void CUpDownClient::ResetDisplayUploadRate()
+{
+	m_displayUploadRate.Reset();
+	m_lastDisplayUploadSample = GetTickCount64();
+	if (m_socket) {
+		// These bytes may have reached the peer before the core accounted for them.
+		// Leave the accounting counters intact; only the new display window starts empty.
+		m_socket->GetSentFileBytesForDisplayAndReset();
+	}
+}
+
 void CUpDownClient::SetUploadState(uint8 eNewState)
 {
 	if (eNewState != m_nUploadState) {
+		// Entering or leaving US_UPLOADING changes this file's live upload speed and
+		// uploading-client count (issue #466). Mark it EC-dirty so the delta protocol re-
+		// sends those tags, or a file that just stopped uploading keeps a stale non-zero
+		// speed in remote clients.
+		if ((m_nUploadState == US_UPLOADING || eNewState == US_UPLOADING) && m_uploadingfile) {
+			m_uploadingfile->MarkECChanged();
+		}
 		if (m_nUploadState == US_UPLOADING) {
-			// Reset upload data rate computation
 			m_nUpDatarate = 0;
 			m_nSumForAvgUpDataRate = 0;
 			m_AvarageUDR_list.clear();
@@ -67,14 +85,21 @@ void CUpDownClient::SetUploadState(uint8 eNewState)
 		}
 
 		// don't add any final cleanups for US_NONE here
+		const bool changedActivity = m_nUploadState == US_UPLOADING || eNewState == US_UPLOADING;
+		if (changedActivity) {
+			ResetDisplayUploadRate();
+		}
 		m_nUploadState = eNewState;
+		if (changedActivity && m_uploadingfile) {
+			Notify_SharedFilesUpdateItem(m_uploadingfile);
+		}
 		UpdateDisplayedInfo(true);
 	}
 }
 
 uint32 CUpDownClient::CalculateScoreInternal()
 {
-	//TODO: complete this (friends, uploadspeed, amuleuser etc etc)
+	// TODO: complete this (friends, uploadspeed, amuleuser etc etc)
 	if (m_Username.IsEmpty()) {
 		return 0;
 	}
@@ -83,8 +108,8 @@ uint32 CUpDownClient::CalculateScoreInternal()
 		return 0;
 	}
 
-	const CKnownFile* pFile = GetUploadFile();
-	if ( !pFile ) {
+	const CKnownFile *pFile = GetUploadFile();
+	if (!pFile) {
 		return 0;
 	}
 
@@ -107,75 +132,62 @@ uint32 CUpDownClient::CalculateScoreInternal()
 	}
 
 	// calculate score, based on waitingtime and other factors
-	float fBaseValue = (float)(::GetTickCount64()-GetWaitStartTime())/1000;
+	float fBaseValue = (float)(::GetTickCount64() - GetWaitStartTime()) / 1000;
 
-	fBaseValue *= GetScoreRatio();	// credits
+	fBaseValue *= GetScoreRatio(); // credits
 
-	// Take file upload priority into account
-	//
-	// One yet unsolved problem here:
-	// sometimes a client asks for 2 files and there is no way to decide, which file the
-	// client finally gets. so it could happen that he is queued first because of a
-	// high prio file, but then asks for something completely different.
+	// Take file upload priority into account. One unsolved problem: a client sometimes asks for
+	// 2 files and there is no way to tell which it finally gets, so it could be queued first
+	// because of a high-priority file and then ask for something completely different.
 	float filepriority;
 	switch (pFile->GetUpPriority()) {
-		case PR_POWERSHARE:
-			filepriority = 250.0f;
-			break;
-		case PR_VERYHIGH:
-			filepriority = 1.8f;
-			break;
-		case PR_HIGH:
-			filepriority = 0.9f;
-			break;
-		case PR_LOW:
-			filepriority = 0.6f;
-			break;
-		case PR_VERY_LOW:
-			filepriority = 0.2f;
-			break;
-		case PR_NORMAL:
-		default:
-			filepriority = 0.7f;
-			break;
+	case PR_POWERSHARE:
+		filepriority = 250.0f;
+		break;
+	case PR_VERYHIGH:
+		filepriority = 1.8f;
+		break;
+	case PR_HIGH:
+		filepriority = 0.9f;
+		break;
+	case PR_LOW:
+		filepriority = 0.6f;
+		break;
+	case PR_VERY_LOW:
+		filepriority = 0.2f;
+		break;
+	case PR_NORMAL:
+	default:
+		filepriority = 0.7f;
+		break;
 	}
 	fBaseValue *= filepriority;
 
-	if ( (IsEmuleClient() || GetClientSoft() < 10) && m_byEmuleVersion <= 0x19) {
+	if ((IsEmuleClient() || GetClientSoft() < 10) && m_byEmuleVersion <= 0x19) {
 		fBaseValue *= 0.5f;
 	}
 	return (uint32)fBaseValue;
 }
 
-
-// Checks if it is next requested block from another chunk of the actual file or from another file
-//
-// [Returns]
-//   true : Next requested block is from another different chunk or file than last downloaded block
-//   false: Next requested block is from same chunk that last downloaded block
+// True when the next requested block is from a different chunk or file than the
+// last downloaded block. [Tarod 12/22/2002]
 bool CUpDownClient::IsDifferentPartBlock() const // [Tarod 12/22/2002]
 {
 	bool different_part = false;
 
-	// Check if we have good lists and proceed to check for different chunks
-	if ((!m_BlockRequests_queue.empty()) && !m_DoneBlocks_list.empty())
-	{
-		Requested_Block_Struct* last_done_block = NULL;
-		Requested_Block_Struct* next_requested_block = NULL;
+	if ((!m_BlockRequests_queue.empty()) && !m_DoneBlocks_list.empty()) {
+		Requested_Block_Struct *last_done_block = NULL;
+		Requested_Block_Struct *next_requested_block = NULL;
 		uint64 last_done_part = 0xffffffff;
 		uint64 next_requested_part = 0xffffffff;
 
-
-		// Get last block and next pending
 		last_done_block = m_DoneBlocks_list.front();
 		next_requested_block = m_BlockRequests_queue.front();
 
-		// Calculate corresponding parts to blocks
 		last_done_part = last_done_block->StartOffset / PARTSIZE;
 		next_requested_part = next_requested_block->StartOffset / PARTSIZE;
 
-		// Test is we are asking same file and same part
-		if ( last_done_part != next_requested_part) {
+		if (last_done_part != next_requested_part) {
 			different_part = true;
 			AddDebugLogLineN(logClient, "Session ended due to new chunk.");
 		}
@@ -189,14 +201,13 @@ bool CUpDownClient::IsDifferentPartBlock() const // [Tarod 12/22/2002]
 	return different_part;
 }
 
-
 void CUpDownClient::ProcessExtendedInfo(const CMemFile *data, CKnownFile *tempreqfile)
 {
-	m_uploadingfile->UpdateUpPartsFrequency( this, false ); // Decrement
+	m_uploadingfile->UpdateUpPartsFrequency(this, false); // Decrement
 	m_upPartStatus.clear();
-	m_nUpCompleteSourcesCount= 0;
+	m_nUpCompleteSourcesCount = 0;
 
-	if( GetExtendedRequestsVersion() == 0 ) {
+	if (GetExtendedRequestsVersion() == 0) {
 		// Something is coded wrong on this client if he's sending something it doesn't advertise.
 		return;
 	}
@@ -209,24 +220,26 @@ void CUpDownClient::ProcessExtendedInfo(const CMemFile *data, CKnownFile *tempre
 
 	uint16 nED2KUpPartCount = data->ReadUInt16();
 	if (!nED2KUpPartCount) {
-		m_upPartStatus.setsize( tempreqfile->GetPartCount(), 0 );
+		m_upPartStatus.setsize(tempreqfile->GetPartCount(), 0);
 	} else {
 		if (tempreqfile->GetED2KPartCount() != nED2KUpPartCount) {
-			// We already checked if we are talking about the same file.. So if we get here, something really strange happened!
+			// We already checked if we are talking about the same file.. So if we get here,
+			// something really strange happened!
 			m_upPartStatus.clear();
 			return;
 		}
 
-		m_upPartStatus.setsize( tempreqfile->GetPartCount(), 0 );
+		m_upPartStatus.setsize(tempreqfile->GetPartCount(), 0);
 
 		try {
 			uint16 done = 0;
 			while (done != m_upPartStatus.size()) {
 				uint8 toread = data->ReadUInt8();
-				for (sint32 i = 0;i != 8;i++){
-					m_upPartStatus.set(done, (toread>>i)&1);
+				for (sint32 i = 0; i != 8; i++) {
+					m_upPartStatus.set(done, (toread >> i) & 1);
 					//	We may want to use this for another feature..
-					//	if (m_upPartStatus[done] && !tempreqfile->IsComplete(done*PARTSIZE,((done+1)*PARTSIZE)-1))
+					//	if (m_upPartStatus[done] &&
+					//! tempreqfile->IsComplete(done*PARTSIZE,((done+1)*PARTSIZE)-1))
 					// bPartsNeeded = true;
 					done++;
 					if (done == m_upPartStatus.size()) {
@@ -236,151 +249,194 @@ void CUpDownClient::ProcessExtendedInfo(const CMemFile *data, CKnownFile *tempre
 			}
 		} catch (...) {
 			// We want the increment the frequency even if we didn't read everything
-			m_uploadingfile->UpdateUpPartsFrequency( this, true ); // Increment
+			m_uploadingfile->UpdateUpPartsFrequency(this, true); // Increment
 
 			throw;
 		}
 
 		if (GetExtendedRequestsVersion() > 1) {
-			uint16 nCompleteCountLast = GetUpCompleteSourcesCount();
-			uint16 nCompleteCountNew = data->ReadUInt16();
-			SetUpCompleteSourcesCount(nCompleteCountNew);
-			if (nCompleteCountLast != nCompleteCountNew) {
-				tempreqfile->UpdatePartsInfo();
-			}
+			// Still guarded, because this is where the count is read off the wire. The
+			// recompute it used to gate has moved below: the peer's self-reported total
+			// staying put says nothing about its part bitmap.
+			SetUpCompleteSourcesCount(data->ReadUInt16());
 		}
 	}
 
-	m_uploadingfile->UpdateUpPartsFrequency( this, true ); // Increment
+	m_uploadingfile->UpdateUpPartsFrequency(this, true); // Increment
+	// Unconditional now, where it used to be gated on the peer's self-reported complete-source
+	// total having changed -- which says nothing about its part bitmap, so the frequency vector
+	// could move without the count following (issue #1050). UpdatePartsInfo() is throttled to
+	// one real recompute a minute per file, so the extra calls cost a comparison.
+	//
+	// On tempreqfile, as before: the UDP/v3 callers pass a reqfile that is not necessarily this
+	// client's m_uploadingfile.
+	tempreqfile->UpdatePartsInfo();
 
 	Notify_SharedCtrlRefreshClient(ECID(), AVAILABLE_SOURCE);
 }
 
-
-void CUpDownClient::SetUploadFileID(CKnownFile* newreqfile)
+void CUpDownClient::SetUploadFileID(CKnownFile *newreqfile)
 {
 	if (m_uploadingfile == newreqfile) {
 		return;
-	} else if (m_uploadingfile) {
+	}
+	CKnownFile *previousFile = m_uploadingfile;
+	// A peer can change shares without leaving its upload slot. Its recent display
+	// bytes belong to the old share, not to the share it has just requested.
+	ResetDisplayUploadRate();
+	if (m_uploadingfile) {
 		m_uploadingfile->RemoveUploadingClient(this);
 		m_uploadingfile->UpdateUpPartsFrequency(this, false); // Decrement
+		// The decrement side never recomputed, so the count was a high-water mark that only
+		// ever rose (issue #1050). This one call covers both the peer disconnecting and the
+		// peer switching to a different file.
+		m_uploadingfile->UpdatePartsInfo();
 	}
 
 	if (newreqfile) {
-		// This is a new file! update info
 		newreqfile->AddUploadingClient(this);
 
 		if (m_requpfileid != newreqfile->GetFileHash()) {
 			m_requpfileid = newreqfile->GetFileHash();
-			m_upPartStatus.setsize( newreqfile->GetPartCount(), 0 );
+			m_upPartStatus.setsize(newreqfile->GetPartCount(), 0);
 		} else {
-			// this is the same file we already had assigned. Only update data.
 			newreqfile->UpdateUpPartsFrequency(this, true); // Increment
+			newreqfile->UpdatePartsInfo();
 		}
 
 		m_uploadingfile = newreqfile;
 	} else {
 		m_upPartStatus.clear();
 		m_nUpCompleteSourcesCount = 0;
-		// This clears m_uploadingfile and m_requpfileid
 		ClearUploadFileID();
+	}
+	// The periodic sweep visits only current upload files. The old file needs an
+	// explicit refresh when its final peer leaves, including changes to a null file.
+	if (previousFile) {
+		Notify_SharedFilesUpdateItem(previousFile);
+	}
+	if (newreqfile) {
+		Notify_SharedFilesUpdateItem(newreqfile);
 	}
 }
 
-
-void CUpDownClient::AddReqBlock(Requested_Block_Struct* reqblock, bool bSignalIOThread)
+void CUpDownClient::AddReqBlock(Requested_Block_Struct *reqblock, bool bSignalIOThread)
 {
+	// Own the request from here on. Every early return below used to delete it
+	// by hand, and a single missed path would leak the block; the queue takes
+	// over ownership via release() only once the block is actually stored.
+	std::unique_ptr<Requested_Block_Struct> reqblockOwner(reqblock);
+
 	if (GetUploadState() != US_UPLOADING) {
-		AddDebugLogLineN(logRemoteClient, "UploadClient: Client tried to add requested block when not in upload slot! Prevented requested blocks from being added.");
-		delete reqblock;
+		AddDebugLogLineN(logRemoteClient,
+			"UploadClient: Client tried to add requested block when not in upload slot! "
+			"Prevented requested blocks from being added.");
 		return;
 	}
 
-	// eMule ref: UploadClient.cpp AddReqBlock — sanity checks before queuing
-	CKnownFile* srcfile = theApp->sharedfiles->GetFileByID(CMD4Hash(reqblock->FileID));
+	// eMule ref: UploadClient.cpp AddReqBlock -- sanity checks before queuing
+	CKnownFile *srcfile = theApp->sharedfiles->GetFileByID(CMD4Hash(reqblock->FileID));
 	if (srcfile == NULL) {
 		AddDebugLogLineN(logRemoteClient, "AddReqBlock: Requested file not found in shared files");
-		delete reqblock;
 		return;
 	}
 
-	if (srcfile->IsPartFile() && !static_cast<CPartFile*>(srcfile)->IsComplete(reqblock->StartOffset, reqblock->EndOffset - 1)) {
-		AddDebugLogLineN(logRemoteClient, CFormat("AddReqBlock: Requested block not complete (%llu - %llu)")
-			% reqblock->StartOffset % (reqblock->EndOffset - 1));
-		delete reqblock;
+	if (srcfile->IsPartFile() && !static_cast<CPartFile *>(srcfile)->IsComplete(
+					     reqblock->StartOffset, reqblock->EndOffset - 1)) {
+		AddDebugLogLineN(logRemoteClient,
+			CFormat("AddReqBlock: Requested block not complete (%llu - %llu)") %
+				reqblock->StartOffset % (reqblock->EndOffset - 1));
 		return;
 	}
 
 	if (reqblock->StartOffset >= reqblock->EndOffset || reqblock->EndOffset > srcfile->GetFileSize()) {
-		AddDebugLogLineN(logRemoteClient, "AddReqBlock: Invalid block request (out of range or negative size)");
-		delete reqblock;
+		AddDebugLogLineN(logRemoteClient,
+			"AddReqBlock: Invalid block request (out of range or negative size)");
 		return;
 	}
 
 	if (reqblock->EndOffset - reqblock->StartOffset > EMBLOCKSIZE * 3) {
 		AddDebugLogLineN(logRemoteClient, "AddReqBlock: Block request too large");
-		delete reqblock;
+		return;
+	}
+
+	// Even a request for a previously corrupt part may trigger a due recheck after repair.
+	// Verification is asynchronous and does not gate this upload on its completion.
+	if (theApp->uploadqueue->IsDownloading(this) && !m_bIOError) {
+		srcfile->MaybeScheduleVerification();
+	}
+
+	// A block in a part a check found corrupt. Peers are told we lack those parts, so this is a
+	// stale part status or a misbehaving client: end the session and send the current status.
+	if (!srcfile->IsPartFile() &&
+		srcfile->GetVerifyResult().IsRangeCorrupt(reqblock->StartOffset, reqblock->EndOffset - 1)) {
+		AddDebugLogLineN(logRemoteClient,
+			CFormat("AddReqBlock: Requested block is in a corrupt part (%llu - %llu), ending the "
+				"upload session") %
+				reqblock->StartOffset % (reqblock->EndOffset - 1));
+		if (theApp->uploadqueue->RemoveFromUploadQueue(this, "corrupt part")) {
+			EndUploadSessionWithStatus(srcfile);
+		}
 		return;
 	}
 
 	if (!theApp->uploadqueue->IsDownloading(this)) {
 		AddDebugLogLineN(logRemoteClient, "AddReqBlock: Client not in upload list");
-		delete reqblock;
 		return;
 	}
 
 	if (m_bIOError) {
 		AddDebugLogLineN(logRemoteClient, "AddReqBlock: Client has pending IO error");
-		delete reqblock;
 		return;
 	}
 
 	{
-		// Hold m_blockListLock for all reads/writes of the block queues.
-		// The disk I/O thread accesses m_DoneBlocks_list, m_BlockRequests_queue,
-		// and m_addedPayloadQueueSession under this same lock.
+		// Hold m_blockListLock for all reads and writes of the block queues. The disk I/O
+		// thread accesses m_DoneBlocks_list and m_BlockRequests_queue under this same lock.
 		wxMutexLocker lock(m_blockListLock);
+		m_lastBlockRequest = ::GetTickCount64();
 
 		{
-			std::list<Requested_Block_Struct*>::iterator it = m_DoneBlocks_list.begin();
+			std::list<Requested_Block_Struct *>::iterator it = m_DoneBlocks_list.begin();
 			for (; it != m_DoneBlocks_list.end(); ++it) {
-				if (reqblock->StartOffset == (*it)->StartOffset && reqblock->EndOffset == (*it)->EndOffset) {
-					delete reqblock;
+				if (reqblock->StartOffset == (*it)->StartOffset &&
+					reqblock->EndOffset == (*it)->EndOffset) {
 					return;
 				}
 			}
 		}
 
 		{
-			std::list<Requested_Block_Struct*>::iterator it = m_BlockRequests_queue.begin();
+			std::list<Requested_Block_Struct *>::iterator it = m_BlockRequests_queue.begin();
 			for (; it != m_BlockRequests_queue.end(); ++it) {
-				if (reqblock->StartOffset == (*it)->StartOffset && reqblock->EndOffset == (*it)->EndOffset) {
-					delete reqblock;
+				if (reqblock->StartOffset == (*it)->StartOffset &&
+					reqblock->EndOffset == (*it)->EndOffset) {
 					return;
 				}
 			}
 		}
 
-		m_BlockRequests_queue.push_back(reqblock);
-	}	// release lock before signalling to avoid contention
+		m_BlockRequests_queue.push_back(reqblockOwner.get());
+		reqblockOwner.release();
+	} // release lock before signalling to avoid contention
 
 	// Notify disk I/O thread that new block requests are available.
-	// eMule ref: NewBlockRequestsAvailable() — UploadDiskIOThread.h:55
+	// eMule ref: NewBlockRequestsAvailable() -- UploadDiskIOThread.h:55
 	if (bSignalIOThread && theApp->uploadDiskIOThread) {
 		theApp->uploadDiskIOThread->NewBlockRequestsAvailable();
 	}
 }
 
-
 uint64 CUpDownClient::GetWaitStartTime() const
 {
 	uint64 dwResult = 0;
 
-	if ( credits ) {
-		dwResult = credits->GetSecureWaitStartTime(GetIP());
+	if (credits) {
+		dwResult = credits->GetSecureWaitStartTime(GetUserAddress());
 
 		if (dwResult > m_dwUploadTime && IsDownloading()) {
-			// This happens only if two clients with invalid securehash are in the queue - if at all
+			// This happens only if two clients with invalid securehash are in the queue - if at
+			// all
 			dwResult = m_dwUploadTime - 1;
 		}
 	}
@@ -388,157 +444,177 @@ uint64 CUpDownClient::GetWaitStartTime() const
 	return dwResult;
 }
 
-
 void CUpDownClient::SetWaitStartTime()
 {
-	if ( credits ) {
-		credits->SetSecWaitStartTime(GetIP());
+	if (credits) {
+		credits->SetSecWaitStartTime(GetUserAddress());
 	}
 }
 
-
 void CUpDownClient::ClearWaitStartTime()
 {
-	if ( credits ) {
+	if (credits) {
 		credits->ClearWaitStartTime();
 	}
 }
 
-
 void CUpDownClient::ResetSessionUp()
 {
 	m_nCurSessionUp = m_nTransferredUp;
-	m_addedPayloadQueueSession = 0;
-	m_nCurQueueSessionPayloadUp = 0;
-	// If upload was resumed there can be a remaining payload in the socket
-	// causing (prepared - sent) getting negative. So reset the counter here.
-	if (m_socket) {
-		CEMSocket* s = m_socket;
-		s->GetSentPayloadSinceLastCallAndReset();
+	{
+		// The disk I/O thread checks the read session under this lock.
+		wxMutexLocker lock(m_blockListLock);
+		++m_uploadReadSession;
 	}
 }
-
 
 uint32 CUpDownClient::SendBlockData()
 {
-    uint64 curTick = ::GetTickCount64();
-    uint64 sentBytesCompleteFile = 0;
-    uint64 sentBytesPartFile = 0;
-    uint64 sentBytesPayload = 0;
+	uint64 curTick = ::GetTickCount64();
+	uint64 sentBytesCompleteFile = 0;
+	uint64 sentBytesPartFile = 0;
+	uint64 displayBytes = 0;
 
-    if (m_socket) {
-		CEMSocket* s = m_socket;
-//		uint32 uUpStatsPort = GetUserPort();
+	if (m_socket) {
+		CEMSocket *s = m_socket;
 
-	    // Extended statistics information based on which client software and which port we sent this data to...
-	    // This also updates the grand total for sent bytes, etc.  And where this data came from.
-        sentBytesCompleteFile = s->GetSentBytesCompleteFileSinceLastCallAndReset();
-        sentBytesPartFile = s->GetSentBytesPartFileSinceLastCallAndReset();
-//		thePrefs.Add2SessionTransferData(GetClientSoft(), uUpStatsPort, false, true, sentBytesCompleteFile, (IsFriend() && GetFriendSlot()));
-//		thePrefs.Add2SessionTransferData(GetClientSoft(), uUpStatsPort, true, true, sentBytesPartFile, (IsFriend() && GetFriendSlot()));
+		// Extended statistics based on which client software and port we sent this
+		// data to, which also updates the grand totals.
+		sentBytesCompleteFile = s->GetSentBytesCompleteFileSinceLastCallAndReset();
+		sentBytesPartFile = s->GetSentBytesPartFileSinceLastCallAndReset();
+		displayBytes = s->GetSentFileBytesForDisplayAndReset();
 
 		m_nTransferredUp += sentBytesCompleteFile + sentBytesPartFile;
-        credits->AddUploaded(sentBytesCompleteFile + sentBytesPartFile, GetIP(), theApp->CryptoAvailable());
+		credits->AddUploaded(sentBytesCompleteFile + sentBytesPartFile,
+			GetUserAddress(),
+			theApp->CryptoAvailable());
 
-        sentBytesPayload = s->GetSentPayloadSinceLastCallAndReset();
-        m_nCurQueueSessionPayloadUp += sentBytesPayload;
-
-        // Wake the disk I/O thread so it can re-check its buffer condition with the
-        // freshly updated m_nCurQueueSessionPayloadUp. Without this, the thread might
-        // wait up to its WaitTimeout (100ms) before noticing curPayload advanced.
-        if (sentBytesPayload > 0 && theApp->uploadDiskIOThread) {
-            theApp->uploadDiskIOThread->SocketNeedsMoreData();
-        }
-
-        if (theApp->uploadqueue->CheckForTimeOver(this)) {
-            theApp->uploadqueue->RemoveFromUploadQueue(this);
+		if (theApp->uploadqueue->CheckForTimeOver(this)) {
+			theApp->uploadqueue->RemoveFromUploadQueue(this, "rotated");
 			SendOutOfPartReqsAndAddToWaitingQueue();
-        }
-    }
+		}
+	}
 
-    if(sentBytesCompleteFile + sentBytesPartFile > 0 ||
-        m_AvarageUDR_list.empty() || (curTick - m_AvarageUDR_list.back().timestamp) > 1*1000) {
-        // Store how much data we've transferred this round,
-        // to be able to calculate average speed later
-        // keep sum of all values in list up to date
-        TransferredData newitem = {(uint32) (sentBytesCompleteFile + sentBytesPartFile), curTick};
-        m_AvarageUDR_list.push_back(newitem);
-        m_nSumForAvgUpDataRate += sentBytesCompleteFile + sentBytesPartFile;
-    }
+	if (sentBytesCompleteFile + sentBytesPartFile > 0 || m_AvarageUDR_list.empty() ||
+		(curTick - m_AvarageUDR_list.back().timestamp) > 1 * 1000) {
+		// Store how much data was transferred this round, to calculate the average
+		// speed later, keeping the running sum up to date.
+		TransferredData newitem = { (uint32)(sentBytesCompleteFile + sentBytesPartFile), curTick };
+		m_AvarageUDR_list.push_back(newitem);
+		m_nSumForAvgUpDataRate += sentBytesCompleteFile + sentBytesPartFile;
+	}
 
-    // remove to old values in list
-    while ((!m_AvarageUDR_list.empty()) && (curTick - m_AvarageUDR_list.front().timestamp) > 10*1000) {
-        // keep sum of all values in list up to date
-        m_nSumForAvgUpDataRate -= m_AvarageUDR_list.front().datalen;
-	m_AvarageUDR_list.pop_front();
-    }
+	while ((!m_AvarageUDR_list.empty()) && (curTick - m_AvarageUDR_list.front().timestamp) > 10 * 1000) {
+		// keep sum of all values in list up to date
+		m_nSumForAvgUpDataRate -= m_AvarageUDR_list.front().datalen;
+		m_AvarageUDR_list.pop_front();
+	}
 
-    // Calculate average speed for this slot
-    if ((!m_AvarageUDR_list.empty()) && (curTick - m_AvarageUDR_list.front().timestamp) > 0 && GetUpStartTimeDelay() > 2*1000) {
-        m_nUpDatarate = ((uint64)m_nSumForAvgUpDataRate*1000) / (curTick-m_AvarageUDR_list.front().timestamp);
-    } else {
-        // not enough values to calculate trustworthy speed. Use -1 to tell this
-        m_nUpDatarate = 0; //-1;
-    }
+	if ((!m_AvarageUDR_list.empty()) && (curTick - m_AvarageUDR_list.front().timestamp) > 0 &&
+		GetUpStartTimeDelay() > 2 * 1000) {
+		m_nUpDatarate = ((uint64)m_nSumForAvgUpDataRate * 1000) /
+				(curTick - m_AvarageUDR_list.front().timestamp);
+	} else {
+		// not enough values to calculate trustworthy speed. Use -1 to tell this
+		m_nUpDatarate = 0; //-1;
+	}
 
-    // Check if it's time to update the display.
-	m_cSendblock++;
-	if (m_cSendblock == 30){
-		m_cSendblock = 0;
+	const uint32 previousRate = GetDisplayUploadDatarate();
+	if (IsDownloading()) {
+		m_displayUploadRate.AddBatch(displayBytes, m_lastDisplayUploadSample, curTick);
+		m_lastDisplayUploadSample = curTick;
+		m_displayUploadRate.CalculateRate(curTick);
+	}
+	if (GetDisplayUploadDatarate() != previousRate && m_uploadingfile) {
+		// Dirty every published change, including expiry between GUI refreshes. Otherwise
+		// a remote poll can retain an intermediate speed after the file becomes idle.
+		m_uploadingfile->MarkECChanged();
+	}
+
+	if (curTick - m_lastUploadDisplayUpdate >= 1000) {
+		m_lastUploadDisplayUpdate = curTick;
 		Notify_SharedCtrlRefreshClient(ECID(), AVAILABLE_SOURCE);
 	}
 
-    return sentBytesCompleteFile + sentBytesPartFile;
+	return sentBytesCompleteFile + sentBytesPartFile;
 }
-
 
 void CUpDownClient::SendOutOfPartReqsAndAddToWaitingQueue()
 {
 	// Kry - this is actually taken from eMule, but makes a lot of sense ;)
 
-	//OP_OUTOFPARTREQS will tell the downloading client to go back to OnQueue..
-	//The main reason for this is that if we put the client back on queue and it goes
-	//back to the upload before the socket times out... We get a situation where the
-	//downloader thinks it already sent the requested blocks and the uploader thinks
-	//the downloader didn't send any request blocks. Then the connection times out..
-	//I did some tests with eDonkey also and it seems to work well with them also..
+	// OP_OUTOFPARTREQS tells the downloading client to go back to OnQueue. Without it, a client
+	// put back on queue that returns before the socket times out leaves the downloader thinking
+	// it already sent the requested blocks while the uploader thinks it sent none, and the
+	// connection times out.
 
 	// Send this immediately, don't queue.
-	CPacket* pPacket = new CPacket(OP_OUTOFPARTREQS, 0, OP_EDONKEYPROT);
+	CPacket *pPacket = new CPacket(OP_OUTOFPARTREQS, 0, OP_EDONKEYPROT);
 	theStats::AddUpOverheadFileRequest(pPacket->GetPacketSize());
-	AddDebugLogLineN( logLocalClient, "Local Client: OP_OUTOFPARTREQS to " + GetFullIP() );
+	AddDebugLogLineN(logLocalClient, "Local Client: OP_OUTOFPARTREQS to " + GetFullIP());
 	SendPacket(pPacket, true, true);
 
 	theApp->uploadqueue->AddClientToQueue(this);
 }
 
+void CUpDownClient::EndUploadSessionWithStatus(CKnownFile *file)
+{
+	// A downloader still connected to us is accepted again without asking for the file status,
+	// and would keep requesting parts we no longer advertise. Peers process an unsolicited
+	// OP_FILESTATUS like an answer; it goes first so it arrives before any new accept.
+	CMemFile data(16 + 16);
+	data.WriteHash(file->GetFileHash());
+	file->WritePartStatus(&data);
+	CPacket *packet = new CPacket(data, OP_EDONKEYPROT, OP_FILESTATUS);
+	theStats::AddUpOverheadFileRequest(packet->GetPacketSize());
+	AddDebugLogLineN(logLocalClient, "Local Client: OP_FILESTATUS to " + GetFullIP());
+	SendPacket(packet, true, true);
+
+	SendOutOfPartReqsAndAddToWaitingQueue();
+}
+
+bool CUpDownClient::HasQueuedBlockInCorruptPart(const CKnownFile *file)
+{
+	// Only blocks not read yet: the disk I/O thread moves a block to m_DoneBlocks_list once its
+	// data is on the way.
+	wxMutexLocker lock(m_blockListLock);
+	for (const Requested_Block_Struct *block : m_BlockRequests_queue) {
+		if (md4cmp(block->FileID, file->GetFileHash().GetHash()) == 0 &&
+			file->GetVerifyResult().IsRangeCorrupt(block->StartOffset, block->EndOffset - 1)) {
+			return true;
+		}
+	}
+	return false;
+}
 
 /**
- * See description for CEMSocket::TruncateQueues().
+ * See the description for CEMSocket::TruncateQueues().
  */
 void CUpDownClient::FlushSendBlocks()
 {
 	// Call this when you stop upload, or the socket might be not able to send
-    if (m_socket) {    //socket may be NULL...
-        m_socket->TruncateQueues();
+	if (m_socket) { // socket may be NULL...
+		m_socket->TruncateQueues();
 	}
 }
 
-
-void CUpDownClient::SendHashsetPacket(const CMD4Hash& forfileid)
+void CUpDownClient::SendHashsetPacket(const CMD4Hash &forfileid)
 {
-	CKnownFile* file = theApp->sharedfiles->GetFileByID( forfileid );
+	CKnownFile *file = theApp->sharedfiles->GetFileByID(forfileid);
 	bool from_dq = false;
-	if ( !file ) {
+	if (!file) {
 		from_dq = true;
 		if ((file = theApp->downloadqueue->GetFileByID(forfileid)) == NULL) {
-			AddLogLineN(CFormat( _("Hashset requested for unknown file: %s") ) % forfileid.Encode() );
+			AddLogLineN(
+				CFormat(_("Hashset requested for unknown file: %s")) % forfileid.Encode());
 
 			return;
 		}
 	}
 
-	if ( !file->GetHashCount() ) {
+	// A file under one part has no part hashes, and the answer says so. As eMule does: a peer that
+	// asks waits for the answer until the connection times out.
+	if (!file->GetHashCount() && file->GetED2KPartHashCount() != 0) {
 		if (from_dq) {
 			AddDebugLogLineN(logRemoteClient, "Requested hashset could not be found");
 			return;
@@ -558,12 +634,11 @@ void CUpDownClient::SendHashsetPacket(const CMD4Hash& forfileid)
 	for (int i = 0; i != parts; i++) {
 		data.WriteHash(file->GetPartHash(i));
 	}
-	CPacket* packet = new CPacket(data, OP_EDONKEYPROT, OP_HASHSETANSWER);
+	CPacket *packet = new CPacket(data, OP_EDONKEYPROT, OP_HASHSETANSWER);
 	theStats::AddUpOverheadFileRequest(packet->GetPacketSize());
 	AddDebugLogLineN(logLocalClient, "Local Client: OP_HASHSETANSWER to " + GetFullIP());
-	SendPacket(packet,true,true);
+	SendPacket(packet, true, true);
 }
-
 
 void CUpDownClient::ClearUploadBlockRequests()
 {
@@ -572,7 +647,8 @@ void CUpDownClient::ClearUploadBlockRequests()
 	DeleteContents(m_DoneBlocks_list);
 }
 
-void CUpDownClient::SendRankingInfo(){
+void CUpDownClient::SendRankingInfo()
+{
 	if (!ExtProtocolAvailable()) {
 		return;
 	}
@@ -586,15 +662,16 @@ void CUpDownClient::SendRankingInfo(){
 	data.WriteUInt16(nRank);
 	// Kry: what are these zero bytes for. are they really correct?
 	// Kry - Well, eMule does like that. I guess they're ok.
-	data.WriteUInt32(0); data.WriteUInt32(0); data.WriteUInt16(0);
-	CPacket* packet = new CPacket(data, OP_EMULEPROT, OP_QUEUERANKING);
+	data.WriteUInt32(0);
+	data.WriteUInt32(0);
+	data.WriteUInt16(0);
+	CPacket *packet = new CPacket(data, OP_EMULEPROT, OP_QUEUERANKING);
 	theStats::AddUpOverheadOther(packet->GetPacketSize());
 	AddDebugLogLineN(logLocalClient, "Local Client: OP_QUEUERANKING to " + GetFullIP());
-	SendPacket(packet,true,true);
+	SendPacket(packet, true, true);
 }
 
-
-void CUpDownClient::SendCommentInfo(CKnownFile* file)
+void CUpDownClient::SendCommentInfo(CKnownFile *file)
 {
 	if (!m_bCommentDirty || file == NULL || !ExtProtocolAvailable() || m_byAcceptCommentVer < 1) {
 		return;
@@ -605,7 +682,7 @@ void CUpDownClient::SendCommentInfo(CKnownFile* file)
 	wxString desc = file->GetFileComment().Left(MAXFILECOMMENTLEN);
 	uint8 rating = file->GetFileRating();
 
-	if ( file->GetFileRating() == 0 && desc.IsEmpty() ) {
+	if (file->GetFileRating() == 0 && desc.IsEmpty()) {
 		return;
 	}
 
@@ -613,27 +690,40 @@ void CUpDownClient::SendCommentInfo(CKnownFile* file)
 	data.WriteUInt8(rating);
 	data.WriteString(desc, GetUnicodeSupport(), 4 /* size it's uint32 */);
 
-	CPacket* packet = new CPacket(data, OP_EMULEPROT, OP_FILEDESC);
+	CPacket *packet = new CPacket(data, OP_EMULEPROT, OP_FILEDESC);
 	theStats::AddUpOverheadOther(packet->GetPacketSize());
 	AddDebugLogLineN(logLocalClient, "Local Client: OP_FILEDESC to " + GetFullIP());
-	SendPacket(packet,true);
+	SendPacket(packet, true);
 }
 
-void  CUpDownClient::UnBan(){
+void CUpDownClient::UnBan()
+{
 	m_Aggressiveness = 0;
 
 	theApp->clientlist->AddTrackClient(this);
-	theApp->clientlist->RemoveBannedClient( GetIP() );
+	theApp->clientlist->RemoveBannedClient(GetUserAddress());
 	SetUploadState(US_NONE);
 	ClearWaitStartTime();
 }
 
-void CUpDownClient::Ban(){
+void CUpDownClient::Ban()
+{
 	theApp->clientlist->AddTrackClient(this);
-	theApp->clientlist->AddBannedClient( GetIP() );
+	theApp->clientlist->AddBannedClient(GetUserAddress());
 
-	AddDebugLogLineN(logClient, "Client '" + GetUserName() + "' seems to be an aggressive client and is banned from the uploadqueue");
+	AddDebugLogLineN(logClient,
+		"Client '" + GetUserName() +
+			"' seems to be an aggressive client and is banned from the uploadqueue");
 
+	// The upload state is set whether or not the record took the address, and the two are
+	// deliberately independent. US_BANNED governs this client object and needs nothing to
+	// identify it, so an aggressive peer we have no address for still loses its slot; the
+	// record governs an ADDRESS, so the ban outlives the object and survives a reconnection,
+	// and with no address there is nothing to remember it by.
+	//
+	// The visible consequence is that IsBanned() reads false for such a peer while its state is
+	// US_BANNED, so it is never un-banned through the record. That is the right way round: we
+	// cannot recognise it if it comes back.
 	SetUploadState(US_BANNED);
 
 	Notify_SharedCtrlRefreshClient(ECID(), UNAVAILABLE_SOURCE);
@@ -641,54 +731,50 @@ void CUpDownClient::Ban(){
 
 bool CUpDownClient::IsBanned() const
 {
-	return ( (theApp->clientlist->IsBannedClient(GetIP()) ) && m_nDownloadState != DS_DOWNLOADING);
+	return ((theApp->clientlist->IsBannedClient(GetUserAddress())) && m_nDownloadState != DS_DOWNLOADING);
 }
 
 void CUpDownClient::CheckForAggressive()
 {
 	uint64 cur_time = ::GetTickCount64();
 
-	// First call, initialize
-	if ( !m_LastFileRequest ) {
+	if (!m_LastFileRequest) {
 		m_LastFileRequest = cur_time;
 		return;
 	}
 
-	// Is this an aggressive request?
-	if ( ( cur_time - m_LastFileRequest ) < MIN_REQUESTTIME ) {
+	if ((cur_time - m_LastFileRequest) < MIN_REQUESTTIME) {
 		m_Aggressiveness += 3;
 
 		// Is the client EVIL?
-		if ( m_Aggressiveness >= 10 && (!IsBanned() && m_nDownloadState != DS_DOWNLOADING )) {
-			AddDebugLogLineN(logClient, CFormat( "Aggressive client banned (score: %d): %s -- %s -- %s" )
-				% m_Aggressiveness
-				% m_Username
-				% m_strModVersion
-				% m_fullClientVerString );
+		if (m_Aggressiveness >= 10 && (!IsBanned() && m_nDownloadState != DS_DOWNLOADING)) {
+			AddDebugLogLineN(logClient,
+				CFormat("Aggressive client banned (score: %d): %s -- %s -- %s") %
+					m_Aggressiveness % m_Username % m_strModVersion %
+					m_fullClientVerString);
 			Ban();
 		}
 	} else {
 		// Polite request, reward client
-		if ( m_Aggressiveness )
+		if (m_Aggressiveness)
 			m_Aggressiveness--;
 	}
 
 	m_LastFileRequest = cur_time;
 }
 
-
-void CUpDownClient::SetUploadFileID(const CMD4Hash& new_id)
+void CUpDownClient::SetUploadFileID(const CMD4Hash &new_id)
 {
-	// Update the uploading file found
-	CKnownFile* uploadingfile = theApp->sharedfiles->GetFileByID(new_id);
-	if ( !uploadingfile ) {
+	CKnownFile *uploadingfile = theApp->sharedfiles->GetFileByID(new_id);
+	if (!uploadingfile) {
 		// Can this really happen?
 		uploadingfile = theApp->downloadqueue->GetFileByID(new_id);
 	}
 	SetUploadFileID(uploadingfile); // This will update queue count on old and new file.
 }
 
-void CUpDownClient::ProcessRequestPartsPacket(const uint8_t* pachPacket, uint32 nSize, bool largeblocks) {
+void CUpDownClient::ProcessRequestPartsPacket(const uint8_t *pachPacket, uint32 nSize, bool largeblocks)
+{
 
 	CMemFile data(pachPacket, nSize);
 
@@ -717,11 +803,10 @@ void CUpDownClient::ProcessRequestPartsPacket(const uint8_t* pachPacket, uint32 
 
 	for (unsigned int i = 0; i < itemsof(auStartOffsets); i++) {
 		AddDebugLogLineN(logClient,
-			CFormat("Client %s requests %d File block %d-%d (%d bytes):")
-				% GetFullIP() % i % auStartOffsets[i] % auEndOffsets[i]
-				% (auEndOffsets[i] - auStartOffsets[i]));
+			CFormat("Client %s requests %d File block %d-%d (%d bytes):") % GetFullIP() % i %
+				auStartOffsets[i] % auEndOffsets[i] % (auEndOffsets[i] - auStartOffsets[i]));
 		if (auEndOffsets[i] > auStartOffsets[i]) {
-			Requested_Block_Struct* reqblock = new Requested_Block_Struct;
+			Requested_Block_Struct *reqblock = new Requested_Block_Struct;
 			reqblock->StartOffset = auStartOffsets[i];
 			reqblock->EndOffset = auEndOffsets[i];
 			md4cpy(reqblock->FileID, reqfilehash.GetHash());
@@ -738,39 +823,4 @@ void CUpDownClient::ProcessRequestPartsPacket(const uint8_t* pachPacket, uint32 
 	}
 }
 
-void CUpDownClient::ProcessRequestPartsPacketv2(const CMemFile& data) {
-
-	CMD4Hash reqfilehash = data.ReadHash();
-
-	uint8 numblocks = data.ReadUInt8();
-
-	for (int i = 0; i < numblocks; i++) {
-		Requested_Block_Struct* reqblock = new Requested_Block_Struct;
-		try {
-			reqblock->StartOffset = data.GetIntTagValue();
-			// We have to do +1, because the block matching uses that.
-			reqblock->EndOffset = data.GetIntTagValue() + 1;
-			if ((reqblock->StartOffset || reqblock->EndOffset) && (reqblock->StartOffset > reqblock->EndOffset)) {
-				AddDebugLogLineN(logClient, CFormat("Client %s request is invalid! %d / %d")
-					% GetFullIP() % reqblock->StartOffset % reqblock->EndOffset);
-				throw wxString("Client request is invalid!");
-			}
-
-			AddDebugLogLineN(logClient,
-				CFormat("Client %s requests %d File block %d-%d (%d bytes):")
-					% GetFullIP() % i % reqblock->StartOffset % reqblock->EndOffset
-					% (reqblock->EndOffset - reqblock->StartOffset));
-
-			md4cpy(reqblock->FileID, reqfilehash.GetHash());
-			reqblock->transferred = 0;
-			AddReqBlock(reqblock, false);
-		} catch (...) {
-			delete reqblock;
-			throw;
-		}
-	}
-	if (theApp->uploadDiskIOThread) {
-		theApp->uploadDiskIOThread->NewBlockRequestsAvailable();
-	}
-}
 // File_checked_for_headers

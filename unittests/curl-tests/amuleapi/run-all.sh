@@ -1,0 +1,307 @@
+#!/usr/bin/env bash
+#
+# Orchestrator for the amuleapi curl-smoke matrix.
+#
+# Brings up a fresh amuleapi daemon for each script, runs the
+# script, and aggregates pass/fail. The fresh-daemon-per-script
+# pattern isolates state — most importantly, 02-auth.sh fires the
+# rate-limit lockout (5 failed logins → 300 s IP lockout) which would
+# block every subsequent script's /auth/login. Restarting wipes the
+# in-memory CRateLimiter buckets.
+#
+# Setup per phase:
+#   1. pkill any running amuleapi
+#   2. wipe + recreate /tmp/amuleapi-regtest config dir
+#   3. set admin pass (one-shot CLI invocation, daemon exits)
+#   4. set guest pass (second one-shot — App.cpp's set-pass paths are
+#      mutually exclusive, so admin and guest need separate runs)
+#   5. start the daemon in foreground, log to /tmp/amuleapi.log
+#   6. sleep 5 s for the refresher to populate its caches (first
+#      GET_UPDATE tick is the heaviest — sends every alive ECID with
+#      full identity)
+#   7. run the phase script
+#
+# Usage:
+#   ./run-all.sh                                                 # run every script in
+#                                                                # the canonical order
+#   ./run-all.sh 12-downloads-add-patch.sh 13-downloads-delete-clear.sh  # run a subset
+#   AMULEAPI_SMOKE_OFFLINE=1 ./run-all.sh 26-rfc-followup-endpoints.sh  # isolated endpoint fixture
+#
+# For a full run against a connected daemon, use run-live.sh: it checks the
+# fixtures the network-dependent phases need before it starts.
+
+set -u
+
+# Resolve our location so the orchestrator runs from any cwd.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+
+# Locate the repo root by climbing out of unittests/curl-tests/amuleapi/.
+# AMULEAPI_ROOT remains an env override for unusual layouts; the default
+# follows the script's own location so anyone who checks the repo out
+# elsewhere works without editing this file.
+ROOT="${AMULEAPI_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
+. "$SCRIPT_DIR/lib/amuleapi-bin.sh"
+
+BIN="${AMULEAPI_BIN:-$(_find_amuleapi_bin "$ROOT")}"
+
+# The daemon every phase talks to. Overridable so the whole suite can be
+# pointed at a daemon that is not on the stock EC port.
+EC_HOST=${EC_HOST:-127.0.0.1}
+EC_PORT=${EC_PORT:-4712}
+EC_PASSWORD=${EC_PASSWORD:-amule}
+
+if [ ! -x "$BIN" ]; then
+	echo "FATAL: no usable amuleapi binary under $ROOT." >&2
+	echo "       set AMULEAPI_BIN to point at one." >&2
+	exit 2
+fi
+# Print what was resolved, not what was requested: with several build
+# trees around, which one this run actually exercised is the first thing
+# to check when a result looks wrong.
+echo "bin=$BIN"
+
+# One stable 256-bit JWT secret (64 hex chars) reused by every phase's
+# daemon. See run_phase: a fixed secret makes a brief instance overlap
+# on the port harmless instead of a token-verification failure.
+JWT_SECRET=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')
+
+run_phase() {
+	local script=$1
+	echo "==================== $script ===================="
+	# All-search always owns an offline core/API pair on private ports.
+	# Endpoint checks use the shared daemon unless CI requests the fixture.
+	if [ "$script" = "45-all-search.sh" ] || [ "$script" = "49-search-metadata.sh" ] ||
+		{ [ "$script" = "26-rfc-followup-endpoints.sh" ] && [ "${AMULEAPI_SMOKE_OFFLINE:-0}" = "1" ]; }; then
+		AMULEAPI_BIN="$BIN" bash "$SCRIPT_DIR/$script" --offline
+		return $?
+	fi
+	# Narrowly target the regtest daemon so a dev who happens to have
+	# `vim path/to/amuleapi.cpp` open doesn't get their editor killed.
+	# The config-dir suffix is uniquely ours.
+	#
+	# Tear down the previous phase's daemon CLEANLY before reusing port
+	# 4713. A bare `pkill; sleep 1` races graceful shutdown: amuleapi
+	# binds with SO_REUSEADDR, so a lingering old instance can briefly
+	# share the port with the new one. Each phase regenerates its config
+	# dir (and its JWT secret), so during that overlap a token minted by
+	# one instance is rejected by the other ("invalid or expired token").
+	# Wait for every matching process to exit, escalating to SIGKILL, and
+	# for the listen socket to be released.
+	local pat="amuleapi --config-dir=/tmp/amuleapi-regtest"
+	pkill -f "$pat" 2>/dev/null
+	local w
+	for w in $(seq 1 40); do
+		pgrep -f "$pat" >/dev/null 2>&1 || break
+		sleep 0.25
+	done
+	if pgrep -f "$pat" >/dev/null 2>&1; then
+		pkill -9 -f "$pat" 2>/dev/null
+		for w in $(seq 1 20); do
+			pgrep -f "$pat" >/dev/null 2>&1 || break
+			sleep 0.25
+		done
+	fi
+	for w in $(seq 1 40); do
+		ss -tln 2>/dev/null | grep -q ":4713 " || break
+		sleep 0.25
+	done
+	rm -rf /tmp/amuleapi-regtest
+	mkdir -p /tmp/amuleapi-regtest
+	# Pin a stable JWT secret for every phase (belt-and-suspenders with
+	# the clean teardown above): if two instances ever do overlap on the
+	# port, they share the secret, so a freshly-minted token still
+	# verifies regardless of which instance answers. amuleapi loads this
+	# file as-is instead of generating a per-process secret.
+	printf '%s' "$JWT_SECRET" > /tmp/amuleapi-regtest/amuleapi-jwt-secret
+	chmod 600 /tmp/amuleapi-regtest/amuleapi-jwt-secret
+	# The first of these also writes a defaults amuleapi.conf, which the
+	# EC password is seeded into below. Neither connects to amuled -- they
+	# write the credential file and exit -- so no EC settings are needed
+	# here at all.
+	"$BIN" --config-dir=/tmp/amuleapi-regtest \
+		--set-admin-pass=adminpass > /dev/null 2>&1
+	"$BIN" --config-dir=/tmp/amuleapi-regtest \
+		--set-guest-pass=guestpass > /dev/null 2>&1
+	# amuleapi has no --password: it takes the EC credential from the
+	# ephemeral token the core writes when it spawns amuleapi, or from
+	# amuleapi.conf. Nothing spawns it here, so seed the config file.
+	printf '%s\n' "$EC_PASSWORD" | "$BIN" --config-dir=/tmp/amuleapi-regtest \
+		--set-ec-pass-stdin > /dev/null 2>&1
+	# 27-static-frontend exercises the static-frontend serve path, and
+	# 40-http-conformance asserts the trailing-slash rule stops at the
+	# API prefix by checking the static root still answers 200 -- which
+	# it cannot do with StaticRoot unset. Both therefore need it wired.
+	#
+	# 27 plants symlinks + an oversized file into StaticRoot during the
+	# run, so the dir has to be writable. The bundled source tree is
+	# read-only in container CI; copy the placeholder out to a /tmp
+	# scratch dir and point StaticRoot at the copy. Every other script
+	# leaves it unset, which is what keeps the install-path discovery
+	# chain exercised: these pin it, the rest do not. 44 loads the WebUI
+	# under its BasePath, so it needs the same.
+	if [ "$script" = "27-static-frontend.sh" ] || [ "$script" = "40-http-conformance.sh" ] ||
+		[ "$script" = "44-base-path.sh" ]; then
+		STATIC_SRC="$ROOT/src/webapi/static"
+		STATIC_DIR=/tmp/amuleapi-static-frontend
+		rm -rf "$STATIC_DIR"
+		mkdir -p "$STATIC_DIR"
+		if [ -d "$STATIC_SRC" ]; then
+			cp -R "$STATIC_SRC"/. "$STATIC_DIR/"
+		fi
+		sed -i'.bak' \
+			"s|^StaticRoot=.*|StaticRoot=$STATIC_DIR|" \
+			/tmp/amuleapi-regtest/amuleapi.conf
+		rm -f /tmp/amuleapi-regtest/amuleapi.conf.bak
+	fi
+	if [ "$script" = "44-base-path.sh" ]; then
+		sed -i'.bak' "s|^BasePath=.*|BasePath=/amule|" /tmp/amuleapi-regtest/amuleapi.conf
+		rm -f /tmp/amuleapi-regtest/amuleapi.conf.bak
+	fi
+	"$BIN" --config-dir=/tmp/amuleapi-regtest \
+		--host="$EC_HOST" --port="$EC_PORT" \
+		> /tmp/amuleapi.log 2>&1 &
+	# Poll /health until the daemon is ready instead of guessing the
+	# cold-start time. The first EC GET_UPDATE roundtrip can take a
+	# couple of seconds on a slow CI runner, and the cap of 12 leaves
+	# headroom while still failing fast on a genuine bring-up bug.
+	local i
+	for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+		if curl -s -o /dev/null --max-time 1 \
+		    http://localhost:4713/api/v1/health 2>/dev/null; then
+			break
+		fi
+		sleep 0.5
+	done
+	# Scripts that bounce the daemon themselves (25-cors.sh rewrites
+	# amuleapi.conf to flip CORS modes) read these envs to know how
+	# to restart cleanly. AMULE_SHARED_DIR lets a phase self-provision
+	# a shared-file fixture (17-shared-priority-patch): it points at a
+	# directory the connected amuled shares (its Incoming, typically),
+	# so the smoke doesn't depend on the operator's library already
+	# holding a shared file. AMULE_CONFIG_DIR is that amuled's config dir, for phases that check
+	# what it saved (14-servers-mutations). Unset is fine unless a phase needs it.
+	AMULEAPI_BIN="$BIN" \
+	EC_HOST="$EC_HOST" EC_PORT="$EC_PORT" EC_PASSWORD="$EC_PASSWORD" \
+	AMULEAPI_CONFIG_DIR=/tmp/amuleapi-regtest \
+	AMULEAPI_LOG=/tmp/amuleapi.log \
+	AMULE_SHARED_DIR="${AMULE_SHARED_DIR:-}" \
+	AMULE_CONFIG_DIR="${AMULE_CONFIG_DIR:-}" \
+	bash "$SCRIPT_DIR/$script"
+	local rc=$?
+	echo "$script exit=$rc"
+	# If a script failed AND the daemon is currently rate-limiting,
+	# the operator likely hit the 02-auth fallout: 7 deliberate
+	# wrong-password attempts armed a 5-minute IP lockout that later
+	# scripts inherit when the orchestrator's daemon restart isn't
+	# enough to clear the in-memory bucket. Print a one-line tip so
+	# the operator doesn't lose half an hour chasing the wrong layer.
+	if [ "$rc" -ne 0 ]; then
+		local probe=$(curl -s -X POST -H "Content-Type: application/json" \
+			-o /dev/null -w "%{http_code}" \
+			-d "{\"password\":\"adminpass\"}" \
+			http://localhost:4713/api/v1/auth/login 2>/dev/null)
+		if [ "$probe" = "429" ]; then
+			echo "TIP: amuleapi is currently rate-limiting login (HTTP 429)." \
+			     "If you ran 02-auth.sh right before this, that's the 7-bad-pass" \
+			     "arm carried over. Restart amuleapi (kills the bucket)" \
+			     "before re-running."
+		fi
+	fi
+	return $rc
+}
+
+# Canonical execution order. Numeric prefix doubles as dependency
+# ordering: auth before any mutation, refresher-consolidation tests
+# before later read tests that rely on the consolidated tick shape,
+# CORS / static-frontend after the API surface tests so failures in
+# the new transports don't mask earlier regressions.
+#
+# 00-peer-fixture and 99-peer-fixture-teardown bracket the run: the first
+# promotes a real search hit into the transfer queue so the source-dependent
+# checks (04, 33, 43) have a download a peer will actually connect to, the
+# last removes it again. Neither asserts anything, and 00 is non-fatal -- with
+# no network it prints a banner and those checks skip as they always did.
+# A subset run (`./run-all.sh 04-...`) replaces this list wholesale, so it gets
+# no fixture and no teardown; name 00 and 99 explicitly to exercise that path.
+PHASES=(
+	00-peer-fixture.sh
+	01-version-and-errors.sh
+	02-auth.sh
+	02b-auth-lockout-isolation.sh
+	03-read-status.sh
+	04-read-downloads-shared.sh
+	05-read-servers-kad-categories-prefs.sh
+	06-read-logs.sh
+	07-read-stats-and-search-results.sh
+	08-read-download-parts.sh
+	09-refresher-consolidation.sh
+	10-refresher-lazy-ondemand.sh
+	11-downloads-default-filter.sh
+	12-downloads-add-patch.sh
+	13-downloads-delete-clear.sh
+	14-servers-mutations.sh
+	15-preferences-patch.sh
+	16-networks-connect.sh
+	17-shared-priority-patch.sh
+	18-categories-crud.sh
+	19-search.sh
+	20-etag-conditional-get.sh
+	21-sse-heartbeat.sh
+	22-sse-diff-emission.sh
+	23-sse-replay.sh
+	24-sse-resync.sh
+	25-cors.sh
+	26-rfc-followup-endpoints.sh
+	27-static-frontend.sh
+	28-list-pagination-sort.sh
+	29-bulk-mutations.sh
+	30-shared-verify.sh
+	31-shared-directories.sh
+	32-country-flags.sh
+	33-known-clients.sh
+	34-friends.sh
+	35-ipfilter-actions.sh
+	36-shared-reload.sh
+	37-shared-availability-parts.sh
+	38-chat.sh
+	39-shared-media-refresh.sh
+	40-http-conformance.sh
+	41-shared-content.sh
+	42-path-and-body-contracts.sh
+	43-client-protocol-extensions.sh
+	44-base-path.sh
+	45-all-search.sh
+	46-sse-session-end.sh
+	47-shared-delete.sh
+	48-cross-origin-writes.sh
+	49-search-metadata.sh
+	50-proxy-auth.sh
+	99-peer-fixture-teardown.sh
+)
+
+# Override list from the command line if given.
+if [ "$#" -gt 0 ]; then
+	PHASES=("$@")
+fi
+
+OVERALL=0
+for s in "${PHASES[@]}"; do
+	if [ ! -f "$SCRIPT_DIR/$s" ]; then
+		echo "skip $s (not present in $SCRIPT_DIR)"
+		continue
+	fi
+	if ! run_phase "$s"; then
+		OVERALL=1
+	fi
+done
+
+# Final teardown — same narrow scope as the per-phase kill at line 53
+# so an editor with `vim path/to/amuleapi.cpp` open survives the run.
+pkill -f "amuleapi --config-dir=/tmp/amuleapi-regtest" 2>/dev/null
+echo
+if [ "$OVERALL" -eq 0 ]; then
+	echo "OVERALL: ALL PHASES PASSED"
+else
+	echo "OVERALL: ONE OR MORE PHASES FAILED"
+fi
+exit "$OVERALL"

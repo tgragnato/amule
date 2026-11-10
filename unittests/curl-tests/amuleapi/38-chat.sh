@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+#
+# amuleapi 38-chat — the /chats surface (issue #971).
+#
+# Chat is served from a session store in amuled that every client shares,
+# so a message sent from the desktop GUI, from amulegui or through this
+# API lands in one transcript.
+#
+# Wire contract:
+#   GET    /chats                   → list envelope of conversations
+#   GET    /chats/{address}/messages   → { peer, messages[], total, last_message_id }
+#   POST   /chats/{address}/messages   → 202 + the created message
+#   DELETE /chats/{address}            → 204, no body
+#
+# `{peer}` is "<ip>:<port>". Every route answers 503 ec_unsupported when
+# the connected amuled predates the chat ops.
+#
+# The peer used below is in the RFC 5737 TEST-NET-3 documentation range,
+# which is not routable: the daemon creates the conversation and queues
+# the message without anything leaving the host. That is the point --
+# POST is 202 ("queued on the peer connection"), never a delivery
+# receipt, so an unreachable peer is a valid and deliberate test target.
+
+set -u
+set -o pipefail
+
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+
+# TEST-NET-3 (RFC 5737). Never routable, never a real peer.
+PEER_IP=203.0.113.42
+PEER_PORT=4662
+PEER="$PEER_IP:$PEER_PORT"
+
+_preflight
+
+echo "amuleapi 38-chat smoke @ $HOST"
+
+TOKEN=$(_login "$ADMIN_PASS")
+[ -n "$TOKEN" ] || _die "login failed"
+
+# --- 1. Capability gate. ------------------------------------------
+#
+# Against an amuled that predates the chat ops every route must answer
+# 503 ec_unsupported rather than sending an opcode the daemon would land
+# in its unknown-opcode branch (which asserts before it can answer).
+_curl -H "Authorization: Bearer $TOKEN" "$API/chats"
+if [ "$CURL_STATUS" = "503" ]; then
+	CODE=$(printf '%s' "$CURL_BODY" | jq -r '.error.code')
+	if [ "$CODE" = "ec_unsupported" ]; then
+		_pass "GET /chats → 503 ec_unsupported (daemon predates the chat ops)"
+		echo "    info: connected amuled does not serve chat; remaining checks skipped"
+		echo
+		echo "OK: $TEST_COUNT/$TEST_COUNT passed"
+		exit 0
+	fi
+	_fail "GET /chats 503 shape" "expected error.code=ec_unsupported, got $CODE"
+fi
+_assert_status 200 "GET /chats → 200"
+_assert_json_eq '.chats | type' array '/chats .chats is array'
+
+# --- 2. Send creates the conversation. ----------------------------
+#
+# No 404 for an unknown peer: the core creates the session, so POST
+# doubles as "start a chat with this address".
+_curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+	-d '{"text":"curl-test hello"}' "$API/chats/$PEER/messages"
+_assert_status 202 "POST /chats/{address}/messages → 202 Accepted"
+# The created message stays in the body: no per-message GET defines a shape
+# for it, so the id and the timestamp the store assigned are only readable
+# here. There is no `ok` field; the 202 already carries it.
+_assert_json_eq '. | has("ok")' false 'send response has no constant ok field'
+_assert_json_eq '.address'                "$PEER" 'send echoes the conversation key'
+_assert_json_eq '. | has("hash")' true 'send carries the hash field'
+_assert_json_eq '.hash' null 'provisional route send has no hash'
+_assert_json_eq '.message.direction'   out     'sent message is direction=out'
+_assert_json_eq '.message.text'        "curl-test hello" 'send echoes the text'
+# Same object shape the GET returns, from the same writer -- including the
+# sent_at key. It is null here and only here: EC_OP_CHAT_SEND answers with the
+# message id and no timestamp.
+_assert_json_eq '.message | has("sent_at")' true 'send echo carries the sent_at key'
+_assert_json_eq '.message.sent_at' null 'send echo sent_at is null, not a fabricated stamp'
+FIRST_ID=$(printf '%s' "$CURL_BODY" | jq -r '.message.id')
+
+# The refresher mirrors the store on its next tick (1 s).
+sleep 3
+
+# --- 3. The conversation is now on the list. ----------------------
+_curl -H "Authorization: Bearer $TOKEN" "$API/chats"
+_assert_status 200 "GET /chats → 200 after send"
+FOUND=$(printf '%s' "$CURL_BODY" | jq --arg p "$PEER" '[.chats[] | select(.address == $p)] | length')
+if [ "$FOUND" = "1" ]; then
+	_pass "/chats lists the new conversation"
+else
+	_fail "/chats conversation presence" "expected exactly 1 row for $PEER, got $FOUND"
+fi
+# Narrow the body to just this conversation's row for the field checks.
+ROW=$(printf '%s' "$CURL_BODY" | jq --arg p "$PEER" -c '.chats[] | select(.address == $p)')
+printf '%s' "$ROW" > "$CURL_BODY_FILE"; CURL_BODY=$ROW
+_assert_json_eq '.ip'                 "$PEER_IP"   'row carries the split ip'
+_assert_json_eq '.port'               "$PEER_PORT" 'row carries the split port'
+_assert_json_eq '.hash'               null         'legacy route row has no hash identity'
+# The peer is a TEST-NET-3 address nothing can reach, so we are definitively
+# not connected to it -- whether or not the daemon minted a client object
+# while trying. That is the whole point of the field: `connected` is
+# reachability, not the mere existence of a client_ecid, which is true from
+# the first contact ATTEMPT.
+_assert_json_eq '.connected'          false        'unrouted peer is offline'
+# client_ecid is deliberately NOT asserted null here any more. The daemon
+# legitimately holds a client object for a peer it is trying to reach, so
+# pinning it to null asserted the very conflation `online` now avoids. What
+# must hold is the implication: online can only be true with a live peer.
+_assert_json_eq '(.connected == true) and (.client_ecid == null) | not' true \
+	'connected is never true without a client_ecid'
+_assert_json_eq '.client_ecid | type | test("^(number|null)$")' true \
+	'client_ecid is a number or null, never a 0 sentinel'
+_assert_json_eq '.friend_ecid'        null         'a non-friend peer has friend_ecid null, not a 0 sentinel'
+_assert_json_eq '.last_message.text'  "curl-test hello" 'row carries last_message'
+# The core has no nickname for a peer that never answered, so the row must
+# fall back to the desktop's own rendering rather than an empty string.
+_assert_json_eq '.name' "IP: $PEER_IP Port: $PEER_PORT" 'name falls back to the address form'
+
+# --- 4. Reading the transcript. -----------------------------------
+_curl -H "Authorization: Bearer $TOKEN" "$API/chats/$PEER/messages"
+_assert_status 200 "GET /chats/{address}/messages → 200"
+_assert_json_eq '.address'            "$PEER" 'messages echo the conversation key'
+_assert_json_eq '. | has("hash")' true 'transcript carries the hash field'
+_assert_json_eq '.hash' null 'provisional route transcript has no hash'
+_assert_json_eq '.messages | type' array   'messages is an array'
+_assert_json_eq '.messages[0].direction' out 'first message is direction=out'
+
+# Every message object is exactly {id, direction, text, sent_at}.
+WRONG=$(printf '%s' "$CURL_BODY" | jq \
+	'[.messages[] | select((keys | sort) != ["direction","id","sent_at","text"])] | length')
+if [ "$WRONG" = "0" ]; then
+	_pass "every message object is {id, direction, text, sent_at}"
+else
+	_fail "message object shape" "$WRONG messages carry unexpected keys"
+fi
+
+# --- 5. since_message_id is a safe cursor. --------------------------------
+#
+# ids are monotonic per daemon process, so a client polling with the
+# highest id it holds must never see a duplicate and never skip one.
+_curl -H "Authorization: Bearer $TOKEN" \
+	"$API/chats/$PEER/messages?since_message_id=$FIRST_ID"
+_assert_status 200 "GET messages?since_message_id → 200"
+_assert_json_eq '.messages | length' 0 'since_message_id at the head returns nothing new'
+
+_curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+	-d '{"text":"second message"}' "$API/chats/$PEER/messages"
+_assert_status 202 "POST second message → 202"
+sleep 3
+_curl -H "Authorization: Bearer $TOKEN" \
+	"$API/chats/$PEER/messages?since_message_id=$FIRST_ID"
+_assert_json_eq '.messages | length'   1                'since_message_id returns exactly the new message'
+_assert_json_eq '.messages[0].text'    "second message" 'since_message_id returns the right message'
+
+# --- 5b. `tail`, not `limit`. --------------------------------------
+#
+# This selects the last N of the window rather than a page of it, which is
+# what the log endpoints already call `tail`. It was called `limit`, which
+# on nine other collections means a window paired with `offset` -- one word
+# with two meanings is a rule a client has to learn twice.
+_curl -H "Authorization: Bearer $TOKEN" \
+	"$API/chats/$PEER/messages?tail=1"
+_assert_status 200 "GET messages?tail=1 → 200"
+_assert_json_eq '.messages | length' 1 'tail=1 returns just the newest message'
+_assert_json_eq '.messages[0].text' "second message" 'tail keeps the newest, not the oldest'
+
+# `limit` is an unknown parameter here and is simply ignored --
+# the count parameter is `tail`, honoured under no other name.
+_curl -H "Authorization: Bearer $TOKEN" \
+	"$API/chats/$PEER/messages?limit=1"
+_assert_status 200 "GET messages?limit=1 → 200 (unknown param, ignored)"
+_assert_json_eq '.messages | length' 2 'limit does not truncate the chat window'
+
+# Same strict parsing as every other count on the surface.
+_curl -H "Authorization: Bearer $TOKEN" \
+	"$API/chats/$PEER/messages?tail=abc"
+_assert_status 400 "GET messages?tail=abc → 400"
+
+# --- 6. Input validation. -----------------------------------------
+_curl -H "Authorization: Bearer $TOKEN" "$API/chats/notanaddress/messages"
+_assert_status 400 "GET messages with a malformed {peer} → 400"
+_curl -H "Authorization: Bearer $TOKEN" "$API/chats/$PEER_IP:99999/messages"
+_assert_status 400 "GET messages with an out-of-range port → 400"
+_curl -H "Authorization: Bearer $TOKEN" "$API/chats/198.51.100.7:4662/messages"
+_assert_status 404 "GET messages for an unknown conversation → 404"
+_curl -H "Authorization: Bearer $TOKEN" "$API/chats/not-a-md4-hash/messages"
+_assert_status 400 "GET messages with an invalid hash key → 400"
+_curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+	-d '{"text":"x"}' "$API/chats/0123456789abcdef0123456789abcdef/messages"
+_assert_status 404 "POST to an unknown hash conversation → 404"
+_curl -H "Authorization: Bearer $TOKEN" "$API/chats/0123456789abcdef0123456789abcdef/messages"
+_assert_status 404 "GET an unknown hash conversation → 404"
+_curl -X DELETE -H "Authorization: Bearer $TOKEN" "$API/chats/0123456789abcdef0123456789abcdef"
+_assert_status 404 "DELETE an unknown hash conversation → 404"
+_curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+	-d '{"text":""}' "$API/chats/$PEER/messages"
+_assert_status 400 "POST with empty text → 400"
+_curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+	-d '{}' "$API/chats/$PEER/messages"
+_assert_status 400 "POST with no text field → 400"
+# The ECID-keyed send routes are gone (issue #1497): a conversation is addressed by
+# ip:port, which every caller already has on its own rows. Both paths now fall through
+# to the catch-all 404 -- asserted so a re-added route cannot slip back in unnoticed.
+_curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+	-d '{"text":"x"}' "$API/clients/4294967290/messages"
+_assert_status 404 "POST /clients/{ecid}/messages is not a route → 404"
+_curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+	-d '{"text":"x"}' "$API/friends/4294967290/messages"
+_assert_status 404 "POST /friends/{ecid}/messages is not a route → 404"
+
+# --- 7. Method gating. --------------------------------------------
+_curl -X PUT -H "Authorization: Bearer $TOKEN" "$API/chats"
+_assert_status 405 "PUT /chats → 405"
+_curl -X PATCH -H "Authorization: Bearer $TOKEN" "$API/chats/$PEER"
+_assert_status 405 "PATCH /chats/{address} → 405"
+
+# --- 8. Guests read but do not write. -----------------------------
+GUEST_TOKEN=$(_login "$GUEST_PASS")
+if [ -n "$GUEST_TOKEN" ]; then
+	_curl -H "Authorization: Bearer $GUEST_TOKEN" "$API/chats"
+	_assert_status 200 "GET /chats as guest → 200 (read-only data)"
+	_curl -X POST -H "Authorization: Bearer $GUEST_TOKEN" -H "Content-Type: application/json" \
+		-d '{"text":"nope"}' "$API/chats/$PEER/messages"
+	_assert_status 403 "POST as guest → 403 (sending is admin-only)"
+	_curl -X DELETE -H "Authorization: Bearer $GUEST_TOKEN" "$API/chats/$PEER"
+	_assert_status 403 "DELETE as guest → 403"
+else
+	echo "    info: guest login unavailable; guest checks skipped"
+fi
+
+# --- 9. Closing is global and actually removes it. ----------------
+_curl -X DELETE -H "Authorization: Bearer $TOKEN" "$API/chats/$PEER"
+# 204, no body: `peer` came from the URL and `ok` restated the status code.
+_assert_status 204 "DELETE /chats/{address} → 204"
+_assert_body_empty 'close sends no body'
+sleep 3
+_curl -H "Authorization: Bearer $TOKEN" "$API/chats"
+GONE=$(printf '%s' "$CURL_BODY" | jq --arg p "$PEER" '[.chats[] | select(.address == $p)] | length')
+if [ "$GONE" = "0" ]; then
+	_pass "closed conversation is gone from /chats"
+else
+	_fail "close removal" "conversation still listed after DELETE"
+fi
+_curl -X DELETE -H "Authorization: Bearer $TOKEN" "$API/chats/$PEER"
+_assert_status 404 "DELETE an already-closed conversation → 404"
+
+# A route DELETE must not depend on the refresher having observed the POST.
+_curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+	-d '{"text":"close immediately"}' "$API/chats/$PEER/messages"
+_assert_status 202 "POST before immediate close → 202"
+_curl -X DELETE -H "Authorization: Bearer $TOKEN" "$API/chats/$PEER"
+_assert_status 204 "DELETE immediately after route POST → 204"
+
+# Route-to-hash promotion requires a peer handshake, which TEST-NET cannot provide.
+# RefresherTest exercises the real session-value route + identity-child wire shape.
+
+# --- Summary. -----------------------------------------------------
+_summary

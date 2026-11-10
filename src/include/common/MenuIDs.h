@@ -26,9 +26,10 @@
 #ifndef COMMONMENUIDS_H
 #define COMMONMENUIDS_H
 
-#include <wx/defs.h>	// To access wxID_HIGHEST menu item constant
+#include <wx/defs.h> // To access wxID_HIGHEST menu item constant
 
-enum {
+enum
+{
 	MP_MESSAGE = wxID_HIGHEST + 1, // Start ID at next free value (defined by wx)
 	MP_DETAIL,
 	MP_ADDFRIEND,
@@ -36,20 +37,28 @@ enum {
 	MP_SHOWLIST,
 	MP_FRIENDSLOT,
 	MP_CHANGE2FILE,
+	// Explains the colours of a chunk-bar column. Only the client lists that
+	// actually draw one offer it -- see CGenericClientListCtrl.
+	MP_BARLEGEND,
 	MP_CANCEL,
 	MP_STOP,
 	MP_RESUME,
 	MP_PAUSE,
 	MP_CLEARCOMPLETED,
+	MP_DELETEFROMDISK,
 	MP_VIEW,
+	MP_SHOWINFOLDER,
 	MP_SENDMESSAGE,
 	MP_WS,
 	MP_RAZORSTATS,
 	MP_ADDCOLLECTION,
+	MP_EXPORTCOLLECTION,
 	MP_GETCOMMENTS,
 	MP_SEARCHRELATED,
-	MP_MARK_AS_KNOWN,
-//For comments
+	// Folder rows in a browse tab (CBrowseListModel)
+	MP_EXPANDALL,
+	MP_COLLAPSEALL,
+	// For comments
 	MP_CMT,
 
 	MP_PRIOVERYLOW,
@@ -83,16 +92,13 @@ enum {
 	MP_CLOSE_ALL_TABS,
 	MP_CLOSE_OTHER_TABS,
 	MP_RENAME,
+	MP_VERIFY,
+	MP_REFRESHMEDIAMETA,
 
-/* Razor 1a - Modif by MikaelB
-     Opcodes for :
-      - Drop No Needed Sources now
-      - Drop Full Queue Sources now
-      - Drop High Queue Rating Sources now
-      - Clean Up Sources now ( drop NNS, FQS and HQRS )
-      - Swap every A4AF to this file now
-      - Swap every A4AF to this file ( AUTO )
-      - Swap every A4AF to any other file now   */
+	/* Razor 1a - Modif by MikaelB
+	     Opcodes for dropping no-needed / full-queue / high-queue-rating sources now, cleaning
+	     up sources (all three at once), and swapping every A4AF to this file now, to this file
+	     automatically, or to any other file now. */
 	MP_DROP_NO_NEEDED_SOURCES,
 	MP_DROP_FULL_QUEUE_SOURCES,
 	MP_DROP_HIGH_QUEUE_RATING_SOURCES,
@@ -101,12 +107,12 @@ enum {
 	MP_SWAP_A4AF_TO_THIS_AUTO,
 	MP_SWAP_A4AF_TO_ANY_OTHER,
 
-//menus
+	// menus
 	MP_MENU_PRIO,
 	MP_MENU_EXTD,
 	MP_MENU_CATS,
 
-// CMuleListCtrl tabs.
+	// CMuleListCtrl tabs.
 	MP_LISTCOL_1,
 	MP_LISTCOL_2,
 	MP_LISTCOL_3,
@@ -122,16 +128,30 @@ enum {
 	MP_LISTCOL_13,
 	MP_LISTCOL_14,
 	MP_LISTCOL_15,
+	// The header show/hide menu offers one entry per column, so this range has to be at least
+	// as long as the longest list. The server list reached 16 columns and the 16th was silently
+	// dropped from the menu; the spares are headroom so the next column added does not repeat
+	// that. The shared files list reached 21 with its Verify Local Data column.
+	MP_LISTCOL_16,
+	MP_LISTCOL_17,
+	MP_LISTCOL_18,
+	MP_LISTCOL_19,
+	MP_LISTCOL_20,
+	MP_LISTCOL_21,
+	MP_LISTCOL_22,
+	MP_LISTCOL_23,
+	MP_LISTCOL_24,
+	MP_LISTCOL_25,
 
-	MP_ASSIGNCAT	= MP_LISTCOL_15   + 1,   // reserve some for categories (about 100)
-	MP_CAT_SET0		= MP_ASSIGNCAT    + 100, // reserve some for change all-cats (about 50)
-	MP_SWITCHCTRL_0 = MP_CAT_SET0     + 50,
-	MP_SWITCHCTRL_9	= MP_SWITCHCTRL_0 + 9,
+	MP_ASSIGNCAT = MP_LISTCOL_25 + 1, // reserve some for categories (about 100)
+	MP_CAT_SET0 = MP_ASSIGNCAT + 100, // reserve some for change all-cats (about 50)
+	MP_SWITCHCTRL_0 = MP_CAT_SET0 + 50,
+	MP_SWITCHCTRL_9 = MP_SWITCHCTRL_0 + 9,
 
-// Pop-up menu clickable entries
+	// Pop-up menu clickable entries
 	TRAY_MENU_INFO = 0,
 	TRAY_MENU_CLIENTINFO = 0,
-	TRAY_MENU_CLIENTINFO_ITEM = MP_SWITCHCTRL_9 + 1,  // continue from MP_SWITCHCTRL_9
+	TRAY_MENU_CLIENTINFO_ITEM = MP_SWITCHCTRL_9 + 1, // continue from MP_SWITCHCTRL_9
 	TRAY_MENU_DISCONNECT,
 	TRAY_MENU_CONNECT,
 	TRAY_MENU_HIDE,

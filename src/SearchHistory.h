@@ -1,0 +1,47 @@
+//                                                       -*- C++ -*-
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
+//
+
+#ifndef SEARCHHISTORY_H
+#define SEARCHHISTORY_H
+
+#include <wx/arrstr.h>
+
+// Pure list logic behind the Search tab's Name-field query history (amule-org/amule#641, #643) --
+// kept free of CSearchDlg/wxComboBox so it is unit-testable without a wx GUI event loop. This is
+// query history: the strings the user typed, not the results a search returned (that is the
+// separate, not-yet-implemented result persistence tracked in #641).
+
+// How many past queries the Search tab keeps. Started at eMule's CCustomAutoComplete default of 30
+// (amule-org/amule#643 review) and raised on request (#755): a search history is only useful as far
+// back as it reaches, and clearing it has been a deliberate, confirmed action since #754. It lives
+// here rather than in SearchDlg.cpp so the tests can assert the value the GUI actually passes
+// instead of mirroring a copy of it.
+const size_t MAX_SEARCH_HISTORY_ENTRIES = 100;
+
+// `existing` with `term` moved to the front: any earlier case-insensitive occurrence of `term` is
+// dropped so it does not appear twice, and the result is capped to at most `maxEntries`, oldest
+// entries dropping off the tail first. An empty `term` returns `existing` unchanged.
+wxArrayString ApplySearchHistoryEntry(const wxArrayString &existing, const wxString &term, size_t maxEntries);
+
+#endif // SEARCHHISTORY_H

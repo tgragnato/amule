@@ -24,6 +24,13 @@
 //
 
 #include "KadDlg.h"
+#include "KadContactHistogram.h"
+#include "KadLookupView.h"
+#ifdef CLIENT_GUI
+#include "libs/ec/cpp/RemoteConnect.h"
+#else
+#include "kademlia/kademlia/SearchManager.h"
+#endif
 #include "muuli_wdr.h"
 #include "OScopeCtrl.h"
 #include "OtherFunctions.h"
@@ -41,53 +48,136 @@
 #include "kademlia/kademlia/Kademlia.h"
 #endif
 
-
 wxBEGIN_EVENT_TABLE(CKadDlg, wxPanel)
-	EVT_TEXT(ID_NODE_IP1, CKadDlg::OnFieldsChange)
-	EVT_TEXT(ID_NODE_IP2, CKadDlg::OnFieldsChange)
-	EVT_TEXT(ID_NODE_IP3, CKadDlg::OnFieldsChange)
-	EVT_TEXT(ID_NODE_IP4, CKadDlg::OnFieldsChange)
+	EVT_TEXT(ID_NODE_IP, CKadDlg::OnFieldsChange)
 	EVT_TEXT(ID_NODE_PORT, CKadDlg::OnFieldsChange)
 
-	EVT_TEXT_ENTER(IDC_NODESLISTURL ,CKadDlg::OnBnClickedUpdateNodeList)
+	EVT_TEXT_ENTER(IDC_NODESLISTURL, CKadDlg::OnBnClickedUpdateNodeList)
 
 	EVT_BUTTON(ID_NODECONNECT, CKadDlg::OnBnClickedBootstrapClient)
-	EVT_BUTTON(ID_KNOWNNODECONNECT, CKadDlg::OnBnClickedBootstrapKnown)
 	EVT_BUTTON(ID_KADDISCONNECT, CKadDlg::OnBnClickedDisconnectKad)
 	EVT_BUTTON(ID_UPDATEKADLIST, CKadDlg::OnBnClickedUpdateNodeList)
 wxEND_EVENT_TABLE()
 
-
-
-CKadDlg::CKadDlg(wxWindow* pParent)
-	: wxPanel(pParent, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL, "kadwnd" )
+CKadDlg::CKadDlg(wxWindow *pParent)
+: wxPanel(pParent, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL, "kadwnd")
 {
 	m_kad_scope = NULL;
 }
 
-
 void CKadDlg::Init()
 {
-	m_kad_scope = CastChild( "kadScope", COScopeCtrl );
+	m_kad_scope = CastChild("kadScope", COScopeCtrl);
 	m_kad_scope->SetRanges(0.0, thePrefs::GetStatsMax());
 	m_kad_scope->SetYUnits("Nodes");
 
-	//
-	// Get label with line breaks out of muuli.wdr, because generated code fails
-	// to compile in Windows.
-	//
-	// In Windows, setting a button label with a newline fails (the newline is ignored).
-	// Creating a button with such a label works however. :-/
-	// So leave the label from the muuli (without line breaks) here,
-	// so it can still be fixed in the translation.
-	//
-	wxButton* bootstrap = CastChild(ID_KNOWNNODECONNECT, wxButton);
-	bootstrap->SetLabel(_("Bootstrap from \nknown clients"));
-
 	SetUpdatePeriod(thePrefs::GetTrafficOMeterInterval());
 	SetGraphColors();
+
+	UpdateConnectButton();
+	m_contactHistogram = CastChild("kadContactDistribution", CKadContactHistogram);
+	m_distributionTimer.SetOwner(this);
+	Bind(
+		wxEVT_TIMER,
+		[this](wxTimerEvent &) {
+			if (!IsContactDistributionVisible()) {
+				return;
+			}
+			UpdateContactDistribution();
+		},
+		m_distributionTimer.GetId());
+	Bind(wxEVT_SHOW, [this](wxShowEvent &event) {
+		event.Skip();
+		if (event.IsShown()) {
+			CallAfter(&CKadDlg::ShowContactDistribution);
+		}
+	});
+	UpdateContactDistribution();
+	m_distributionTimer.Start(1000);
+	m_lookupButton = CastChild("kadLookupDiagnostics", wxButton);
+#ifdef CLIENT_GUI
+	m_lookupRequest = std::make_shared<CKadLookupRequestState>(m_lookupButton);
+#endif
+	m_lookupButton->Bind(wxEVT_BUTTON, [this](wxCommandEvent &event) {
+		if (!m_lookupView) {
+			m_lookupView = new CKadLookupView(this);
+		}
+		m_lookupView->Show();
+		m_lookupView->Raise();
+#ifdef CLIENT_GUI
+		(void)event;
+		m_lookupRequest->SetSupported(theApp->m_connect->ServerSupportsKadLookups());
+		if (!m_lookupRequest->TryBegin()) {
+			return;
+		}
+		m_lookupView->SetSnapshot(_("Requesting Kad lookup diagnostics..."));
+		CECPacket request(EC_OP_GET_KAD_LOOKUPS);
+		theApp->m_connect->SendRequest(
+			new CKadLookupReply(m_lookupView.get(), m_lookupRequest), &request);
+#else
+		(void)event;
+		m_lookupView->SetSnapshot(Kademlia::CSearchManager::GetLookupDiagnostics());
+#endif
+	});
+	UpdateConnectButton();
+	Layout();
 }
 
+void CKadDlg::ShowContactDistribution()
+{
+	if (!IsContactDistributionVisible()) {
+		return;
+	}
+	UpdateContactDistribution();
+#ifdef CLIENT_GUI
+	theApp->RequestKadContactDistribution();
+#endif
+}
+
+bool CKadDlg::IsContactDistributionVisible() const
+{
+	// A minimized frame still has its shown flag set. Use the main window's
+	// event-based iconize state, which also handles wxGTK's stale IsIconized().
+	return IsShownOnScreen() && theApp->amuledlg && theApp->amuledlg->IsVisibleToUser();
+}
+
+void CKadDlg::UpdateContactDistribution()
+{
+	if (!m_contactHistogram) {
+		return;
+	}
+	Kademlia::ContactDistribution distribution;
+	const auto state = CStatistics::GetKadContactDistribution(distribution);
+	m_contactHistogram->SetDistribution(distribution, state);
+}
+
+void CKadDlg::UpdateConnectButton()
+{
+	wxButton *button = CastChild(ID_KADDISCONNECT, wxButton);
+	wxCHECK_RET(button, "'ID_KADDISCONNECT' widget not found");
+
+	EConnButtonState state;
+	if (theApp->IsConnectedKad()) {
+		state = ConnButtonConnected;
+	} else if (theApp->IsKadRunning()) {
+		state = ConnButtonConnecting;
+	} else {
+		state = ConnButtonOff;
+	}
+
+	// _("Kad") matches the translatable tab label (muuli_wdr.cpp's
+	// NetDialog); see CServerWnd::UpdateED2KConnectButton's ED2K equivalent.
+	SetConnectButtonState(button, state, thePrefs::GetNetworkKademlia(), _("Kad"));
+#ifdef CLIENT_GUI
+	if (m_lookupRequest) {
+		const bool supported = theApp->m_connect->ServerSupportsKadLookups();
+		m_lookupRequest->SetSupported(supported);
+		m_lookupButton->SetToolTip(
+			supported ? wxString()
+				  : _("The connected core does not support Kad lookup diagnostics."));
+	}
+#endif
+}
 
 void CKadDlg::SetUpdatePeriod(int step)
 {
@@ -99,121 +189,137 @@ void CKadDlg::SetUpdatePeriod(int step)
 	}
 }
 
-
 void CKadDlg::SetGraphColors()
 {
-	static const char aTrend[] = { 2,      1,        0        };
-	static const int aRes[]    = { IDC_C0, IDC_C0_3, IDC_C0_2 };
+	// Same shape as the download graph on the statistics panel -- three trends, the same three
+	// legend swatches -- driven by the Kad graph's own preference colours.
+	static const CStatisticsDlg::GraphColorSlot aSlot[] = { { 12, 2, IDC_C0, wxTRANSLATE("Current") },
+		{ 13, 1, IDC_C0_3, wxTRANSLATE("Running average") },
+		{ 14, 0, IDC_C0_2, wxTRANSLATE("Session average") } };
 
-	m_kad_scope->SetBackgroundColor(CStatisticsDlg::getColors(0));
-	m_kad_scope->SetGridColor(CStatisticsDlg::getColors(1));
-
-	for (size_t i = 0; i < 3; ++i) {
-		m_kad_scope->SetPlotColor(CStatisticsDlg::getColors(12 + i), aTrend[i]);
-
-		CColorFrameCtrl* ctrl = CastChild(aRes[i], CColorFrameCtrl);
-		ctrl->SetBackgroundBrushColour(CMuleColour(CStatisticsDlg::getColors(12 + i)));
-		ctrl->SetFrameBrushColour(*wxBLACK);
+	CStatisticsDlg::ApplyGraphFrameColors(m_kad_scope);
+	for (const CStatisticsDlg::GraphColorSlot &slot : aSlot) {
+		CStatisticsDlg::ApplyGraphSlot(this, m_kad_scope, slot);
 	}
 }
 
-
-void CKadDlg::UpdateGraph(const GraphUpdateInfo& update)
+void CKadDlg::UpdateGraph(const GraphUpdateInfo &update)
 {
-	std::vector<float *> v(3);
-	v[0] = const_cast<float *>(&update.kadnodes[0]);
-	v[1] = const_cast<float *>(&update.kadnodes[1]);
-	v[2] = const_cast<float *>(&update.kadnodes[2]);
-	const std::vector<float *> &apfKad(v);
-	unsigned nodeCount = static_cast<unsigned>(update.kadnodes[2]);
-
+	// A hidden panel needs no update: the graph redraws from the statistics
+	// history and catches up by itself the next time it is painted.
 	if (!IsShownOnScreen()) {
-		m_kad_scope->DelayPoints();
-	} else {
-		// Check the current node-count to see if we should increase the graph height
-		if (m_kad_scope->GetUpperLimit() < update.kadnodes[2]) {
-			// Grow the limit by 50 sized increments.
-			m_kad_scope->SetRanges(0.0, ((nodeCount + 49) / 50) * 50);
-		}
-
-		m_kad_scope->AppendPoints(update.timestamp, apfKad);
+		return;
 	}
-}
 
+	// Check the current node-count to see if we should increase the graph height
+	if (m_kad_scope->GetUpperLimit() < update.kadnodes[2]) {
+		const unsigned nodeCount = static_cast<unsigned>(update.kadnodes[2]);
+		// Grow the limit by 50 sized increments. The integer ceiling-to-50 is intentional: a
+		// whole number is what we want for the axis range.
+		// NOLINTNEXTLINE(bugprone-integer-division)
+		m_kad_scope->SetRanges(0.0, (float)(((nodeCount + 49) / 50) * 50));
+	}
+
+	m_kad_scope->AppendPoints(update.timestamp);
+}
 
 void CKadDlg::UpdateNodeCount(unsigned nodeCount)
 {
-	wxStaticText* label = CastChild( "nodesListLabel", wxStaticText );
+	wxStaticText *label = CastChild("nodesListLabel", wxStaticText);
 	wxCHECK_RET(label, "Failed to find kad-nodes label");
 
 	label->SetLabel(CFormat(_("Nodes (%u)")) % nodeCount);
 	label->GetParent()->Layout();
 }
 
-
 // Enables or disables the node connect button depending on the contents of the text fields
-void CKadDlg::OnFieldsChange(wxCommandEvent& WXUNUSED(evt))
+void CKadDlg::OnFieldsChange(wxCommandEvent &WXUNUSED(evt))
 {
 	// These are the IDs of the search-fields
-	int textfields[] = { ID_NODE_IP1, ID_NODE_IP2, ID_NODE_IP3, ID_NODE_IP4, ID_NODE_PORT};
+	int textfields[] = { ID_NODE_IP, ID_NODE_PORT };
 
 	bool enable = true;
-	for ( uint16 i = 0; i < itemsof(textfields); i++ ) {
-		enable &= !CastChild(textfields[i], wxTextCtrl)->GetValue().IsEmpty();
+	for (int textfield : textfields) {
+		enable &= !CastChild(textfield, wxTextCtrl)->GetValue().IsEmpty();
 	}
 
 	// Enable the node connect button if all fields contain text
-	FindWindowById(ID_NODECONNECT)->Enable( enable );
+	FindWindowById(ID_NODECONNECT)->Enable(enable);
 }
 
-
-void CKadDlg::OnBnClickedBootstrapClient(wxCommandEvent& WXUNUSED(evt))
+void CKadDlg::OnBnClickedBootstrapClient(wxCommandEvent &WXUNUSED(evt))
 {
 	if (FindWindowById(ID_NODECONNECT)->IsEnabled()) {
-		// Ip is reversed since StringIPtoUint32 returns anti-host and kad expects host order
-		uint32 ip = StringIPtoUint32(
-			dynamic_cast<wxTextCtrl*>(FindWindowById(ID_NODE_IP4))->GetValue() + "." +
-			dynamic_cast<wxTextCtrl*>(FindWindowById(ID_NODE_IP3))->GetValue() + "." +
-			dynamic_cast<wxTextCtrl*>(FindWindowById(ID_NODE_IP2))->GetValue() + "." +
-			dynamic_cast<wxTextCtrl*>(FindWindowById(ID_NODE_IP1))->GetValue() );
+		// Single "x.x.x.x" field (issue #402 review, matching the eD2k tab's
+		// IDC_IPADDRESS). Trim first: the field exists for easier copy-paste, and a paste
+		// commonly carries a leading or trailing space that would otherwise fail as
+		// "Invalid ip to bootstrap". Octets are reversed before StringIPtoUint32 because
+		// that function returns anti-host order and Kad expects host order -- the same
+		// trick the old four-field version used, built from one string instead of four
+		// controls. wxSplit's third parameter is an escape character, not meaningful for
+		// IPs, so it stays at its default.
+		wxArrayString octets = wxSplit(dynamic_cast<wxTextCtrl *>(FindWindowById(ID_NODE_IP))
+						       ->GetValue()
+						       .Trim(true)
+						       .Trim(false),
+			'.');
+		uint32 ip = 0;
+		if (octets.GetCount() == 4) {
+			ip = StringIPtoUint32(
+				octets[3] + "." + octets[2] + "." + octets[1] + "." + octets[0]);
+		}
 
 		if (ip == 0) {
-			wxMessageBox(_("Invalid ip to bootstrap"), _("WARNING"), wxOK | wxICON_EXCLAMATION, this);
+			wxMessageBox(
+				_("Invalid ip to bootstrap"), _("WARNING"), wxOK | wxICON_EXCLAMATION, this);
 		} else {
 			unsigned long port;
-			if (dynamic_cast<wxTextCtrl*>(FindWindowById(ID_NODE_PORT))->GetValue().ToULong(&port)) {
+			if (dynamic_cast<wxTextCtrl *>(FindWindowById(ID_NODE_PORT))
+					->GetValue()
+					.ToULong(&port)) {
 				theApp->BootstrapKad(ip, port);
 			} else {
-				wxMessageBox(_("Invalid port to bootstrap"), _("WARNING"), wxOK | wxICON_EXCLAMATION, this);
+				wxMessageBox(_("Invalid port to bootstrap"),
+					_("WARNING"),
+					wxOK | wxICON_EXCLAMATION,
+					this);
 			}
 		}
 	} else {
-		wxMessageBox(_("Please fill all fields required"), _("Message"), wxOK | wxICON_INFORMATION, this);
+		wxMessageBox(
+			_("Please fill all fields required"), _("Message"), wxOK | wxICON_INFORMATION, this);
 	}
 }
 
-
-void CKadDlg::OnBnClickedBootstrapKnown(wxCommandEvent& WXUNUSED(evt))
+void CKadDlg::OnBnClickedDisconnectKad(wxCommandEvent &WXUNUSED(evt))
 {
-	theApp->StartKad();
+	// Doubles as Connect/Cancel/Disconnect depending on the button's current state (see
+	// UpdateConnectButton()). StopKad() also covers "cancel while connecting"; there is no
+	// separate abort path.
+	if (theApp->IsConnectedKad() || theApp->IsKadRunning()) {
+		theApp->StopKad();
+	} else {
+		theApp->StartKad();
+	}
 }
 
-
-void CKadDlg::OnBnClickedDisconnectKad(wxCommandEvent& WXUNUSED(evt))
+void CKadDlg::OnBnClickedUpdateNodeList(wxCommandEvent &WXUNUSED(evt))
 {
-	theApp->StopKad();
-}
-
-
-void CKadDlg::OnBnClickedUpdateNodeList(wxCommandEvent& WXUNUSED(evt))
-{
-	if ( wxMessageBox( wxString(_("Are you sure you want to download a new nodes.dat file?\n")) +
-						_("Doing so will remove your current nodes and restart Kademlia connection.")
-					, _("Continue?"), wxICON_EXCLAMATION | wxYES_NO | wxNO_DEFAULT, this) == wxYES ) {
-		wxString strURL = dynamic_cast<wxTextCtrl*>(FindWindowById(IDC_NODESLISTURL))->GetValue();
+	if (wxMessageBox(
+		    wxString(_("Are you sure you want to download a new nodes.dat file?\n")) +
+			    _("Doing so will remove your current nodes and restart Kademlia connection."),
+		    _("Continue?"),
+		    wxICON_EXCLAMATION | wxYES_NO | wxNO_DEFAULT,
+		    this) == wxYES) {
+		wxString strURL = dynamic_cast<wxTextCtrl *>(FindWindowById(IDC_NODESLISTURL))->GetValue();
 
 		thePrefs::SetKadNodesUrl(strURL);
+#ifdef CLIENT_GUI
+		// Runs on the core, which shows no dialog for a remote request.
 		theApp->UpdateNotesDat(strURL);
+#else
+		theApp->UpdateNotesDat(strURL, true);
+#endif
 	}
 }
 // File_checked_for_headers

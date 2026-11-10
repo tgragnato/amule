@@ -26,48 +26,61 @@
 #ifndef ED2KC2STCP_H
 #define ED2KC2STCP_H
 
-enum OP_ClientToServerTCP {
-	OP_LOGINREQUEST				= 0x01,	// <HASH 16><ID 4><PORT 2><1 Tag_set>
-	OP_REJECT					= 0x05,	// (null)
-	OP_GETSERVERLIST			= 0x14,	// (null)client->server
-	OP_OFFERFILES				= 0x15,	// <count 4>(<HASH 16><ID 4><PORT 2><1 Tag_set>)[count]
-	OP_SEARCHREQUEST			= 0x16,	// <Query_Tree>
-	OP_DISCONNECT				= 0x18,	// (not verified)
-	OP_GETSOURCES				= 0x19,	// <HASH 16>
-										// v2 <HASH 16><SIZE_4> (17.3) (mandatory on 17.8)
-										// v2large <HASH 16><FILESIZE 4(0)><FILESIZE 8> (17.9) (large files only)
-	OP_SEARCH_USER				= 0x1A,	// <Query_Tree>
-	OP_CALLBACKREQUEST			= 0x1C,	// <ID 4>
-//	OP_QUERY_CHATS				= 0x1D,	// (deprecated, not supported by server any longer)
-//	OP_CHAT_MESSAGE				= 0x1E,	// (deprecated, not supported by server any longer)
-//	OP_JOIN_ROOM				= 0x1F,	// (deprecated, not supported by server any longer)
-	OP_QUERY_MORE_RESULT		= 0x21,	// (null)
-	OP_GETSOURCES_OBFU	= 0x23,
-	OP_SERVERLIST				= 0x32,	// <count 1>(<IP 4><PORT 2>)[count] server->client
-	OP_SEARCHRESULT				= 0x33,	// <count 4>(<HASH 16><ID 4><PORT 2><1 Tag_set>)[count]
-	OP_SERVERSTATUS				= 0x34,	// <USER 4><FILES 4>
-	OP_CALLBACKREQUESTED		= 0x35,	// <IP 4><PORT 2>
-	OP_CALLBACK_FAIL			= 0x36,	// (null notverified)
-	OP_SERVERMESSAGE			= 0x38,	// <len 2><Message len>
-//	OP_CHAT_ROOM_REQUEST		= 0x39,	// (deprecated, not supported by server any longer)
-//	OP_CHAT_BROADCAST			= 0x3A,	// (deprecated, not supported by server any longer)
-//	OP_CHAT_USER_JOIN			= 0x3B,	// (deprecated, not supported by server any longer)
-//	OP_CHAT_USER_LEAVE			= 0x3C,	// (deprecated, not supported by server any longer)
-//	OP_CHAT_USER				= 0x3D,	// (deprecated, not supported by server any longer)
-	OP_IDCHANGE					= 0x40,	// <NEW_ID 4>
-	OP_SERVERIDENT				= 0x41,	// <HASH 16><IP 4><PORT 2>{1 TAG_SET}
-	OP_FOUNDSOURCES				= 0x42,	// <HASH 16><count 1>(<ID 4><PORT 2>)[count]
-	OP_USERS_LIST				= 0x43,	// <count 4>(<HASH 16><ID 4><PORT 2><1 Tag_set>)[count]
-	OP_FOUNDSOURCES_OBFU = 0x44    // <HASH 16><count 1>(<ID 4><PORT 2><obf settings 1>(UserHash16 if obf&0x08))[count]
+enum OP_ClientToServerTCP
+{
+	OP_LOGINREQUEST = 0x01,    // <HASH 16><ID 4><PORT 2><1 Tag_set>
+	OP_REJECT = 0x05,          // (null)
+	OP_GETSERVERLIST = 0x14,   // (null)client->server
+	OP_OFFERFILES = 0x15,      // <count 4>(<HASH 16><ID 4><PORT 2><1 Tag_set>)[count]
+	OP_SEARCHREQUEST = 0x16,   // <Query_Tree>
+	OP_DISCONNECT = 0x18,      // (not verified)
+	OP_GETSOURCES = 0x19,      // <HASH 16>
+				   // v2 <HASH 16><SIZE_4> (17.3) (mandatory on 17.8)
+				   // v2large <HASH 16><FILESIZE 4(0)><FILESIZE 8> (17.9) (large files only)
+	OP_SEARCH_USER = 0x1A,     // <Query_Tree>
+	OP_CALLBACKREQUEST = 0x1C, // <ID 4>
+	// Deprecated, no longer supported by any server: OP_QUERY_CHATS = 0x1D,
+	// OP_CHAT_MESSAGE = 0x1E, OP_JOIN_ROOM = 0x1F.
+	OP_QUERY_MORE_RESULT = 0x21, // (null)
+	OP_GETSOURCES_OBFU = 0x23,
+	OP_SERVERLIST = 0x32,        // <count 1>(<IP 4><PORT 2>)[count] server->client
+	OP_SEARCHRESULT = 0x33,      // <count 4>(<HASH 16><ID 4><PORT 2><1 Tag_set>)[count]
+	OP_SERVERSTATUS = 0x34,      // <USER 4><FILES 4>
+	OP_CALLBACKREQUESTED = 0x35, // <IP 4><PORT 2>
+	OP_CALLBACK_FAIL = 0x36,     // (null notverified)
+	// Lugdunum NAT callback, forwarded over TCP (see LugdunumNatTraversal.h).
+	OP_NAT_CALLBACKREQUESTED = 0x37, // <Seen IP 4><Seen UDP Port 2><Requester ID 4>[<obfuscation 17>]
+	OP_SERVERMESSAGE = 0x38,         // <len 2><Message len>
+	// Deprecated, no longer supported by any server: OP_CHAT_ROOM_REQUEST = 0x39,
+	// OP_CHAT_BROADCAST = 0x3A, OP_CHAT_USER_JOIN = 0x3B, OP_CHAT_USER_LEAVE = 0x3C,
+	// OP_CHAT_USER = 0x3D.
+	OP_IDCHANGE = 0x40,     // <NEW_ID 4>
+	OP_SERVERIDENT = 0x41,  // <HASH 16><IP 4><PORT 2>{1 TAG_SET}
+	OP_FOUNDSOURCES = 0x42, // <HASH 16><count 1>(<ID 4><PORT 2>)[count]
+	OP_USERS_LIST = 0x43,   // <count 4>(<HASH 16><ID 4><PORT 2><1 Tag_set>)[count]
+	OP_FOUNDSOURCES_OBFU =
+		0x44, // <HASH 16><count 1>(<ID 4><PORT 2><obf settings 1>(UserHash16 if obf&0x80))[count]
+	OP_IPV6_UPDATE = 0x63 // <ipv6 address 16>; all zeros withdraws. Same rules as the login tag:
+			      // sent only on a connection that received SRV_TCPFLG_IPV6_UPDATE. No reply.
 };
 
 // Server TCP flags
-#define SRV_TCPFLG_COMPRESSION          0x00000001
-#define SRV_TCPFLG_NEWTAGS                      0x00000008
-#define SRV_TCPFLG_UNICODE                      0x00000010
-#define SRV_TCPFLG_RELATEDSEARCH        0x00000040
-#define SRV_TCPFLG_TYPETAGINTEGER       0x00000080
-#define SRV_TCPFLG_LARGEFILES           0x00000100
-#define SRV_TCPFLG_TCPOBFUSCATION	0x00000400
+#define SRV_TCPFLG_COMPRESSION 0x00000001
+#define SRV_TCPFLG_NEWTAGS 0x00000008
+#define SRV_TCPFLG_UNICODE 0x00000010
+#define SRV_TCPFLG_RELATEDSEARCH 0x00000040
+#define SRV_TCPFLG_TYPETAGINTEGER 0x00000080
+#define SRV_TCPFLG_LARGEFILES 0x00000100
+#define SRV_TCPFLG_TCPOBFUSCATION 0x00000400
+// Lugdunum's NAT callback (eserver 17.15+); other servers use this bit unofficially too.
+#define SRV_TCPFLG_NATTRAVERSAL 0x00001000
+// Server speaks the IPv6 source extension.
+#define SRV_TCPFLG_IPV6 0x00004000
+// Server accepts OP_IPV6_UPDATE on this connection; trusted only together with SRV_TCPFLG_IPV6.
+#define SRV_TCPFLG_IPV6_UPDATE 0x00008000
+// Server accepts OP_LOWID_HOLEPUNCH_REQUEST (ed2k-server 0.9.84+).
+#define SRV_TCPFLG_LOWID_HOLEPUNCH 0x00020000
+// Server runs the hole-punch extension (ed2k-server 0.9.85).
+#define SRV_TCPFLG_HOLEPUNCH_EXTENSION 0x00100000
 
 #endif // ED2KC2STCP_H

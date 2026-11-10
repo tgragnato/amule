@@ -22,50 +22,45 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include "ThreadScheduler.h"	// Interface declarations
-#include "Logger.h"				// Needed for Add(Debug)LogLine{C,N}
-#include <common/Format.h>		// Needed for CFormat
-#include "ScopedPtr.h"			// Needed for CScopedPtr
+#include "ThreadScheduler.h" // Interface declarations
+#include "Logger.h"          // Needed for Add(Debug)LogLine{C,N}
+#include <common/Format.h>   // Needed for CFormat
+#include "ScopedPtr.h"       // Needed for CScopedPtr
 
-#include <algorithm>			// Needed for std::sort		// Do_not_auto_remove (mingw-gcc-3.4.5)
+#include <algorithm> // Needed for std::sort		// Do_not_auto_remove (mingw-gcc-3.4.5)
 
 //! Global lock the scheduler and its thread.
 static wxMutex s_lock;
 //! Pointer to the global scheduler instance (automatically instantiated).
-static CThreadScheduler* s_scheduler = NULL;
+static CThreadScheduler *s_scheduler = NULL;
 //! Specifies if the scheduler is running.
-static bool	s_running = false;
+static bool s_running = false;
 //! Specifies if the global scheduler has been terminated.
 static bool s_terminated = false;
 
 /**
- * This class is used in a custom implementation of wxThreadHelper.
+ * Used in a custom implementation of wxThreadHelper.
  *
- * The reason for not using wxThreadHelper are as follows:
- *  - wxThreadHelper makes use of wxThread:Kill, which is warned against
- *    several times in the docs, and even calls it in its destructor.
- *  - Managing the thread-object is difficult, since the only way to
- *    destroy it is to create a new thread.
+ * wxThreadHelper is avoided because it uses wxThread::Kill, which the docs warn against repeatedly
+ * and which it even calls in its destructor; and because managing the thread object is difficult,
+ * the only way to destroy it being to create a new thread.
  */
 class CTaskThread : public CMuleThread
 {
 public:
-	CTaskThread(CThreadScheduler* owner)
-		: CMuleThread(wxTHREAD_JOINABLE),
-		  m_owner(owner)
+	CTaskThread(CThreadScheduler *owner)
+	: CMuleThread(wxTHREAD_JOINABLE)
+	, m_owner(owner)
 	{
 	}
 
 	//! For simplicity's sake, all code is placed in CThreadScheduler::Entry
-	void* Entry() {
-		return m_owner->Entry();
-	}
+	void *Entry() { return m_owner->Entry(); }
 
 private:
 	//! The scheduler owning this thread.
-	CThreadScheduler* m_owner;
+	CThreadScheduler *m_owner;
 };
-
 
 void CThreadScheduler::Start()
 {
@@ -81,11 +76,10 @@ void CThreadScheduler::Start()
 	}
 }
 
-
 void CThreadScheduler::Terminate()
 {
 	AddDebugLogLineN(logThreads, "Terminating scheduler");
-	CThreadScheduler* ptr = NULL;
+	CThreadScheduler *ptr = NULL;
 
 	{
 		wxMutexLocker lock(s_lock);
@@ -101,8 +95,27 @@ void CThreadScheduler::Terminate()
 	AddDebugLogLineN(logThreads, "Scheduler terminated");
 }
 
+bool CThreadScheduler::AddTask(CThreadTask *task, Overwrite overwrite)
+{
+	return AddTaskInternal(task, overwrite, false);
+}
 
-bool CThreadScheduler::AddTask(CThreadTask* task, bool overwrite)
+bool CThreadScheduler::AddTaskIfNoneOfType(CThreadTask *task)
+{
+	return AddTaskInternal(task, Overwrite::Never, true);
+}
+
+bool CThreadScheduler::HasTaskOfType(const wxString &type)
+{
+	wxMutexLocker lock(s_lock);
+	if (!s_scheduler) {
+		return false;
+	}
+	const auto existing = s_scheduler->m_taskDescs.find(type);
+	return existing != s_scheduler->m_taskDescs.end() && !existing->second.empty();
+}
+
+bool CThreadScheduler::AddTaskInternal(CThreadTask *task, Overwrite overwrite, bool uniqueType)
 {
 	wxMutexLocker lock(s_lock);
 
@@ -116,36 +129,50 @@ bool CThreadScheduler::AddTask(CThreadTask* task, bool overwrite)
 		AddDebugLogLineN(logThreads, "Scheduler created.");
 	}
 
+	if (uniqueType) {
+		const auto existing = s_scheduler->m_taskDescs.find(task->GetType());
+		if (existing != s_scheduler->m_taskDescs.end() && !existing->second.empty()) {
+			delete task;
+			return false;
+		}
+	}
 	return s_scheduler->DoAddTask(task, overwrite);
 }
-
 
 /** Returns string representation of error code. */
 static wxString GetErrMsg(wxThreadError err)
 {
 	switch (err) {
-		case wxTHREAD_NO_ERROR:		return "wxTHREAD_NO_ERROR";
-		case wxTHREAD_NO_RESOURCE:	return "wxTHREAD_NO_RESOURCE";
-		case wxTHREAD_RUNNING:		return "wxTHREAD_RUNNING";
-		case wxTHREAD_NOT_RUNNING:	return "wxTHREAD_NOT_RUNNING";
-		case wxTHREAD_KILLED:		return "wxTHREAD_KILLED";
-		case wxTHREAD_MISC_ERROR:	return "wxTHREAD_MISC_ERROR";
-		default:
-			return "Unknown error";
+	case wxTHREAD_NO_ERROR:
+		return "wxTHREAD_NO_ERROR";
+	case wxTHREAD_NO_RESOURCE:
+		return "wxTHREAD_NO_RESOURCE";
+	case wxTHREAD_RUNNING:
+		return "wxTHREAD_RUNNING";
+	case wxTHREAD_NOT_RUNNING:
+		return "wxTHREAD_NOT_RUNNING";
+	case wxTHREAD_KILLED:
+		return "wxTHREAD_KILLED";
+	case wxTHREAD_MISC_ERROR:
+		return "wxTHREAD_MISC_ERROR";
+	default:
+		return "Unknown error";
 	}
 }
 
-
 void CThreadScheduler::CreateSchedulerThread()
 {
-	if ((m_thread && m_thread->IsAlive()) || m_tasks.empty()) {
+	// Not IsAlive(): a worker that found the queue empty stays alive for a moment after
+	// releasing s_lock, and a task added then would wait for the next AddTask.
+	if (m_threadRunning || m_tasks.empty()) {
 		return;
 	}
 
-	// A thread can only be run once, so the old one must be safely disposed of
+	// A thread can only be run once, so the old one must be safely disposed of. It has left
+	// its loop and no longer takes s_lock, so joining it here cannot deadlock.
 	if (m_thread) {
 		AddDebugLogLineN(logThreads, "CreateSchedulerThread: Disposing of old thread.");
-		m_thread->Stop();
+		m_thread->Wait(wxTHREAD_WAIT_BLOCK);
 		delete m_thread;
 	}
 
@@ -158,10 +185,12 @@ void CThreadScheduler::CreateSchedulerThread()
 
 		err = m_thread->Run();
 		if (err == wxTHREAD_NO_ERROR) {
+			m_threadRunning = true;
 			AddDebugLogLineN(logThreads, "Scheduler thread started");
 			return;
 		} else {
-			AddDebugLogLineC(logThreads, "Error while starting scheduler thread: " + GetErrMsg(err));
+			AddDebugLogLineC(
+				logThreads, "Error while starting scheduler thread: " + GetErrMsg(err));
 		}
 	} else {
 		AddDebugLogLineC(logThreads, "Error while creating scheduler thread: " + GetErrMsg(err));
@@ -173,11 +202,11 @@ void CThreadScheduler::CreateSchedulerThread()
 	m_thread = NULL;
 }
 
-
 /** This is the sorter functor for the task-queue. */
 struct CTaskSorter
 {
-	bool operator()(const CThreadScheduler::CEntryPair& a, const CThreadScheduler::CEntryPair& b) {
+	bool operator()(const CThreadScheduler::CEntryPair &a, const CThreadScheduler::CEntryPair &b)
+	{
 		if (a.first->GetPriority() != b.first->GetPriority()) {
 			return a.first->GetPriority() > b.first->GetPriority();
 		}
@@ -187,16 +216,13 @@ struct CTaskSorter
 	}
 };
 
-
-
 CThreadScheduler::CThreadScheduler()
-	: m_tasksDirty(false),
-	  m_thread(NULL),
-	  m_currentTask(NULL)
+: m_tasksDirty(false)
+, m_thread(NULL)
+, m_threadRunning(false)
+, m_currentTask(NULL)
 {
-
 }
-
 
 CThreadScheduler::~CThreadScheduler()
 {
@@ -204,8 +230,11 @@ CThreadScheduler::~CThreadScheduler()
 		m_thread->Stop();
 		delete m_thread;
 	}
+	// The worker owns only its current task; queued snapshots are still ours on shutdown.
+	for (const CEntryPair &entry : m_tasks) {
+		delete entry.first;
+	}
 }
-
 
 size_t CThreadScheduler::GetTaskCount() const
 {
@@ -214,31 +243,63 @@ size_t CThreadScheduler::GetTaskCount() const
 	return m_tasks.size();
 }
 
+size_t CThreadScheduler::GetPendingCount(const wxString &type)
+{
+	wxMutexLocker lock(s_lock);
 
-bool CThreadScheduler::DoAddTask(CThreadTask* task, bool overwrite)
+	if (s_scheduler == nullptr) {
+		return 0;
+	}
+
+	size_t count = 0;
+	for (const CEntryPair &entry : s_scheduler->m_tasks) {
+		if (type.IsEmpty() || entry.first->GetType() == type) {
+			++count;
+		}
+	}
+
+	// The running task has already left the queue but is not done, so count it: otherwise a
+	// batch reads as finished while its last task is still executing.
+	const CThreadTask *current = s_scheduler->m_currentTask;
+	if (current && (type.IsEmpty() || current->GetType() == type)) {
+		++count;
+	}
+
+	return count;
+}
+
+bool CThreadScheduler::DoAddTask(CThreadTask *task, Overwrite overwrite)
 {
 	// GetTick is too lowres, so we just use a counter to ensure that
 	// the sorted order will match the order in which the tasks were added.
 	static unsigned taskAge = 0;
 
 	// Get the map for this task type, implicitly creating it as needed.
-	CDescMap& map = m_taskDescs[task->GetType()];
+	CDescMap &map = m_taskDescs[task->GetType()];
 
 	CDescMap::value_type entry(task->GetDesc(), task);
 	if (map.insert(entry).second) {
 		AddDebugLogLineN(logThreads, "Task scheduled: " + task->GetType() + " - " + task->GetDesc());
 		m_tasks.push_back(CEntryPair(task, taskAge++));
 		m_tasksDirty = true;
-	} else if (overwrite) {
-		AddDebugLogLineN(logThreads, "Task overwritten: " + task->GetType() + " - " + task->GetDesc());
+	} else if (overwrite == Overwrite::Always ||
+		   (overwrite == Overwrite::LowerPriority &&
+			   task->GetPriority() > map[task->GetDesc()]->GetPriority())) {
+		AddDebugLogLineN(
+			logThreads, "Task overwritten: " + task->GetType() + " - " + task->GetDesc());
 
-		CThreadTask* existingTask = map[task->GetDesc()];
+		CThreadTask *existingTask = map[task->GetDesc()];
 		if (m_currentTask == existingTask) {
 			// The duplicate is already being executed, abort it.
 			m_currentTask->m_abort = true;
 		} else {
-			// Task not yet started, simply remove and delete.
+			// Not started yet. Its queue entry must go too, or the worker runs freed memory.
 			wxCHECK2(map.erase(existingTask->GetDesc()), /* Do nothing. */);
+			const auto isExisting = [existingTask](const CEntryPair &queued) {
+				return queued.first == existingTask;
+			};
+			m_tasks.erase(
+				std::remove_if(m_tasks.begin(), m_tasks.end(), isExisting), m_tasks.end());
 			delete existingTask;
 		}
 
@@ -246,7 +307,8 @@ bool CThreadScheduler::DoAddTask(CThreadTask* task, bool overwrite)
 		map[task->GetDesc()] = task;
 		m_tasksDirty = true;
 	} else {
-		AddDebugLogLineN(logThreads, "Duplicate task, discarding: " + task->GetType() + " - " + task->GetDesc());
+		AddDebugLogLineN(logThreads,
+			"Duplicate task, discarding: " + task->GetType() + " - " + task->GetDesc());
 		delete task;
 		return false;
 	}
@@ -258,8 +320,7 @@ bool CThreadScheduler::DoAddTask(CThreadTask* task, bool overwrite)
 	return true;
 }
 
-
-void* CThreadScheduler::Entry()
+void *CThreadScheduler::Entry()
 {
 	AddDebugLogLineN(logThreads, "Entering scheduling loop");
 
@@ -276,6 +337,7 @@ void* CThreadScheduler::Entry()
 				m_tasksDirty = false;
 			} else if (m_tasks.empty()) {
 				AddDebugLogLineN(logThreads, "No more tasks, stopping");
+				m_threadRunning = false;
 				break;
 			}
 
@@ -297,17 +359,18 @@ void* CThreadScheduler::Entry()
 		{
 			wxMutexLocker lock(s_lock);
 
-			// If the task has been aborted, the entry now refers to
-			// a different task, so dont remove it. That also means
-			// that it can't be the last task of this type.
+			// If the task has been aborted the entry now refers to a different task, so
+			// do not remove it. That also means it cannot be the last task of this
+			// type.
 			if (!task->m_abort) {
 				AddDebugLogLineN(logThreads,
-					CFormat("Completed task '%s%s', %u tasks remaining.")
-						% task->GetType()
-						% (task->GetDesc().IsEmpty() ? wxString() : (" - " + task->GetDesc()))
-						% m_tasks.size() );
+					CFormat("Completed task '%s%s', %u tasks remaining.") %
+						task->GetType() %
+						(task->GetDesc().IsEmpty() ? wxString()
+									   : (" - " + task->GetDesc())) %
+						m_tasks.size());
 
-				CDescMap& map = m_taskDescs[task->GetType()];
+				CDescMap &map = m_taskDescs[task->GetType()];
 				if (!map.erase(task->GetDesc())) {
 					wxFAIL;
 				} else if (map.empty()) {
@@ -331,34 +394,26 @@ void* CThreadScheduler::Entry()
 	return 0;
 }
 
-
-
-CThreadTask::CThreadTask(const wxString& type, const wxString& desc, ETaskPriority priority)
-	: m_type(type),
-	  m_desc(desc),
-	  m_priority(priority),
-	  m_owner(NULL),
-	  m_abort(false)
+CThreadTask::CThreadTask(const wxString &type, const wxString &desc, ETaskPriority priority)
+: m_type(type)
+, m_desc(desc)
+, m_priority(priority)
+, m_owner(NULL)
+, m_abort(false)
 {
 }
 
-
-CThreadTask::~CThreadTask()
-{
-}
-
+CThreadTask::~CThreadTask() {}
 
 void CThreadTask::OnLastTask()
 {
 	// Does nothing by default.
 }
 
-
 void CThreadTask::OnExit()
 {
 	// Does nothing by default.
 }
-
 
 bool CThreadTask::TestDestroy() const
 {
@@ -367,23 +422,19 @@ bool CThreadTask::TestDestroy() const
 	return m_abort || m_owner->TestDestroy();
 }
 
-
-const wxString& CThreadTask::GetType() const
+const wxString &CThreadTask::GetType() const
 {
 	return m_type;
 }
 
-
-const wxString& CThreadTask::GetDesc() const
+const wxString &CThreadTask::GetDesc() const
 {
 	return m_desc;
 }
-
 
 ETaskPriority CThreadTask::GetPriority() const
 {
 	return m_priority;
 }
-
 
 // File_checked_for_headers

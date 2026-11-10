@@ -23,68 +23,126 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-//
 // Client to Server communication
-//
 
 #ifndef SERVERSOCKET_H
 #define SERVERSOCKET_H
 
-#include "EMSocket.h"		// Needed for CEMSocket
+#include "EMSocket.h" // Needed for CEMSocket
 #include "ServerConnect.h"
+#ifdef ENABLE_IPV6
+#include "NetworkAddress.h" // Needed for CNetworkAddress
+#endif
+#include "OfferFilesPolicy.h"
 
-//------------------------------------------------------------------------------
 // CServerSocket
-//------------------------------------------------------------------------------
 
 class CServer;
 
 class CServerSocket : public CEMSocket
 {
 	friend class CServerConnect;
-public:
 
-	CServerSocket(CServerConnect* in_serverconnect, const CProxyData *ProxyData = NULL);
+public:
+	CServerSocket(CServerConnect *in_serverconnect, const CProxyData *ProxyData = NULL);
 	virtual ~CServerSocket();
 
-	void	ConnectToServer(CServer* server, bool bNoCrypt = false);
-	sint8	GetConnectionState()	const	{ return connectionstate; }
-	uint64  GetLastTransmission() const	{ return m_dwLastTransmission; }
+	void ConnectToServer(CServer *server, bool bNoCrypt = false);
+	sint8 GetConnectionState() const { return connectionstate; }
+	uint64 GetLastTransmission() const { return m_dwLastTransmission; }
 	wxString info;
 
-	void	OnClose(int nErrorCode) override;
-	void	OnConnect(int nErrorCode) override;
-	void	OnReceive(int nErrorCode) override;
-	void	OnError(int nErrorCode) override;
-	bool	PacketReceived(CPacket* packet) override;
+	void OnClose(int nErrorCode) override;
+	void OnConnect(int nErrorCode) override;
+	void OnReceive(int nErrorCode) override;
+	void OnError(int nErrorCode) override;
+	bool PacketReceived(CPacket *packet) override;
 
-	// Server control traffic is not subject to the global download
-	// bandwidth budget — search/source/MOTD packets are tiny and
-	// latency-sensitive.
-	bool	IsDownloadThrottled() const override { return false; }
-	void	SendPacket(CPacket* packet, bool delpacket = true, bool controlpacket = true, uint32 actualPayloadSize = 0) override;
-	bool	IsSolving() const { return m_IsSolving;};
-	void	OnHostnameResolved(uint32 ip);
+	// Server control traffic is not subject to the global download bandwidth budget -- search,
+	// source and MOTD packets are tiny and latency-sensitive.
+	bool IsDownloadThrottled() const override { return false; }
+	void SendPacket(CPacket *packet,
+		bool delpacket = true,
+		bool controlpacket = true,
+		uint32 actualPayloadSize = 0) override;
+	bool TrySendPacket(CPacket *packet,
+		bool delpacket = true,
+		bool controlpacket = true,
+		uint32 actualPayloadSize = 0);
+	bool IsSolving() const { return m_IsSolving; };
+	void OnHostnameResolved(uint32 ip);
 	CServer *GetServerConnected() const { return serverconnect->GetCurrentServer(); }
 
 	uint32 GetServerIP() const;
+	const COfferFilesAdvertisement *GetOfferFilesAdvertisement() const
+	{
+		return m_offerFilesPolicy.Get();
+	}
+	bool RequestedOfferFilesV1() const { return m_offerFilesPolicy.Requested(); }
+	bool AwaitingOfferFilesAdvertisement() const { return m_offerFilesPolicy.AwaitingAdvertisement(); }
+	bool CanPublishOfferFiles(uint64 now) const { return m_offerFilesPolicy.CanPublish(now); }
+	COfferFilesPublication &GetOfferFilesPublication() { return m_offerFilesPublication; }
+	// The port ConnectToServer() dialed: the obfuscation port, or GetConnPort(), which can be an
+	// aux port rather than the advertised one.
+	uint16 GetConnectPort() const { return m_connectPort; }
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+	// This login's ST_NATT_TOKEN, the key of the keepalive proof. It never goes on UDP.
+	const std::optional<NatServerHolePunch::Hash> &GetNattSessionToken() const
+	{
+		return m_nattSessionToken;
+	}
+	// Set by ST_NATT_PROOF: each OP_SERVER_NATT_KEEPALIVE then proves the token instead.
+	bool UsesNattKeepaliveProof() const { return m_nattKeepaliveProof; }
+	// The server takes a proof only with a counter above the last it accepted in this login.
+	uint32 NextNattKeepaliveCounter() { return ++m_nattKeepaliveCounter; }
+#endif
+
+#ifdef ENABLE_IPV6
+	// The IPv6 this connection last sent, by login or a later OP_IPV6_UPDATE; Absent after a
+	// withdrawal. This is the own-record check address in CPartFile::AddSources().
+	void SetLoginIPv6(const CNetworkAddress &address)
+	{
+		m_loginIPv6 = address;
+		if (address.IsPresent()) {
+			m_ipv6SentinelParsingOn = true;
+		}
+	}
+	const CNetworkAddress &GetLoginIPv6() const { return m_loginIPv6; }
+
+	// Sticky for the rest of this server session once any IPv6 was advertised on it: the server
+	// sends no reply to OP_IPV6_UPDATE, so an OP_FOUNDSOURCES built before a withdrawal can still
+	// arrive after it (0xFFFFFFFF is never a real source id).
+	bool IsIPv6SentinelParsingOn() const { return m_ipv6SentinelParsingOn; }
+#endif
 
 private:
-	bool	ProcessPacket(const uint8_t* packet, uint32 size, int8 opcode);
-	void	SetConnectionState(sint8 newstate);
-	CServerConnect*	serverconnect;
-	sint8	connectionstate;
-	CServer*	cur_server;
+	bool ProcessPacket(const uint8_t *packet, uint32 size, int8 opcode);
+	void SetConnectionState(sint8 newstate);
+	CServerConnect *serverconnect;
+	sint8 connectionstate;
+	CServer *cur_server;
 	bool m_bNoCrypt;
-	bool	headercomplete;
-	int32	sizetoget;
-	int32	sizereceived;
-	char*	rbuffer;
-	bool	m_bIsDeleting;	// true: socket is already in deletion phase, don't destroy it in ::StopConnectionTry
-	uint64	m_dwLastTransmission;
+	bool headercomplete;
+	int32 sizetoget;
+	int32 sizereceived;
+	char *rbuffer;
+	bool m_bIsDeleting; // true: socket is already in deletion phase, don't destroy it in
+			    // ::StopConnectionTry
+	uint64 m_dwLastTransmission;
 
 	bool m_IsSolving;
-
+	COfferFilesConnectionPolicy m_offerFilesPolicy;
+	COfferFilesPublication m_offerFilesPublication;
+	uint16 m_connectPort = 0;
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+	std::optional<NatServerHolePunch::Hash> m_nattSessionToken;
+	bool m_nattKeepaliveProof = false;
+	uint32 m_nattKeepaliveCounter = 0;
+#endif
+#ifdef ENABLE_IPV6
+	CNetworkAddress m_loginIPv6;
+	bool m_ipv6SentinelParsingOn = false;
+#endif
 };
 
 #endif // SERVERSOCKET_H

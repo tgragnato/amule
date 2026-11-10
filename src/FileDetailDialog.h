@@ -28,60 +28,70 @@
 
 #include <wx/dialog.h>
 #include <wx/event.h>
-#include <wx/listctrl.h>
 #include <wx/timer.h>
 
+#include <map>
 #include <vector>
 
 class CPartFile;
 class CKnownFile;
+class SourcenameItem;
+class wxDataViewEvent;
 
 // CFileDetailDialog dialog
 
 class CFileDetailDialog : public wxDialog
 {
 public:
-	CFileDetailDialog(wxWindow *parent, std::vector<CPartFile *> & files, int index);
+	// `files` may hold plain shared CKnownFiles, in-progress CPartFiles, or a mix (a partfile
+	// is also a shared file). Which rows the dialog shows is decided per file from its state,
+	// not from which list opened it.
+	CFileDetailDialog(wxWindow *parent, std::vector<CKnownFile *> &files, int index);
 	virtual ~CFileDetailDialog();
 
 	/**
-	 * Drop every reference to `file` from any open instance of this
-	 * dialog before the underlying CPartFile is destroyed. Stops the
-	 * update-timer's deref of `m_file`, walks `m_files` to scrub
-	 * matching entries, and dismisses the dialog if its currently
-	 * active file is the destroyed one. Pointer-value comparison
-	 * only — `file` may already be freed. Wired via
+	 * Drop every reference to `file` from any open instance of this dialog before the
+	 * underlying CPartFile is destroyed. Stops the update timer's deref of `m_file`, walks
+	 * `m_files` to scrub matching entries, and dismisses the dialog if its active file is the
+	 * destroyed one. Pointer-value comparison only -- `file` may already be freed. Wired via
 	 * MuleNotify::KnownFileBeingDestroyed (GuiEvents.cpp).
 	 */
-	static void DropReferencesTo(const CKnownFile* file);
+	static void DropReferencesTo(const CKnownFile *file);
 
 protected:
-	void OnTimer(wxTimerEvent& evt);
+	void OnTimer(wxTimerEvent &evt);
 	wxDECLARE_EVENT_TABLE();
 
 private:
 	void UpdateData(bool resetFilename);
-	std::vector<CPartFile *> & m_files;
-	CPartFile* m_file;
+	std::vector<CKnownFile *> &m_files;
+	CKnownFile *m_file;
 	int m_index;
 	wxTimer m_timer;
 	bool m_filenameChanged;
+	std::vector<wxSize> m_contentBestSizes;
 
-	void OnClosewnd(wxCommandEvent& evt);
+	//! Source-name rows for the currently displayed partfile, keyed by name so
+	//! FillSourcenameList() can find-or-create by identity across ticks instead of searching
+	//! the list widget. Owns the SourcenameItem objects handed to CFileDetailListCtrl as item
+	//! data.
+	std::map<wxString, SourcenameItem *> m_sourcenames;
+
+	void OnClosewnd(wxCommandEvent &evt);
 	void FillSourcenameList();
 	void setEnableForApplyButton();
 	void setValueForFilenameTextEdit(const wxString &s);
 	void resetValueForFilenameTextEdit();
 
-	void OnBnClickedButtonStrip(wxCommandEvent& evt);
-	void OnBnClickedShowComment(wxCommandEvent& evt);
-	void OnBnClickedTakeOver(wxCommandEvent& evt);
-	void OnListClickedTakeOver(wxListEvent& evt);
-	void OnTextFileNameChange(wxCommandEvent& evt);
-	void OnBnClickedOk(wxCommandEvent& evt);
-	void OnBnClickedApply(wxCommandEvent& evt);
-	void OnBnClickedPrevFile(wxCommandEvent& evt);
-	void OnBnClickedNextFile(wxCommandEvent& evt);
+	void OnBnClickedButtonStrip(wxCommandEvent &evt);
+	void OnBnClickedShowComment(wxCommandEvent &evt);
+	void OnBnClickedTakeOver(wxCommandEvent &evt);
+	void OnListClickedTakeOver(wxDataViewEvent &evt);
+	void OnTextFileNameChange(wxCommandEvent &evt);
+	void OnBnClickedOk(wxCommandEvent &evt);
+	void OnBnClickedApply(wxCommandEvent &evt);
+	void OnBnClickedPrevFile(wxCommandEvent &evt);
+	void OnBnClickedNextFile(wxCommandEvent &evt);
 };
 
 #endif // FILEDETAILDIALOG_H

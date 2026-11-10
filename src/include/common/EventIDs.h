@@ -28,9 +28,10 @@
 
 // Handlers
 
-enum {
+enum
+{
 	// Socket handlers
-	ID_LISTENSOCKET_EVENT = wxID_HIGHEST+123,  // random safe ID
+	ID_LISTENSOCKET_EVENT = wxID_HIGHEST + 123, // random safe ID
 	ID_CLIENTTCPSOCKET_EVENT,
 	ID_SERVERUDPSOCKET_EVENT,
 	ID_SERVERSOCKET_EVENT,
@@ -41,7 +42,11 @@ enum {
 	ID_CORE_TIMER_EVENT,
 	ID_GUI_TIMER_EVENT,
 	ID_SERVER_RETRY_TIMER_EVENT,
-	ID_REMOTE_CONNECT_TIMEOUT_TIMER
+	ID_REMOTE_CONNECT_TIMEOUT_TIMER,
+	// Spacing timer between amulegui reconnect attempts (issue #444)
+	ID_REMOTE_RECONNECT_TIMER,
+	// Polls the hashing queue while the startup splash is up
+	ID_SPLASH_POLL_TIMER
 };
 
 #endif // EVENTHANDLERS_H

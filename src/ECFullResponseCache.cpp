@@ -22,16 +22,15 @@
 
 #include <set>
 
-
 CECFullResponseCache::CECFullResponseCache(TagBuilder builder)
-	: m_builder(std::move(builder))
-{}
-
-
-std::vector<std::shared_ptr<const std::vector<unsigned char> > >
-CECFullResponseCache::GetBlobs(const std::vector<FileRef> &files)
+: m_builder(std::move(builder))
 {
-	std::vector<std::shared_ptr<const std::vector<unsigned char> > > result;
+}
+
+std::vector<std::shared_ptr<const std::vector<unsigned char>>> CECFullResponseCache::GetBlobs(
+	const std::vector<FileRef> &files)
+{
+	std::vector<std::shared_ptr<const std::vector<unsigned char>>> result;
 	result.reserve(files.size());
 
 	// First pass under the lock: collect cached entries that are still
@@ -45,28 +44,26 @@ CECFullResponseCache::GetBlobs(const std::vector<FileRef> &files)
 				result.push_back(it->second.bytes);
 			} else {
 				// Placeholder; filled in below
-				result.push_back(std::shared_ptr<const std::vector<unsigned char> >());
+				result.push_back(std::shared_ptr<const std::vector<unsigned char>>());
 				to_build.push_back(i);
 			}
 		}
 	}
 
-	// Build stale / missing entries outside the lock. Tag construction
-	// + serialization is the slow part — holding the cache mutex
-	// through it would serialise every concurrent reader on the first
-	// thread's rebuild.
+	// Build stale or missing entries outside the lock. Tag construction and serialization is
+	// the slow part -- holding the cache mutex through it would serialise every concurrent
+	// reader on the first thread's rebuild.
 	for (size_t i = 0; i < to_build.size(); ++i) {
 		const size_t idx = to_build[i];
 		const FileRef &ref = files[idx];
 
 		std::unique_ptr<CECTag> tag(m_builder(ref.file));
-		std::shared_ptr<const std::vector<unsigned char> > bytes(
+		std::shared_ptr<const std::vector<unsigned char>> bytes(
 			new std::vector<unsigned char>(CECMemSocket::SerializeTag(*tag)));
 
-		// Re-lock briefly to install. Two concurrent rebuilds for the
-		// same file are tolerated: each produces a logically
-		// equivalent blob, the last writer wins, both callers' result
-		// vectors point at a valid blob via the shared_ptr they
+		// Re-lock briefly to install. Two concurrent rebuilds for the same file are
+		// tolerated: each produces a logically equivalent blob, the last writer wins, and
+		// both callers' result vectors point at a valid blob via the shared_ptr they
 		// already took out.
 		{
 			std::lock_guard<std::mutex> lk(m_mutex);
@@ -80,7 +77,6 @@ CECFullResponseCache::GetBlobs(const std::vector<FileRef> &files)
 	return result;
 }
 
-
 void CECFullResponseCache::PruneOutsideOf(const std::vector<FileRef> &alive_files)
 {
 	std::set<uint32> alive;
@@ -89,8 +85,7 @@ void CECFullResponseCache::PruneOutsideOf(const std::vector<FileRef> &alive_file
 	}
 
 	std::lock_guard<std::mutex> lk(m_mutex);
-	for (std::map<uint32, Entry>::iterator it = m_entries.begin();
-		it != m_entries.end(); ) {
+	for (std::map<uint32, Entry>::iterator it = m_entries.begin(); it != m_entries.end();) {
 		if (!alive.count(it->first)) {
 			m_entries.erase(it++);
 		} else {

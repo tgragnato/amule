@@ -1,4 +1,7 @@
 add_library (ec STATIC
+	ECCrypt.cpp
+	ECSRP.cpp
+	ECSRPConfig.cpp
 	ECMemSocket.cpp
 	ECMuleSocket.cpp
 	ECPacket.cpp
@@ -23,10 +26,7 @@ target_include_directories (ec
 	PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
 	PRIVATE ${INCLUDE_INCLUDE_DIR}
 	PRIVATE ${LIBS_INCLUDE_DIR}
-)
-
-target_include_directories (ec
-	PUBLIC ${Boost_INCLUDE_DIR}
+	PRIVATE ${LIBS_BINARY_INCLUDE_DIR}
 )
 
 target_link_libraries (ec

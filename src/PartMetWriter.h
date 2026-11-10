@@ -1,0 +1,175 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
+//
+
+#ifndef PARTMETWRITER_H
+#define PARTMETWRITER_H
+
+#include "Types.h"       // Needed for uint8, uint64
+#include <common/Path.h> // Needed for CPath
+
+#include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <thread>
+#include <vector>
+
+//! A serialised .part.met and where it goes.
+struct CPartMetSaveRequest
+{
+	//! Bytes 1-4 hold the .part's mtime, which WritePartMet fills in.
+	std::vector<uint8> content;
+	CPath metPath;
+	CPath tmpPath;
+	CPath partPath;
+	//! Where the free space is checked.
+	CPath dir;
+};
+
+struct CPartMetSaveResult
+{
+	enum Status
+	{
+		Saved,
+		//! Under 100 KB free: nothing was written.
+		LowSpace,
+		//! detail says why.
+		Failed,
+		//! An I/O exception; detail is its message.
+		IOFailure,
+		//! The .tmp came out empty and was removed; the .part.met is untouched.
+		ZeroLength
+	};
+	Status status = Saved;
+	wxString detail;
+};
+
+/**
+ * Writes into .part.met.tmp, copies the old .part.met to .part.met.bak, and renames the
+ * .tmp over the live metadata. Patches the .part's mtime into @a req's content first.
+ */
+CPartMetSaveResult WritePartMet(CPartMetSaveRequest &req);
+
+//! File operations used to commit a completed temporary metadata file.
+struct CPartMetFileOps
+{
+	std::function<bool(const CPath &, const wxString &)> backup;
+	std::function<bool(const CPath &, const CPath &, wxString *)> replace;
+};
+
+//! Backs up the old metadata without removing its live name, then installs the new file.
+//! On failure the live metadata stays in place and the temporary file remains for recovery.
+CPartMetSaveResult InstallPartMet(const CPartMetSaveRequest &req, const CPartMetFileOps &ops);
+
+//! The change counts a save was serialised at. CPartFile counts changes to the .part.met's
+//! state and to its upload statistics apart, so a save clears only what it carried.
+struct CPartMetGen
+{
+	uint64 met = 0;
+	uint64 stats = 0;
+};
+
+/**
+ * Whether a part file should queue a .part.met save, from its change counts now, as of the
+ * last save on disk, and of the newest save on its way, if any. A state change is saved unless
+ * a save carrying it is on its way. Statistics alone wait for the heartbeat and for no save to
+ * be on its way, as every save carries them.
+ */
+bool PartMetSaveDue(const CPartMetGen &current,
+	const CPartMetGen &saved,
+	const std::optional<CPartMetGen> &pending,
+	bool heartbeatDue);
+
+//! One part file's saves, shared between its CPartFile and the writer, so either can go first.
+class CPartMetSaveSlot
+{
+public:
+	//! The newest save queued or being written, if any.
+	std::optional<CPartMetGen> Pending();
+
+	//! Drops a save not yet started and waits for one being written. Afterwards no save of
+	//! this slot runs until the next Queue. True if it dropped one.
+	bool Cancel();
+
+	//! Waits until the save queued, if any, is written.
+	void WaitIdle();
+
+	//! The saves finished since the last call, oldest first, with the counts each wrote.
+	std::vector<std::pair<CPartMetGen, CPartMetSaveResult>> TakeResults();
+
+private:
+	friend class CPartMetWriter;
+
+	//! Kept when nothing takes them, so a part file that is never reaped stays bounded.
+	static constexpr size_t kMaxResults = 16;
+
+	std::mutex m_mutex;
+	std::condition_variable m_idle;
+	//! In the writer's queue. Cancel leaves it set: the writer skips an empty slot.
+	bool m_queued = false;
+	bool m_hasRequest = false;
+	bool m_inFlight = false;
+	CPartMetSaveRequest m_request;
+	CPartMetGen m_requestGen;
+	CPartMetGen m_inFlightGen;
+	std::deque<std::pair<CPartMetGen, CPartMetSaveResult>> m_results;
+};
+
+/**
+ * Writes part files' .part.met on its own thread. On a slow or busy disk each save can take
+ * seconds, and the main thread, which also answers EC, used to wait for every one.
+ *
+ * Saves of the same part file coalesce: a newer one replaces one not yet started, and they are
+ * written in the order queued.
+ */
+class CPartMetWriter
+{
+public:
+	using WriteFn = std::function<CPartMetSaveResult(CPartMetSaveRequest &)>;
+
+	explicit CPartMetWriter(WriteFn write = WritePartMet);
+	//! Calls EndThread if it was not called.
+	~CPartMetWriter();
+	CPartMetWriter(const CPartMetWriter &) = delete;
+	CPartMetWriter &operator=(const CPartMetWriter &) = delete;
+
+	//! Writes what is queued, then stops the thread. Later saves must be written inline.
+	void EndThread();
+	bool IsRunning() const { return m_run; }
+
+	//! Queues @a req as the newest save of @a slot, serialised at the change counts @a gen.
+	void Queue(const std::shared_ptr<CPartMetSaveSlot> &slot, CPartMetSaveRequest req, CPartMetGen gen);
+
+private:
+	void Run();
+
+	WriteFn m_write;
+	std::mutex m_mutex;
+	std::condition_variable m_wake;
+	std::atomic<bool> m_run{ true };
+	std::deque<std::shared_ptr<CPartMetSaveSlot>> m_queue;
+	std::thread m_thread;
+};
+
+#endif // PARTMETWRITER_H
+// File_checked_for_headers

@@ -1,0 +1,307 @@
+#!/usr/bin/env bash
+#
+# amuleapi 17-shared-priority-patch — PATCH /shared/{hash} priority.
+#
+# Endpoint:
+#   PATCH /api/v1/shared/{hash}
+#       body: {priority: <enum>}
+#
+# Priority input enum (base levels + "auto"):
+#   very_low | low | normal | high | release | auto
+#
+# Output mirrors /downloads: a base `priority` string plus a
+# `priority_auto` boolean. Sending "auto" hands level selection to
+# amuled (it derives the level from the upload queue, priority_auto=true);
+# the combined "*_auto" strings are NOT accepted as input (400).
+
+set -u
+set -o pipefail
+
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+
+_preflight
+
+echo "amuleapi 17-shared-priority-patch smoke @ $HOST"
+
+ADMIN_TOKEN=$(_login "$ADMIN_PASS")
+[ -n "$ADMIN_TOKEN" ] || _die "admin login failed"
+
+GUEST_TOKEN=$(_login "$GUEST_PASS")
+HAVE_GUEST=0
+[ -n "$GUEST_TOKEN" ] && HAVE_GUEST=1
+
+sleep 4
+
+# Pick the first shared file for testing — order-independent across
+# operator's libraries. /shared is the broader surface (completed
+# knownfiles + downloading-and-shared partfiles).
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/shared"
+COUNT=$(printf '%s' "$CURL_BODY" | jq '.shared | length')
+
+# Self-provision a fixture when the daemon shares nothing. /shared only
+# lists completed knownfiles (a partfile shows up only once a part has
+# finished), so a synthetic ed2k link won't do — we must plant a real
+# file in a directory amuled shares and let it hash in. AMULE_SHARED_DIR
+# (set by run-all.sh) points at that directory, typically amuled's
+# Incoming. The fixture is reused across runs once it exists.
+if [ "$COUNT" = "0" ]; then
+	if [ -z "$AMULE_SHARED_DIR" ]; then
+		echo "    info: no shared files and AMULE_SHARED_DIR unset"
+		_die "set AMULE_SHARED_DIR to a directory amuled shares so the smoke can plant a fixture"
+	fi
+	FIXTURE="$AMULE_SHARED_DIR/amuleapi-regtest-shared.dat"
+	if [ ! -f "$FIXTURE" ]; then
+		head -c 1048576 /dev/urandom > "$FIXTURE" \
+			|| _die "cannot write fixture to AMULE_SHARED_DIR=$AMULE_SHARED_DIR"
+	fi
+	echo "    info: planted fixture $FIXTURE; reloading shares"
+	curl -s -o /dev/null -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+		"$API/shared_reload"
+	# Wait for amuled to hash the file and surface it in /shared.
+	for _ in $(seq 1 30); do
+		sleep 1
+		_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/shared"
+		COUNT=$(printf '%s' "$CURL_BODY" | jq '.shared | length')
+		[ "$COUNT" != "0" ] && break
+	done
+	[ "$COUNT" != "0" ] \
+		|| _die "fixture planted in $AMULE_SHARED_DIR but never appeared in /shared after reload"
+fi
+TEST_HASH=$(printf '%s' "$CURL_BODY" | jq -r '.shared[0].hash')
+SAVED_PRIORITY=$(printf '%s' "$CURL_BODY" | jq -r '.shared[0].priority')
+SAVED_AUTO=$(printf '%s' "$CURL_BODY" | jq -r '.shared[0].priority_auto')
+SAVED_NAME=$(printf '%s' "$CURL_BODY" | jq -r '.shared[0].name')
+echo "    info: saved hash=$TEST_HASH priority=$SAVED_PRIORITY priority_auto=$SAVED_AUTO name=$SAVED_NAME"
+
+# --- 1. Auth + admin gate. -----------------------------------------
+_curl -X PATCH -H "Content-Type: application/json" \
+	-d '{"priority":"high"}' "$API/shared/$TEST_HASH"
+_assert_status 401 "PATCH /shared/{hash} (no token) → 401"
+
+if [ "$HAVE_GUEST" = "1" ]; then
+	_curl -X PATCH -H "Authorization: Bearer $GUEST_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d '{"priority":"high"}' "$API/shared/$TEST_HASH"
+	_assert_status 403 "PATCH /shared/{hash} (guest) → 403"
+fi
+
+# --- 2. PATCH priority each bare value + no-stale GET. ------------
+for p in low normal high release very_low; do
+	_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d "{\"priority\":\"$p\"}" "$API/shared/$TEST_HASH"
+	_assert_status 200 "PATCH priority=$p → 200"
+	_assert_json_eq '.priority' "$p" "PATCH response shows priority=$p"
+	_assert_json_eq '.priority_auto' false "PATCH priority=$p → priority_auto=false"
+
+	_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/shared"
+	OBS=$(printf '%s' "$CURL_BODY" \
+		| jq -r --arg h "$TEST_HASH" \
+		  '.shared[] | select(.hash == $h) | .priority')
+	if [ "$OBS" = "$p" ]; then
+		_pass "IMMEDIATE GET /shared shows priority=$p (no stale)"
+	else
+		_fail "IMMEDIATE GET /shared priority" \
+			"expected $p, got $OBS (stale cache)"
+	fi
+done
+
+# --- 3. PATCH "auto" → priority_auto=true + a derived base level. --
+# amuled derives the concrete level from the upload queue, so we don't
+# pin the base string — just assert the flag is set and the reported
+# level is a known base enum (never a combined "*_auto" string).
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"priority":"auto"}' "$API/shared/$TEST_HASH"
+_assert_status 200 "PATCH priority=auto → 200"
+_assert_json_eq '.priority_auto' true "PATCH priority=auto → priority_auto=true"
+BASE_PRIO=$(printf '%s' "$CURL_BODY" | jq -r '.priority')
+case "$BASE_PRIO" in
+	very_low|low|normal|high|release) _pass "PATCH auto → derived base level=$BASE_PRIO" ;;
+	*) _fail "PATCH auto base level" "expected a base enum, got '$BASE_PRIO'" ;;
+esac
+
+# Immediate GET reflects the auto flag (no stale cache).
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/shared"
+GAUTO=$(printf '%s' "$CURL_BODY" \
+	| jq -r --arg h "$TEST_HASH" '.shared[] | select(.hash == $h) | .priority_auto')
+if [ "$GAUTO" = "true" ]; then
+	_pass "IMMEDIATE GET /shared shows priority_auto=true (no stale)"
+else
+	_fail "IMMEDIATE GET /shared priority_auto" "expected true, got $GAUTO (stale cache)"
+fi
+
+# The combined "*_auto" strings are not accepted as input.
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"priority":"high_auto"}' "$API/shared/$TEST_HASH"
+_assert_status 400 "PATCH rejected variant high_auto → 400"
+
+# --- 3c. PATCH comment + rating (issue #419). ---------------------
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"my_comment":"nice file","my_rating":4}' "$API/shared/$TEST_HASH"
+_assert_status 200 "PATCH comment+rating → 200"
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/shared/$TEST_HASH"
+_assert_json_eq '.my_comment' "nice file" "GET /shared/{hash} shows the set comment"
+_assert_json_eq '.my_rating' 4 "GET /shared/{hash} shows the set rating"
+
+# Partial (comment without rating) → 400 (both required together).
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"my_comment":"solo"}' "$API/shared/$TEST_HASH"
+_assert_status 400 "PATCH comment without rating → 400"
+
+# Rating out of range → 400.
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"comment":"x","rating":9}' "$API/shared/$TEST_HASH"
+_assert_status 400 "PATCH rating out of range → 400"
+
+# --- 3d. PATCH name (rename; issue #420). -------------------------
+# Rename to a name guaranteed different from the current one (renaming a
+# file to its existing name is a no-op amuled rejects with non-200),
+# verify it lands, then restore the original. This suite runs against a
+# PERSISTENT daemon, so it must leave the real shared file exactly as it
+# found it — an earlier version renamed to a fixed name and never
+# restored, which both clobbered a real share and made the next run fail
+# on the no-op rename. `jq` builds the body so odd characters in the
+# real filename are escaped correctly.
+RENAME_TO="amuleapi-test-rename.dat"
+if [ "$SAVED_NAME" = "$RENAME_TO" ]; then
+	RENAME_TO="amuleapi-test-rename-b.dat"
+fi
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d "$(jq -nc --arg n "$RENAME_TO" '{name: $n}')" "$API/shared/$TEST_HASH"
+_assert_status 200 "PATCH name (rename) → 200"
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/shared/$TEST_HASH"
+_assert_json_eq '.name' "$RENAME_TO" 'IMMEDIATE GET /shared/{hash} shows the renamed file (no stale)'
+
+# Path separators rejected (directory-traversal guard).
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"name":"../evil.dat"}' "$API/shared/$TEST_HASH"
+_assert_status 400 "PATCH name with path separator → 400"
+
+# Empty name rejected.
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"name":""}' "$API/shared/$TEST_HASH"
+_assert_status 400 "PATCH empty name → 400"
+
+# Restore the original name so the real shared file is left untouched.
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d "$(jq -nc --arg n "$SAVED_NAME" '{name: $n}')" "$API/shared/$TEST_HASH"
+_assert_status 200 "PATCH name (restore original) → 200"
+
+# --- 4. Error paths. ----------------------------------------------
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"priority":"bogus"}' "$API/shared/$TEST_HASH"
+_assert_status 400 "PATCH unknown priority enum → 400"
+
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{}' "$API/shared/$TEST_HASH"
+_assert_status 400 "PATCH empty body (no priority) → 400"
+
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"priority":"low"}' \
+	"$API/shared/baadbaadbaadbaadbaadbaadbaadbaad"
+_assert_status 404 "PATCH unknown hash → 404"
+
+# --- 5. Method gate (POST/PUT not allowed). --------------------
+_curl -X PUT -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/shared/$TEST_HASH"
+_assert_status 405 "PUT /shared/{hash} → 405"
+
+# --- 5b. Both-file priority independence. --------------------------
+# A partfile that is BOTH downloading and shared carries two independent
+# priorities: a download priority (EC_TAG_PARTFILE_PRIO) on /downloads and
+# an upload priority (EC_TAG_KNOWNFILE_PRIO) on /shared. They must not
+# clobber each other — a prior build stored a single `priority` on the
+# snapshot entry, so the shared refresher pass overwrote the download
+# value and /downloads reported the UPLOAD level. The scenario needs a
+# file present in both lists (a partfile with >=1 completed part, which
+# requires a live source), so skip when none exists; the unit test
+# (RefresherTest.BothFilePrioritiesAreIndependent) covers the split
+# against crafted EC packets.
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/downloads"
+DL_BODY=$CURL_BODY
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/shared"
+SH_BODY=$CURL_BODY
+BOTH_HASH=$(jq -rn --argjson d "$DL_BODY" --argjson s "$SH_BODY" \
+	'([$d.downloads[].hash] - ([$d.downloads[].hash] - [$s.shared[].hash]))[0] // ""')
+if [ -z "$BOTH_HASH" ]; then
+	echo "    info: no downloading-and-shared partfile present; skipping independence check"
+else
+	echo "    info: both-file hash=$BOTH_HASH"
+	B_DL_PRIO=$(jq -rn --argjson d "$DL_BODY" --arg h "$BOTH_HASH" \
+		'$d.downloads[] | select(.hash == $h) | .priority')
+	B_DL_AUTO=$(jq -rn --argjson d "$DL_BODY" --arg h "$BOTH_HASH" \
+		'$d.downloads[] | select(.hash == $h) | .priority_auto')
+	B_SH_PRIO=$(jq -rn --argjson s "$SH_BODY" --arg h "$BOTH_HASH" \
+		'$s.shared[] | select(.hash == $h) | .priority')
+	B_SH_AUTO=$(jq -rn --argjson s "$SH_BODY" --arg h "$BOTH_HASH" \
+		'$s.shared[] | select(.hash == $h) | .priority_auto')
+	# Set the two sides to DISTINCT levels. On the buggy build the shared
+	# pass clobbers the download value, so /downloads reports "low".
+	_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d '{"priority":"high"}' "$API/downloads/$BOTH_HASH"
+	_assert_status 200 "PATCH download priority=high (both-file) → 200"
+	_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d '{"priority":"low"}' "$API/shared/$BOTH_HASH"
+	_assert_status 200 "PATCH shared priority=low (both-file) → 200"
+
+	_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/downloads"
+	OBS_DL=$(printf '%s' "$CURL_BODY" | jq -r --arg h "$BOTH_HASH" \
+		'.downloads[] | select(.hash == $h) | .priority')
+	if [ "$OBS_DL" = "high" ]; then
+		_pass "/downloads reports download priority (high), not clobbered by shared PATCH"
+	else
+		_fail "/downloads priority independence" \
+			"expected high, got $OBS_DL (shared priority leaked onto /downloads)"
+	fi
+	_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/shared"
+	OBS_SH=$(printf '%s' "$CURL_BODY" | jq -r --arg h "$BOTH_HASH" \
+		'.shared[] | select(.hash == $h) | .priority')
+	if [ "$OBS_SH" = "low" ]; then
+		_pass "/shared reports upload priority (low), not clobbered by download PATCH"
+	else
+		_fail "/shared priority independence" \
+			"expected low, got $OBS_SH (download priority leaked onto /shared)"
+	fi
+
+	# Restore both sides. (If BOTH_HASH == TEST_HASH, section 6 restores
+	# the shared side again — idempotent.)
+	[ "$B_DL_AUTO" = "true" ] && B_DL_RESTORE=auto || B_DL_RESTORE=$B_DL_PRIO
+	[ "$B_SH_AUTO" = "true" ] && B_SH_RESTORE=auto || B_SH_RESTORE=$B_SH_PRIO
+	curl -s -o /dev/null -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d "{\"priority\":\"$B_DL_RESTORE\"}" "$API/downloads/$BOTH_HASH"
+	curl -s -o /dev/null -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d "{\"priority\":\"$B_SH_RESTORE\"}" "$API/shared/$BOTH_HASH"
+fi
+
+# --- 6. Restore saved priority. -----------------------------------
+# If the file was on auto, restore "auto" (SAVED_PRIORITY holds the
+# derived base level, not the literal "auto"); otherwise restore the
+# saved bare level.
+if [ "$SAVED_AUTO" = "true" ]; then
+	RESTORE=auto
+else
+	RESTORE=$SAVED_PRIORITY
+fi
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d "{\"priority\":\"$RESTORE\"}" "$API/shared/$TEST_HASH"
+_assert_status 200 "PATCH (restore saved priority) → 200"
+
+# --- Summary. -----------------------------------------------------
+_summary

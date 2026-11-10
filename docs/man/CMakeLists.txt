@@ -1,3 +1,8 @@
+include (CMakeDependentOption)
+
+# Install the English masters via CHECK_MANPAGE. The util binaries
+# (alc/alcc/cas/wxcas) install their own English masters from their own
+# CMakeLists.txt — we only drive the daemon/GUI/etc. binaries here.
 if (BUILD_AMULECMD)
 	check_manpage ("amulecmd")
 endif()
@@ -22,16 +27,142 @@ if (BUILD_WEBSERVER)
 	check_manpage ("amuleweb")
 endif()
 
-# Translator-only target: regenerate manpages-{lang}.po and translated *.{lang}.1
-# files from the English masters. po4a is not a build dependency; this target
-# only exists when the tool is found on the host. Run it explicitly:
-#     cmake --build build --target po4a-update
-find_program (PO4A_EXECUTABLE po4a)
-if (PO4A_EXECUTABLE)
-	add_custom_target (po4a-update
-		COMMAND ${PO4A_EXECUTABLE} po4a.config
-		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-		COMMENT "Refreshing translated manpages via po4a"
-		VERBATIM
-	)
+if (BUILD_AMULEAPI)
+	check_manpage ("amuleapi")
+endif()
+
+# Translated manpages — rendered at build time via po4a from the English
+# masters plus po/manpages-<lang>.po. The rendered files are not tracked in
+# git; po4a writes them straight into the build dir based on absolute paths
+# templated into po4a.config (see po4a.config.in).
+#
+# cmake/render_translated_manpages.cmake then substitutes @MAN_DATE@ and
+# @PACKAGE_VERSION@ (which po4a passes through verbatim) so the installed
+# manpages carry the correct .TH header. It runs from add_custom_command, so
+# CMake handles incremental rebuilds via DEPENDS on the .po inputs, and po4a's
+# own mtime-incremental logic is bypassed entirely.
+#
+# Source-tarball consumers that don't want po4a as a build dep can grab the
+# pre-rendered tarball attached to each GitHub Release (built by the
+# source-bundle job in .github/workflows/release.yml).
+
+cmake_dependent_option (TRANSLATED_MANPAGES
+	"Render and install translated manpages via po4a (requires po4a at build time)"
+	ON ENABLE_NLS OFF)
+
+set (AMULE_MANPAGE_LANGUAGES ca de es fr hu it nl pt_BR ro ru tr zh_TW)
+
+if (TRANSLATED_MANPAGES)
+	find_program (PO4A_EXECUTABLE po4a)
+
+	if (NOT PO4A_EXECUTABLE)
+		message (STATUS "po4a not found — translated manpages will not be installed. "
+			"Install po4a (https://po4a.org) and reconfigure, or pass "
+			"-DTRANSLATED_MANPAGES=NO to silence this notice.")
+	else()
+		configure_file (
+			"${CMAKE_CURRENT_SOURCE_DIR}/po4a.config.in"
+			"${CMAKE_CURRENT_BINARY_DIR}/po4a.config"
+			@ONLY
+		)
+
+		# Per-binary install destination + build-system gate. The util
+		# binaries have their rendered outputs land in their own build
+		# subdirs because po4a.config.in points them there explicitly.
+		#
+		# amuleapi is INTENTIONALLY absent from this list: the English
+		# master ships (gated by BUILD_AMULEAPI in the top-half
+		# check_manpage() block above), but the po4a translation
+		# pipeline has no amuleapi strings in po/manpages-*.po yet, so
+		# adding amuleapi here would break the build by asking po4a to
+		# render a translation it has no source for. English-only
+		# until 3.1; the translator workflow lands amuleapi entries in
+		# po/manpages-*.po, which adds amuleapi to MANPAGE_BINARIES +
+		# MANPAGE_GATE_amuleapi BUILD_AMULEAPI here.
+		set (MANPAGE_BINARIES amule amulecmd amuled amulegui amuleweb ed2k alc alcc cas wxcas)
+		set (MANPAGE_BUILD_DIR_amule     "${CMAKE_CURRENT_BINARY_DIR}")
+		set (MANPAGE_BUILD_DIR_amulecmd  "${CMAKE_CURRENT_BINARY_DIR}")
+		set (MANPAGE_BUILD_DIR_amuled    "${CMAKE_CURRENT_BINARY_DIR}")
+		set (MANPAGE_BUILD_DIR_amulegui  "${CMAKE_CURRENT_BINARY_DIR}")
+		set (MANPAGE_BUILD_DIR_amuleweb  "${CMAKE_CURRENT_BINARY_DIR}")
+		set (MANPAGE_BUILD_DIR_ed2k      "${CMAKE_CURRENT_BINARY_DIR}")
+		set (MANPAGE_BUILD_DIR_alc       "${CMAKE_BINARY_DIR}/src/utils/aLinkCreator/docs")
+		set (MANPAGE_BUILD_DIR_alcc      "${CMAKE_BINARY_DIR}/src/utils/aLinkCreator/docs")
+		set (MANPAGE_BUILD_DIR_cas       "${CMAKE_BINARY_DIR}/src/utils/cas/docs")
+		set (MANPAGE_BUILD_DIR_wxcas     "${CMAKE_BINARY_DIR}/src/utils/wxCas/docs")
+		set (MANPAGE_GATE_amule     BUILD_MONOLITHIC)
+		set (MANPAGE_GATE_amulecmd  BUILD_AMULECMD)
+		set (MANPAGE_GATE_amuled    BUILD_DAEMON)
+		set (MANPAGE_GATE_amulegui  BUILD_REMOTEGUI)
+		set (MANPAGE_GATE_amuleweb  BUILD_WEBSERVER)
+		set (MANPAGE_GATE_ed2k      BUILD_ED2K)
+		set (MANPAGE_GATE_alc       BUILD_ALC)
+		set (MANPAGE_GATE_alcc      BUILD_ALCC)
+		set (MANPAGE_GATE_cas       BUILD_CAS)
+		set (MANPAGE_GATE_wxcas     BUILD_WXCAS)
+
+		# Every page po4a may render, and the installable page derived from each. The script
+		# writes the .1 files at build time; install() only needs them at install time.
+		set (PO4A_RAW_OUTPUTS "")
+		foreach (LANG ${AMULE_MANPAGE_LANGUAGES})
+			foreach (BIN ${MANPAGE_BINARIES})
+				set (_raw   "${MANPAGE_BUILD_DIR_${BIN}}/${BIN}.${LANG}.1.in")
+				set (_final "${MANPAGE_BUILD_DIR_${BIN}}/${BIN}.${LANG}.1")
+				list (APPEND PO4A_RAW_OUTPUTS "${_raw}")
+
+				# OPTIONAL: po4a leaves out a page translated below --keep.
+				if (${MANPAGE_GATE_${BIN}} AND TRANSLATION_${LANG})
+					install (FILES "${_final}"
+						DESTINATION "${CMAKE_INSTALL_MANDIR}/${LANG}/man1"
+						RENAME "${BIN}.1"
+						OPTIONAL
+					)
+				endif()
+			endforeach()
+		endforeach()
+
+		# Collect po-file inputs for DEPENDS so a translator edit triggers
+		# a rebuild. manpages.pot itself is regenerated by the maintainer
+		# via scripts/update-manpages-po.sh and committed.
+		file (GLOB PO4A_PO_INPUTS
+			"${CMAKE_CURRENT_SOURCE_DIR}/po/manpages-*.po"
+			"${CMAKE_CURRENT_SOURCE_DIR}/po/manpages-*.add"
+			"${CMAKE_CURRENT_SOURCE_DIR}/po/manpages.pot"
+		)
+
+		# --no-update: render translated manpages from the existing .po
+		# files but do NOT regenerate manpages.pot or msgmerge into
+		# manpages-*.po. Keeping these source-tree files unmodified is
+		# what scripts/update-manpages-po.sh is for; a plain `cmake
+		# --build` should never dirty the working tree.
+		#
+		# --keep: po4a skips a page translated below this. Its default of 80 leaves no room for
+		# strings awaiting translation. On the command line because po4a 0.57 ignores it in
+		# po4a.config.
+		#
+		# A stamp is the only OUTPUT, with no BYPRODUCTS: Ninja treats both as outputs, so a page
+		# po4a leaves out would be missing and every later build would rerun po4a.
+		string (REPLACE ";" "|" _pages "${PO4A_RAW_OUTPUTS}")
+		set (PO4A_STAMP "${CMAKE_CURRENT_BINARY_DIR}/translated_manpages.stamp")
+		add_custom_command (
+			OUTPUT "${PO4A_STAMP}"
+			COMMAND ${CMAKE_COMMAND}
+				"-DPO4A=${PO4A_EXECUTABLE}"
+				"-DPO4A_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/po4a.config"
+				-DKEEP=70
+				"-DPAGES=${_pages}"
+				"-DSTAMP=${PO4A_STAMP}"
+				"-DMAN_DATE=${MAN_DATE}"
+				"-DPACKAGE_VERSION=${PACKAGE_VERSION}"
+				-P "${CMAKE_SOURCE_DIR}/cmake/render_translated_manpages.cmake"
+			DEPENDS
+				${PO4A_PO_INPUTS}
+				"${CMAKE_CURRENT_BINARY_DIR}/po4a.config"
+				"${CMAKE_SOURCE_DIR}/cmake/render_translated_manpages.cmake"
+			COMMENT "Rendering translated manpages via po4a"
+			VERBATIM
+		)
+
+		add_custom_target (translated_manpages ALL DEPENDS "${PO4A_STAMP}")
+	endif()
 endif()

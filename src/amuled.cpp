@@ -22,67 +22,59 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
-#include "amule.h"			// Interface declarations.
+#include "amule.h" // Interface declarations.
+#include "libs/ec/cpp/ECSRP.h"
 
 #include <include/common/EventIDs.h>
 
-#include "config.h"			// Needed for HAVE_SYS_RESOURCE_H, etc
-
+#include "config.h" // Needed for HAVE_SYS_RESOURCE_H, etc
 
 // Include the necessary headers for select(2), properly guarded
-#if defined HAVE_SYS_SELECT_H
-#	include <sys/select.h>
+#if defined HAVE_SYS_SELECT_H && !defined __IRIX__
+#include <sys/select.h>
 #else
-#	ifdef HAVE_SYS_TIME_H
-#		include <sys/time.h>
-#	endif
-#	ifdef HAVE_SYS_TYPES_H
-#		include <sys/types.h>
-#	endif
-#	ifdef HAVE_UNISTD_H
-#		include <unistd.h>
-#	endif
+#ifdef HAVE_SYS_TIME_H
+#include <sys/time.h>
 #endif
+#ifdef HAVE_SYS_TYPES_H
+#include <sys/types.h>
+#endif
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+#endif
+
+#include <cerrno>
+#include <cstdio>  // fprintf() for the pre-wxEntry "forking to background" notice
+#include <cstring> // strcmp() for the pre-wxEntry daemon-flag scan
+#include <fcntl.h> // open()/O_RDWR for the early daemonize fork
 
 #include <wx/utils.h>
 
-#include "Preferences.h"		// Needed for CPreferences
-#include "PartFile.h"			// Needed for CPartFile
+#include <common/LocaleInit.h>  // Needed for aMuleInitLocale()
+#include "Preferences.h"        // Needed for CPreferences
+#include "PartFile.h"           // Needed for CPartFile
+#include "PartFileHashThread.h" // Needed for EVT_PARTFILE_HASH_RESULT
 #include "Logger.h"
+#ifdef __APPLE__
+#include "MacBackgroundOnly_mac.h"
+#endif
 #include <common/Format.h>
-#include "InternalEvents.h"		// Needed for wxEVT_*
+#include "InternalEvents.h" // Needed for wxEVT_*
 #include "ThreadTasks.h"
-#include "GuiEvents.h"			// Needed for EVT_MULE_NOTIFY
-#include "Timer.h"			// Needed for EVT_MULE_TIMER
+#include "MuleGUIEvent.h" // Needed for EVT_MULE_NOTIFY
+#include "Timer.h"        // Needed for EVT_MULE_TIMER
 
-#include "ClientUDPSocket.h"		// Do_not_auto_remove (forward declaration not enough)
-#include "ListenSocket.h"		// Do_not_auto_remove (forward declaration not enough)
-
+#include "ClientUDPSocket.h" // Do_not_auto_remove (forward declaration not enough)
+#include "ListenSocket.h"    // Do_not_auto_remove (forward declaration not enough)
 
 #ifdef HAVE_SYS_RESOURCE_H
 #include <sys/resource.h> // Do_not_auto_remove
 #endif
 
-#ifdef  HAVE_SYS_WAIT_H
-	#include <sys/wait.h> // Do_not_auto_remove
-#endif
+#ifdef HAVE_SYS_WAIT_H
+#include <sys/wait.h> // Do_not_auto_remove
 #include <wx/ffile.h>
-
-BEGIN_EVENT_TABLE(CamuleDaemonApp, wxAppConsole)
-
-#ifndef ASIO_SOCKETS
-	//
-	// Socket handlers
-	//
-
-	// Listen Socket
-	EVT_SOCKET(ID_LISTENSOCKET_EVENT, CamuleDaemonApp::ListenSocketHandler)
-
-	// UDP Socket (servers)
-	EVT_SOCKET(ID_SERVERUDPSOCKET_EVENT, CamuleDaemonApp::UDPSocketHandler)
-	// UDP Socket (clients)
-	EVT_SOCKET(ID_CLIENTUDPSOCKET_EVENT, CamuleDaemonApp::UDPSocketHandler)
 #endif
 
 	// Socket timer (TCP)
@@ -102,7 +94,17 @@ BEGIN_EVENT_TABLE(CamuleDaemonApp, wxAppConsole)
 
 	// Hash ended notifier
 	EVT_MULE_HASHING(CamuleDaemonApp::OnFinishedHashing)
+	EVT_MULE_HASHING_DRAINED(CamuleDaemonApp::OnHashingDrained)
 	EVT_MULE_AICH_HASHING(CamuleDaemonApp::OnFinishedAICHHashing)
+
+	// MediaProbe (#140) -- attaches media tags on the main thread.
+	EVT_MULE_MEDIA_PROBE(CamuleDaemonApp::OnMediaProbeFinished)
+
+	// Verify Local Data -- records the check's result on the main thread.
+	EVT_MULE_VERIFY_LOCAL_DATA(CamuleDaemonApp::OnVerifyLocalDataFinished)
+
+	// CPartFileHashThread per-part result
+	EVT_PARTFILE_HASH_RESULT(CamuleDaemonApp::OnPartFileHashResult)
 
 	// File completion ended notifier
 	EVT_MULE_FILE_COMPLETED(CamuleDaemonApp::OnFinishedCompletion)
@@ -114,17 +116,162 @@ BEGIN_EVENT_TABLE(CamuleDaemonApp, wxAppConsole)
 	EVT_MULE_ALLOC_FINISHED(CamuleDaemonApp::OnFinishedAllocation)
 END_EVENT_TABLE()
 
-IMPLEMENT_APP(CamuleDaemonApp)
+CamuleDaemonApp::CamuleDaemonApp()
+{
+	theApp = this;
+}
 
+IMPLEMENT_APP_NO_MAIN(CamuleDaemonApp)
+
+// amuled's `-f`/`--full-daemon` must daemonize BEFORE wxEntry() initialises wxWidgets. On macOS wx
+// links the Cocoa core, which spins up framework threads during app init; forking AFTER that and
+// then calling into ObjC from the child -- the FSEvents run-loop pump, the version-check HTTP
+// fetch, Kad startup -- trips the ObjC fork-safety guard and aborts or spins at 100% CPU. Forking
+// first lets Cocoa initialise fresh in the child, and is harmless on Linux/*BSD. Everything then
+// runs in the child, so the worker threads constructed during OnInit() land in the daemon instead
+// of being orphaned by a mid-init fork (#849). Windows never forks.
+static bool AmuledWantsDaemonFork(int argc, char **argv)
+{
+	for (int i = 1; i < argc; ++i) {
+		if (strcmp(argv[i], "--") == 0) {
+			break; // end-of-options marker
+		}
+		if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--full-daemon") == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void AmuledDaemonizeEarly()
+{
+	fprintf(stdout, "amuled: forking to background - see you\n");
+	fflush(stdout);
+
+	int startup[2];
+	if (pipe(startup) != 0) {
+		perror("amuled: cannot create startup pipe");
+		_exit(1);
+	}
+	// Keep the writer outside stdio even if the launcher started with a closed
+	// standard descriptor. An exec'd helper must not inherit this pipe end.
+	if (startup[1] < 3) {
+		const int moved = fcntl(startup[1], F_DUPFD, 3);
+		if (moved < 0) {
+			perror("amuled: cannot reserve startup descriptor");
+			_exit(1);
+		}
+		close(startup[1]);
+		startup[1] = moved;
+	}
+	if (fcntl(startup[1], F_SETFD, FD_CLOEXEC) < 0) {
+		perror("amuled: cannot protect startup descriptor");
+		_exit(1);
+	}
+
+	const pid_t pid = fork();
+	if (pid < 0) {
+		perror("amuled: cannot fork");
+		_exit(1);
+	}
+	if (pid > 0) {
+		close(startup[1]);
+		char status;
+		ssize_t count;
+		do {
+			count = read(startup[0], &status, 1);
+		} while (count < 0 && errno == EINTR);
+		if (count == 1 && status == 'S') {
+			close(startup[0]);
+			_exit(0);
+		}
+		if (count == 1 && status == 'E') {
+			char message[512];
+			while ((count = read(startup[0], message, sizeof(message))) != 0) {
+				if (count < 0) {
+					if (errno == EINTR) {
+						continue;
+					}
+					break;
+				}
+				fwrite(message, 1, count, stderr);
+			}
+		} else {
+			fputs("ERROR: daemon exited before reporting its log file startup result\n", stderr);
+		}
+		fflush(stderr);
+		close(startup[0]);
+		_exit(1);
+	}
+
+	close(startup[0]);
+	CamuleAppCommon::SetDaemonStartupFd(startup[1]);
+	signal(SIGPIPE, SIG_IGN);
+	if (setsid() < 0) {
+		CamuleAppCommon::ReportDaemonStartup(false, "ERROR: unable to detach daemon session");
+		_exit(1);
+	}
+	const int fd = open("/dev/null", O_RDWR);
+	if (fd < 0) {
+		CamuleAppCommon::ReportDaemonStartup(false, "ERROR: unable to open /dev/null");
+		_exit(1);
+	}
+	for (int i_fd = 0; i_fd < 3; ++i_fd) {
+		if (dup2(fd, i_fd) < 0) {
+			CamuleAppCommon::ReportDaemonStartup(false, "ERROR: unable to detach daemon stdio");
+			_exit(1);
+		}
+	}
+	if (fd > 2) {
+		close(fd);
+	}
+}
+
+
+int main(int argc, char **argv)
+{
+	if (AmuledWantsDaemonFork(argc, argv)) {
+		AmuledDaemonizeEarly();
+	}
+#ifdef __APPLE__
+	// Transform only in the daemon process: the process transform starts framework threads,
+	// and Cocoa cannot be initialized in a child forked from a multithreaded parent.
+	MacDeclareBackgroundOnly();
+#endif
+	const int rc = wxEntry(argc, argv);
+	// Startup stopped before InitCommon reported, for example because another instance holds
+	// the config. Nothing reached a log file, so hand the launcher what was logged: it is what
+	// a foreground run prints, reason included. A no-op once InitCommon has reported.
+	const wxString unwritten = theLogger.GetUnwrittenLog().Strip(wxString::trailing);
+	CamuleAppCommon::ReportDaemonStartup(false,
+		unwritten.IsEmpty() ? "ERROR: amuled stopped during startup; run it without -f to see why"
+				    : (const char *)unwritten.utf8_str());
+	// wx before 3.2.7 cannot set the status of a --configure-* run, so it is applied here.
+	const int configured = CamuleAppCommon::ConfigureExitCode();
+	return configured >= 0 ? configured : rc;
+}
 
 int CamuleDaemonApp::OnRun()
 {
 	if (!thePrefs::AcceptExternalConnections()) {
-		AddLogLineCS(_("ERROR: aMule daemon cannot be used when external connections are disabled. To enable External Connections, use either a normal aMule, start amuled with the option --ec-config or set the key \"AcceptExternalConnections\" to 1 in the file ~/.aMule/amule.conf"));
+		AddLogLineCS(_("ERROR: aMule daemon cannot be used when external connections are disabled. "
+			       "To enable External Connections, use either a normal aMule, start amuled with "
+			       "the option --ec-config or set the key \"AcceptExternalConnections\" to 1 in "
+			       "the file ~/.aMule/amule.conf"));
 		return 0;
-	} else if (thePrefs::ECPassword().IsEmpty()) {
-		AddLogLineCS(_("ERROR: A valid password is required to use external connections, and aMule daemon cannot be used without external connections. To run aMule daemon, you must set the \"ECPassword\" field in the file ~/.aMule/amule.conf with an appropriate value. Execute amuled with the flag --ec-config to set the password. More information can be found at http://wiki.amule.org"));
+	} else if (!thePrefs::ECPasswordLoadError().IsEmpty()) {
+		AddLogLineCS(thePrefs::ECPasswordLoadError());
+		return 1;
+	} else if (thePrefs::ECPasswordVerifier().IsEmpty()) {
+		AddLogLineCS(_("ERROR: An EC password is required. Run amuled --ec-config to set it."));
 		return 0;
+	}
+	try {
+		ECSRP::Verifier::Decode(std::string(thePrefs::ECPasswordVerifier().utf8_str()));
+	} catch (const std::exception &) {
+		AddLogLineCS(_("ERROR: Invalid ECPasswordVerifier in amule.conf. Run amuled --ec-config to "
+			       "set a new EC password."));
+		return 1;
 	}
 
 	return wxApp::OnRun();
@@ -132,11 +279,11 @@ int CamuleDaemonApp::OnRun()
 
 bool CamuleDaemonApp::OnInit()
 {
-	if ( !CamuleApp::OnInit() ) {
+	if (!CamuleApp::OnInit()) {
 		return false;
 	}
 	AddLogLineNS(_("amuled: OnInit - starting timer"));
-	core_timer = new CTimer(this,ID_CORE_TIMER_EVENT);
+	core_timer = new CTimer(this, ID_CORE_TIMER_EVENT);
 	core_timer->Start(CORE_TIMER_PERIOD);
 	glob_prefs->GetCategory(0)->title = GetCatTitle(thePrefs::GetAllcatFilter());
 	glob_prefs->GetCategory(0)->path = thePrefs::GetIncomingDir();
@@ -144,78 +291,50 @@ bool CamuleDaemonApp::OnInit()
 	return true;
 }
 
-int CamuleDaemonApp::InitGui(bool ,wxString &)
+int CamuleDaemonApp::InitGui(bool, wxString &)
 {
-	if ( !enable_daemon_fork ) {
-		return 0;
-	}
-	AddLogLineNS(_("amuled: forking to background - see you"));
-	theLogger.SetEnabledStdoutLog(false);
-	//
-	// fork to background and detach from controlling tty
-	// while redirecting stdout to /dev/null
-	//
-	for(int i_fd = 0;i_fd < 3; i_fd++) {
-		close(i_fd);
-	}
-	int fd = open("/dev/null",O_RDWR);
-	if (dup(fd)){}	// prevent GCC warning
-	if (dup(fd)){}
-	pid_t pid = fork();
-
-	wxASSERT(pid != -1);
-
-	if ( pid ) {
-		exit(0);
-	} else {
-		pid = setsid();
-		//
-		// Create a Pid file with the Pid of the Child, so any daemon-manager
-		// can easily manage the process
-		//
-		if (!m_PidFile.IsEmpty()) {
-			wxString temp = CFormat(wxT("%d\n")) % pid;
-			wxFFile ff(m_PidFile, wxT("w"));
-			if (!ff.Error()) {
-				ff.Write(temp);
-				ff.Close();
-			} else {
-				AddLogLineNS(_("Cannot Create Pid File"));
-			}
-		}
-	}
-
 	return 0;
 }
 
-bool CamuleDaemonApp::Initialize(int& argc_, wxChar **argv_)
+bool CamuleDaemonApp::Initialize(int &argc_, wxChar **argv_)
 {
-	if ( !wxAppConsole::Initialize(argc_, argv_) ) {
+	if (!wxAppConsole::Initialize(argc_, argv_)) {
 		return false;
 	}
+
+	// Pull LC_CTYPE etc. from the environment so unicode2char() emits real UTF-8 instead of
+	// mangling non-ASCII bytes under the default "C" locale (see #203).
+	aMuleInitLocale();
 
 #ifdef __UNIX__
 	wxString encName;
 #if wxUSE_INTL
-	// if a non default locale is set,
-	// assume that the user wants his
-        // filenames in this locale too
-        encName = wxLocale::GetSystemEncodingName().Upper();
+	// A non-default locale is taken to mean the user wants filenames in that locale too.
+	encName = wxLocale::GetSystemEncodingName().Upper();
 
-        // But don't consider ASCII in this case.
-	if ( !encName.empty() ) {
-		if ( encName == wxT("US-ASCII") ) {
+	// But don't consider ASCII in this case.
+	if (!encName.empty()) {
+		if (encName == "US-ASCII") {
 			// This means US-ASCII when returned
 			// from GetEncodingFromName().
 			encName.clear();
 		}
-        }
+	}
 #endif // wxUSE_INTL
 
 	// in this case, UTF-8 is used by default.
-        if ( encName.empty() ) {
-		encName = wxT("UTF-8");
+	if (encName.empty()) {
+		encName = "UTF-8";
 	}
+
+#ifdef __WXOSX__
+	// macOS reports "Mac OS Roman" from GetSystemEncodingName() regardless of the user's
+	// locale, but HFS+/APFS file names are always UTF-8. Encoding with Mac Roman turns U+00AA
+	// into the single byte 0xAA, which the kernel rejects as invalid UTF-8 when the completed
+	// file is opened, leaving non-ASCII downloads stuck in PS_ERROR. The GUI keeps wx's UTF-8
+	// converter; force UTF-8 to match.
+	encName = "UTF-8";
+#endif
 
 	static wxConvBrokenFileNames fileconv(encName);
 	wxConvFileName = &fileconv;
@@ -231,15 +350,14 @@ int CamuleDaemonApp::OnExit()
 	return CamuleApp::OnExit();
 }
 
-
 int CamuleDaemonApp::ShowAlert(wxString msg, wxString title, int flags)
 {
-	if ( flags | wxICON_ERROR ) {
+	if (flags | wxICON_ERROR) {
 		title = CFormat(_("ERROR: %s")) % title;
 	}
 	AddLogLineCS(title + wxT(" ") + msg);
 
-	return 0;	// That's neither yes nor no, ok, cancel
+	return 0; // That's neither yes nor no, ok, cancel
 }
 
 // File_checked_for_headers

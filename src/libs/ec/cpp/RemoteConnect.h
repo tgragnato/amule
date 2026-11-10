@@ -26,42 +26,72 @@
 #ifndef REMOTECONNECT_H
 #define REMOTECONNECT_H
 
-
 #include "ECMuleSocket.h"
-#include "ECPacket.h"		// Needed for CECPacket
+#include "ECSRP.h"
+
+#include <chrono>     // steady_clock for the reply watchdog
+#include "ECPacket.h" // Needed for CECPacket
 
 #include <wx/event.h>
 
-class CECPacketHandlerBase {
-	public:
-		virtual ~CECPacketHandlerBase() { }
-		virtual void HandlePacket(const CECPacket *) = 0;
+// Installed by a headless EC client (amuleapi) to replace the hard _exit() that
+// CRemoteConnect::OnLost() performs when the connection drops with a NULL
+// notifier. OnLost then invokes the handler and returns, letting the client tear
+// down on its own main thread rather than racing static destructors from the asio
+// callback.
+void SetEcConnectionLostHandler(void (*handler)());
+
+class CECPacketHandlerBase
+{
+public:
+	virtual ~CECPacketHandlerBase() {}
+	virtual void HandlePacket(const CECPacket *) = 0;
+
+	// Called when a reconnect discards the pending-request FIFO: the reply this
+	// handler waited for died with the socket, so any "request in flight" state must
+	// be rewound or the handler would refuse to re-request. Default no-op;
+	// CRemoteContainer rewinds its request SM.
+	virtual void AbortPendingRequest() {}
 };
 
-class CECLoginPacket : public CECPacket {
-	public:
-		CECLoginPacket(const wxString& client, const wxString& version,
-						bool canZLIB = true, bool canUTF8numbers = true, bool canNotify = false,
-						bool preferNoZlib = false);
+class CECLoginPacket : public CECPacket
+{
+public:
+	CECLoginPacket(const wxString &client,
+		const wxString &version,
+		bool canZLIB = true,
+		bool canUTF8numbers = true,
+		bool canNotify = false,
+		bool preferNoZlib = false,
+		bool canMultiSearch = false,
+		bool canSearchProgressUnion = false,
+		bool canChat = false,
+		bool canChatSessions = false,
+		bool canChatPeerHash = false,
+		const std::vector<uint8_t> &clientNonce = std::vector<uint8_t>(),
+		const std::vector<uint8_t> &clientPubKey = std::vector<uint8_t>());
 };
 
-class CECAuthPacket : public CECPacket {
-	public:
-		CECAuthPacket(const wxString& pass);
+class CECAuthPacket : public CECPacket
+{
+public:
+	explicit CECAuthPacket(const std::vector<uint8_t> &proof);
 };
 
-//#warning Kry TODO - move to abstract layer.
-class CRemoteConnect : public CECMuleSocket {
+// #warning Kry TODO - move to abstract layer.
+class CRemoteConnect : public CECMuleSocket
+{
 private:
 	// State enums for connection SM ( client side ) in case of async processing
-	enum {
-		EC_INIT,         // initial state
-		EC_CONNECT_SENT, // socket connect request sent
-		EC_REQ_SENT,     // sent auth request to core, waiting for reply
-		EC_SALT_RECEIVED,// received salt from core
-		EC_PASSWD_SENT,  // sent password to core, waiting for OK
-		EC_OK,           // core replied "ok"
-		EC_FAIL          // core replied "bad"
+	enum
+	{
+		EC_INIT,          // initial state
+		EC_CONNECT_SENT,  // socket connect request sent
+		EC_REQ_SENT,      // sent auth request to core, waiting for reply
+		EC_SALT_RECEIVED, // received salt from core
+		EC_PASSWD_SENT,   // sent password to core, waiting for OK
+		EC_OK,            // core replied "ok"
+		EC_FAIL           // core replied "bad"
 	} m_ec_state;
 
 	// fifo of handlers for on-the-air requests. all EC concept is working in fcfs
@@ -70,10 +100,16 @@ private:
 	int m_req_count;
 	int m_req_fifo_thr;
 
-	wxEvtHandler* m_notifier;
+	wxEvtHandler *m_notifier;
 
 	wxString m_connectionPassword;
+	ECSRP::Client m_srp;
+	ECSRP::Bytes m_srpA;
+	uint8_t m_srpCredential = ECSRP::Password;
+	void AddSRPLogin(CECPacket &packet);
+
 	wxString m_server_reply;
+	wxString m_serverVersion;
 	wxString m_client;
 	wxString m_version;
 
@@ -81,65 +117,254 @@ private:
 	bool m_canUTF8numbers;
 	bool m_canNotify;
 
-	// Set in ConnectToCore when the dialed server address resolves to
-	// a loopback / RFC1918 LAN / RFC3927 link-local IP. Drives the
-	// `EC_TAG_PREFER_NO_ZLIB` hint in the auth packet; see
-	// `CECLoginPacket` ctor and ECSocket.cpp's `m_isLocalPeer` per-
-	// packet bypass. Only meaningful when `m_canZLIB` is also true
-	// (no point sending the hint when the capability isn't advertised).
+	// Our half of the key-derivation salt, generated per connection attempt and kept
+	// so the derivation can run once the daemon's half arrives in EC_OP_AUTH_SALT.
+	std::vector<uint8_t> m_aeadClientNonce;
+
+	// The ciphers we offered, verbatim, plus the one the daemon chose. Bound into the
+	// key derivation so a modified capability exchange yields a different key on each
+	// side and the first sealed packet fails, rather than quietly dropping to
+	// something weaker.
+	std::vector<uint8_t> m_aeadOffered;
+	std::vector<uint8_t> m_aeadTranscript;
+
+	// Our ephemeral X25519 pair for this connection attempt. The private half is
+	// wiped as soon as the shared secret is derived: it is what an attacker with a
+	// recording would need, and it exists for one handshake precisely so there is
+	// nothing left to compel or steal.
+	std::vector<uint8_t> m_aeadEphPriv;
+	std::vector<uint8_t> m_aeadEphPub;
+
+	// Our SRP proof, sent with EC_OP_AUTH_PASSWD. It binds the password exchange
+	// to the transport transcript so a relay cannot reuse it on a different leg.
+	std::vector<uint8_t> m_srpClientProof;
+
+	/// Set when the daemon named a cipher and the keys derived cleanly.
+	bool m_aeadNegotiated;
+
+	/** Derive X25519 session keys from AUTH_SALT and start sealing immediately.
+	 * The daemon has already installed its keys, so the next packet, M1, is sealed.
+	 */
+	void SetupAEADFromSalt(const CECPacket *reply);
+
+	/**
+	 * Check the daemon's SRP evidence M2 in EC_OP_AUTH_OK.
+	 *
+	 * Only meaningful once encryption was negotiated; a false return means the
+	 * peer completed a key exchange but cannot prove it knows the credential,
+	 * which is what a relay looks like. The caller drops the connection.
+	 */
+	bool VerifyServerProof(const CECPacket *reply);
+
+	// Set in ConnectToCore when the dialed address resolves to a loopback, RFC1918 or
+	// RFC3927 IP. Drives the EC_TAG_PREFER_NO_ZLIB hint, and means nothing unless
+	// m_canZLIB is also true.
 	bool m_preferNoZlib;
 
-	// User override to always negotiate ZLIB regardless of dialed
-	// server locality. Use case: a WireGuard / Tailscale tunnel
-	// endpoint that resolves to an RFC1918 IP but whose underlying
-	// transit is slow Internet — the locality check would otherwise
-	// strip ZLIB and the user loses the perf they actually want.
-	// Set via SetForceZlib() from the caller's config/CLI plumbing.
+	// User override to always negotiate ZLIB regardless of locality, for a WireGuard
+	// or Tailscale endpoint that resolves to an RFC1918 IP over slow transit.
 	bool m_forceZlib;
 
-	// Set when the server echoed `EC_TAG_CAN_PARTIAL_UPDATE` in AUTH_OK,
-	// confirming it speaks the partial-update INC_UPDATE protocol: skip
-	// the bulk "anything missing == deleted" loop and instead delete only
-	// what arrives in explicit `EC_TAG_FILE_REMOVED` markers. Old daemons
-	// don't echo the tag; we then fall back to the legacy bulk-deletion
-	// path (server emits alive-marker tags so it still works).
+	// The daemon process this connection is talking to (EC_TAG_SESSION_ID from
+	// AUTH_OK), or 0 against a daemon too old to send it. ECIDs mean something only
+	// within one session -- CECID counts from a process-local counter -- so a
+	// reconnect that comes back with a different value, or with 0, has to discard
+	// everything keyed by ECID rather than reconcile against it.
+	uint64 m_serverSessionId;
+
+	// Server echoed EC_TAG_CAN_PARTIAL_UPDATE: skip the bulk "anything missing ==
+	// deleted" loop and delete only what arrives in explicit EC_TAG_FILE_REMOVED
+	// markers. Old daemons do not echo it, and the legacy bulk path still works
+	// because the server emits alive-marker tags.
 	bool m_serverPartialUpdate;
 
+	// Server echoed EC_TAG_CAN_CLIENT_HISTORY: it answers EC_OP_GET_CLIENT_HISTORY.
+	// Not an optimisation -- a daemon that predates the request reaches the
+	// unknown-opcode branch of ProcessRequest2(), which asserts before returning the
+	// EC_OP_FAILED it otherwise would.
+	bool m_serverClientHistory;
+
+	// Server echoed EC_TAG_CAN_PARTIAL_SEARCH: it may skip unchanged SEARCH RESULTS
+	// on the multi-search union poll and signal their removal with
+	// EC_TAG_FILE_REMOVED.
+	//
+	// Separate from m_serverPartialUpdate, which is about the shared-file / download
+	// stream and is advertised by every client built since it landed. Reusing it here
+	// would make an older amuleGUI -- which advertises it, speaks multi-search, and
+	// still deletes any result missing from the reply -- silently drop its results.
+	bool m_serverPartialSearch;
+
+	// Client opts into the multi-search protocol. Off by default; set via
+	// SetCanMultiSearch() only once the client addresses searches by
+	// `EC_TAG_SEARCH_ID`.
+	bool m_canMultiSearch;
+	// Client reads the union form of EC_OP_SEARCH_PROGRESS. On by default with multi-
+	// search; amulecmd turns it off so an id-less `progress` means the current search.
+	bool m_canSearchProgressUnion;
+	// Server echoed `EC_TAG_CAN_MULTI_SEARCH`: it runs several EC searches at once,
+	// addressed by ID. Old daemons don't echo it and the client stays single-search.
+	bool m_serverMultiSearch;
+
+	// Server echoed `EC_TAG_CAN_SHAREDDIRS_CONFIG`: it serves
+	// EC_OP_GET/SET_SHARED_DIRS. Without the echo the GUI leaves the shared-folders
+	// panel read-only, since a selection there could not reach the daemon.
+	bool m_serverSharedDirsConfig;
+
+	// Server echoed EC_TAG_CAN_SEARCH_LIST: it serves EC_OP_SEARCH_LIST. Old daemons
+	// predate #680, so the client must not send the opcode at all -- the request
+	// falls into ProcessRequest2's unknown-opcode branch and trips a wxFAIL. Without
+	// the list the GUI sees only the searches it started itself.
+	bool m_serverSearchList;
+	bool m_serverKadLookups;
+	bool m_serverSearchAll;
+	bool m_serverSearchMetadata;
+
+	// Steady-clock stamp of the last packet received from the daemon. Steady, not
+	// wall-clock: a system clock step (NTP, sleep/wake) must not read as a stall.
+	std::chrono::steady_clock::time_point m_lastReplyAt;
+
+	// Server echoed EC_TAG_CAN_SEARCH_PROGRESS_UNION: an EC_OP_SEARCH_PROGRESS with
+	// no EC_TAG_SEARCH_ID reports every open search as children rather than one.
+	// Advertised only alongside multi-search, so an id-less request from a
+	// single-search client keeps its legacy meaning.
+	bool m_serverSearchProgressUnion;
+
+	// Client opts into chat relay. Off by default; a client with a chat window sets
+	// it via SetCanChat().
+	bool m_canChat;
+	// Server echoed `EC_TAG_CAN_CHAT`: it buffers incoming peer messages for polling
+	// via EC_OP_GET_CHAT_MESSAGES. Old daemons don't echo it and we never poll.
+	bool m_serverChat;
+	// Client speaks the chat session ops (advertise `EC_TAG_CAN_CHAT_SESSIONS`).
+	bool m_canChatSessions;
+	// Server echoed EC_TAG_CAN_CHAT_SESSIONS.
+	//
+	// Distinct from m_serverChat on purpose: EC_TAG_CAN_CHAT is echoed by daemons
+	// that predate the session ops entirely, so gating on it would send
+	// EC_OP_GET_CHAT_SESSIONS straight into the unknown-opcode branch, which asserts.
+	bool m_serverChatSessions;
+	// Client understands EC_TAG_CHAT_PEER_HASH (advertise `EC_TAG_CAN_CHAT_PEER_HASH`).
+	bool m_canChatPeerHash;
+	// Server echoed EC_TAG_CAN_CHAT_PEER_HASH: it may target/list sessions by hash and
+	// include one with no unique GUI_ID. Distinct from m_serverChatSessions: a client
+	// that predates the hash tag would merge two such sessions under one legacy id.
+	bool m_serverChatPeerHash;
+	bool m_serverDeleteComplete;
+	bool m_closeExpected = false;
+
 	void WriteDoneAndQueueEmpty();
+
 public:
 	// The event handler is used for notifying connect/close
-	CRemoteConnect(wxEvtHandler* evt_handler);
+	CRemoteConnect(wxEvtHandler *evt_handler);
 
 	void SetCapabilities(bool canZLIB, bool canUTF8numbers, bool canNotify);
+	void SetTokenCredential(uint8_t credential) { m_srpCredential = credential; }
 
-	// Force-ZLIB override: when true, ConnectToCore skips the
-	// loopback/LAN-IP locality detection and never asks the server
-	// to bypass ZLIB. Call BEFORE ConnectToCore() — the flag is read
-	// during connect.
+	/// True once keys were derived for this connection, i.e. the daemon accepted the
+	/// offer. Used to insist that EC_OP_AUTH_OK really did arrive sealed.
+	bool IsAEADNegotiated() const { return m_aeadNegotiated; }
+
+	// Force-ZLIB override: ConnectToCore then skips the loopback/LAN-IP locality
+	// detection and never asks the server to bypass ZLIB. Call BEFORE
+	// ConnectToCore(), which is where the flag is read.
 	void SetForceZlib(bool force) noexcept { m_forceZlib = force; }
 
+	// Opt into the multi-search protocol. Call BEFORE ConnectToCore(), and only from
+	// a client that reads `EC_TAG_SEARCH_ID` and addresses searches by it.
+	void SetCanMultiSearch(bool can) noexcept { m_canMultiSearch = can; }
+	void SetCanSearchProgressUnion(bool can) noexcept { m_canSearchProgressUnion = can; }
+
+	// Opt into chat relay. Call BEFORE ConnectToCore(). Only a client with a
+	// chat window (amulegui) should set this; others never poll for messages.
+	void SetCanChat(bool can) noexcept { m_canChat = can; }
+
+	// Opt into the chat session ops. Call BEFORE ConnectToCore().
+	void SetCanChatSessions(bool can) noexcept { m_canChatSessions = can; }
+
+	// Opt into hash-addressed chat (EC_TAG_CHAT_PEER_HASH). Call BEFORE ConnectToCore(),
+	// and only alongside SetCanChatSessions(true).
+	void SetCanChatPeerHash(bool can) noexcept { m_canChatPeerHash = can; }
+
 	bool ServerSupportsPartialUpdate() const { return m_serverPartialUpdate; }
+	//! See m_serverClientHistory. False means: do not send the request at all.
+	bool ServerSupportsClientHistory() const { return m_serverClientHistory; }
+	//! See m_serverSessionId. 0 means the daemon didn't tell us.
+	uint64 GetServerSessionId() const { return m_serverSessionId; }
+	bool ServerSupportsPartialSearch() const { return m_serverPartialSearch; }
 
-	bool ConnectToCore(
-		const wxString &host, int port,
-		const wxString& login, const wxString &pass,
-		const wxString& client, const wxString& version);
+	bool ServerSupportsMultiSearch() const { return m_serverMultiSearch; }
 
-	const wxString& GetServerReply() const { return m_server_reply; }
+	bool ServerSupportsChat() const { return m_serverChat; }
 
-	bool RequestFifoFull()
-	{
-		return m_req_count > m_req_fifo_thr;
-	}
+	//! See m_serverChatSessions. False means: do not send the chat session
+	//! opcodes at all.
+	bool ServerSupportsChatSessions() const { return m_serverChatSessions; }
+
+	//! See m_serverChatPeerHash. False means: address and list chat sessions by
+	//! GUI_ID only, exactly as a build that predates the hash tag would.
+	bool ServerSupportsChatPeerHash() const { return m_serverChatPeerHash; }
+	bool ServerSupportsDeleteComplete() const { return m_serverDeleteComplete; }
+
+	bool ServerSupportsSharedDirsConfig() const { return m_serverSharedDirsConfig; }
+
+	bool ServerSupportsSearchList() const { return m_serverSearchList; }
+	bool ServerSupportsKadLookups() const { return m_serverKadLookups; }
+	void ClearPeerNegotiatedFlags();
+	bool ServerSupportsSearchAll() const { return m_serverSearchAll; }
+	bool ServerSupportsSearchMetadata() const { return m_serverSearchMetadata; }
+
+	bool ServerSupportsSearchProgressUnion() const { return m_serverSearchProgressUnion; }
+
+	// No `login`: EC authenticates on the password alone. The parameter existed since
+	// 2005, was declared WXUNUSED in the definition, and the three callers passed an
+	// empty string, a dialog field that was never filled in, and the literal
+	// "foobar" (issue #1266).
+	bool ConnectToCore(const wxString &host,
+		int port,
+		const wxString &pass,
+		const wxString &client,
+		const wxString &version);
+
+	const wxString &GetServerReply() const { return m_server_reply; }
+
+	// Version of the connected core, from EC_TAG_SERVER_VERSION in AUTH_OK. Empty
+	// until the handshake completes, or if an old daemon omits the tag.
+	const wxString &GetServerVersion() const { return m_serverVersion; }
+
+	bool RequestFifoFull() { return m_req_count > m_req_fifo_thr; }
+
+	// Outstanding requests: pushed by SendRequest, popped when the matching reply is
+	// handled. Unlike m_req_count this never sees the handshake packets.
+	size_t GetReqFifoSize() const { return m_req_fifo.size(); }
+
+	// Milliseconds since the last packet arrived from the daemon, or since the
+	// connection was established if none has. Drives the reply watchdog: EC has no
+	// application-level keepalive, so a transport that silently stops delivering (an
+	// SSH tunnel with no ServerAliveInterval, a NAT dropping an idle mapping, a
+	// proxy) leaves the socket ESTABLISHED with every queue empty, and the only
+	// symptom is a frozen UI.
+	uint64 MillisecondsSinceLastReply() const;
 
 	virtual void OnConnect(); // To override connection events
-	virtual void OnLost(); // To override close events
+	virtual void OnLost();    // To override close events
+
+	// The core may close instead of replying, e.g. to a shutdown request; OnLost()
+	// then stays silent and returns.
+	void ExpectClose() noexcept { m_closeExpected = true; }
 
 	void SendRequest(CECPacketHandlerBase *handler, const CECPacket *request);
 	void SendPacket(const CECPacket *request);
 
-	/********************* EC API ********************/
+	// Drop every handler still queued for an in-flight reply. The EC FIFO assumes the
+	// core answers every request in order (see SendRequest), but a dropped socket
+	// leaves the requests that were on the air unanswered; their handlers would stay
+	// in m_req_fifo and mis-pair with the reconnected session's replies (a stats
+	// reply routed to the file-list handler wipes the download / shared lists, aMule
+	// #444). Rewinds each orphaned handler and zeroes the in-flight counter.
+	void DiscardRequestQueue();
 
+	/********************* EC API ********************/
 
 	/* Misc */
 
@@ -147,8 +372,7 @@ public:
 	void ShutDown();
 
 	// Handles a ED2K link
-	void Ed2kLink(wxString* link);
-
+	void Ed2kLink(wxString *link);
 
 	/* Kad */
 
@@ -157,7 +381,6 @@ public:
 
 	// Disconnects Kad network
 	void StopKad();
-
 
 	/* ED2K */
 
@@ -168,24 +391,20 @@ public:
 	// Disconnects from ED2K
 	void DisconnectED2K();
 
-
 	/* Servers */
 
 	// Adds a server
-	void AddServer(uint32 ip,
-		       uint16 port);
+	void AddServer(uint32 ip, uint16 port);
 
 	// Remove specific server
 	// Returns: Error message or empty string for no error
-	void RemoveServer(uint32 ip,
-			  uint16 port);
+	void RemoveServer(uint32 ip, uint16 port);
 
 	// Returns ED2K server list
 	void GetServerList();
 
 	// Updates ED2K server from a URL
 	void UpdateServerList(wxString url);
-
 
 	/* Search */
 
@@ -199,8 +418,7 @@ public:
 	void GetSearchProgress();
 
 	// Add 1 or more of found files to download queue
-	void DownloadSearchResult(uint32* file);
-
+	void DownloadSearchResult(uint32 *file);
 
 	/* Statistics */
 
@@ -210,47 +428,43 @@ public:
 	// Returns aMule connection status
 	void GetConnectionState();
 
-
 	/* Queue/File handling */
 
 	// Returns downloads queue
-	void GetDlQueue(CMD4Hash* file);
+	void GetDlQueue(CMD4Hash *file);
 
 	// Returns uploads queue
-	void GetUpQueue(CMD4Hash* file);
+	void GetUpQueue(CMD4Hash *file);
 
 	// Returns waiting queue
-	void GetWtQueue(CMD4Hash* file);
+	void GetWtQueue(CMD4Hash *file);
 
 	// Swaps A4AF to a file
-	void SwapA4AFThis(CMD4Hash* file);
+	void SwapA4AFThis(CMD4Hash *file);
 
 	// Swaps A4AF to a file (auto)
-	void SwapA4AFThisAuto(CMD4Hash* file);
+	void SwapA4AFThisAuto(CMD4Hash *file);
 
 	// Swaps A4AF to any other files
-	void SwapA4AFOthers(CMD4Hash* file);
+	void SwapA4AFOthers(CMD4Hash *file);
 
 	// Pauses download(s)
-	void Pause(CMD4Hash* file);
+	void Pause(CMD4Hash *file);
 
 	// Resumes download(s)
-	void Resume(CMD4Hash* file);
+	void Resume(CMD4Hash *file);
 
 	// Stops download(s)
-	void Stop(CMD4Hash* file);
+	void Stop(CMD4Hash *file);
 
 	// Sets priority for a download
-	void SetPriority(CMD4Hash* file,
-			 uint8 priority);
+	void SetPriority(CMD4Hash *file, uint8 priority);
 
 	// Deletes a download
-	void Delete(CMD4Hash* file);
+	void Delete(CMD4Hash *file);
 
 	// Sets category for a download
-	void SetCategory(CMD4Hash* file,
-			 wxString category);
-
+	void SetCategory(CMD4Hash *file, wxString category);
 
 	/* Shared files */
 
@@ -258,8 +472,7 @@ public:
 	void GetSharedFiles();
 
 	// Sets priority for 1 or more shared files
-	void SetSharedPriority(CMD4Hash* file,
-			       uint8 priority);
+	void SetSharedPriority(CMD4Hash *file, uint8 priority);
 
 	// Reloads shared file list
 	void ReloadSharedFiles();
@@ -268,9 +481,7 @@ public:
 	void AddDirectoryToSharedFiles(wxString dir);
 
 	// Renames a file
-	void RenameFile(CMD4Hash file,
-			wxString name);
-
+	void RenameFile(CMD4Hash file, wxString name);
 
 	/* Logging */
 
@@ -301,7 +512,6 @@ public:
 	// Clears server info log
 	void ClearServerInfo();
 
-
 	/* Preferences */
 
 	// Request for Preferences
@@ -309,94 +519,93 @@ public:
 
 	// Setting the preferences
 	void SetPreferencesCategories();
-	void SetPreferencesGeneral(wxString userNick,
-				   CMD4Hash userHash);
+	void SetPreferencesGeneral(wxString userNick, CMD4Hash userHash);
 	void SetPreferencesConnections(uint32 LineDownloadCapacity,
-				       uint32 LineUploadCapacity,
-				       uint32 MaxDownloadSpeed,
-				       uint32 MaxUploadSpeed,
-				       uint32 UploadSlotAllocation,
-				       uint16 TCPPort,
-				       uint16 UDPPort,
-				       bool DisableUDP,
-				       uint16 MaxSourcesPerFile,
-				       uint16 MaxConnections,
-				       bool EnableAutoConnect,
-				       bool EnableReconnect,
-				       bool EnableNetworkED2K,
-				       bool EnableNetworkKademlia);
+		uint32 LineUploadCapacity,
+		uint32 MaxDownloadSpeed,
+		uint32 MaxUploadSpeed,
+		uint32 UploadSlotAllocation,
+		uint16 TCPPort,
+		uint16 UDPPort,
+		bool DisableUDP,
+		uint16 MaxSourcesPerFile,
+		uint16 MaxConnections,
+		bool EnableAutoConnect,
+		bool EnableReconnect,
+		bool EnableNetworkED2K,
+		bool EnableNetworkKademlia);
 	void SetPreferencesMessageFilter(bool Enabled,
-					 bool FilterAll,
-					 bool AllowFromFriends,
-					 bool FilterFromUnknownClients,
-					 bool FilterByKeyword,
-					 wxString Keywords);
+		bool FilterAll,
+		bool AllowFromFriends,
+		bool FilterFromUnknownClients,
+		bool FilterByKeyword,
+		wxString Keywords);
 	void SetPreferencesRemoteCrtl(bool RunOnStartup,
-				      uint16 Port,
-				      bool Guest,
-				      CMD4Hash GuestPasswdHash,
-				      bool UseGzip,
-				      uint32 RefreshInterval,
-				      wxString Template);
+		uint16 Port,
+		bool Guest,
+		CMD4Hash GuestPasswdHash,
+		bool UseGzip,
+		uint32 RefreshInterval,
+		wxString Template);
 	void SetPreferencesOnlineSig(bool Enabled);
 	void SetPreferencesServers(bool RemoveDeadServers,
-				   uint16 RetriesDeadServers,
-				   bool AutoUpdate,
-				   // bool URLList, TODO: Implement this!
-				   bool AddFromServer,
-				   bool AddFromClient,
-				   bool UsePrioritySystem,
-				   bool SmartLowIDCheck,
-				   bool SafeServerConnection,
-				   bool AutoConnectStaticOnly,
-				   bool ManualHighPriority);
+		uint16 RetriesDeadServers,
+		bool AutoUpdate,
+		// bool URLList, TODO: Implement this!
+		bool AddFromServer,
+		bool AddFromClient,
+		bool UsePrioritySystem,
+		bool SmartLowIDCheck,
+		bool SafeServerConnection,
+		bool AutoConnectStaticOnly,
+		bool ManualHighPriority);
 	void SetPreferencesFiles(bool ICHEnabled,
-				 bool AIHCTrust,
-				 bool NewPaused,
-				 bool NewDownloadAutoPriority,
-				 bool PreviewPriority,
-				 bool NewAutoULPriotiry,
-				 bool UploadFullChunks,
-				 bool StartNextPaused,
-				 bool ResumeSameCategory,
-				 bool SaveSources,
-				 bool ExtractMetadata,
-				 bool AllocateFullChunks,
-				 bool AllocateFullSize,
-				 bool CheckFreeSpace,
-				 uint32 MinFreeSpace);
+		bool AIHCTrust,
+		bool NewPaused,
+		bool NewDownloadAutoPriority,
+		bool PreviewPriority,
+		bool NewAutoULPriotiry,
+		bool UploadFullChunks,
+		bool StartNextPaused,
+		bool ResumeSameCategory,
+		bool SaveSources,
+		bool ExtractMetadata,
+		bool AllocateFullChunks,
+		bool AllocateFullSize,
+		bool CheckFreeSpace,
+		uint32 MinFreeSpace);
 	void SetPreferencesDirectories();
 	void SetPreferencesStatistics();
 	void SetPreferencesSecurity(uint8 CanSeeShares,
-				    uint32 FilePermissions,
-				    uint32 DirPermissions,
-				    bool IPFilterEnabled,
-				    bool IPFilterAutoUpdate,
-				    wxString IPFilterUpdateURL,
-				    uint8 IPFilterLevel,
-				    bool IPFilterFilterLAN,
-				    bool UseSecIdent);
+		uint32 FilePermissions,
+		uint32 DirPermissions,
+		bool IPFilterEnabled,
+		bool IPFilterAutoUpdate,
+		wxString IPFilterUpdateURL,
+		uint8 IPFilterLevel,
+		bool IPFilterFilterLAN,
+		bool UseSecIdent);
 	void SetPreferencesCoreTweaks(uint16 MaxConnectionsPerFive,
-				      bool Verbose,
-				      uint32 FileBuffer,
-				      uint32 ULQueue,
-				      uint32 SRVKeepAliveTimeout);
+		bool Verbose,
+		uint32 FileBuffer,
+		uint32 ULQueue,
+		uint32 SRVKeepAliveTimeout);
 
 	// Creates new category
 	void CreateCategory(uint32 category,
-			    wxString title,
-			    wxString folder,
-			    wxString comment,
-			    uint32 color,
-			    uint8 priority);
+		wxString title,
+		wxString folder,
+		wxString comment,
+		uint32 color,
+		uint8 priority);
 
 	// Updates existing category
 	void UpdateCategory(uint32 category,
-			    wxString title,
-			    wxString folder,
-			    wxString comment,
-			    uint32 color,
-			    uint8 priority);
+		wxString title,
+		wxString folder,
+		wxString comment,
+		uint32 color,
+		uint8 priority);
 
 	// Deletes existing category
 	void DeleteCategory(uint32 category);
@@ -413,19 +622,34 @@ public:
 private:
 	virtual const CECPacket *OnPacketReceived(const CECPacket *packet, uint32 trueSize);
 	bool ProcessAuthPacket(const CECPacket *reply);
+
+	/**
+	 * Hand the outcome of a login attempt to the GUI, carrying whatever
+	 * m_server_reply currently explains.
+	 *
+	 * Every path that ends a login attempt must call this. Plain CloseSocket()
+	 * does not dispatch OnLost (see CloseAndDispatchLost in ECSocket.h) precisely
+	 * because ProcessAuthPacket is expected to notify for itself, so a path that
+	 * closes and returns without calling this leaves amulegui waiting on its
+	 * connect-timeout watchdog instead of showing the reason.
+	 */
+	void NotifyConnectionResult(bool connected);
 };
 
 wxDECLARE_EVENT(wxEVT_EC_CONNECTION, wxEvent);
-class wxECSocketEvent : public wxEvent {
+class wxECSocketEvent : public wxEvent
+{
 public:
-	wxECSocketEvent(int id, bool result, const wxString& reply) : wxEvent(-1, id)
+	wxECSocketEvent(int id, bool result, const wxString &reply)
+	: wxEvent(-1, id)
 	{
 		m_value = result;
 		m_server_reply = reply;
 	}
-	wxEvent *Clone(void) const		{ return new wxECSocketEvent(*this); }
-	bool GetResult() const			{ return m_value; }
-	const wxString& GetServerReply() const	{ return m_server_reply; }
+	wxEvent *Clone(void) const { return new wxECSocketEvent(*this); }
+	bool GetResult() const { return m_value; }
+	const wxString &GetServerReply() const { return m_server_reply; }
+
 private:
 	bool m_value;
 	wxString m_server_reply;

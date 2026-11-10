@@ -1,0 +1,57 @@
+# Also usable standalone for helper tests.
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  cmake_minimum_required(VERSION 3.12)
+  project(AMuleMediaProbe LANGUAGES CXX)
+  option(BUILD_TESTING "Build tests" ON)
+  enable_testing()
+endif()
+# The helper does not link wxWidgets, so it must request large-file stdio itself.
+add_compile_definitions(_FILE_OFFSET_BITS=64)
+# Native container parsers: no external libraries.
+set(MEDIA_PROBE_PARSERS probe.cpp tags.cpp codecs.cpp riff.cpp isobmff.cpp matroska.cpp audio.cpp ogg.cpp
+  legacy.cpp)
+add_library(media-probe-sandbox STATIC sandbox.cpp)
+target_compile_features(media-probe-sandbox PRIVATE cxx_std_17)
+add_executable(amule-media-probe main.cpp ${MEDIA_PROBE_PARSERS})
+target_link_libraries(amule-media-probe PRIVATE media-probe-sandbox)
+target_compile_features(amule-media-probe PRIVATE cxx_std_17)
+# Same directory as the core, including relocated bundles and portable installs.
+set_target_properties(amule-media-probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/src")
+if(NOT AMULE_MEDIA_PROBE_INSTALL_DIR)
+  set(AMULE_MEDIA_PROBE_INSTALL_DIR bin)
+endif()
+install(TARGETS amule-media-probe RUNTIME DESTINATION "${AMULE_MEDIA_PROBE_INSTALL_DIR}")
+option(MEDIA_PROBE_FUZZ "Build the libFuzzer harness for the media parsers (Clang only)" OFF)
+if(MEDIA_PROBE_FUZZ)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "MEDIA_PROBE_FUZZ requires Clang with libFuzzer, ASan and UBSan")
+  endif()
+  add_executable(amule-media-probe-fuzz fuzz.cpp ${MEDIA_PROBE_PARSERS})
+  target_compile_features(amule-media-probe-fuzz PRIVATE cxx_std_17)
+  target_compile_options(amule-media-probe-fuzz PRIVATE -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all)
+  target_link_options(amule-media-probe-fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+endif()
+find_package(Python3 COMPONENTS Interpreter)
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  # A broken loader/sandbox cannot exercise parser cases. Fail once with its
+  # diagnostic instead of repeating the same infrastructure error 1,000 times.
+  add_test(NAME MediaProbeStartup COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_helper.py $<TARGET_FILE:amule-media-probe>
+    HelperTests.test_extracts_wav)
+  set_tests_properties(MediaProbeStartup PROPERTIES FIXTURES_SETUP MediaProbeReady TIMEOUT 15)
+  add_executable(media-probe-sandbox-test sandbox-test.cpp)
+  target_compile_features(media-probe-sandbox-test PRIVATE cxx_std_17)
+  target_link_libraries(media-probe-sandbox-test PRIVATE media-probe-sandbox)
+  add_test(NAME MediaProbeSandbox COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_sandbox.py $<TARGET_FILE:media-probe-sandbox-test>
+    $<TARGET_FILE:amule-media-probe>)
+  add_test(NAME MediaProbeCorpus COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_corpus.py)
+  add_test(NAME MediaProbeHelper COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_helper.py $<TARGET_FILE:amule-media-probe>)
+  add_test(NAME MediaProbeHostile COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_hostile.py $<TARGET_FILE:amule-media-probe>)
+  # Each case starts the helper; on Windows runners that can exceed the 10 s fast lane.
+  set_tests_properties(MediaProbeHelper MediaProbeHostile PROPERTIES LABELS "slow")
+  set_tests_properties(MediaProbeSandbox MediaProbeHelper MediaProbeHostile
+    PROPERTIES FIXTURES_REQUIRED MediaProbeReady)
+endif()

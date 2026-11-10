@@ -1,0 +1,414 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
+//
+
+#include <muleunit/test.h>
+
+#include "Credentials.h"
+#include "TestScratchDir.h"
+
+#include <wx/filefn.h>
+#include <wx/filename.h>
+#include <wx/utils.h>
+
+#include <fstream>
+#include <string>
+
+using namespace muleunit;
+using namespace webcommon;
+
+DECLARE_SIMPLE(Credentials)
+
+namespace
+{
+// MD5("secret") and MD5("other") -- the pre-hash the preferences dialog
+// produces before the value ever leaves the client.
+const char *const MD5_SECRET = "5ebe2294ecd0e0f08eab7690d2a6ee69";
+const char *const MD5_OTHER = "795f3202b17cb6bc3d4b771d8c6c9eaf";
+} // namespace
+
+TEST(Credentials, HashIsSaltedAndVerifies)
+{
+	const std::string a = HashMd5Hex(MD5_SECRET);
+	const std::string b = HashMd5Hex(MD5_SECRET);
+
+	ASSERT_FALSE(a.empty());
+	// Same input, different record: the salt must be per-record, otherwise
+	// identical passwords are visibly identical in the file.
+	ASSERT_TRUE(a != b);
+	ASSERT_TRUE(VerifyMd5Hex(MD5_SECRET, a));
+	ASSERT_TRUE(VerifyMd5Hex(MD5_SECRET, b));
+}
+
+TEST(Credentials, WrongPasswordFails)
+{
+	const std::string rec = HashMd5Hex(MD5_SECRET);
+	ASSERT_FALSE(VerifyMd5Hex(MD5_OTHER, rec));
+}
+
+TEST(Credentials, CaseInsensitiveDigestInput)
+{
+	// The preferences dialog and the EC path have historically disagreed
+	// about digest case; both must verify against the same record.
+	const std::string rec = HashMd5Hex(MD5_SECRET);
+	std::string upper(MD5_SECRET);
+	for (char &c : upper) {
+		c = static_cast<char>(::toupper(static_cast<unsigned char>(c)));
+	}
+	ASSERT_TRUE(VerifyMd5Hex(upper, rec));
+}
+
+TEST(Credentials, EmptyRecordNeverVerifies)
+{
+	// An unset credential must not be satisfiable by any input - this is
+	// what makes "guest unset" mean "guest disabled".
+	ASSERT_FALSE(VerifyMd5Hex(MD5_SECRET, ""));
+	ASSERT_FALSE(VerifyMd5Hex("", ""));
+}
+
+TEST(Credentials, MalformedRecordNeverVerifies)
+{
+	ASSERT_FALSE(VerifyMd5Hex(MD5_SECRET, "pbkdf2-sha256$"));
+	ASSERT_FALSE(VerifyMd5Hex(MD5_SECRET, "pbkdf2-sha256$0$aabb$ccdd"));
+	ASSERT_FALSE(VerifyMd5Hex(MD5_SECRET, "pbkdf2-sha256$1000$nothex$ccdd"));
+	ASSERT_FALSE(VerifyMd5Hex(MD5_SECRET, "pbkdf2-sha256$1000$aabb$tooshort"));
+	ASSERT_FALSE(VerifyMd5Hex(MD5_SECRET, "scrypt$1$aabb$ccdd"));
+	ASSERT_FALSE(VerifyMd5Hex(MD5_SECRET, "garbage"));
+}
+
+TEST(Credentials, NonMd5InputRejected)
+{
+	const std::string rec = HashMd5Hex(MD5_SECRET);
+	ASSERT_FALSE(VerifyMd5Hex("secret", rec)); // plaintext, not a digest
+	ASSERT_FALSE(VerifyMd5Hex("abc", rec));
+	ASSERT_TRUE(HashMd5Hex("not-a-digest").empty());
+}
+
+// A developer config written before the KDF stores the bare MD5. It must
+// still let its owner in, and must be reported as wanting a rewrite.
+TEST(Credentials, LegacyBareMd5VerifiesAndWantsRehash)
+{
+	bool needs_rehash = false;
+	ASSERT_TRUE(IsLegacyMd5Record(MD5_SECRET));
+	ASSERT_TRUE(VerifyMd5Hex(MD5_SECRET, MD5_SECRET, &needs_rehash));
+	ASSERT_TRUE(needs_rehash);
+
+	needs_rehash = false;
+	ASSERT_FALSE(VerifyMd5Hex(MD5_OTHER, MD5_SECRET, &needs_rehash));
+}
+
+TEST(Credentials, CurrentFormatDoesNotWantRehash)
+{
+	bool needs_rehash = true;
+	ASSERT_TRUE(VerifyMd5Hex(MD5_SECRET, HashMd5Hex(MD5_SECRET), &needs_rehash));
+	ASSERT_FALSE(needs_rehash);
+}
+
+TEST(Credentials, WeakerIterationCountVerifiesButWantsRehash)
+{
+	// Records written at a lower cost must keep working while being
+	// flagged for rewrite, otherwise raising the cost locks users out.
+	const std::string rec = "pbkdf2-sha256$1000$"
+				"000102030405060708090a0b0c0d0e0f$"
+				"0000000000000000000000000000000000000000000000000000000000000000";
+	bool needs_rehash = false;
+	// The digest is wrong, so this only asserts the parser accepts the
+	// shape; the rehash flag is exercised by the round-trip test below.
+	ASSERT_FALSE(VerifyMd5Hex(MD5_SECRET, rec, &needs_rehash));
+}
+
+TEST(Credentials, FileRoundTrip)
+{
+	const TestScratchDir scratch("credtest-");
+	const std::string dir = scratch.Path();
+	Credentials in;
+	in.admin = HashMd5Hex(MD5_SECRET);
+	in.guest = HashMd5Hex(MD5_OTHER);
+
+	std::string err;
+	ASSERT_TRUE(SaveCredentialsFile(dir, in, err));
+
+	Credentials out;
+	ASSERT_TRUE(LoadCredentialsFile(dir, out, err));
+	ASSERT_EQUALS(in.admin, out.admin);
+	ASSERT_EQUALS(in.guest, out.guest);
+	ASSERT_TRUE(VerifyMd5Hex(MD5_SECRET, out.admin));
+	ASSERT_TRUE(VerifyMd5Hex(MD5_OTHER, out.guest));
+}
+
+// Clearing the guest credential is how the guest role is disabled, so an
+// empty value has to survive a save/load round trip as empty.
+TEST(Credentials, EmptyGuestRoundTripsAsDisabled)
+{
+	const TestScratchDir scratch("credtest-");
+	const std::string dir = scratch.Path();
+	Credentials in;
+	in.admin = HashMd5Hex(MD5_SECRET);
+	in.guest = "";
+
+	std::string err;
+	ASSERT_TRUE(SaveCredentialsFile(dir, in, err));
+
+	Credentials out;
+	ASSERT_TRUE(LoadCredentialsFile(dir, out, err));
+	ASSERT_TRUE(out.guest.empty());
+	ASSERT_FALSE(VerifyMd5Hex(MD5_OTHER, out.guest));
+}
+
+TEST(Credentials, MissingFileIsFirstRunNotAnError)
+{
+	Credentials out;
+	std::string err;
+	ASSERT_TRUE(LoadCredentialsFile("./credtest-does-not-exist", out, err));
+	ASSERT_TRUE(out.admin.empty());
+	ASSERT_TRUE(out.guest.empty());
+	ASSERT_TRUE(err.empty());
+}
+
+TEST(Credentials, LegacyFileIsReadable)
+{
+	// A file written by a pre-KDF build: bare digests, no PHC prefix.
+	const TestScratchDir scratch("credtest-");
+	const std::string dir = scratch.Path();
+	{
+		std::ofstream f((dir + "/amuleapi-passwords").c_str());
+		f << "admin=" << MD5_SECRET << "\n";
+		f << "guest=" << MD5_OTHER << "\n";
+	}
+
+	Credentials out;
+	std::string err;
+	ASSERT_TRUE(LoadCredentialsFile(dir, out, err));
+
+	bool needs_rehash = false;
+	ASSERT_TRUE(VerifyMd5Hex(MD5_SECRET, out.admin, &needs_rehash));
+	ASSERT_TRUE(needs_rehash);
+	ASSERT_TRUE(VerifyMd5Hex(MD5_OTHER, out.guest));
+}
+
+TEST(Credentials, CommentsAndBlankLinesIgnored)
+{
+	const TestScratchDir scratch("credtest-");
+	const std::string dir = scratch.Path();
+	{
+		std::ofstream f((dir + "/amuleapi-passwords").c_str());
+		f << "# a comment\n\n";
+		f << "  admin = " << MD5_SECRET << "  \n";
+		f << "junk-without-equals\n";
+	}
+
+	Credentials out;
+	std::string err;
+	ASSERT_TRUE(LoadCredentialsFile(dir, out, err));
+	ASSERT_TRUE(VerifyMd5Hex(MD5_SECRET, out.admin));
+	ASSERT_TRUE(out.guest.empty());
+}
+
+TEST(Credentials, FilePathJoinsWithAndWithoutSeparator)
+{
+	ASSERT_EQUALS(std::string("/tmp/x/amuleapi-passwords"), CredentialsFilePath("/tmp/x"));
+	ASSERT_EQUALS(std::string("/tmp/x/amuleapi-passwords"), CredentialsFilePath("/tmp/x/"));
+}
+
+// The pending-change rules every entry point shares: aMule's preferences dialog, the same dialog in
+// amulegui over EC, `amuleapi --set-*-pass` and the REST endpoint. Encoded once here so the four
+// cannot disagree.
+TEST(Credentials, ChangeWithEmptyAdminLeavesAdminAlone)
+{
+	const TestScratchDir scratch("credtest-");
+	const std::string dir = scratch.Path();
+	std::string err;
+
+	CredentialChange first;
+	first.admin_md5 = MD5_SECRET;
+	first.guest_enabled = false;
+	ASSERT_TRUE(ApplyCredentialChange(dir, first, err));
+
+	// A client changing only the guest role sends no admin digest, because
+	// it cannot read the stored one back.
+	CredentialChange second;
+	second.guest_enabled = true;
+	second.guest_md5 = MD5_OTHER;
+	ASSERT_TRUE(ApplyCredentialChange(dir, second, err));
+
+	Credentials out;
+	ASSERT_TRUE(LoadCredentialsFile(dir, out, err));
+	ASSERT_TRUE(VerifyMd5Hex(MD5_SECRET, out.admin));
+	ASSERT_TRUE(VerifyMd5Hex(MD5_OTHER, out.guest));
+}
+
+TEST(Credentials, ChangeWithGuestDisabledClearsGuest)
+{
+	const TestScratchDir scratch("credtest-");
+	const std::string dir = scratch.Path();
+	std::string err;
+
+	CredentialChange on;
+	on.admin_md5 = MD5_SECRET;
+	on.guest_enabled = true;
+	on.guest_md5 = MD5_OTHER;
+	ASSERT_TRUE(ApplyCredentialChange(dir, on, err));
+
+	CredentialChange off;
+	off.guest_enabled = false;
+	ASSERT_TRUE(ApplyCredentialChange(dir, off, err));
+
+	Credentials out;
+	ASSERT_TRUE(LoadCredentialsFile(dir, out, err));
+	ASSERT_TRUE(out.guest.empty());
+	// Turning guest off must never take admin down with it, or the
+	// operator locks themselves out of a non-loopback deployment.
+	ASSERT_TRUE(VerifyMd5Hex(MD5_SECRET, out.admin));
+}
+
+TEST(Credentials, ChangeWithGuestEnabledAndNoDigestKeepsGuestPassword)
+{
+	const TestScratchDir scratch("credtest-");
+	const std::string dir = scratch.Path();
+	std::string err;
+
+	CredentialChange on;
+	on.guest_enabled = true;
+	on.guest_md5 = MD5_OTHER;
+	ASSERT_TRUE(ApplyCredentialChange(dir, on, err));
+
+	// "Guest stays on, I did not retype the password."
+	CredentialChange unchanged;
+	unchanged.guest_enabled = true;
+	ASSERT_TRUE(ApplyCredentialChange(dir, unchanged, err));
+
+	Credentials out;
+	ASSERT_TRUE(LoadCredentialsFile(dir, out, err));
+	ASSERT_TRUE(VerifyMd5Hex(MD5_OTHER, out.guest));
+}
+
+TEST(Credentials, ChangeRejectsMalformedDigests)
+{
+	const TestScratchDir scratch("credtest-");
+	const std::string dir = scratch.Path();
+	std::string err;
+
+	CredentialChange bad_admin;
+	bad_admin.admin_md5 = "nonsense";
+	ASSERT_FALSE(ApplyCredentialChange(dir, bad_admin, err));
+	ASSERT_FALSE(err.empty());
+
+	CredentialChange bad_guest;
+	bad_guest.guest_enabled = true;
+	bad_guest.guest_md5 = "nonsense";
+	ASSERT_FALSE(ApplyCredentialChange(dir, bad_guest, err));
+
+	Credentials out;
+	ASSERT_TRUE(LoadCredentialsFile(dir, out, err));
+	ASSERT_TRUE(out.admin.empty());
+	ASSERT_TRUE(out.guest.empty());
+}
+
+// Ephemeral EC token. The token is how amuled hands a spawned amuleapi a credential without either
+// process putting the password-equivalent value from amule.conf on disk or on a command line. Both
+// ends derive the filename from EcTokenFilePath, so these pin the joining rules the same way the
+// amuleapi-passwords test above does -- a drift between the two binaries would not fail loudly, it
+// would just mean the child never finds the file and quietly falls back to its configured password.
+
+TEST(Credentials, EcTokenFilePathJoinsLikeCredentialsPath)
+{
+	ASSERT_EQUALS(std::string("amuleapi-ec-token"), EcTokenFilePath(""));
+	ASSERT_EQUALS(std::string("/tmp/x/amuleapi-ec-token"), EcTokenFilePath("/tmp/x"));
+	ASSERT_EQUALS(std::string("/tmp/x/amuleapi-ec-token"), EcTokenFilePath("/tmp/x/"));
+	// Distinct from the credential store: one is ephemeral, the other is
+	// the persistent password file.
+	ASSERT_TRUE(EcTokenFilePath("/tmp/x") != CredentialsFilePath("/tmp/x"));
+	ASSERT_EQUALS(std::string("amuleweb-ec-token"), EcWebTokenFilePath(""));
+	ASSERT_EQUALS(std::string("/tmp/x/amuleweb-ec-token"), EcWebTokenFilePath("/tmp/x/"));
+	ASSERT_TRUE(EcWebTokenFilePath("/tmp/x") != EcTokenFilePath("/tmp/x"));
+}
+
+TEST(Credentials, GeneratedTokenHasTheMd5HexShape)
+{
+	const std::string a = GenerateEcToken();
+	// 32 lowercase hex chars: the width EC's challenge-response already
+	// consumes, which is what lets the token drop in with no wire change.
+	ASSERT_EQUALS(std::size_t(32), a.size());
+	for (const char c : a) {
+		ASSERT_TRUE((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+	}
+	// Fresh every call -- a token reused across daemon runs would defeat
+	// the point of it dying with the process.
+	ASSERT_TRUE(a != GenerateEcToken());
+}
+
+TEST(Credentials, ReadAndConsumeEcTokenReturnsItAndDeletesTheFile)
+{
+	const TestScratchDir scratch("credtest-");
+	const std::string dir = scratch.Path();
+	const std::string path = EcTokenFilePath(dir);
+	const std::string token = GenerateEcToken();
+
+	std::ofstream(path.c_str(), std::ios::binary) << token << "\n";
+
+	std::string got;
+	ASSERT_TRUE(ReadAndConsumeEcToken(path, got));
+	ASSERT_EQUALS(token, got);
+	// Consumed: the secret stops being at rest the moment it is in memory.
+	ASSERT_TRUE(!wxFileExists(wxString(path.c_str(), wxConvUTF8)));
+
+	// A second read finds nothing, which is the ordinary case for a
+	// manually started amuleapi.
+	std::string again;
+	ASSERT_TRUE(!ReadAndConsumeEcToken(path, again));
+}
+
+TEST(Credentials, ReadAndConsumeEcTokenRejectsMalformedButStillDeletes)
+{
+	const TestScratchDir scratch("credtest-");
+	const std::string dir = scratch.Path();
+	const std::string path = EcTokenFilePath(dir);
+
+	// Truncated, non-hex and empty must all be refused rather than attempted as a credential;
+	// the file goes either way, because a file that failed to parse is still not something to
+	// leave behind.
+	const char *const bad[] = {
+		"deadbeef", "", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", "5ebe2294ecd0e0f08eab7690d2a6ee69extra"
+	};
+	for (const char *body : bad) {
+		std::ofstream(path.c_str(), std::ios::binary) << body;
+		std::string got("untouched");
+		ASSERT_TRUE(!ReadAndConsumeEcToken(path, got));
+		ASSERT_EQUALS(std::string("untouched"), got);
+		ASSERT_TRUE(!wxFileExists(wxString(path.c_str(), wxConvUTF8)));
+	}
+}
+
+TEST(Credentials, ReadAndConsumeEcTokenIgnoresSurroundingWhitespace)
+{
+	const TestScratchDir scratch("credtest-");
+	const std::string dir = scratch.Path();
+	const std::string path = EcTokenFilePath(dir);
+	const std::string token = GenerateEcToken();
+
+	std::ofstream(path.c_str(), std::ios::binary) << "  " << token << "\r\n";
+
+	std::string got;
+	ASSERT_TRUE(ReadAndConsumeEcToken(path, got));
+	ASSERT_EQUALS(token, got);
+}

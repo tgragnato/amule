@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <defs>
+    <linearGradient id="su_up" x1="0" y1="0" x2="0.55" y2="1">
+      <stop offset="0" stop-color="#d9ffcf"/>
+      <stop offset="0.45" stop-color="#43fc3f"/>
+      <stop offset="1" stop-color="#1da32c"/>
+    </linearGradient>
+    <linearGradient id="sd_up" x1="0" y1="0" x2="0.55" y2="1">
+      <stop offset="0" stop-color="#ffc9c9"/>
+      <stop offset="0.45" stop-color="#f22525"/>
+      <stop offset="1" stop-color="#a81111"/>
+    </linearGradient>
+  </defs>
+  <!-- upload arrow, top right -->
+  <rect x="8.75" y="5.35" width="2.5" height="3.4" fill="#909090" stroke="#3f3f3f" stroke-width="0.4"/>
+  <rect x="9.15" y="5.55" width="0.7" height="3" fill="#c8c8c8"/>
+  <path d="M10 0.3 L14.6 5.45 H5.4 Z" fill="url(#su_up)" stroke="#14582a" stroke-width="0.45" stroke-linejoin="round"/>
+  <!-- download arrow, bottom left -->
+  <rect x="4.75" y="7.25" width="2.5" height="3.45" fill="#909090" stroke="#3f3f3f" stroke-width="0.4"/>
+  <rect x="5.15" y="7.45" width="0.7" height="3" fill="#c8c8c8"/>
+  <path d="M6 15.7 L1.4 10.55 H10.6 Z" fill="url(#sd_up)" stroke="#7a0d0d" stroke-width="0.45" stroke-linejoin="round"/>
+</svg>

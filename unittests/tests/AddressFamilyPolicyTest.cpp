@@ -1,0 +1,438 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
+//
+
+// Which address families aMule opens sockets in.
+//
+// Two properties are worth pinning for reasons that outlast this PR:
+//
+//   1. The default is IPv4-only. Piece 4 of the widening is gated so nothing advertises IPv6 until
+// a switch is deliberately turned on. A default of DualStack would hand the first caller dual stack
+// with no switch thrown, leaving the gate in place but guarding nothing.
+//   2. Refusal never falls back. Opening a v4 socket towards a v6 target is how a truncated address
+// becomes a connection to the wrong host, so a target the configuration forbids yields no protocol
+// at all.
+//
+// The configured family is process-global mutable state, so every case below restores what it
+// found. The default is captured at static-initialisation time rather than read inside a test,
+// which keeps the first assertion independent of the order the cases run in.
+
+#include <muleunit/test.h>
+
+#include <AddressFamilyPolicyAsio.h>
+
+#include <limits>
+#include <optional>
+
+#include "WarningsPush_Asio.h"
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/v6_only.hpp>
+#include "WarningsPop.h"
+
+using namespace muleunit;
+using namespace AddressFamilyPolicy;
+
+DECLARE_SIMPLE(AddressFamilyPolicy)
+
+//! Read before main(), so no test can have perturbed it.
+static const Families g_processDefault = Configured();
+
+namespace
+{
+//! Restores the configured family, so one case cannot leak into the next.
+class ScopedFamilies
+{
+public:
+	explicit ScopedFamilies(Families families)
+	: m_previous(Configured())
+	{
+		SetConfigured(families);
+	}
+	~ScopedFamilies() { SetConfigured(m_previous); }
+
+private:
+	Families m_previous;
+};
+
+CNetworkAddress Addr(const char *text)
+{
+	return CNetworkAddress::FromString(text);
+}
+} // namespace
+
+// Absence is not the only value that names no peer. 0.0.0.0 reaches Permits() as a present IPv4
+// address, so the family test alone permits it under every configuration, and a call site
+// replacing an old `if (ip)` guard would dial it -- which on Linux connects to this machine.
+TEST(AddressFamilyPolicy, TheUnspecifiedAddressIsNeverPermitted)
+{
+	const Families every[] = { Families::IPv4Only, Families::IPv6Only, Families::DualStack };
+	for (const Families families : every) {
+		ScopedFamilies scope(families);
+		ASSERT_FALSE(Permits(Addr("0.0.0.0")));
+		ASSERT_FALSE(Permits(Addr("::")));
+		ASSERT_FALSE(Permits(Addr("::ffff:0.0.0.0")));
+	}
+	// A real address of the permitted family still passes, so this did not just refuse
+	// everything.
+	{
+		ScopedFamilies scope(Families::DualStack);
+		ASSERT_TRUE(Permits(Addr("192.0.2.1")));
+		ASSERT_TRUE(Permits(Addr("2001:db8::1")));
+	}
+}
+
+// The protocol and the endpoint have to be the same family. Asked separately they are not for a
+// mapped target: the protocol is v4 because a mapped address is reachable over IPv4, while
+// ToAsioAddress() preserves the family and yields an address_v6. Connecting those is EAFNOSUPPORT.
+TEST(AddressFamilyPolicy, AsioTargetPairsTheProtocolWithAMatchingAddress)
+{
+	ScopedFamilies scope(Families::DualStack);
+
+	const boost::optional<SAsioTarget> mapped = AsioTargetFor(Addr("::ffff:192.0.2.1"));
+	ASSERT_TRUE((bool)mapped);
+	ASSERT_TRUE(mapped->protocol == boost::asio::ip::tcp::v4());
+	ASSERT_TRUE(mapped->address.is_v4());
+
+	const boost::optional<SAsioTarget> native = AsioTargetFor(Addr("192.0.2.1"));
+	ASSERT_TRUE((bool)native);
+	ASSERT_TRUE(native->protocol == boost::asio::ip::tcp::v4());
+	ASSERT_TRUE(native->address.is_v4());
+	// The mapped and native spellings of one peer reach the same wire target.
+	ASSERT_TRUE(mapped->address == native->address);
+
+	const boost::optional<SAsioTarget> v6 = AsioTargetFor(Addr("2001:db8::1"));
+	ASSERT_TRUE((bool)v6);
+	ASSERT_TRUE(v6->protocol == boost::asio::ip::tcp::v6());
+	ASSERT_TRUE(v6->address.is_v6());
+}
+
+// One decision, one thing to test: a refused target yields no pair at all, rather than a protocol
+// the caller might dereference after a separate and possibly stale Permits() check.
+TEST(AddressFamilyPolicy, AsioTargetIsEmptyForAnythingRefused)
+{
+	{
+		ScopedFamilies scope(Families::IPv4Only);
+		ASSERT_FALSE((bool)AsioTargetFor(Addr("2001:db8::1")));
+	}
+	{
+		ScopedFamilies scope(Families::DualStack);
+		ASSERT_FALSE((bool)AsioTargetFor(CNetworkAddress::Absent()));
+		ASSERT_FALSE((bool)AsioTargetFor(Addr("0.0.0.0")));
+	}
+}
+
+// FamiliesFromSetting() never yields a value outside the enum, but a cast still can. Testing
+// inequality against one enumerator made such a value permit both families while the resolver
+// fell back to IPv4-only; every answer now agrees on the same fallback.
+TEST(AddressFamilyPolicy, AnOutOfRangeConfigurationFallsBackConsistently)
+{
+	ScopedFamilies scope(static_cast<Families>(99));
+
+	ASSERT_TRUE(PermitsIPv4());
+	ASSERT_FALSE(PermitsIPv6());
+	ASSERT_TRUE(ResolverFamilyForLookup() == ResolverFamily::IPv4Only);
+	ASSERT_TRUE(Permits(Addr("192.0.2.1")));
+	ASSERT_FALSE(Permits(Addr("2001:db8::1")));
+}
+
+// The stored values are fixed independently of the enum's order, and IPv6Only is not among them.
+TEST(AddressFamilyPolicy, OnlyTheTwoSupportedSettingsSelectFamilies)
+{
+	ASSERT_TRUE(FamiliesFromSetting(0) == Families::IPv4Only);
+	ASSERT_TRUE(FamiliesFromSetting(1) == Families::DualStack);
+
+	const long unsupported[] = {
+		-1, 2, 99, std::numeric_limits<long>::min(), std::numeric_limits<long>::max()
+	};
+	for (long value : unsupported) {
+		ASSERT_FALSE(FamiliesFromSetting(value).has_value());
+	}
+}
+
+// The AddressFamilies choice widget (#1177) only ever offers two options, so an out-of-range
+// stored setting must fall back the same way FamiliesFromSetting() does, never to index 1.
+TEST(AddressFamilyPolicy, ChoiceIndexFromSettingFallsBackToIPv4OnlyForAnythingButOne)
+{
+	ASSERT_EQUALS(0, AddressFamiliesChoiceIndexFromSetting(0));
+	ASSERT_EQUALS(1, AddressFamiliesChoiceIndexFromSetting(1));
+
+	const long unsupported[] = {
+		-1, 2, 99, std::numeric_limits<long>::min(), std::numeric_limits<long>::max()
+	};
+	for (long value : unsupported) {
+		ASSERT_EQUALS(0, AddressFamiliesChoiceIndexFromSetting(value));
+	}
+}
+
+// The round trip: a setting that already maps to a choice index must map back to itself, so the
+// GUI never rewrites the setting merely by displaying it.
+TEST(AddressFamilyPolicy, SettingFromChoiceIndexRoundTripsBothSupportedSettings)
+{
+	for (long setting : { 0L, 1L }) {
+		ASSERT_EQUALS(setting,
+			AddressFamiliesSettingFromChoiceIndex(
+				AddressFamiliesChoiceIndexFromSetting(setting)));
+	}
+}
+
+// Only a real wxChoice selection (0 or 1) ever reaches this; anything else still resolves to a
+// supported setting rather than propagating an invalid index.
+TEST(AddressFamilyPolicy, SettingFromChoiceIndexTreatsAnythingButOneAsIPv4Only)
+{
+	ASSERT_EQUALS(0L, AddressFamiliesSettingFromChoiceIndex(0));
+	ASSERT_EQUALS(1L, AddressFamiliesSettingFromChoiceIndex(1));
+	ASSERT_EQUALS(0L, AddressFamiliesSettingFromChoiceIndex(-1));
+	ASSERT_EQUALS(0L, AddressFamiliesSettingFromChoiceIndex(99));
+}
+
+TEST(AddressFamilyPolicy, DefaultIsIPv4Only)
+{
+	// Captured before any case ran. If this fails, the widening advertises a
+	// family the gate was supposed to withhold.
+	ASSERT_TRUE(g_processDefault == Families::IPv4Only);
+}
+
+TEST(AddressFamilyPolicy, PermitsFollowsTheConfiguredFamilies)
+{
+	const CNetworkAddress v4 = Addr("192.0.2.1");
+	const CNetworkAddress v6 = Addr("2001:db8::1");
+	{
+		ScopedFamilies scope(Families::IPv4Only);
+		ASSERT_TRUE(Permits(v4));
+		ASSERT_FALSE(Permits(v6));
+	}
+	{
+		ScopedFamilies scope(Families::IPv6Only);
+		ASSERT_FALSE(Permits(v4));
+		ASSERT_TRUE(Permits(v6));
+	}
+	{
+		ScopedFamilies scope(Families::DualStack);
+		ASSERT_TRUE(Permits(v4));
+		ASSERT_TRUE(Permits(v6));
+	}
+}
+
+TEST(AddressFamilyPolicy, MappedIPv4IsIPv4ForPolicy)
+{
+	// It narrows losslessly, so an IPv4-only configuration can reach it -- and an IPv6-only one
+	// must not, or the policy would contradict IndexKey(), which collapses the two spellings to
+	// one peer.
+	const CNetworkAddress mapped = Addr("::ffff:192.0.2.1");
+	{
+		ScopedFamilies scope(Families::IPv4Only);
+		ASSERT_TRUE(Permits(mapped));
+	}
+	{
+		ScopedFamilies scope(Families::IPv6Only);
+		ASSERT_FALSE(Permits(mapped));
+	}
+}
+
+TEST(AddressFamilyPolicy, AbsentIsNeverPermitted)
+{
+	const CNetworkAddress absent = CNetworkAddress::Absent();
+	ScopedFamilies scope(Families::DualStack);
+	ASSERT_FALSE(Permits(absent));
+	ASSERT_FALSE((bool)AsioTargetFor(absent));
+}
+
+TEST(AddressFamilyPolicy, RefusalNeverFallsBackToTheOtherFamily)
+{
+	const CNetworkAddress v4 = Addr("192.0.2.1");
+	const CNetworkAddress v6 = Addr("2001:db8::1");
+	{
+		ScopedFamilies scope(Families::IPv4Only);
+		ASSERT_TRUE(AsioTargetFor(v4)->protocol == boost::asio::ip::tcp::v4());
+		// Not v4() as a fallback: no pair at all.
+		ASSERT_FALSE((bool)AsioTargetFor(v6));
+	}
+	{
+		ScopedFamilies scope(Families::IPv6Only);
+		ASSERT_FALSE((bool)AsioTargetFor(v4));
+		ASSERT_TRUE(AsioTargetFor(v6)->protocol == boost::asio::ip::tcp::v6());
+	}
+	{
+		ScopedFamilies scope(Families::DualStack);
+		ASSERT_TRUE(AsioTargetFor(v4)->protocol == boost::asio::ip::tcp::v4());
+		ASSERT_TRUE(AsioTargetFor(v6)->protocol == boost::asio::ip::tcp::v6());
+		ASSERT_TRUE(AsioTargetFor(Addr("::ffff:192.0.2.1"))->protocol == boost::asio::ip::tcp::v4());
+	}
+}
+
+TEST(AddressFamilyPolicy, ResolverIsUnrestrictedOnlyUnderDualStack)
+{
+	// Any means "do not restrict the lookup", not "refuse it". That distinction
+	// is why this returns its own enum rather than an optional protocol.
+	{
+		ScopedFamilies scope(Families::IPv4Only);
+		ASSERT_TRUE(ResolverFamilyForLookup() == ResolverFamily::IPv4Only);
+	}
+	{
+		ScopedFamilies scope(Families::IPv6Only);
+		ASSERT_TRUE(ResolverFamilyForLookup() == ResolverFamily::IPv6Only);
+	}
+	{
+		ScopedFamilies scope(Families::DualStack);
+		ASSERT_TRUE(ResolverFamilyForLookup() == ResolverFamily::Any);
+	}
+}
+
+TEST(AddressFamilyPolicy, AnyAddressStaysIPv4WhereverIPv4IsPermitted)
+{
+	// Including dual stack. Handing :: to the single-socket services -- the EC listener, the
+	// web server -- would move the daemon's control channel to another family as a side effect
+	// of the ed2k work.
+	{
+		ScopedFamilies scope(Families::IPv4Only);
+		ASSERT_TRUE(AnyAddress() == AnyIPv4Address());
+	}
+	{
+		ScopedFamilies scope(Families::DualStack);
+		ASSERT_TRUE(AnyAddress() == AnyIPv4Address());
+	}
+	{
+		ScopedFamilies scope(Families::IPv6Only);
+		ASSERT_TRUE(AnyAddress() == AnyIPv6Address());
+	}
+}
+
+TEST(AddressFamilyPolicy, WildcardsAreTheUnspecifiedAddresses)
+{
+	ASSERT_EQUALS(wxString("0.0.0.0"), wxString(AnyIPv4Address().to_string()));
+	ASSERT_EQUALS(wxString("::"), wxString(AnyIPv6Address().to_string()));
+}
+
+TEST(AddressFamilyPolicy, IPv4OnlyListenerBindsTheIPv4Wildcard)
+{
+	const ListenerBind plan = ListenerBindFor(Families::IPv4Only, AnyIPv4Address());
+
+	ASSERT_TRUE(plan.protocol == boost::asio::ip::tcp::v4());
+	ASSERT_TRUE(plan.address == AnyIPv4Address());
+	ASSERT_FALSE(plan.v6Only.has_value());
+}
+
+// One IPv6 socket with IPV6_V6ONLY explicitly cleared accepts both families; leaving the option at
+// the platform default would make the listener's reach depend on the OS rather than the policy.
+TEST(AddressFamilyPolicy, DualStackListenerWidensTheIPv4WildcardToOneDualSocket)
+{
+	const ListenerBind plan = ListenerBindFor(Families::DualStack, AnyIPv4Address());
+
+	ASSERT_TRUE(plan.protocol == boost::asio::ip::tcp::v6());
+	ASSERT_TRUE(plan.address == AnyIPv6Address());
+	ASSERT_TRUE(plan.v6Only.has_value());
+	ASSERT_FALSE(*plan.v6Only);
+}
+
+// Linux defaults IPV6_V6ONLY off, so without setting it an IPv6-only listener would accept IPv4
+// peers as mapped addresses that Permits() refuses under this configuration.
+TEST(AddressFamilyPolicy, IPv6OnlyListenerSetsV6OnlyOnTheIPv6Wildcard)
+{
+	const ListenerBind plan = ListenerBindFor(Families::IPv6Only, AnyIPv4Address());
+
+	ASSERT_TRUE(plan.protocol == boost::asio::ip::tcp::v6());
+	ASSERT_TRUE(plan.address == AnyIPv6Address());
+	ASSERT_TRUE(plan.v6Only.has_value());
+	ASSERT_TRUE(*plan.v6Only);
+}
+
+// A bind interface the user named is a deliberate choice of one address, not a wildcard to widen.
+TEST(AddressFamilyPolicy, ListenerKeepsAConcreteIPv4AddressUnderEveryConfiguration)
+{
+	const boost::asio::ip::address concrete = boost::asio::ip::make_address("192.0.2.10");
+	const Families every[] = { Families::IPv4Only, Families::IPv6Only, Families::DualStack };
+	for (const Families families : every) {
+		const ListenerBind plan = ListenerBindFor(families, concrete);
+		ASSERT_TRUE(plan.protocol == boost::asio::ip::tcp::v4());
+		ASSERT_TRUE(plan.address == concrete);
+		ASSERT_FALSE(plan.v6Only.has_value());
+	}
+}
+
+// The same rule for a concrete IPv6 address, with IPV6_V6ONLY set explicitly. Under IPv4Only a v4
+// plan would only send it down the address-family path, which binds the same address anyway.
+TEST(AddressFamilyPolicy, ListenerKeepsAConcreteIPv6AddressUnderEveryConfiguration)
+{
+	const boost::asio::ip::address concrete = boost::asio::ip::make_address("2001:db8::10");
+	const Families every[] = { Families::IPv4Only, Families::IPv6Only, Families::DualStack };
+	for (const Families families : every) {
+		const ListenerBind plan = ListenerBindFor(families, concrete);
+		ASSERT_TRUE(plan.protocol == boost::asio::ip::tcp::v6());
+		ASSERT_TRUE(plan.address == concrete);
+		ASSERT_TRUE(plan.v6Only.has_value() && *plan.v6Only);
+	}
+}
+
+TEST(AddressFamilyPolicy, ListenerTreatsAnOutOfRangeConfigurationAsIPv4Only)
+{
+	const ListenerBind plan = ListenerBindFor(static_cast<Families>(99), AnyIPv4Address());
+
+	ASSERT_TRUE(plan.protocol == boost::asio::ip::tcp::v4());
+	ASSERT_TRUE(plan.address == AnyIPv4Address());
+	ASSERT_FALSE(plan.v6Only.has_value());
+}
+
+// Pins the plan against a real kernel: an IPv4 client must reach the dual-stack listener. Connect
+// before accept needs no thread, because loopback completes the handshake into the backlog.
+TEST(AddressFamilyPolicy, DualStackListenerAcceptsAnIPv4LoopbackPeer)
+{
+	using boost::asio::ip::tcp;
+
+	const ListenerBind plan = ListenerBindFor(Families::DualStack, AnyIPv4Address());
+	// Checked before the environment early-returns, so a wrong plan cannot pass as "no IPv6".
+	ASSERT_TRUE(plan.protocol == tcp::v6());
+	ASSERT_TRUE(plan.v6Only.has_value());
+
+	boost::asio::io_context io;
+	tcp::acceptor acceptor(io);
+	boost::system::error_code ec;
+	// A host without IPv6, or one that refuses dual-stack sockets, is environment, not behavior.
+	acceptor.open(plan.protocol, ec);
+	if (ec) {
+		return;
+	}
+	acceptor.set_option(boost::asio::ip::v6_only(*plan.v6Only), ec);
+	if (ec) {
+		return;
+	}
+	acceptor.bind(tcp::endpoint(plan.address, 0), ec);
+	if (ec) {
+		return;
+	}
+	acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
+	ASSERT_FALSE((bool)ec);
+	const unsigned short port = acceptor.local_endpoint().port();
+
+	tcp::socket client(io);
+	client.connect(tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), port), ec);
+	ASSERT_FALSE((bool)ec);
+
+	tcp::socket peer(io);
+	acceptor.accept(peer, ec);
+	ASSERT_FALSE((bool)ec);
+	const boost::asio::ip::address remote = peer.remote_endpoint(ec).address();
+	ASSERT_FALSE((bool)ec);
+	ASSERT_TRUE(remote.is_v4() || (remote.is_v6() && remote.to_v6().is_v4_mapped()));
+}
+
+// File_checked_for_headers

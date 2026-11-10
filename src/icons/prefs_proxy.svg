@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <defs>
+    <linearGradient id="wire" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="16" y2="16">
+      <stop offset="0" stop-color="#ffe4f4"/>
+      <stop offset="0.35" stop-color="#ffb8e2"/>
+      <stop offset="0.7" stop-color="#f088bd"/>
+      <stop offset="1" stop-color="#c96697"/>
+    </linearGradient>
+  </defs>
+  <g stroke="#a3517c" stroke-width="1.4" fill="none">
+    <line x1="0.9" y1="1" x2="7.13" y2="14.6"/>
+    <line x1="6.4" y1="1" x2="12.63" y2="14.6"/>
+    <line x1="11.9" y1="1" x2="16" y2="9.95"/>
+    <line x1="4.1" y1="1" x2="0" y2="9.95"/>
+    <line x1="9.6" y1="1" x2="3.37" y2="14.6"/>
+    <line x1="15.1" y1="1" x2="8.87" y2="14.6"/>
+  </g>
+  <g stroke="url(#wire)" stroke-width="0.75" fill="none">
+    <line x1="0.9" y1="1" x2="7.13" y2="14.6"/>
+    <line x1="6.4" y1="1" x2="12.63" y2="14.6"/>
+    <line x1="11.9" y1="1" x2="16" y2="9.95"/>
+    <line x1="4.1" y1="1" x2="0" y2="9.95"/>
+    <line x1="9.6" y1="1" x2="3.37" y2="14.6"/>
+    <line x1="15.1" y1="1" x2="8.87" y2="14.6"/>
+  </g>
+  <circle cx="2.5" cy="4.5" r="0.6" fill="#ffe6f6" opacity="0.95"/>
+  <circle cx="8" cy="4.5" r="0.55" fill="#ff9ed2" opacity="0.85"/>
+  <circle cx="13.5" cy="4.5" r="0.55" fill="#f8b8da" opacity="0.75"/>
+</svg>

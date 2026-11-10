@@ -23,18 +23,14 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-const int versionMajor		= 1;
-const int versionMinor		= 5;
-const int versionRevision	= 1;
+const int versionMajor = 1;
+const int versionMinor = 5;
+const int versionRevision = 1;
 
 #include <cstdlib>
 #include <sstream>
 #include <iostream>
 #include <fstream>
-
-#ifdef __APPLE__
-	#include <CoreServices/CoreServices.h>
-#endif
 
 #include "FileLock.h"
 #include "MagnetURI.h"
@@ -42,7 +38,7 @@ const int versionRevision	= 1;
 
 using std::string;
 
-static string GetLinksFilePath(const string& configDir)
+static string GetLinksFilePath(const string &configDir)
 {
 	if (!configDir.empty()) {
 		string strDir = configDir;
@@ -52,45 +48,39 @@ static string GetLinksFilePath(const string& configDir)
 		return strDir + "ED2KLinks";
 	}
 
-
 #ifdef __APPLE__
 
-	// ~/Library/Application Support always exists on macOS >= 10.5 and
-	// is the user-domain equivalent of FSFindFolder(kUserDomain,
-	// kApplicationSupportFolderType, ...) that we used to call via the
-	// Carbon FSRef API (removed in 64-bit macOS).
-	const char* home = getenv("HOME");
+	// ~/Library/Application Support always exists on macOS >= 10.5 and is the user-domain
+	// equivalent of the FSFindFolder(kUserDomain, kApplicationSupportFolderType, ...) we used
+	// to call through the Carbon FSRef API, removed in 64-bit macOS.
+	const char *home = getenv("HOME");
 	std::string strDir = (home ? home : "");
 	return strDir + "/Library/Application Support/aMule/ED2KLinks";
 
 #else
 
-	// Mirror the macOS branch above: getenv may return NULL if HOME is
-	// unset (rare in practice, but constructing std::string(NULL) is
-	// undefined behaviour).
-	const char* home = getenv("HOME");
+	// Mirror the macOS branch above: getenv may return NULL if HOME is unset -- rare in
+	// practice, but constructing std::string(NULL) is undefined behaviour.
+	const char *home = getenv("HOME");
 	return string(home ? home : "") + "/.aMule/ED2KLinks";
 
 #endif
 }
 
 /**
- * Converts a hexadecimal number to a char.
- *
- * @param hex The hex-number, must be at most 2 digits long.
- * @return The resulting char or \0 if conversion failed.
+ * Converts a hexadecimal number of at most 2 digits to a char, or \0 if the conversion failed.
  */
-static char HexToDec( const string& hex )
+static char HexToDec(const string &hex)
 {
 	char result = 0;
 
-	for ( size_t i = 0; i < hex.length(); ++i ) {
-		char cur = toupper( hex.at(i) );
+	for (size_t i = 0; i < hex.length(); ++i) {
+		char cur = toupper(hex.at(i));
 		result *= 16;
 
-		if ( isdigit( cur ) ) {
+		if (isdigit(cur)) {
 			result += cur - '0';
-		} else if ( cur >= 'A' && cur <= 'F' ) {
+		} else if (cur >= 'A' && cur <= 'F') {
 			result += cur - 'A' + 10;
 		} else {
 			return '\0';
@@ -100,23 +90,19 @@ static char HexToDec( const string& hex )
 	return result;
 }
 
-
 /**
- * This function converts all valid HTML escape-codes to their corresponding chars.
- *
- * @param str The string to unescape.
- * @return The unescaped version of the input string.
+ * Converts every valid HTML escape code in @a str to its corresponding char.
  */
-static string Unescape( const string& str )
+static string Unescape(const string &str)
 {
 	string result;
-	result.reserve( str.length() );
+	result.reserve(str.length());
 
-	for ( size_t i = 0; i < str.length(); ++i ) {
-		if ( str.at(i) == '%' && ( i + 2 < str.length() ) ) {
-			char unesc = HexToDec( str.substr( i + 1, 2 ) );
+	for (size_t i = 0; i < str.length(); ++i) {
+		if (str.at(i) == '%' && (i + 2 < str.length())) {
+			char unesc = HexToDec(str.substr(i + 1, 2));
 
-			if ( unesc ) {
+			if (unesc) {
 				i += 2;
 
 				result += unesc;
@@ -133,38 +119,36 @@ static string Unescape( const string& str )
 	return result;
 }
 
-
 /**
- * Returns the string with whitespace stripped from both ends.
+ * The string with whitespace stripped from both ends.
  */
-static string strip( const string& str )
+static string strip(const string &str)
 {
 	size_t first = 0;
-	size_t last  = str.length() - 1;
+	size_t last = str.length() - 1;
 
 	// A simple but no very optimized way to narrow down the
 	// usable text within the string.
-	while ( first <= last ) {
-		if ( isspace( str.at(first) ) ) {
+	while (first <= last) {
+		if (isspace(str.at(first))) {
 			first++;
-		} else if ( isspace( str.at(last) ) ) {
+		} else if (isspace(str.at(last))) {
 			last--;
 		} else {
 			break;
 		}
 	};
 
-	return str.substr( first, 1 + last - first );
+	return str.substr(first, 1 + last - first);
 }
 
-
 /**
- * Returns true if the string is a valid number.
+ * True if the string is a valid number.
  */
-static bool isNumber( const string& str )
+static bool isNumber(const string &str)
 {
-	for ( size_t i = 0; i < str.length(); i++ ) {
-		if ( !isdigit( str.at(i) ) ) {
+	for (size_t i = 0; i < str.length(); i++) {
+		if (!isdigit(str.at(i))) {
 			return false;
 		}
 	}
@@ -172,16 +156,15 @@ static bool isNumber( const string& str )
 	return str.length() > 0;
 }
 
-
 /**
- * Returns true if the string is a valid Base16 representation of a MD4 Hash.
+ * True if the string is a valid Base16 representation of an MD4 hash.
  */
-static bool isMD4Hash( const string& str )
+static bool isMD4Hash(const string &str)
 {
-	for ( size_t i = 0; i < str.length(); i++ ) {
-		const char c = toupper( str.at(i) );
+	for (size_t i = 0; i < str.length(); i++) {
+		const char c = toupper(str.at(i));
 
-		if ( !isdigit( c ) && ( c < 'A' || c > 'F' ) ) {
+		if (!isdigit(c) && (c < 'A' || c > 'F')) {
 			return false;
 		}
 	}
@@ -189,101 +172,97 @@ static bool isMD4Hash( const string& str )
 	return str.length() == 32;
 }
 
-
 /**
- * Returns a description of the current version of "ed2k".
+ * A description of the current version of "ed2k".
  */
 static string getVersion()
 {
 	std::ostringstream v;
 
-	v << "aMule ED2k link parser v"
-		<< versionMajor << "."
-		<< versionMinor << "."
-		<< versionRevision;
+	v << "aMule ED2k link parser v" << versionMajor << "." << versionMinor << "." << versionRevision;
 
 	return v.str();
 }
 
-
 /**
- * Helper-function for printing link-errors.
+ * Helper for printing link errors.
  */
-static void badLink( const string& type, const string& err, const string& uri )
+static void badLink(const string &type, const string &err, const string &uri)
 {
 	std::cout << "Invalid " << type << "-link, " + err << ":\n"
-		<< "\t" << uri << std::endl;
+		  << "\t" << uri << '\n';
 }
 
-
 /**
- * Writes a string to the ED2KLinks file.
- *
- * If errors are detected, it will terminate the program.
+ * Writes a string to the ED2KLinks file, terminating the program on error. False, and nothing
+ * written, if the link holds a line break.
  */
-static void writeLink( const string& uri, const string& config_dir )
+static bool writeLink(const string &uri, const string &config_dir)
 {
+	// One link per line: a decoded line break would forge more links.
+	if (uri.find_first_of("\r\n") != string::npos) {
+		std::cerr << "Line break in link, not queued:\n\t" << uri << '\n';
+		return false;
+	}
+
 	// Attempt to lock the ED2KLinks file
 	static CFileLock lock(GetLinksFilePath(config_dir));
 	static std::ofstream file;
 
 	if (!file.is_open()) {
 		string path = GetLinksFilePath(config_dir);
-		file.open( path.c_str(), std::ofstream::out | std::ofstream::app );
+		file.open(path.c_str(), std::ofstream::out | std::ofstream::app);
 
 		if (!file.is_open()) {
-			std::cout << "ERROR! Failed to open " << path << " for writing!" << std::endl;
+			std::cout << "ERROR! Failed to open " << path << " for writing!" << '\n';
 			exit(1);
 		}
 	}
 
-	file << uri << std::endl;
+	file << uri << '\n';
 
-	std::cout << "Link successfully queued." << std::endl;
+	std::cout << "Link successfully queued." << '\n';
+	return true;
 }
 
-
 /**
- * Writes the the specified URI to the ED2KLinks file if it is a valid file-link.
- *
- * @param uri The URI to check.
- * @return True if the URI was written, false otherwise.
+ * Writes @a uri to the ED2KLinks file if it is a valid file link, returning whether it was written.
  */
-static bool checkFileLink( const string& uri )
+static bool checkFileLink(const string &uri)
 {
-	if ( uri.substr( 0, 13 ) == "ed2k://|file|" ) {
+	if (uri.substr(0, 13) == "ed2k://|file|") {
 		size_t base_off = 12;
-		size_t name_off = uri.find( '|', base_off + 1 );
-		size_t size_off = uri.find( '|', name_off + 1 );
-		size_t hash_off = uri.find( '|', size_off + 1 );
+		size_t name_off = uri.find('|', base_off + 1);
+		size_t size_off = uri.find('|', name_off + 1);
+		size_t hash_off = uri.find('|', size_off + 1);
 
 		bool valid = true;
-		valid &= ( base_off < name_off );
-		valid &= ( name_off < size_off );
-		valid &= ( size_off < hash_off );
-		valid &= ( hash_off != string::npos );
+		valid &= (base_off < name_off);
+		valid &= (name_off < size_off);
+		valid &= (size_off < hash_off);
+		valid &= (hash_off != string::npos);
 
-		if ( !valid ) {
-			badLink( "file", "invalid link format", uri );
+		if (!valid) {
+			badLink("file", "invalid link format", uri);
 			return false;
 		}
 
-		string name = uri.substr( base_off + 1, name_off - base_off - 1 );
-		string size = uri.substr( name_off + 1, size_off - name_off - 1 );
-		string hash = uri.substr( size_off + 1, hash_off - size_off - 1 );
+		string name = uri.substr(base_off + 1, name_off - base_off - 1);
+		string size = uri.substr(name_off + 1, size_off - name_off - 1);
+		string hash = uri.substr(size_off + 1, hash_off - size_off - 1);
 
-		if ( name.empty() ) {
-			badLink( "file", "no name specified", uri );
+		if (name.empty()) {
+			badLink("file", "no name specified", uri);
 			return false;
 		}
 
-		if ( !isNumber( size ) ) {
-			badLink( "file", "invalid size", uri );
+		if (!isNumber(size)) {
+			badLink("file", "invalid size", uri);
 			return false;
 		}
 
-		if ( !isMD4Hash( hash ) ) {
-			badLink( "file", "invalid MD4 hash", uri );
+		if (!isMD4Hash(hash)) {
+			badLink("file", "invalid MD4 hash", uri);
 			return false;
 		}
 
@@ -293,40 +272,37 @@ static bool checkFileLink( const string& uri )
 	return false;
 }
 
-
 /**
- * Writes the the specified URI to the ED2KLinks file if it is a valid server-link.
- *
- * @param uri The URI to check.
- * @return True if the URI was written, false otherwise.
+ * Writes @a uri to the ED2KLinks file if it is a valid server link, returning whether it was
+ * written.
  */
-static bool checkServerLink( const string& uri )
+static bool checkServerLink(const string &uri)
 {
-	if ( uri.substr( 0, 15 ) == "ed2k://|server|" ) {
+	if (uri.substr(0, 15) == "ed2k://|server|") {
 		size_t base_off = 14;
-		size_t host_off = uri.find( '|', base_off + 1 );
-		size_t port_off = uri.find( '|', host_off + 1 );
+		size_t host_off = uri.find('|', base_off + 1);
+		size_t port_off = uri.find('|', host_off + 1);
 
 		bool valid = true;
-		valid &= ( base_off < host_off );
-		valid &= ( host_off < port_off );
-		valid &= ( port_off != string::npos );
+		valid &= (base_off < host_off);
+		valid &= (host_off < port_off);
+		valid &= (port_off != string::npos);
 
-		if ( !valid || uri.at( port_off + 1 ) != '/' ) {
-			badLink( "server", "invalid link format", uri );
+		if (!valid || uri.at(port_off + 1) != '/') {
+			badLink("server", "invalid link format", uri);
 			return false;
 		}
 
-		string host = uri.substr( base_off + 1, host_off - base_off - 1 );
-		string port = uri.substr( host_off + 1, port_off - host_off - 1 );
+		string host = uri.substr(base_off + 1, host_off - base_off - 1);
+		string port = uri.substr(host_off + 1, port_off - host_off - 1);
 
-		if ( host.empty() ) {
-			badLink( "server", "no hostname specified", uri );
+		if (host.empty()) {
+			badLink("server", "no hostname specified", uri);
 			return false;
 		}
 
-		if ( !isNumber( port ) ) {
-			badLink( "server", "invalid port", uri );
+		if (!isNumber(port)) {
+			badLink("server", "invalid port", uri);
 			return false;
 		}
 
@@ -335,33 +311,30 @@ static bool checkServerLink( const string& uri )
 
 	return false;
 }
-
 
 /**
- * Writes the the specified URI to the ED2KLinks file if it is a valid serverlist-link.
- *
- * @param uri The URI to check.
- * @return True if the URI was written, false otherwise.
+ * Writes @a uri to the ED2KLinks file if it is a valid serverlist link, returning whether it was
+ * written.
  */
-static bool checkServerListLink( const string& uri )
+static bool checkServerListLink(const string &uri)
 {
-	if ( uri.substr( 0, 19 ) == "ed2k://|serverlist|" ) {
+	if (uri.substr(0, 19) == "ed2k://|serverlist|") {
 		size_t base_off = 19;
-		size_t path_off = uri.find( '|', base_off + 1 );
+		size_t path_off = uri.find('|', base_off + 1);
 
 		bool valid = true;
-		valid &= ( base_off < path_off );
-		valid &= ( path_off != string::npos );
+		valid &= (base_off < path_off);
+		valid &= (path_off != string::npos);
 
-		if ( !valid ) {
-			badLink( "serverlist", "invalid link format", uri );
+		if (!valid) {
+			badLink("serverlist", "invalid link format", uri);
 			return false;
 		}
 
-		string path = uri.substr( base_off + 1, path_off - base_off - 1 );
+		string path = uri.substr(base_off + 1, path_off - base_off - 1);
 
-		if ( path.empty() ) {
-			badLink( "serverlist", "no hostname specified", uri );
+		if (path.empty()) {
+			badLink("serverlist", "no hostname specified", uri);
 			return false;
 		}
 
@@ -370,20 +343,23 @@ static bool checkServerListLink( const string& uri )
 
 	return false;
 }
-
 
 int main(int argc, char *argv[])
 {
 	bool errors = false;
 	string config_path;
 	string category = "";
-	for ( int i = 1; i < argc; i++ ) {
-		string arg = strip( Unescape( string( argv[i] ) ) );
+	for (int i = 1; i < argc; i++) {
+		string arg = strip(string(argv[i]));
+		// A magnet is split before decoding, so an escaped & or | stays in its field.
+		if (!CMagnetURI::IsMagnet(arg)) {
+			arg = strip(Unescape(arg));
+		}
 
-		if ( arg.compare(0, 7, "magnet:" ) == 0 ) {
+		if (CMagnetURI::IsMagnet(arg)) {
 			string ed2k = CMagnetED2KConverter(arg);
-			if ( ed2k.empty() ) {
-				std::cerr << "Cannot convert magnet URI to ed2k:\n\t" << arg << std::endl;
+			if (ed2k.empty()) {
+				std::cerr << "Cannot convert magnet URI to ed2k:\n\t" << arg << '\n';
 				errors = true;
 				continue;
 			} else {
@@ -391,30 +367,30 @@ int main(int argc, char *argv[])
 			}
 		}
 
-		if ( arg.substr( 0, 8 ) == "ed2k://|" ) {
+		if (arg.substr(0, 8) == "ed2k://|") {
 			// Ensure the URI is valid
-			if ( arg.at( arg.length() - 1 ) != '/' ) {
+			if (arg.at(arg.length() - 1) != '/') {
 				arg += '/';
 			}
 
-			string type = arg.substr( 8, arg.find( '|', 9 ) - 8 );
+			string type = arg.substr(8, arg.find('|', 9) - 8);
 
-			if ( (type == "file") && checkFileLink( arg ) ) {
+			if ((type == "file") && checkFileLink(arg)) {
 				arg += category;
-				writeLink( arg, config_path );
-			} else if ( (type == "server") && checkServerLink( arg ) ) {
-				writeLink( arg, config_path );
-			} else if ( (type == "serverlist") && checkServerListLink( arg ) ) {
-				writeLink( arg, config_path );
+				errors |= !writeLink(arg, config_path);
+			} else if ((type == "server") && checkServerLink(arg)) {
+				errors |= !writeLink(arg, config_path);
+			} else if ((type == "serverlist") && checkServerListLink(arg)) {
+				errors |= !writeLink(arg, config_path);
 			} else {
-				std::cout << "Unknown or invalid link-type:\n\t" << arg << std::endl;
+				std::cout << "Unknown or invalid link-type:\n\t" << arg << '\n';
 				errors = true;
 			}
 		} else if (arg == "-c" || arg == "--config-dir") {
 			if (i < argc - 1) {
 				config_path = argv[++i];
 			} else {
-				std::cerr << "Missing mandatory argument for " << arg << std::endl;
+				std::cerr << "Missing mandatory argument for " << arg << '\n';
 				errors = true;
 			}
 		} else if (arg.substr(0, 2) == "-c") {
@@ -422,60 +398,61 @@ int main(int argc, char *argv[])
 		} else if (arg.substr(0, 13) == "--config-dir=") {
 			config_path = arg.substr(13);
 		} else if (arg == "-h" || arg == "--help") {
-			std::cout << getVersion()
-				<< "\n\n"
+			std::cout
+				<< getVersion() << "\n\n"
 				<< "Usage:\n"
 				<< "    --help, -h              Prints this help.\n"
-				<< "    --config-dir, -c        Specifies the aMule configuration directory.\n"
+				<< "    --config-dir, -c        Specifies the aMule configuration "
+				   "directory.\n"
 				<< "    --version, -v           Displays version info.\n\n"
 				<< "    --category, -t          Add Link to category number.\n"
 				<< "    magnet:?                Causes the file to be queued for download.\n"
 				<< "    ed2k://|file|           Causes the file to be queued for download.\n"
 				<< "    ed2k://|server|         Causes the server to be listed or updated.\n"
-				<< "    ed2k://|serverlist|     Causes aMule to update the current serverlist.\n\n"
+				<< "    ed2k://|serverlist|     Causes aMule to update the current "
+				   "serverlist.\n\n"
 				<< "    --list, -l              Show all links of an emulecollection\n"
 				<< "    --emulecollection, -e   Loads all links of an emulecollection\n\n"
 				<< "*** NOTE: Option order is important! ***\n"
-				<< std::endl;
+				<< '\n';
 
 		} else if (arg == "-v" || arg == "--version") {
-			std::cout << getVersion() << std::endl;
+			std::cout << getVersion() << '\n';
 		} else if (arg == "-t" || arg == "--category") {
 			if (i < argc - 1) {
-				if ((category == "" ) && (0 != atoi(argv[++i]))) {
+				if ((category == "") && (0 != atoi(argv[++i]))) {
 					category = ':';
 					category += argv[i];
 				}
 			} else {
-				std::cerr << "Missing mandatory argument for " << arg << std::endl;
+				std::cerr << "Missing mandatory argument for " << arg << '\n';
 				errors = true;
 			}
 		} else if (arg == "-e" || arg == "--emulecollection" || arg == "-l" || arg == "--list") {
 			bool listOnly = (arg == "-l" || arg == "--list");
 			if (i < argc - 1) {
 				CMuleCollection my_collection;
-				if (my_collection.Open( /* emulecollection file */ argv[++i] ))
-				{
-					for(size_t e = 0; e < my_collection.size(); e++)
+				if (my_collection.Open(/* emulecollection file */ argv[++i])) {
+					for (size_t e = 0; e < my_collection.size(); e++)
 						if (listOnly)
-							std::cout << my_collection[e] << std::endl;
+							std::cout << my_collection[e] << '\n';
 						else
-							writeLink( my_collection[e], config_path );
+							errors |= !writeLink(my_collection[e], config_path);
 				} else {
-					std::cerr << "Invalid emulecollection file: " << argv[i] << std::endl;
+					std::cerr << "Invalid emulecollection file: " << argv[i] << '\n';
 					errors = true;
 				}
 			} else {
-				std::cerr << "Missing mandatory argument for " << arg << std::endl;
+				std::cerr << "Missing mandatory argument for " << arg << '\n';
 				errors = true;
 			}
 		} else {
-			std::cerr << "Bad parameter value:\n\t" << arg << "\n" << std::endl;
+			std::cerr << "Bad parameter value:\n\t" << arg << "\n" << '\n';
 			errors = true;
 		}
 	}
 
-	return ( errors ? 1 : 0 );
+	return (errors ? 1 : 0);
 }
 
 // File_checked_for_headers

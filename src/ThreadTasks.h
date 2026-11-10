@@ -28,24 +28,25 @@
 #define TASKS_H
 
 #include "ThreadScheduler.h"
+#include "MediaProbe.h" // Needed for MediaMetadata
+#include "MD4Hash.h"    // Needed for CMD4Hash on CMediaProbeTask + CMediaProbeEvent
 #include <common/Path.h>
+#include <wx/event.h>              // Needed for wxEvent and wxDECLARE_EVENT
+#include "SHAHashSet.h"            // Needed for CAICHHash, EAICHStatus
+#include "VerifyLocalDataResult.h" // Needed for CVerifyLocalDataResult
+#include <memory>                  // Needed for std::shared_ptr
 
 class CKnownFile;
 class CPartFile;
 class CFileAutoClose;
-
+class CPartMetSaveSlot;
 
 /**
- * This task performs MD4 and/or AICH hashings of a file,
- * depending on the type. For new shared files (using the
- * first constructor, with part == NULL), both MD4 and
- * AICH hashes are created. For incomplete partfiles
- * (rehashed due to changed timestamps), only MD4 hashing
- * is done. For complete partfiles, both MD4 and AICH
- * hashing is done.
+ * Performs MD4 and/or AICH hashing of a file, depending on the type.
  *
- * For existing shared files (using the second constructor),
- * only an AICH hash is created.
+ * First constructor: a new shared file (part == NULL) gets both MD4 and AICH; an incomplete
+ * partfile, rehashed because its timestamp changed, gets MD4 only; a complete partfile gets both.
+ * Second constructor: an existing shared file gets an AICH hash only.
  *
  * @see CHashingEvent
  * @see CAICHSyncTask
@@ -58,54 +59,42 @@ public:
 	 *
 	 * @param path The full path, without filename.
 	 * @param filename The actual filename.
-	 * @param part Used to identify the owner in the event-handler (PartFiles only).
+	 * @param part Identifies the owner in the event handler (PartFiles only).
 	 *
-	 * CHashingEvents sent by this type of tasks have the id MULE_EVT_HASHING.
-	 * @see EVT_MULE_HASHING
+	 * CHashingEvents from this kind of task have the id MULE_EVT_HASHING. @see EVT_MULE_HASHING
 	 */
-	CHashingTask(const CPath& path, const CPath& filename, const CPartFile* part = NULL);
+	CHashingTask(const CPath &path, const CPath &filename, const CPartFile *part = NULL);
 
 	/**
-	 * Schedules a KnownFile to have a AICH hashset created, used by CAICHSyncTask.
-	 *
-	 * CHashingEvents sent by this type of tasks have the id MULE_EVT_AICH_HASHING.
-	 * @see EVT_MULE_AICH_HASHING
-	 **/
-	CHashingTask(const CKnownFile* toAICHHash);
+	 * Schedules a KnownFile to have an AICH hashset created; used by CAICHSyncTask.
+	 * CHashingEvents from this kind of task have the id MULE_EVT_AICH_HASHING. @see
+	 * EVT_MULE_AICH_HASHING
+	 */
+	CHashingTask(const CKnownFile *toAICHHash);
 
 protected:
-	//! Specifies which hashes should be calculated when the task is executed.
-	//! EH_MD4 and EH_AICH are bit flags; the combined value is named
-	//! explicitly so a bitwise OR cast doesn't produce a value outside
-	//! the enum's valid range (caught by
-	//! clang-analyzer-optin.core.EnumCastOutOfRange in the cpp ctor).
-	enum EHashes {
+	//! Which hashes to calculate when the task runs. EH_MD4 and EH_AICH are bit flags; the
+	//! combined value is named explicitly so a bitwise OR cast cannot produce a value outside
+	//! the enum's valid range.
+	enum EHashes
+	{
 		EH_AICH = 1,
 		EH_MD4 = 2,
 		EH_MD4_AND_AICH = EH_MD4 | EH_AICH
 	};
 
-	//! @see CThreadTask::OnLastTask
 	virtual void OnLastTask();
 
-	//! @see CThreadTask::Entry
 	virtual void Entry();
 
 	/**
-	 * Helper function for hashing a PARTSIZE chunk of a file.
+	 * Hashes the next PARTSIZE chunk of @a file: an MD4 hash, plus an AICH hashset when @a
+	 * toHash asks for one. @a part is the part number and @a owner the known (or part) file it
+	 * belongs to.
 	 *
-	 * @param file The file to read from.
-	 * @param part The number of the part to hash.
-	 * @param owner The known- (or part) file representing that file.
-	 * @bool createAICH Specifies if AICH hash-sets should be created as well.
-	 * @return Returns false on read-errors, true otherwise.
-	 *
-	 * This function will create a MD4 hash and, if specified, a AICH hashset for
-	 * the next part of the file. This function makes the assumption that it wont
-	 * be called for closed or EOF files.
+	 * Returns false on read errors. Assumes it is never called for a closed or EOF file.
 	 */
-	bool CreateNextPartHash(CFileAutoClose& file, uint16 part, CKnownFile* owner, EHashes toHash);
-
+	bool CreateNextPartHash(CFileAutoClose &file, uint16 part, CKnownFile *owner, EHashes toHash);
 
 	//! The path to the file to be hashed (shared or part), without filename.
 	CPath m_path;
@@ -114,22 +103,29 @@ protected:
 	//! Specifies which hash-types should be calculated
 	EHashes m_toHash;
 	//! If a partfile or an AICH hashing, this pointer stores it for callbacks.
-	const CKnownFile* m_owner;
+	const CKnownFile *m_owner;
 
 private:
 	void SetHashingProgress(uint16 part);
 };
 
+// Media metadata probing (#140/#280) runs on the dedicated CMediaProbeThread, not the shared
+// CThreadScheduler, so a slow or hung helper cannot stall completions. Results still arrive via
+// the CMediaProbeEvent below.
 
 /**
- * This task synchronizes the AICH hashlist.
- *
- * Shared files that are lacking a AICH-hash are scheduled for hashing.
+ * Synchronizes the AICH hashlist: shared files lacking an AICH hash are scheduled for hashing.
  */
 class CAICHSyncTask : public CThreadTask
 {
 public:
-	CAICHSyncTask();
+	/**
+	 * @param pruneOrphans Rewrite known2_64.met dropping hashsets no longer referenced by any
+	 * known file. Only safe when the known-file list is authoritative (startup); a post-hashing
+	 * sync races the main-thread registration of the file it just hashed and would prune its
+	 * own freshly-written hashset. Defaults to false so only the startup sync opts in.
+	 */
+	explicit CAICHSyncTask(bool pruneOrphans = false);
 
 protected:
 	/** See CThreadTask::Entry */
@@ -137,23 +133,62 @@ protected:
 
 	/** Converts old known2.met files to known2_64.met files. */
 	bool ConvertToKnown2ToKnown264();
+
+private:
+	bool m_pruneOrphans;
 };
 
+/**
+ * Calculates MD4 and AICH hashes for a known file, to check file integrity against the hashes
+ * stored in the .met files. The file is copied on the main thread at construction, so the task
+ * checks the copy the user selected, not another one found by hash.
+ */
+class CVerifyLocalDataTask : public CThreadTask
+{
+public:
+	enum class Mode
+	{
+		Manual,
+		Automatic
+	};
+
+	explicit CVerifyLocalDataTask(const CKnownFile *file, Mode mode = Mode::Manual);
+
+protected:
+	/** See CThreadTask::Entry */
+	virtual void Entry();
+
+	CVerifyLocalDataResult::PartList m_corruptedMD4;
+	CVerifyLocalDataResult::BlockList m_corruptedAICH;
+	CMD4Hash m_fileID;
+
+private:
+	void PrintReport(const CPath &fullPath, const bool checkedAICH, const CVerifyLocalDataResult &result);
+	void PublishResult(bool checkedAICH);
+	// m_owner is only dereferenced after this confirms it is still shared.
+	bool OwnerStillShared() const;
+
+	const Mode m_mode;
+	const CKnownFile *m_owner;
+	CPath m_fullPath;
+	uint64 m_fileSize;
+	uint32 m_fileDate;
+	std::vector<CMD4Hash> m_md4Hashes;
+	CAICHHash m_aichRootHash;
+	EAICHStatus m_aichStatus;
+};
 
 /**
- * This task performs the final tasks on a complete download.
- *
- * This includes finding a usable destination filename, removing
- * old data files and moving the part-file (potentially to a
- * different partition).
- **/
+ * Performs the final steps on a complete download: finding a usable destination filename, removing
+ * old data files and moving the part-file, possibly to a different partition.
+ */
 class CCompletionTask : public CThreadTask
 {
 public:
 	/**
 	 * Creates a thread which will complete the given download.
 	 */
-	CCompletionTask(const CPartFile* file);
+	CCompletionTask(const CPartFile *file);
 
 protected:
 	/** See CThreadTask::Entry */
@@ -163,160 +198,254 @@ protected:
 	virtual void OnExit();
 
 	//! The target filename.
-	CPath		m_filename;
+	CPath m_filename;
 	//! The full path to the .met-file
-	CPath		m_metPath;
+	CPath m_metPath;
 	//! The category of the download.
-	uint8		m_category;
+	uint8 m_category;
 	//! Owner of the file, used when sending completion-event.
-	const CPartFile*	m_owner;
+	const CPartFile *m_owner;
+	//! The owner's .part.met saves, which must be written before the files move.
+	std::shared_ptr<CPartMetSaveSlot> m_metSave;
 	//! Specifies if an error occurred during completion.
-	bool		m_error;
+	bool m_error;
 	//! The resulting full path. File may be be renamed.
-	CPath		m_newName;
+	CPath m_newName;
 };
 
-
 /**
- * This task preallocates space for a newly created partfile.
+ * Preallocates space for a newly created partfile.
  */
 class CAllocateFileTask : public CThreadTask
 {
-      public:
+public:
 	/** Creates a thread that will allocate disk space for the full file. */
 	CAllocateFileTask(CPartFile *file, bool pause);
 
-      protected:
+protected:
 	/** See CThreadTask::Entry */
 	virtual void Entry();
 
 	/** See CThreadTask::OnExit */
 	virtual void OnExit();
 
-      private:
+private:
 	//! The partfile for which this task allocates space.
-	CPartFile *	m_file;
+	CPartFile *m_file;
 
 	//! Should this download start paused?
-	bool		m_pause;
+	bool m_pause;
 
 	//! Result of the preallocation.
-	long		m_result;
+	long m_result;
 };
 
-
 /**
- * This event is used to signal the completion of a hashing event.
- *
- * @see CHashingTask
+ * Signals the completion of a hashing event. @see CHashingTask
  */
 class CHashingEvent : public wxEvent
 {
 public:
 	/**
 	 * @param type MULE_EVT_HASHING or MULE_EVT_AICH_HASHING.
-	 * @param result
 	 */
-	CHashingEvent(wxEventType type, CKnownFile* result, const CKnownFile* owner = NULL);
+	CHashingEvent(wxEventType type, CKnownFile *result, const CKnownFile *owner = NULL);
 
 	/** @see wxEvent::Clone */
-	virtual wxEvent* Clone() const;
+	virtual wxEvent *Clone() const;
 
 	/** Returns the owner (may be NULL) of the hashing result. */
-	const CKnownFile* GetOwner() const;
+	const CKnownFile *GetOwner() const;
 	/** Returns a CKnownfile used to store the results of the hashing. */
-	CKnownFile* GetResult() const;
+	CKnownFile *GetResult() const;
 
 private:
 	//! The file owner.
-	const CKnownFile* m_owner;
+	const CKnownFile *m_owner;
 	//! The hashing results.
-	CKnownFile* m_result;
+	CKnownFile *m_result;
 };
 
+/**
+ * Sent when a probe finished, whether or not it extracted anything. The main-thread handler
+ * resolves the hash back to a CKnownFile* (via CKnownFileList::FindKnownFileByID) and attaches the
+ * FT_MEDIA_* tags there -- doing that from the worker thread would race the publish paths that read
+ * m_taglist.
+ *
+ * A FAILED probe is reported too (issue #1116): the handler records that the file was tried and
+ * produced nothing, so the "already probed" gate stops re-queueing it on every reload and every
+ * restart. Without that round trip a file the helper cannot read is indistinguishable from one never
+ * probed.
+ */
+class CMediaProbeEvent : public wxEvent
+{
+public:
+	// Carries the MediaMetadata whole rather than one accessor per field: the struct already IS the
+	// set of extracted fields, and mirroring them here meant every new field touched the event,
+	// its ctor, its Clone and the handler. Strings are deep-copied on construction for the
+	// thread hop -- see the ctor.
+	//
+	// succeeded == false carries no MediaMetadata worth reading: the handler records the failure
+	// and leaves whatever tags the file already had. markUnprobeable is meaningful only then --
+	// it says the probe reached a verdict about the FILE (the helper ran and found nothing usable)
+	// rather than failing on the environment (no helper, a timeout, a file that vanished). Only
+	// the former may be recorded against the file.
+	CMediaProbeEvent(const CMD4Hash &hash,
+		const MediaMetadata &info,
+		bool succeeded = true,
+		bool markUnprobeable = false);
+
+	virtual wxEvent *Clone() const;
+
+	const CMD4Hash &GetHash() const { return m_hash; }
+	const MediaMetadata &GetInfo() const { return m_info; }
+	bool Succeeded() const { return m_succeeded; }
+	bool MarkUnprobeable() const { return m_markUnprobeable; }
+
+private:
+	CMD4Hash m_hash;
+	MediaMetadata m_info;
+	bool m_succeeded;
+	bool m_markUnprobeable;
+};
 
 /**
- * This event is sent when a part-file has been completed.
+ * Carries a CVerifyLocalDataTask result to the main thread. Sent only for a check that ran to
+ * the end.
+ */
+class CVerifyLocalDataEvent : public wxEvent
+{
+public:
+	// fullPath, fileDate and fileSize identify the copy that was read, so the result is only
+	// recorded on a file that is still that copy.
+	CVerifyLocalDataEvent(const CMD4Hash &hash,
+		const CPath &fullPath,
+		uint32 fileDate,
+		uint64 fileSize,
+		const CVerifyLocalDataResult &result);
+
+	virtual wxEvent *Clone() const;
+
+	const CMD4Hash &GetHash() const { return m_hash; }
+	const CPath &GetFullPath() const { return m_fullPath; }
+	uint32 GetFileDate() const { return m_fileDate; }
+	uint64 GetFileSize() const { return m_fileSize; }
+	const CVerifyLocalDataResult &GetResult() const { return m_result; }
+
+private:
+	CMD4Hash m_hash;
+	CPath m_fullPath;
+	uint32 m_fileDate;
+	uint64 m_fileSize;
+	CVerifyLocalDataResult m_result;
+};
+
+/**
+ * Sent when a part-file has been completed.
  */
 class CCompletionEvent : public wxEvent
 {
 public:
 	/** Constructor, see getter funtion for description of parameters. */
-	CCompletionEvent(bool errorOccured, const CPartFile* owner, const CPath& fullPath);
+	CCompletionEvent(bool errorOccured, const CPartFile *owner, const CPath &fullPath);
 
 	/** @see wxEvent::Clone */
-	virtual wxEvent* Clone() const;
+	virtual wxEvent *Clone() const;
 
 	/** Returns true if completion failed. */
 	bool ErrorOccurred() const;
 
 	/** Returns the owner of the file that was being completed. */
-	const CPartFile* GetOwner() const;
+	const CPartFile *GetOwner() const;
 
 	/** Returns the full path to the completed file (empty on failure). */
-	const CPath& GetFullPath() const;
+	const CPath &GetFullPath() const;
+
 private:
 	//! The full path to the completed file.
 	CPath m_fullPath;
 
 	//! The owner of the completed .part file.
-	const CPartFile* m_owner;
+	const CPartFile *m_owner;
 
 	//! Specifies if completion failed.
 	bool m_error;
 };
 
-
 /**
- * This event is sent when preallocation of a new partfile is finished.
+ * Sent when preallocation of a new partfile is finished.
  */
 wxDECLARE_EVENT(MULE_EVT_ALLOC_FINISHED, wxEvent);
 class CAllocFinishedEvent : public wxEvent
 {
-      public:
+public:
 	/** Constructor, see getter function for description of parameters. */
 	CAllocFinishedEvent(CPartFile *file, bool pause, long result)
-		: wxEvent(-1, MULE_EVT_ALLOC_FINISHED),
-		  m_file(file), m_pause(pause), m_result(result)
-	{}
+	: wxEvent(-1, MULE_EVT_ALLOC_FINISHED)
+	, m_file(file)
+	, m_pause(pause)
+	, m_result(result)
+	{
+	}
 
 	/** @see wxEvent::Clone */
 	virtual wxEvent *Clone() const;
 
 	/** Returns the partfile for which preallocation was requested. */
-	CPartFile *GetFile() const noexcept	{ return m_file; }
+	CPartFile *GetFile() const noexcept { return m_file; }
 
 	/** Returns whether the partfile should start paused. */
-	bool	IsPaused() const noexcept	{ return m_pause; }
+	bool IsPaused() const noexcept { return m_pause; }
 
 	/** Returns the result of preallocation: true on success, false otherwise. */
-	bool	Succeeded() const noexcept	{ return m_result == 0; }
+	bool Succeeded() const noexcept { return m_result == 0; }
 
 	/** Returns the result of the preallocation. */
-	long	GetResult() const noexcept	{ return m_result; }
+	long GetResult() const noexcept { return m_result; }
 
-      private:
+private:
 	//! The partfile for which preallocation was requested.
-	CPartFile *	m_file;
+	CPartFile *m_file;
 
 	//! Should the download start paused?
-	bool		m_pause;
+	bool m_pause;
 
 	//! Result of preallocation
-	long		m_result;
+	long m_result;
+};
+
+/**
+ * Writes known.met. Queued by the main thread once a hashing batch has drained and every result
+ * has been registered, so the save includes the last file instead of racing its registration.
+ */
+class CKnownFileSaveTask : public CThreadTask
+{
+public:
+	CKnownFileSaveTask();
+
+protected:
+	void Entry() override;
 };
 
 wxDECLARE_EVENT(MULE_EVT_HASHING, wxEvent);
 wxDECLARE_EVENT(MULE_EVT_AICH_HASHING, wxEvent);
 wxDECLARE_EVENT(MULE_EVT_FILE_COMPLETED, wxEvent);
+wxDECLARE_EVENT(MULE_EVT_MEDIA_PROBE, wxEvent);
+wxDECLARE_EVENT(MULE_EVT_VERIFY_LOCAL_DATA, wxEvent);
+wxDECLARE_EVENT(MULE_EVT_HASHING_DRAINED, wxThreadEvent);
 
-typedef void (wxEvtHandler::*MuleHashingEventFunction)(CHashingEvent&);
-typedef void (wxEvtHandler::*MuleCompletionEventFunction)(CCompletionEvent&);
-typedef void (wxEvtHandler::*MuleAllocFinishedEventFunction)(CAllocFinishedEvent&);
+typedef void (wxEvtHandler::*MuleHashingEventFunction)(CHashingEvent &);
+typedef void (wxEvtHandler::*MuleCompletionEventFunction)(CCompletionEvent &);
+typedef void (wxEvtHandler::*MuleAllocFinishedEventFunction)(CAllocFinishedEvent &);
+typedef void (wxEvtHandler::*MuleMediaProbeEventFunction)(CMediaProbeEvent &);
+typedef void (wxEvtHandler::*MuleVerifyLocalDataEventFunction)(CVerifyLocalDataEvent &);
 
 //! Event-handler for completed hashings of new shared files and partfiles.
 #define EVT_MULE_HASHING(func) \
 	wx__DECLARE_EVT0(MULE_EVT_HASHING, wxEVENT_HANDLER_CAST(MuleHashingEventFunction, func))
+
+//! Event-handler for the shared hashing queue running empty.
+#define EVT_MULE_HASHING_DRAINED(func) wx__DECLARE_EVT0(MULE_EVT_HASHING_DRAINED, wxThreadEventHandler(func))
 
 //! Event-handler for completed hashings of files that were missing a AICH hash.
 #define EVT_MULE_AICH_HASHING(func) \
@@ -330,6 +459,14 @@ typedef void (wxEvtHandler::*MuleAllocFinishedEventFunction)(CAllocFinishedEvent
 #define EVT_MULE_ALLOC_FINISHED(func) \
 	wx__DECLARE_EVT0(MULE_EVT_ALLOC_FINISHED, wxEVENT_HANDLER_CAST(MuleAllocFinishedEventFunction, func))
 
+//! Event-handler for MediaProbe-completed events.
+#define EVT_MULE_MEDIA_PROBE(func) \
+	wx__DECLARE_EVT0(MULE_EVT_MEDIA_PROBE, wxEVENT_HANDLER_CAST(MuleMediaProbeEventFunction, func))
+
+//! Event-handler for completed Verify Local Data checks.
+#define EVT_MULE_VERIFY_LOCAL_DATA(func) \
+	wx__DECLARE_EVT0( \
+		MULE_EVT_VERIFY_LOCAL_DATA, wxEVENT_HANDLER_CAST(MuleVerifyLocalDataEventFunction, func))
 
 #endif // TASKS_H
 // File_checked_for_headers

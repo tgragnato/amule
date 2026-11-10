@@ -27,89 +27,105 @@
 #define SERVERLIST_H
 
 #include "ObservableQueue.h"
+#include <wx/arrstr.h>
 
 class CServer;
 class CPacket;
 
-class CServerList : public CObservableQueue<CServer*>
+class CServerList : public CObservableQueue<CServer *>
 {
 	friend class CServerListCtrl;
 
 public:
 	CServerList();
 	~CServerList();
-	bool		Init();
-	bool		AddServer(CServer* in_server, bool fromUser = false);
-	void		RemoveServer(CServer* in_server);
-	void		RemoveAllServers();
-	void		RemoveDeadServers();
-	bool		LoadServerMet(const CPath& path);
-	bool		SaveServerMet();
-	void		ServerStats();
-	void		ResetServerPos()	{m_serverpos = m_servers.begin();}
-	CServer*	GetNextServer(bool bOnlyObfuscated = false);
-	size_t		GetServerCount()	{return m_servers.size();}
-	CServer*	GetServerByAddress(const wxString& address, uint16 port) const;
-	CServer*	GetServerByIP(uint32 nIP) const;
-	CServer*	GetServerByIPTCP(uint32 nIP, uint16 nPort) const;
-	CServer*	GetServerByIPUDP(uint32 nIP, uint16 nUDPPort, bool bObfuscationPorts = true) const;
-	CServer*	GetServerByECID(uint32 ecid) const;
-	void		GetStatus(uint32 &failed, uint32 &user, uint32 &file, uint32 &tuser, uint32 &tfile, float &occ);
-	void		GetUserFileStatus( uint32 &user, uint32 &file);
-	bool		IsInitialized() const { return m_initialized; }
-	void		Sort();
-	void		UpdateServerMetFromURL(const wxString& strURL);
-	bool		DownloadFinished(uint32 result);
-	void		AutoDownloadFinished(uint32 result);
-	uint32		GetAvgFile() const;
+	bool Init();
+	bool AddServer(CServer *in_server, bool fromUser = false);
+	// A removal fromUser is refused (false) for the server we are connected to, and also drops a
+	// static server from staticservers.dat. False too if in_server is not in the list.
+	bool RemoveServer(CServer *in_server, bool fromUser = false);
+	void RemoveAllServers();
+	void RemoveDeadServers();
+	// Local startup files may be salvaged; downloaded lists must parse completely.
+	bool LoadServerMet(const CPath &path, bool allowPartial = true);
+	bool SaveServerMet();
+	void ServerStats();
+	void ResetServerPos() { m_serverpos = m_servers.begin(); }
+	CServer *GetNextServer(bool bOnlyObfuscated = false);
+	size_t GetServerCount() { return m_servers.size(); }
+	CServer *GetServerByAddress(const wxString &address, uint16 port) const;
+	CServer *GetServerByIP(uint32 nIP) const;
+	CServer *GetServerByIPTCP(uint32 nIP, uint16 nPort) const;
+	CServer *GetServerByIPUDP(uint32 nIP, uint16 nUDPPort, bool bObfuscationPorts = true) const;
+	CServer *GetServerByECID(uint32 ecid) const;
+	void GetStatus(uint32 &failed, uint32 &user, uint32 &file, uint32 &tuser, uint32 &tfile, float &occ);
+	void GetUserFileStatus(uint32 &user, uint32 &file);
+	bool IsInitialized() const { return m_initialized; }
+	void Sort();
+	// showDialog shows the HTTP progress dialog, for a local, user-initiated update only.
+	bool UpdateServerMetFromURL(const wxString &strURL,
+		bool showDialog = false,
+		bool automatic = false,
+		wxString *error = nullptr);
+	bool IsServerMetDownloading() const { return m_serverMetDownloading; }
+	// Report success only at the end of a sequence, if any source loaded.
+	bool DownloadFinished(uint32 result);
+	void AutoDownloadFinished(uint32 result);
+	uint32 GetAvgFile() const;
 
-	std::vector<const CServer*> CopySnapshot() const;
+	std::vector<const CServer *> CopySnapshot() const;
 
 	/** Refilters all servers though the IPFilter. */
 	void FilterServers();
 
 	void CheckForExpiredUDPKeys();
+	// Brings forward the status ping of a server whose UDP key we need but do not have.
+	void RecoverServerKeyUDP(CServer *server);
 
 	/**
 	 * Marks the specified server as static or not.
 	 *
-	 * @param The server to be marked or unmarked as static.
-	 * @param The new static state.
+	 * As well as setting the server's static flag, this adds it to or removes it from the
+	 * static-list file.
 	 *
-	 * Other than setting the static setting of the specified server, it
-	 * also adds or removes the server from the static-list file.
+	 * @param server The server to mark or unmark.
+	 * @param isStatic The new static state.
 	 */
-	void		SetStaticServer(CServer* server, bool isStatic);
-	void		SetServerPrio(CServer* server, uint32 prio);
+	void SetStaticServer(CServer *server, bool isStatic);
+	void SetServerPrio(CServer *server, uint32 prio);
 
 	/**
 	 * Kick off the auto-update HTTP download of server.met.
 	 *
-	 * Split out of Init() so the caller can defer the HTTP request
-	 * until after the heavy startup I/O has finished, avoiding the
-	 * wxWebSession worker thread being starved by the main thread
-	 * (see #714). Caller is expected to gate this on the
-	 * AutoServerlist pref.
+	 * Split out of Init() so the caller can defer the HTTP request until after the heavy
+	 * startup I/O has finished, which stops the main thread starving the wxWebSession worker
+	 * (see #714). The caller is expected to gate this on the AutoServerlist pref.
 	 */
-	void		StartAutoUpdate();
+	void StartAutoUpdate();
 
 private:
-	virtual void	ObserverAdded( ObserverType* );
-	void		AutoUpdate();
-	CServer*	GetNextStatServer();
+	virtual void ObserverAdded(ObserverType *);
+	void StartServerMetDownload(const wxString &url, bool showDialog);
+	void StartNextServerMetDownload();
+	CServer *GetNextStatServer();
 
-	wxString	m_staticServersConfig;
-	void		LoadStaticServers();
-	void		SaveStaticServers();
-	uint8		current_url_index;
+	wxString m_staticServersConfig;
+	void LoadStaticServers();
+	void SaveStaticServers();
 
-	typedef std::list<CServer*>	CInternalList;
-	CInternalList			m_servers;
-	CInternalList::const_iterator	m_serverpos;
-	CInternalList::const_iterator	m_statserverpos;
+	typedef std::list<CServer *> CInternalList;
+	CInternalList m_servers;
+	CInternalList::const_iterator m_serverpos;
+	CInternalList::const_iterator m_statserverpos;
 
-	wxString	m_URLUpdate;
-	bool		m_initialized;
+	wxString m_serverMetURL;
+	wxArrayString m_serverMetSources;
+	size_t m_serverMetSourceIndex = 0;
+	bool m_serverMetDownloading = false;
+	bool m_serverMetLoaded = false;
+	bool m_serverMetAutomatic = false;
+	bool m_serverMetShowDialog = false;
+	bool m_initialized;
 };
 
 #endif // SERVERLIST_H

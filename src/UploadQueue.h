@@ -26,20 +26,19 @@
 #ifndef UPLOADQUEUE_H
 #define UPLOADQUEUE_H
 
-#include "ClientRef.h"		// Needed for CClientRefList
-#include "MD4Hash.h"		// Needed for CMD4Hash
-#include <wx/thread.h>		// Needed for wxMutex
+#include "ClientRef.h"      // Needed for CClientRefList
+#include "MD4Hash.h"        // Needed for CMD4Hash
+#include "NetworkAddress.h" // Needed for CNetworkAddress
+#include <wx/thread.h>      // Needed for wxMutex
 
-// Experimental extended upload queue population
+// Experimental extended upload queue population.
 //
-// When a client is set up from scratch (no shares, all downloads empty)
-// it takes a while after completion of the first downloaded chunks until
-// uploads start. Problem is, upload queue is empty, because clients that
-// find nothing to download don't stay queued.
+// A client set up from scratch (no shares, all downloads empty) takes a while after its first
+// chunks complete before uploads start: the upload queue is empty, because clients that find
+// nothing to download do not stay queued.
 //
-// Set this to 1 for faster finding of upload slots in this case.
-// aMule will then try to contact its sources for uploading if the
-// upload queue is empty.
+// Set this to 1 for faster finding of upload slots in that case. aMule then tries to contact its
+// sources for uploading when the upload queue is empty.
 #define EXTENDED_UPLOADQUEUE 0
 
 class CUpDownClient;
@@ -50,50 +49,70 @@ class CUploadQueue
 public:
 	CUploadQueue();
 	~CUploadQueue();
-	void	Process();
-	void	AddClientToQueue(CUpDownClient* client);
-	bool	RemoveFromUploadQueue(CUpDownClient* client);
-	bool	RemoveFromWaitingQueue(CUpDownClient* client);
-	bool	IsOnUploadQueue(const CUpDownClient* client) const;
-	bool	IsDownloading(const CUpDownClient* client) const;
-	bool	CheckForTimeOver(CUpDownClient* client);
-	void	ResortQueue() { SortGetBestClient(); }
+	void Process();
+	void AddClientToQueue(CUpDownClient *client);
+	void AdmitUploadCallbackAnswer(CUpDownClient *client);
+	bool RemoveFromUploadQueue(CUpDownClient *client, const wxString &reason);
+	// A client whose callback dial failed goes back to the waiting list, keeping its waiting
+	// time, to get its slot through its own next connection like a LowID.
+	void RequeueUnreachable(CUpDownClient *client);
+	bool RemoveFromWaitingQueue(CUpDownClient *client);
+	bool IsOnUploadQueue(const CUpDownClient *client) const;
+	bool IsDownloading(const CUpDownClient *client) const;
+	// The caller holds GetUploadingListLock().
+	CUpDownClient *FindUploadingClient(uint32 ecid) const;
+	bool CheckForTimeOver(CUpDownClient *client);
+	void ResortQueue() { SortGetBestClient(); }
 
-	const CClientRefList& GetWaitingList() const { return m_waitinglist; }
-	const CClientRefList& GetUploadingList() const { return m_uploadinglist; }
+	const CClientRefList &GetWaitingList() const { return m_waitinglist; }
+	const CClientRefList &GetUploadingList() const { return m_uploadinglist; }
 
-	// Thread-safe access for disk I/O thread — caller must hold the returned lock for the duration of iteration
-	wxMutex& GetUploadingListLock() { return m_uploadingListMutex; }
+	// Thread-safe access for disk I/O thread -- caller must hold the returned lock for the duration of
+	// iteration
+	wxMutex &GetUploadingListLock() { return m_uploadingListMutex; }
 
-	CUpDownClient* GetWaitingClientByIP_UDP(uint32 dwIP, uint16 nUDPPort, bool bIgnorePortOnUniqueIP, bool* pbMultipleIPs = NULL);
+	CUpDownClient *GetWaitingClientByIP_UDP(const CNetworkAddress &address,
+		uint16 nUDPPort,
+		bool bIgnorePortOnUniqueIP,
+		bool *pbMultipleIPs = nullptr);
 
-	uint16	SuspendUpload(const CMD4Hash &, bool terminate);
-	void	ResumeUpload(const CMD4Hash &);
-	CKnownFile* GetAllUploadingKnownFile() { return m_allUploadingKnownFile; }
+	uint16 SuspendUpload(const CMD4Hash &, bool terminate);
+	void ResumeUpload(const CMD4Hash &);
+	CKnownFile *GetAllUploadingKnownFile() { return m_allUploadingKnownFile; }
 
 private:
-	void	RemoveFromWaitingQueue(CClientRefList::iterator pos);
-	uint32	GetMaxSlots() const;
-	void	AddUpNextClient(CUpDownClient* directadd = 0);
-	bool	IsSuspended(const CMD4Hash& hash) { return suspendedUploadsSet.find(hash) != suspendedUploadsSet.end(); }
-	void	SortGetBestClient(CClientRef * bestClient = NULL);
+	bool TryTakeLowIdAlternationSlot(CUpDownClient *client);
+	bool IsWithinUploadScopeLimit(CUpDownClient *client);
+	bool TryStartUploadCallback(
+		CUpDownClient *client, uint64 now, unsigned inFlight, unsigned inFlightCeiling);
+	void RemoveFromWaitingQueue(CClientRefList::iterator pos);
+	uint32 GetMaxSlots() const;
+	void AddUpNextClient(CUpDownClient *directadd = 0);
+	unsigned UploadSlotsInScope(const CUpDownClient *client) const;
+	bool IsSuspended(const CMD4Hash &hash)
+	{
+		return suspendedUploadsSet.find(hash) != suspendedUploadsSet.end();
+	}
+	void SortGetBestClient(CClientRef *bestClient = NULL);
 
 	CClientRefList m_waitinglist;
 	CClientRefList m_uploadinglist;
-	wxMutex        m_uploadingListMutex;	// guards m_uploadinglist for disk I/O thread access
+	wxMutex m_uploadingListMutex; // guards m_uploadinglist for disk I/O thread access
 
 #if EXTENDED_UPLOADQUEUE
 	CClientRefList m_possiblyWaitingList;
-	int		PopulatePossiblyWaitingList();
+	int PopulatePossiblyWaitingList();
 #endif
 
-	std::set<CMD4Hash> suspendedUploadsSet;  // set for suspended uploads
-	uint64	m_nLastStartUpload;
-	uint64	m_lastSort;
-	bool	lastupslotHighID; // VQB lowID alternation
-	bool	m_allowKicking;
+	std::set<CMD4Hash> suspendedUploadsSet; // set for suspended uploads
+	uint64 m_nLastStartUpload;
+	uint64 m_lastSort;
+	uint64 m_lastDisplayUpdate = 0;
+	uint64 m_lastDisplaySample;
+	bool lastupslotHighID; // VQB lowID alternation
+	bool m_allowKicking;
 	// This KnownFile collects all currently uploading clients for display in the upload list control
-	CKnownFile * m_allUploadingKnownFile;
+	CKnownFile *m_allUploadingKnownFile;
 };
 
 #endif // UPLOADQUEUE_H

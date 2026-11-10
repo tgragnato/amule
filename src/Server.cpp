@@ -23,15 +23,16 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include "Server.h"		// Interface declarations.
+#include "Server.h" // Interface declarations.
 
 #include <tags/ServerTags.h>
 
+#include "Logger.h"           // Needed for AddDebugLogLineN
 #include "NetworkFunctions.h" // Needed for StringIPtoUint32
-#include "OtherStructs.h"	// Needed for ServerMet_Struct
+#include "OtherStructs.h"     // Needed for ServerMet_Struct
 #include "amule.h"
 
-CServer::CServer(ServerMet_Struct* in_data)
+CServer::CServer(ServerMet_Struct *in_data)
 {
 	port = in_data->port;
 	ip = in_data->ip;
@@ -39,7 +40,7 @@ CServer::CServer(ServerMet_Struct* in_data)
 	Init();
 }
 
-CServer::CServer(uint16 in_port, const wxString& i_addr)
+CServer::CServer(uint16 in_port, const wxString &i_addr)
 {
 
 	port = in_port;
@@ -49,26 +50,26 @@ CServer::CServer(uint16 in_port, const wxString& i_addr)
 
 	// GonoszTopi - Init() would clear dynip !
 	// Check that the ip isn't in fact 0.0.0.0
-	if (!ip && !StringIPtoUint32( i_addr, ip ) ) {
+	if (!ip && !StringIPtoUint32(i_addr, ip)) {
 		// If ip == 0, the address is a hostname
 		dynip = i_addr;
 	}
 }
 
-
 // copy constructor
-CServer::CServer(CServer* pOld) : CECID(pOld->ECID())
+CServer::CServer(CServer *pOld)
+: CECID(pOld->ECID())
 {
 	wxASSERT(pOld != NULL);
 
 	TagPtrList::iterator it = pOld->m_taglist.begin();
-	for ( ; it != pOld->m_taglist.end(); ++it ) {
+	for (; it != pOld->m_taglist.end(); ++it) {
 		m_taglist.push_back((*it)->CloneTag());
 	}
 	port = pOld->port;
 	ip = pOld->ip;
 	realport = pOld->realport;
-	staticservermember=pOld->IsStaticMember();
+	staticservermember = pOld->IsStaticMember();
 	tagcount = pOld->tagcount;
 	ipfull = pOld->ipfull;
 	files = pOld->files;
@@ -95,6 +96,7 @@ CServer::CServer(CServer* pOld) : CECID(pOld->ECID())
 	m_auxPorts = pOld->m_auxPorts;
 	m_dwServerKeyUDP = pOld->m_dwServerKeyUDP;
 	m_bCryptPingReplyPending = pOld->m_bCryptPingReplyPending;
+	m_bKeyRecoveryPing = pOld->m_bKeyRecoveryPing;
 	m_dwIPServerKeyUDP = pOld->m_dwIPServerKeyUDP;
 	m_nObfuscationPortTCP = pOld->m_nObfuscationPortTCP;
 	m_nObfuscationPortUDP = pOld->m_nObfuscationPortUDP;
@@ -106,7 +108,8 @@ CServer::~CServer()
 	m_taglist.clear();
 }
 
-void CServer::Init() {
+void CServer::Init()
+{
 
 	ipfull = Uint32toStringIP(ip);
 
@@ -123,14 +126,20 @@ void CServer::Init() {
 	lastpinged = 0;
 	lastpingedtime = 0;
 	m_dwRealLastPingedTime = 0;
-	staticservermember=false;
-	maxusers=0;
+	staticservermember = false;
+	maxusers = 0;
 	m_uTCPFlags = 0;
 	m_uUDPFlags = 0;
 	challenge = 0;
 	softfiles = 0;
 	hardfiles = 0;
-	m_strVersion = _("Unknown");
+	// Empty, not _("Unknown"): this is a display placeholder, and every non-display consumer of
+	// the field is worse off holding a translated one. server.met would persist the running
+	// locale's word (an Italian aMule wrote ST_VERSION="Sconosciuta"), EC would ship it to
+	// amulegui and amuleapi, and /api/v1/servers would answer a localized string on a surface
+	// documented as English-only. The server list renders the placeholder itself when this is
+	// empty.
+	m_strVersion.Clear();
 	m_uLowIDUsers = 0;
 	m_uDescReqChallenge = 0;
 	lastdescpingedcout = 0;
@@ -140,23 +149,17 @@ void CServer::Init() {
 
 	m_dwServerKeyUDP = 0;
 	m_bCryptPingReplyPending = false;
+	m_bKeyRecoveryPing = false;
 	m_dwIPServerKeyUDP = 0;
 	m_nObfuscationPortTCP = 0;
 	m_nObfuscationPortUDP = 0;
-
 }
 
-
-bool CServer::AddTagFromFile(CFileDataIO* servermet)
+void CServer::AddTagFromFile(const CTag &tag)
 {
 	uint64_t val;
-	if (servermet == NULL) {
-		return false;
-	}
 
-	CTag tag(*servermet, true);
-
-	switch(tag.GetNameID()){
+	switch (tag.GetNameID()) {
 	case ST_SERVERNAME:
 		if (listname.IsEmpty()) {
 			listname = tag.GetStr();
@@ -207,14 +210,13 @@ bool CServer::AddTagFromFile(CFileDataIO* servermet)
 
 	case ST_VERSION:
 		if (tag.IsStr()) {
-			// m_strVersion defaults to _("Unknown"), so check for that as well
-			if ((m_strVersion.IsEmpty()) || (m_strVersion == _("Unknown"))) {
+			// First writer wins: server.met carries ST_VERSION twice, a UTF-8 copy and
+			// a raw one, and the second must not overwrite what the first decoded.
+			if (m_strVersion.IsEmpty()) {
 				m_strVersion = tag.GetStr();
 			}
 		} else if (tag.IsInt()) {
 			m_strVersion = CFormat("%u.%u") % (tag.GetInt() >> 16) % (tag.GetInt() & 0xFFFF);
-		} else {
-			wxFAIL;
 		}
 		break;
 
@@ -253,27 +255,23 @@ bool CServer::AddTagFromFile(CFileDataIO* servermet)
 		break;
 
 	default:
-		if (!tag.GetName().IsEmpty()) {
-			if (tag.GetName() == "files") {
-				files = tag.GetInt();
-			} else if (tag.GetName() == "users") {
-				users = tag.GetInt();
-			}
+		if (tag.GetName() == "files") {
+			files = tag.GetInt();
+		} else if (tag.GetName() == "users") {
+			users = tag.GetInt();
 		} else {
-			wxFAIL;
+			// server.met also comes from URLs: skip unknown tags, as eMule does.
+			AddDebugLogLineN(logServer, "Skipping unknown server.met tag: " + tag.GetFullInfo());
 		}
 	}
-
-	return true;
 }
 
-
-void CServer::SetListName(const wxString& newname)
+void CServer::SetListName(const wxString &newname)
 {
 	listname = newname;
 }
 
-void CServer::SetDescription(const wxString& newname)
+void CServer::SetDescription(const wxString &newname)
 {
 	description = newname;
 }
@@ -285,11 +283,10 @@ void CServer::SetID(uint32 newip)
 	ipfull = Uint32toStringIP(ip);
 }
 
-void CServer::SetDynIP(const wxString& newdynip)
+void CServer::SetDynIP(const wxString &newdynip)
 {
 	dynip = newdynip;
 }
-
 
 void CServer::SetLastDescPingedCount(bool bReset)
 {
@@ -311,7 +308,7 @@ uint32 CServer::GetServerKeyUDP(bool bForce) const
 
 void CServer::SetServerKeyUDP(uint32 dwServerKeyUDP)
 {
-	wxASSERT( theApp->GetPublicIP() != 0 || dwServerKeyUDP == 0 );
+	wxASSERT(theApp->GetPublicIP() != 0 || dwServerKeyUDP == 0);
 	m_dwServerKeyUDP = dwServerKeyUDP;
 	m_dwIPServerKeyUDP = theApp->GetPublicIP();
 }

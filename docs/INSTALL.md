@@ -7,11 +7,23 @@ following packages:
 
 | Package   | Minimum version | Notes                             |
 | --------- | --------------- | --------------------------------- |
-| CMake     | 3.10            |                                   |
+| CMake     | 3.12            |                                   |
 | zlib      | 1.2.3           |                                   |
 | wxWidgets | 3.2.0           | 3.2 branch or newer               |
-| Crypto++  | 5.6             |                                   |
-| Boost     | 1.47            | headers only; only `asio` is used |
+| Crypto++  | 8.1             | classic or cryptopp-modern        |
+| Boost     | 1.74            | headers only; only `asio` is used |
+
+To use a separate Boost installation, pass
+`-DBoost_DIR=/path/to/boost/lib/cmake/Boost-<version>`. Use a fresh build
+directory when you switch installations.
+
+The Crypto++ row accepts either the classic
+[weidai11/cryptopp](https://github.com/weidai11/cryptopp) library (minimum
+8.1, for ChaCha20-Poly1305) or the
+[cryptopp-modern](https://github.com/cryptopp-modern/cryptopp-modern) fork (any
+release — it is based on 8.9.0, so every release clears the minimum). The cmake
+check disambiguates the two by `CRYPTOPP_VERSION`, which the fork encodes as a
+calendar version.
 
 For `amuleweb` you'll also need a POSIX-compliant regex library — part of
 the standard C library on most GNU systems.
@@ -29,7 +41,9 @@ the standard C library on most GNU systems.
 Without `libayatana-appindicator3` the tray falls back to the legacy
 `GtkStatusIcon` API, which GNOME Shell dropped in 3.26 and wlroots
 compositors don't implement (silently invisible on Fedora / vanilla GNOME /
-Sway). Apt: `libayatana-appindicator3-dev`; RPM:
+Sway). Such builds offer the tray icon only when wxWidgets finds a system
+tray: an X11 tray, or a StatusNotifierItem host when wxWidgets 3.2.12+ is
+built with AppIndicator support. Apt: `libayatana-appindicator3-dev`; RPM:
 `libayatana-appindicator-gtk3-devel`.
 
 ### Linux-only note: glib-2.0 dev headers
@@ -74,7 +88,7 @@ is useful during development — no `sudo` required and easy to clean up:
 cmake --install build --prefix=$HOME/.local
 ```
 
-Platform-specific notes (Homebrew paths on macOS, MSYS2 shells on
+Platform-specific notes (Homebrew paths on macOS, MSYS2 packages on
 Windows, etc.) live in
 [`.github/workflows/ccpp.yml`](../.github/workflows/ccpp.yml), which is
 the authoritative reference used by CI.
@@ -114,24 +128,52 @@ without the manual command.
 
 ## Build options
 
-Common `-D` options (`YES` / `NO`):
+Common `-D` options (`YES` / `NO` unless noted otherwise):
 
-| Option               | Default | Effect                                                           |
-| -------------------- | ------- | ---------------------------------------------------------------- |
-| `BUILD_MONOLITHIC`   | YES     | aMule GUI                                                        |
-| `BUILD_REMOTEGUI`    | NO      | `amulegui` — remote control GUI                                  |
-| `BUILD_DAEMON`       | NO      | `amuled` — headless daemon                                       |
-| `BUILD_AMULECMD`     | NO      | `amulecmd` — CLI client for the daemon                           |
-| `BUILD_WEBSERVER`    | NO      | `amuleweb` — HTTP interface for the daemon                       |
-| `BUILD_ED2K`         | NO      | `ed2k` — handle `ed2k://` links                                  |
-| `BUILD_CAS`          | NO      | `cas` — C statistics tool                                        |
-| `BUILD_WXCAS`        | NO      | `wxCas` — GUI statistics tool                                    |
-| `BUILD_ALC`          | NO      | aMuleLinkCreator GUI                                             |
-| `BUILD_ALCC`         | NO      | aMuleLinkCreator console                                         |
-| `BUILD_FILEVIEW`     | NO      | console file viewer (experimental)                               |
-| `ENABLE_NLS`         | YES     | native-language support (gettext)                                |
-| `ENABLE_UPNP`        | YES     | UPnP port forwarding                                             |
-| `ENABLE_IP2COUNTRY`  | NO      | libmaxminddb country flags ([docs/IP2Country.md](IP2Country.md)) |
+| Option                   | Default | Effect                                                                   |
+| ------------------------ | ------- | ------------------------------------------------------------------------ |
+| `BUILD_MONOLITHIC`       | YES     | aMule GUI                                                                |
+| `BUILD_REMOTEGUI`        | NO      | `amulegui` — remote control GUI                                          |
+| `BUILD_DAEMON`           | NO      | `amuled` — headless daemon                                               |
+| `BUILD_AMULECMD`         | NO      | `amulecmd` — CLI client for the daemon                                   |
+| `BUILD_WEBSERVER`        | NO      | `amuleweb` — HTTP interface for the daemon                               |
+| `BUILD_AMULEAPI`         | NO      | `amuleapi` — REST API + SSE daemon ([docs/QUICKSTART-AMULEAPI.md](QUICKSTART-AMULEAPI.md)) |
+| `BUILD_ED2K`             | YES     | `ed2k` — queue `ed2k://` and magnet links from the command line          |
+| `BUILD_CAS`              | NO      | `cas` — C statistics tool                                                |
+| `BUILD_WXCAS`            | NO      | `wxCas` — GUI statistics tool                                            |
+| `BUILD_ALC`              | NO      | aMuleLinkCreator GUI                                                     |
+| `BUILD_ALCC`             | NO      | aMuleLinkCreator console                                                 |
+| `BUILD_FILEVIEW`         | NO      | console file viewer (experimental)                                       |
+| `BUILD_EVERYTHING`       | NO      | every program above (`cas` only on Unix)                                 |
+| `BUILD_TESTING`          | NO      | unit tests, run with `ctest` ([unittests/README](../unittests/README))    |
+| `ENABLE_NLS`             | YES     | native-language support (gettext)                                        |
+| `ENABLE_MMAP`            | YES     | compile the mmap file-I/O path where the platform has it. Its use is a runtime preference, off by default. Set `NO` to leave the code out, for example in sanitizer builds |
+| `ENABLE_BFD`             | YES     | resolve backtrace symbols in-process with libbfd. With `NO`, crash backtraces use `backtrace_symbols()` and an external `addr2line` |
+| `TRANSLATED_MANPAGES`    | YES     | render and install translated manpages with `po4a` at build time. Needs `ENABLE_NLS`; skipped with a notice when `po4a` is not found |
+| `ENABLE_CCACHE`          | AUTO    | use ccache as compiler launcher when found (`AUTO`/`ON`/`OFF`); set `OFF` for distro builds that manage ccache themselves, `ON` to hard-fail if ccache is missing |
+| `ENABLE_MEDIA_PROBE`     | ON      | build the `amule-media-probe` helper (own container parsers, no dependencies), installed to `libexec/amule` (`bin` on Windows); `OFF` omits media extraction |
+| `ENABLE_VERSION_CHECK`   | ON      | compile in the in-app new-version check (startup notification, the "Check for new version at startup" preference, and the About dialog's "Check for updates" button). Packagers shipping aMule via an OS package manager want `OFF`, so nothing contacts GitHub and the distro's package manager owns updates |
+| `USE_SYSTEM_PICOJSON`    | OFF     | use a system-installed `picojson.h` instead of the bundled copy           |
+| `DOWNLOAD_AND_BUILD_DEPS` | OFF    | download and build missing dependencies. Needs Git and CMake 3.14       |
+
+Sharing and using file repair hashes (AICH) over Kad is enabled by default
+whenever `KadProtocol10` has not been saved in `amule.conf`, including
+configurations upgraded from aMule 3.1.0. An explicitly saved choice is
+preserved. This runtime preference can be changed through Preferences, EC
+or amuleapi.
+
+### Experimental options
+
+These switches are `OFF` by default and compile in unfinished work.
+
+| Option                            | Effect |
+| --------------------------------- | ------ |
+| `ENABLE_UTP`                      | IPv4 uTP in `amule` and `amuled`: datagram framing, inbound streams, and dialing a peer that advertises uTP. With `ENABLE_NATT_SERVER_COORDINATION` and the Lugdunum runtime opt-in, it also dials forwarded Lugdunum callbacks; `OP_HELLO` remains the peer-identity authority |
+| `ENABLE_IPV6`                     | native IPv6 TCP admission, and the `AddressFamilies` setting (`1` = dual-stack ed2k TCP listener), editable in the Connection preferences tab (monolithic and, via EC, amulegui) or directly in `amule.conf`; it takes effect only after a restart. With `1`, aMule also dials native IPv6 peers, including Kad sources firewalled on IPv4 that publish an IPv6 address (eMuleAI's `ip6` tag) when we are firewalled too. `AdvertiseIPv6Mode` (same Connection tab, live) also tells peers our stable IPv6 address: `0` when verified (the default), `1` always, `2` never. `1` is what the old `AdvertiseIPv6=1` meant, so choose it only if the ed2k TCP port accepts inbound IPv6 connections, because eMuleAI peers then dial only that address. In every mode advertising stops for up to a day when several unrelated peers see us arriving from a prefix this host does not hold (IPv6 NAT) and none has confirmed ours. The same opt-in also makes the eD2k server login advertise a `CT_MOD_IP_V6` tag, which lets a server that supports the extension (`OP_IDCHANGE` bit `0x4000`, logged but otherwise unused) send an IPv6 source in `OP_FOUNDSOURCES` / `OP_FOUNDSOURCES_OBFU`; see [docs/IPv6_Server_Sources.md](IPv6_Server_Sources.md). On an `ed2k-server` older than 0.9.83, such a server sends some LowID sources only by their IPv6, so a HighID client can lose sources that it would otherwise reach by server callback -- fixed in 0.9.83, which sends the sentinel only to a LowID requester. A server that also sets `OP_IDCHANGE` bit `0x8000`, together with `0x4000`, accepts `OP_IPV6_UPDATE`, which keeps it current as our advertised address changes, stops or starts after login. Connecting to a server over an IPv6 transport is out of scope. The IPv6 identity work is not complete |
+| `ENABLE_NATT_SERVER_COORDINATION` | **Experimental.** Server-coordinated NAT-T for ed2k-server hole-punch and Lugdunum callbacks ([docs/NAT_T_Protocol.md](NAT_T_Protocol.md)). Needs `ENABLE_UTP`: every rendezvous ends in a uTP dial, and configure fails without it. Traffic requires the corresponding `amule.conf` runtime setting (both settings default **off**, no widget). With `LugdunumNatCallback` on, login advertises `SRVCAP_NATTRAVERSAL` and a LowID client sends `OP_NAT_CALLBACKREQUEST` (`0xA6`) for an eligible same-server LowID source, at most once per source. Authenticated forwarded `0x37`/`0xA7` callbacks start a temporary uTP dial; requester fields are routing hints only, and verified `OP_HELLO` establishes identity. A shared server-scoped guard suppresses identical TCP/UDP callback routing tuples for 10 seconds (up to 256 entries) and limits callback dials to 20 per minute. Failed dials cool down for 10 minutes per peer and observed endpoint; changed endpoints can retry after the duplicate window. Incoming SYN arbitration uses the endpoint-tuple rule with the best available local UDP port (external when known, else configured UDP, else TCP; hash fallback only when both hashes are valid), and handshake port remapping is limited to one expected outgoing callback/punch peer on the same IPv4 within ±512 ports and 30 seconds; established sessions keep their exact tuple. With `LowIdHolePunch` on, login advertises `CT_EMULE_UDPPORTS` (`0xF9`), a `0x9F` keepalive is sent roughly every 60 s to a server announcing `0x20000`, and a LowID client sends `OP_LOWID_HOLEPUNCH_REQUEST` (`0x60`) for a LowID source on that server. A valid `0x61` prompts an empty UDP `OP_HOLEPUNCH`; the requester dials uTP and the other peer dials back only if no stream arrives. A server is either Lugdunum or ed2k-server, never both. The build switch alone (including `ENABLE_ALL_EXPERIMENTAL`) never opts into traffic; both the build switch and relevant runtime setting must be on |
+| `ENABLE_KAD_NODE_PROTECTION`      | local Kad node-protection heuristics: adaptive request timeouts and Kad identity checks. No wire-protocol change |
+| `ENABLE_QUIC`                     | the QUIC NAT-T transport in `amule` and `amuled` ([docs/NAT_T_Protocol.md](NAT_T_Protocol.md)). Needs ngtcp2 with its GnuTLS crypto library, and `BUILD_MONOLITHIC` or `BUILD_DAEMON`: without either, configure fails |
+| `ENABLE_ALL_EXPERIMENTAL`         | all of the switches above. In a build without `amule` and `amuled`, `ENABLE_QUIC` stays `OFF` |
 
 For the full list:
 
@@ -141,18 +183,20 @@ cmake -LAH -B build | less
 
 ## Refreshing translated manpages (maintainers / translators)
 
-The translated `*.LANG.1` manpages under `docs/man/` are committed
-artifacts, regenerated from `docs/man/po/manpages-LANG.po` against the
-English masters via `po4a`. `po4a` is not a build dependency — the
-refresh target only exists when `po4a` is found at configure time:
+The translated manpages are not tracked in git. The build renders them
+from the English masters (`docs/man/*.1.in` and
+`src/utils/*/docs/*.1.in`) and `docs/man/po/manpages-LANG.po`, with
+`po4a` (see `TRANSLATED_MANPAGES` above).
+
+After you edit an English master, regenerate the manpage catalogs from
+the top of the source tree, and commit the result:
 
 ```sh
-cmake --build build --target po4a-update
+./scripts/update-manpages-po.sh
 ```
 
-This rewrites `docs/man/po/manpages.pot`, syncs each
-`manpages-LANG.po`, and regenerates the translated `*.LANG.1` files in
-place. Commit the resulting changes.
+This rewrites `docs/man/po/manpages.pot` and merges it into every
+`docs/man/po/manpages-LANG.po`.
 
 ## Links
 

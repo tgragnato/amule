@@ -28,19 +28,19 @@
 #include <string> // Do_not_auto_remove (g++-4.0.1)
 
 #ifdef HAVE_SYS_TYPES_H
-#	include <sys/types.h>
+#include <sys/types.h>
 #endif
 
 #ifdef PHP_STANDALONE_EN
-#	include <map>
-#	include <string>
-#	include <list>
-#	include <regex.h>
+#include <map>
+#include <string>
+#include <list>
+#include <regex.h>
 #else
-#	include "WebServer.h"
-#	include <ec/cpp/ECSpecialTags.h>
-#	include <wx/regex.h>
-#	include <wx/datetime.h>
+#include "WebServer.h"
+#include <ec/cpp/ECSpecialTags.h>
+#include <wx/regex.h>
+#include <wx/datetime.h>
 #endif
 
 #include "php_syntree.h"
@@ -52,72 +52,81 @@
 #endif
 
 /*
- * Built-in php functions. Those are both library and core internals.
- *
- * I'm not going event to get near to what Zend provide, but
- * at least base things must be here
+ * Built-in php functions, both library and core internals. Nowhere near what Zend provides, but at
+ * least the base things are here.
  */
 
-/*
- * Print info about variable: php var_dump()
- */
+/* Print info about a variable: php var_dump() */
 void php_var_dump(PHP_VALUE_NODE *node, int ident, int ref)
 {
-	for(int i = 0; i < ident;i++) {
+	for (int i = 0; i < ident; i++) {
 		printf("\t");
 	}
-	if ( ref ) printf("&");
-	switch(node->type) {
-		case PHP_VAL_BOOL: printf("bool(%s)\n", node->int_val ? "true" : "false"); break;
-		case PHP_VAL_INT: printf("int(%" PRIu64 ")\n", node->int_val); break;
-		case PHP_VAL_FLOAT: printf("float(%f)\n", node->float_val); break;
-		case PHP_VAL_STRING: printf("string(%d) \"%s\"\n", (int)strlen(node->str_val), node->str_val); break;
-		case PHP_VAL_OBJECT: printf("Object(%s)\n", node->obj_val.class_name); break;
-		case PHP_VAL_ARRAY: {
-			int arr_size = array_get_size(node);
-			printf("array(%d) {\n", arr_size);
-			for(int i = 0; i < arr_size;i++) {
-				const std::string &curr_key = array_get_ith_key(node, i);
-				PHP_VAR_NODE *curr_val = array_get_by_str_key(node, curr_key);
-				printf("\t[%s]=>\n", curr_key.c_str());
-				php_var_dump(&curr_val->value, ident+1, curr_val->ref_count > 1);
-			}
-			for(int i = 0; i < ident;i++) {
-				printf("\t");
-			}
-			printf("}\n");
-			break;
+	if (ref)
+		printf("&");
+	switch (node->type) {
+	case PHP_VAL_BOOL:
+		printf("bool(%s)\n", node->int_val ? "true" : "false");
+		break;
+	case PHP_VAL_INT:
+		printf("int(%" PRId64 ")\n", node->int_val);
+		break;
+	case PHP_VAL_FLOAT:
+		printf("float(%f)\n", node->float_val);
+		break;
+	case PHP_VAL_STRING:
+		printf("string(%d) \"%s\"\n", (int)strlen(node->str_val), node->str_val);
+		break;
+	case PHP_VAL_OBJECT:
+		printf("Object(%s)\n", node->obj_val.class_name);
+		break;
+	case PHP_VAL_ARRAY: {
+		int arr_size = array_get_size(node);
+		printf("array(%d) {\n", arr_size);
+		for (int i = 0; i < arr_size; i++) {
+			const std::string &curr_key = array_get_ith_key(node, i);
+			PHP_VAR_NODE *curr_val = array_get_by_str_key(node, curr_key);
+			printf("\t[%s]=>\n", curr_key.c_str());
+			php_var_dump(&curr_val->value, ident + 1, curr_val->ref_count > 1);
 		}
-		case PHP_VAL_NONE: printf("NULL\n"); break;
-		case PHP_VAL_VAR_NODE:
-		case PHP_VAL_INT_DATA: assert(0); break;
+		for (int i = 0; i < ident; i++) {
+			printf("\t");
+		}
+		printf("}\n");
+		break;
+	}
+	case PHP_VAL_NONE:
+		printf("NULL\n");
+		break;
+	case PHP_VAL_VAR_NODE:
+	case PHP_VAL_INT_DATA:
+		assert(0);
+		break;
 	}
 }
 
 void php_native_var_dump(PHP_VALUE_NODE *)
 {
 	PHP_SCOPE_ITEM *si = get_scope_item(g_current_scope, "__param_0");
-	if ( si ) {
-		assert((si->type == PHP_SCOPE_VAR)||(si->type == PHP_SCOPE_PARAM));
+	if (si) {
+		assert((si->type == PHP_SCOPE_VAR) || (si->type == PHP_SCOPE_PARAM));
 		php_var_dump(&si->var->value, 0, 0);
 	} else {
 		php_report_error(PHP_ERROR, "Invalid or missing argument");
 	}
 }
 
+/* Sorting stl-way requires operator ">" */
+class SortElem
+{
+public:
+	SortElem() {}
+	SortElem(PHP_VAR_NODE *p) { obj = p; }
 
-/*
- * Sorting stl-way requires operator ">"
- */
-class SortElem {
-	public:
-		SortElem() {}
-		SortElem(PHP_VAR_NODE *p) { obj = p; }
+	PHP_VAR_NODE *obj;
+	static PHP_SYN_FUNC_DECL_NODE *callback;
 
-		PHP_VAR_NODE *obj;
-		static PHP_SYN_FUNC_DECL_NODE *callback;
-
-		friend bool operator<(const SortElem &o1, const SortElem &o2);
+	friend bool operator<(const SortElem &o1, const SortElem &o2);
 };
 
 PHP_SYN_FUNC_DECL_NODE *SortElem::callback = 0;
@@ -131,15 +140,11 @@ bool operator<(const SortElem &o1, const SortElem &o2)
 
 	switch_push_scope_table((PHP_SCOPE_TABLE_TYPE *)SortElem::callback->scope);
 
-	//
-	// params passed by-value, all & notations ignored
-	//
+	// params passed by value; all & notations ignored
 	result.type = PHP_VAL_NONE;
 	php_execute(SortElem::callback->code, &result);
 	cast_value_dnum(&result);
-	//
 	// restore stack, free arg list
-	//
 	switch_pop_scope_table(0);
 
 	value_value_free(&SortElem::callback->params[0].si_var->var->value);
@@ -151,38 +156,34 @@ bool operator<(const SortElem &o1, const SortElem &o2)
 void php_native_usort(PHP_VALUE_NODE *)
 {
 	PHP_SCOPE_ITEM *si = get_scope_item(g_current_scope, "__param_0");
-	if ( !si || (si->var->value.type != PHP_VAL_ARRAY)) {
+	if (!si || (si->var->value.type != PHP_VAL_ARRAY)) {
 		php_report_error(PHP_ERROR, "Invalid or missing argument (array)");
 		return;
 	}
 	PHP_VAR_NODE *array = si->var;
 	si = get_scope_item(g_current_scope, "__param_1");
-	if ( !si || (si->var->value.type != PHP_VAL_STRING)) {
+	if (!si || (si->var->value.type != PHP_VAL_STRING)) {
 		php_report_error(PHP_ERROR, "Invalid or missing argument (func name)");
 		return;
 	}
 	char *cmp_func_name = si->var->value.str_val;
 	si = get_scope_item(g_global_scope, cmp_func_name);
-	if ( !si || (si->type != PHP_SCOPE_FUNC)) {
+	if (!si || (si->type != PHP_SCOPE_FUNC)) {
 		php_report_error(PHP_ERROR, "Compare function [%s] not found", cmp_func_name);
 		return;
 	}
 	PHP_SYN_FUNC_DECL_NODE *func_decl = si->func->func_decl;
 
-	//
-	// usort invalidates keys, and sorts values
-	//
+	// usort invalidates keys and sorts values
 	PHP_ARRAY_TYPE *arr_obj = (PHP_ARRAY_TYPE *)array->value.ptr_val;
-	//
 	// create vector of values
-	//
-	if ( arr_obj->array.empty() ) {
+	if (arr_obj->array.empty()) {
 		php_report_error(PHP_WARNING, "Sorting array of size 0");
 		return;
 	}
 
 	std::list<SortElem> sort_list;
-	for(PHP_ARRAY_ITER_TYPE i = arr_obj->array.begin(); i != arr_obj->array.end(); ++i) {
+	for (PHP_ARRAY_ITER_TYPE i = arr_obj->array.begin(); i != arr_obj->array.end(); ++i) {
 		sort_list.push_back(SortElem(i->second));
 	}
 	SortElem::callback = func_decl;
@@ -191,23 +192,19 @@ void php_native_usort(PHP_VALUE_NODE *)
 	arr_obj->array.clear();
 	arr_obj->sorted_keys.clear();
 	unsigned int key = 0;
-	for(std::list<SortElem>::iterator i = sort_list.begin(); i != sort_list.end(); ++i) {
+	for (std::list<SortElem>::iterator i = sort_list.begin(); i != sort_list.end(); ++i) {
 		array_add_to_int_key(&array->value, key++, i->obj);
 	}
-
 }
 
-
-/*
- * String functions
- */
+/* String functions */
 void php_native_strlen(PHP_VALUE_NODE *result)
 {
 	PHP_SCOPE_ITEM *si = get_scope_item(g_current_scope, "__param_0");
-	if ( si ) {
+	if (si) {
 		PHP_VALUE_NODE *param = &si->var->value;
 		cast_value_str(param);
-		if ( result ) {
+		if (result) {
 			cast_value_dnum(result);
 			result->int_val = strlen(param->str_val);
 		}
@@ -219,11 +216,11 @@ void php_native_strlen(PHP_VALUE_NODE *result)
 void php_native_count(PHP_VALUE_NODE *result)
 {
 	PHP_SCOPE_ITEM *si = get_scope_item(g_current_scope, "__param_0");
-	if ( si ) {
+	if (si) {
 		PHP_VALUE_NODE *param = &si->var->value;
-		if ( result ) {
+		if (result) {
 			cast_value_dnum(result);
-			if ( si->var->value.type != PHP_VAL_ARRAY ) {
+			if (si->var->value.type != PHP_VAL_ARRAY) {
 				result->int_val = 0;
 			} else {
 				result->int_val = array_get_size(param);
@@ -237,10 +234,10 @@ void php_native_count(PHP_VALUE_NODE *result)
 void php_native_isset(PHP_VALUE_NODE *result)
 {
 	PHP_SCOPE_ITEM *si = get_scope_item(g_current_scope, "__param_0");
-	if ( si ) {
+	if (si) {
 		PHP_VALUE_NODE *param = &si->var->value;
 		cast_value_str(param);
-		if ( result ) {
+		if (result) {
 			cast_value_bool(result);
 			result->int_val = (si->var->value.type == PHP_VAL_NONE) ? 0 : 1;
 		}
@@ -249,46 +246,101 @@ void php_native_isset(PHP_VALUE_NODE *result)
 	}
 }
 
-void php_native_substr(PHP_VALUE_NODE * /*result*/)
+void php_native_htmlspecialchars(PHP_VALUE_NODE *result)
 {
 	PHP_SCOPE_ITEM *si_str = get_scope_item(g_current_scope, "__param_0");
+	if (!si_str) {
+		php_report_error(PHP_ERROR, "Invalid or missing argument 'string' for 'htmlspecialchars'");
+		return;
+	}
 	PHP_VALUE_NODE *str = &si_str->var->value;
-	if ( si_str ) {
-		cast_value_str(str);
-	} else {
-		php_report_error(PHP_ERROR, "Invalid or missing argument 'str' for 'substr'");
-		return;
+	cast_value_str(str);
+	if (result) {
+		std::string escaped;
+		for (const char *p = str->str_val; *p; p++) {
+			switch (*p) {
+			case '&':
+				escaped += "&amp;";
+				break;
+			case '<':
+				escaped += "&lt;";
+				break;
+			case '>':
+				escaped += "&gt;";
+				break;
+			case '"':
+				escaped += "&quot;";
+				break;
+			case '\'':
+				escaped += "&#039;";
+				break;
+			default:
+				escaped += *p;
+			}
+		}
+		result->type = PHP_VAL_STRING;
+		result->str_val = strdup(escaped.c_str());
 	}
-	PHP_SCOPE_ITEM *si_start = get_scope_item(g_current_scope, "__param_1");
-	PHP_VALUE_NODE *start = &si_start->var->value;
-	if ( si_start ) {
-		cast_value_dnum(start);
-	} else {
-		php_report_error(PHP_ERROR, "Invalid or missing argument 'start' for 'substr'");
-		return;
-	}
-	// 3-rd is optional
-	PHP_SCOPE_ITEM *si_end = get_scope_item(g_current_scope, "__param_2");
-	PHP_VALUE_NODE end = { PHP_VAL_INT, { 0 } };
-	if ( si_end ) {
-		end = si_end->var->value;
-	}
-	cast_value_dnum(&end);
-
-
 }
 
+// Escape a string for safe inclusion inside a quoted JavaScript string literal that lives in an
+// HTML <script> element. On top of the classic PHP addslashes() set (\ " ') this also escapes '<'
+// as \x3C so an embedded "</script>" cannot terminate the <script> block -- the HTML parser scans
+// raw-text script content for that literal sequence whatever the JS syntax -- and CR/LF as \r/\n so
+// a multi-line value cannot break the literal. Every escape decodes back to the original character
+// in JS, so the value is displayed verbatim when assigned to a form field.
+void php_native_addslashes(PHP_VALUE_NODE *result)
+{
+	PHP_SCOPE_ITEM *si_str = get_scope_item(g_current_scope, "__param_0");
+	if (!si_str) {
+		php_report_error(PHP_ERROR, "Invalid or missing argument 'string' for 'addslashes'");
+		return;
+	}
+	PHP_VALUE_NODE *str = &si_str->var->value;
+	cast_value_str(str);
+	if (result) {
+		cast_value_dnum(result);
+		std::string escaped;
+		for (const char *p = str->str_val; *p; p++) {
+			switch (*p) {
+			case '\\':
+				escaped += "\\\\";
+				break;
+			case '"':
+				escaped += "\\\"";
+				break;
+			case '\'':
+				escaped += "\\'";
+				break;
+			case '<':
+				escaped += "\\x3C";
+				break;
+			case '\n':
+				escaped += "\\n";
+				break;
+			case '\r':
+				escaped += "\\r";
+				break;
+			default:
+				escaped += *p;
+			}
+		}
+		result->type = PHP_VAL_STRING;
+		result->str_val = strdup(escaped.c_str());
+	}
+}
 
 void php_native_split(PHP_VALUE_NODE *result)
 {
-	if ( result ) {
+	if (result) {
 		cast_value_array(result);
 	} else {
 		return;
 	}
 	PHP_VALUE_NODE *pattern, *string_to_split;
+	int split_limit = -1;
 	PHP_SCOPE_ITEM *si = get_scope_item(g_current_scope, "__param_0");
-	if ( si ) {
+	if (si) {
 		pattern = &si->var->value;
 		cast_value_str(pattern);
 	} else {
@@ -296,7 +348,7 @@ void php_native_split(PHP_VALUE_NODE *result)
 		return;
 	}
 	si = get_scope_item(g_current_scope, "__param_1");
-	if ( si ) {
+	if (si) {
 		string_to_split = &si->var->value;
 		cast_value_str(string_to_split);
 	} else {
@@ -304,37 +356,43 @@ void php_native_split(PHP_VALUE_NODE *result)
 		return;
 	}
 	si = get_scope_item(g_current_scope, "__param_2");
-	if ( si ) {
-		PHP_VALUE_NODE *split_limit = &si->var->value;
-		cast_value_dnum(split_limit);
-	} else {
-		php_report_error(PHP_ERROR, "Invalid or missing argument: string");
-		return;
+	if (si) {
+		PHP_VALUE_NODE *limit_node = &si->var->value;
+		cast_value_dnum(limit_node);
+		split_limit = limit_node->int_val;
 	}
 #ifdef PHP_STANDALONE_EN
 	regex_t preg;
 	int reg_result = regcomp(&preg, pattern->str_val, REG_EXTENDED);
-	if ( reg_result ) {
+	if (reg_result) {
 		char error_buff[256];
 		regerror(reg_result, &preg, error_buff, sizeof(error_buff));
 		php_report_error(PHP_ERROR, "Failed in regcomp: %s", error_buff);
 		return;
 	}
 
-	size_t nmatch = strlen(string_to_split->str_val);
+	size_t nmatch = 1; // only pmatch[0] used
 	regmatch_t *pmatch = new regmatch_t[nmatch];
 	char *str_2_match = string_to_split->str_val;
-	char *tmp_buff = new char[strlen(string_to_split->str_val)+1];
+	char *tmp_buff = new char[strlen(string_to_split->str_val) + 1];
 
-	while ( 1 ) {
+	int piece_count = 0;
+	while (1) {
+		if (split_limit > 0 && piece_count >= split_limit - 1) {
+			break;
+		}
 		reg_result = regexec(&preg, str_2_match, nmatch, pmatch, 0);
-		if ( reg_result ) {
+		if (reg_result) {
 			// no match
+			break;
+		}
+		if (pmatch[0].rm_eo == pmatch[0].rm_so) {
+			// zero-length match
 			break;
 		}
 		// I will use only first match, since I don't see any sense to have more
 		// than 1 match in split() call.
-		for(int i = 0; i < pmatch[0].rm_so; i++) {
+		for (int i = 0; i < pmatch[0].rm_so; i++) {
 			tmp_buff[i] = str_2_match[i];
 		}
 		tmp_buff[pmatch[0].rm_so] = 0;
@@ -342,6 +400,7 @@ void php_native_split(PHP_VALUE_NODE *result)
 		PHP_VAR_NODE *match_val = array_push_back(result);
 		match_val->value.type = PHP_VAL_STRING;
 		match_val->value.str_val = strdup(tmp_buff);
+		piece_count++;
 
 		str_2_match += pmatch[0].rm_eo;
 	}
@@ -350,14 +409,13 @@ void php_native_split(PHP_VALUE_NODE *result)
 	match_val->value.type = PHP_VAL_STRING;
 	match_val->value.str_val = strdup(str_2_match);
 
-	delete [] tmp_buff;
-	delete [] pmatch;
+	delete[] tmp_buff;
+	delete[] pmatch;
 	regfree(&preg);
 #else
-	// wxRegEx returns match offsets in wxString (wide-char) space, not
-	// bytes -- indexing a UTF-8 char* buffer with those offsets directly
-	// is off by `bytes_per_char - 1` per non-ASCII character. Work
-	// entirely in wxString and convert each chunk to UTF-8 only at the
+	// wxRegEx returns match offsets in wxString (wide-char) space, not bytes -- indexing a
+	// UTF-8 char* buffer with those offsets directly is off by `bytes_per_char - 1` per non-
+	// ASCII character. Work entirely in wxString and convert each chunk to UTF-8 only at the
 	// array_push_back point.
 	wxRegEx preg;
 	if (!preg.Compile(wxString(char2unicode(pattern->str_val)), wxRE_EXTENDED)) {
@@ -365,16 +423,26 @@ void php_native_split(PHP_VALUE_NODE *result)
 		return;
 	}
 
+	int piece_count = 0;
 	wxString remaining(char2unicode(string_to_split->str_val));
 	while (preg.Matches(remaining)) {
+		if (split_limit > 0 && piece_count >= split_limit - 1) {
+			break;
+		}
 		size_t start, len;
 		if (!preg.GetMatch(&start, &len)) {
+			// no match
+			break;
+		}
+		if (len == 0) {
+			// zero-length match
 			break;
 		}
 		PHP_VAR_NODE *match_val = array_push_back(result);
 		match_val->value.type = PHP_VAL_STRING;
 		match_val->value.str_val = strdup(unicode2UTF8(remaining.Mid(0, start)));
 		remaining = remaining.Mid(start + len);
+		piece_count++;
 	}
 
 	PHP_VAR_NODE *tail = array_push_back(result);
@@ -388,14 +456,15 @@ void php_native_split(PHP_VALUE_NODE *result)
 void php_native_gettext(PHP_VALUE_NODE *result)
 {
 	PHP_SCOPE_ITEM *si_str = get_scope_item(g_current_scope, "__param_0");
-	PHP_VALUE_NODE *str = &si_str->var->value;
-	if ( si_str ) {
+	PHP_VALUE_NODE *str;
+	if (si_str) {
+		str = &si_str->var->value;
 		cast_value_str(str);
 	} else {
 		php_report_error(PHP_ERROR, "Invalid or missing argument 'msgid' for 'gettext'");
 		return;
 	}
-	if ( result ) {
+	if (result) {
 		cast_value_dnum(result);
 		result->type = PHP_VAL_STRING;
 		result->str_val = strdup(gettext(str->str_val));
@@ -405,14 +474,15 @@ void php_native_gettext(PHP_VALUE_NODE *result)
 void php_native_gettext_noop(PHP_VALUE_NODE *result)
 {
 	PHP_SCOPE_ITEM *si_str = get_scope_item(g_current_scope, "__param_0");
-	PHP_VALUE_NODE *str = &si_str->var->value;
-	if ( si_str ) {
+	PHP_VALUE_NODE *str;
+	if (si_str) {
+		str = &si_str->var->value;
 		cast_value_str(str);
 	} else {
 		php_report_error(PHP_ERROR, "Invalid or missing argument 'msgid' for 'gettext_noop'");
 		return;
 	}
-	if ( result ) {
+	if (result) {
 		cast_value_dnum(result);
 		result->type = PHP_VAL_STRING;
 		result->str_val = strdup(str->str_val);
@@ -422,30 +492,33 @@ void php_native_gettext_noop(PHP_VALUE_NODE *result)
 void php_native_ngettext(PHP_VALUE_NODE *result)
 {
 	PHP_SCOPE_ITEM *si_msgid = get_scope_item(g_current_scope, "__param_0");
-	PHP_VALUE_NODE *msgid = &si_msgid->var->value;
-	if ( si_msgid ) {
+	PHP_VALUE_NODE *msgid;
+	if (si_msgid) {
+		msgid = &si_msgid->var->value;
 		cast_value_str(msgid);
 	} else {
 		php_report_error(PHP_ERROR, "Invalid or missing argument 'msgid' for 'ngettext'");
 		return;
 	}
 	PHP_SCOPE_ITEM *si_msgid_plural = get_scope_item(g_current_scope, "__param_1");
-	PHP_VALUE_NODE *msgid_plural = &si_msgid_plural->var->value;
-	if ( si_msgid_plural ) {
+	PHP_VALUE_NODE *msgid_plural;
+	if (si_msgid_plural) {
+		msgid_plural = &si_msgid_plural->var->value;
 		cast_value_str(msgid_plural);
 	} else {
 		php_report_error(PHP_ERROR, "Invalid or missing argument 'msgid_plural' for 'ngettext'");
 		return;
 	}
 	PHP_SCOPE_ITEM *si_count = get_scope_item(g_current_scope, "__param_2");
-	PHP_VALUE_NODE *count = &si_count->var->value;
-	if ( si_count ) {
+	PHP_VALUE_NODE *count;
+	if (si_count) {
+		count = &si_count->var->value;
 		cast_value_dnum(count);
 	} else {
 		php_report_error(PHP_ERROR, "Invalid or missing argument 'count' for 'ngettext'");
 		return;
 	}
-	if ( result ) {
+	if (result) {
 		cast_value_dnum(result);
 		result->type = PHP_VAL_STRING;
 		result->str_val = strdup(ngettext(msgid->str_val, msgid_plural->str_val, count->int_val));
@@ -461,15 +534,18 @@ PHP_BLTIN_FUNC_DEF core_lib_funcs[] = {
 	},
 	{
 		"strlen",
-		1, php_native_strlen,
+		1,
+		php_native_strlen,
 	},
 	{
 		"count",
-		1, php_native_count,
+		1,
+		php_native_count,
 	},
 	{
 		"isset",
-		1, php_native_isset,
+		1,
+		php_native_isset,
 	},
 	{
 		"usort",
@@ -481,42 +557,57 @@ PHP_BLTIN_FUNC_DEF core_lib_funcs[] = {
 		3,
 		php_native_split,
 	},
+	{
+		"htmlspecialchars",
+		1,
+		php_native_htmlspecialchars,
+	},
+	{
+		"addslashes",
+		1,
+		php_native_addslashes,
+	},
 #ifdef ENABLE_NLS
 	{
 		"_",
-		1, php_native_gettext,
+		1,
+		php_native_gettext,
 	},
 	{
 		"gettext",
-		1, php_native_gettext,
+		1,
+		php_native_gettext,
 	},
 	{
 		"gettext_noop",
-		1, php_native_gettext_noop,
+		1,
+		php_native_gettext_noop,
 	},
 	{
 		"ngettext",
-		3, php_native_ngettext,
+		3,
+		php_native_ngettext,
 	},
 #endif
-	{ 0, 0, 0, },
+	{
+		0,
+		0,
+		0,
+	},
 };
 
 void php_init_core_lib()
 {
 	// load function definitions
 	PHP_BLTIN_FUNC_DEF *curr_def = core_lib_funcs;
-	while ( curr_def->name ) {
+	while (curr_def->name) {
 		php_add_native_func(curr_def);
 		curr_def++;
 	}
 }
 
-//
 // lexer has no include file
-//
-extern "C"
-void php_set_input_buffer(char *buf, int len);
+extern "C" void php_set_input_buffer(char *buf, int len);
 
 CPhPLibContext::CPhPLibContext(CWebServerBase *server, const char *file)
 {
@@ -526,7 +617,7 @@ CPhPLibContext::CPhPLibContext(CWebServerBase *server, const char *file)
 
 	php_engine_init();
 	phpin = fopen(file, "r");
-	if ( !phpin ) {
+	if (!phpin) {
 		return;
 	}
 
@@ -575,18 +666,16 @@ void CPhPLibContext::Execute(CWriteStrBuffer *buf)
 CPhPLibContext *CPhPLibContext::g_curr_context = 0;
 
 /*
- * For simplicity and performance sake, this function can
- * only handle limited-length printf's. In should be NOT be used
- * for string concatenation like printf("xyz %s %s", s1, s2).
- *
- * Engine will call Print for "print" and "echo"
+ * For simplicity and performance this can only handle limited-length printfs. It should NOT be
+ * used for string concatenation like printf("xyz %s %s", s1, s2). The engine calls Print for
+ * "print" and "echo".
  */
 void CPhPLibContext::Printf(const char *str, ...)
 {
 	va_list args;
 
 	va_start(args, str);
-	if ( !g_curr_context || !g_curr_context->m_curr_str_buffer ) {
+	if (!g_curr_context || !g_curr_context->m_curr_str_buffer) {
 		vprintf(str, args);
 	} else {
 		char buf[4096];
@@ -598,29 +687,36 @@ void CPhPLibContext::Printf(const char *str, ...)
 
 void CPhPLibContext::Print(const char *str)
 {
-	if ( !g_curr_context || !g_curr_context->m_curr_str_buffer ) {
+	if (!g_curr_context || !g_curr_context->m_curr_str_buffer) {
 		printf("%s", str);
 	} else {
 		g_curr_context->m_curr_str_buffer->Write(str);
 	}
 }
 
-
-CPhpFilter::CPhpFilter(CWebServerBase *server, CSession *sess,
-			const char *file, CWriteStrBuffer *buff)
+CPhpFilter::CPhpFilter(CWebServerBase *server, CSession *sess, const char *file, CWriteStrBuffer *buff)
 {
 	FILE *f = fopen(file, "r");
-	if ( !f ) {
+	if (!f) {
 		printf("ERROR: php can not open source file [%s]\n", file);
 		return;
 	}
-	if ( fseek(f, 0, SEEK_END) != 0 ) {
+	if (fseek(f, 0, SEEK_END) != 0) {
 		printf("ERROR: fseek failed on php source file [%s]\n", file);
 		fclose(f);
 		return;
 	}
-	int size = ftell(f);
-	char *buf = new char [size+1];
+	// ftell returns long, which is 32-bit on Win64 (LLP64) -- store it in a 64-bit local first
+	// so a >2 GiB file, or a negative error return, does not silently wrap into a bogus
+	// allocation size.
+	const long long raw_size = ftell(f);
+	if (raw_size < 0 || raw_size > 0x7fffffffLL) {
+		printf("ERROR: php source file [%s] is too large or ftell failed\n", file);
+		fclose(f);
+		return;
+	}
+	int size = static_cast<int>(raw_size);
+	char *buf = new char[size + 1];
 	rewind(f);
 	// fread may actually read less if it is a CR-LF-file in Windows
 	size = fread(buf, 1, size, f);
@@ -628,17 +724,17 @@ CPhpFilter::CPhpFilter(CWebServerBase *server, CSession *sess,
 	fclose(f);
 	char *scan_ptr = buf;
 	char *curr_code_end = buf;
-	while ( strlen(scan_ptr) ) {
+	while (*scan_ptr) {
 		scan_ptr = strstr(scan_ptr, "<?php");
-		if ( !scan_ptr ) {
+		if (!scan_ptr) {
 			buff->Write(curr_code_end);
 			break;
 		}
-		if ( scan_ptr != curr_code_end ) {
+		if (scan_ptr != curr_code_end) {
 			buff->Write(curr_code_end, scan_ptr - curr_code_end);
 		}
 		curr_code_end = strstr(scan_ptr, "?>");
-		if ( !curr_code_end ) {
+		if (!curr_code_end) {
 			break;
 		}
 		curr_code_end += 2; // include "?>" in buffer
@@ -648,6 +744,7 @@ CPhpFilter::CPhpFilter(CWebServerBase *server, CSession *sess,
 		CPhPLibContext *context = new CPhPLibContext(server, scan_ptr, len);
 
 #ifndef PHP_STANDALONE_EN
+		context->SetAdmin(sess->m_admin);
 		load_session_vars("HTTP_GET_VARS", sess->m_get_vars);
 		load_session_vars("_SESSION", sess->m_vars);
 #endif
@@ -667,14 +764,12 @@ CPhpFilter::CPhpFilter(CWebServerBase *server, CSession *sess,
 	sess->m_get_vars.clear();
 #endif
 
-	delete [] buf;
+	delete[] buf;
 }
 
-
 /*
- * String buffer: almost same as regular 'string' class, but,
- * without reallocation when full. Instead, new buffer is
- * allocated, and added to list
+ * String buffer: almost the same as a regular 'string' class, but with no reallocation when full.
+ * Instead a new buffer is allocated and added to a list.
  */
 CWriteStrBuffer::CWriteStrBuffer()
 {
@@ -686,30 +781,31 @@ CWriteStrBuffer::CWriteStrBuffer()
 
 CWriteStrBuffer::~CWriteStrBuffer()
 {
-	for(std::list<char *>::iterator i = m_buf_list.begin(); i != m_buf_list.end(); ++i) {
-		delete [] *i;
+	for (std::list<char *>::iterator i = m_buf_list.begin(); i != m_buf_list.end(); ++i) {
+		delete[] *i;
 	}
-	delete [] m_curr_buf;
+	delete[] m_curr_buf;
 }
 
 void CWriteStrBuffer::AllocBuf()
 {
-	m_curr_buf = new char [m_alloc_size];
+	m_curr_buf = new char[m_alloc_size];
 	m_buf_ptr = m_curr_buf;
 	m_curr_buf_left = m_alloc_size;
 }
 
 void CWriteStrBuffer::Write(const char *s, int len)
 {
-	if ( len == -1 ) {
+	if (len == -1) {
 		len = strlen(s);
 	}
 	m_total_length += len;
 
-	while ( len ) {
-		if ( (len + 1) <= m_curr_buf_left ) {
-			strncpy(m_buf_ptr, s, len);
+	while (len) {
+		if ((len + 1) <= m_curr_buf_left) {
+			memcpy(m_buf_ptr, s, len);
 			m_buf_ptr += len;
+			*m_buf_ptr = '\0';
 			m_curr_buf_left -= len;
 			len = 0;
 		} else {
@@ -728,12 +824,12 @@ void CWriteStrBuffer::CopyAll(char *dst_buffer)
 {
 	char *curr_ptr = dst_buffer;
 	int rem_size = m_total_length;
-	for(std::list<char *>::iterator i = m_buf_list.begin(); i != m_buf_list.end(); ++i) {
+	for (std::list<char *>::iterator i = m_buf_list.begin(); i != m_buf_list.end(); ++i) {
 		memcpy(curr_ptr, *i, m_alloc_size);
 		rem_size -= m_alloc_size;
 		curr_ptr += m_alloc_size;
 	}
-	if ( rem_size ) {
+	if (rem_size) {
 		memcpy(curr_ptr, m_curr_buf, rem_size);
 	}
 	*(curr_ptr + rem_size) = 0;
@@ -746,7 +842,7 @@ void load_session_vars(const char *target, std::map<std::string, std::string> &v
 	// i'm not building exp tree, node not needed
 	delete sess_vars_exp_node;
 	cast_value_array(&sess_vars->value);
-	for(std::map<std::string, std::string>::iterator i = varmap.begin(); i != varmap.end(); ++i) {
+	for (std::map<std::string, std::string>::iterator i = varmap.begin(); i != varmap.end(); ++i) {
 		PHP_VAR_NODE *curr_var = array_get_by_str_key(&sess_vars->value, i->first);
 		PHP_VALUE_NODE val;
 		val.type = PHP_VAL_STRING;
@@ -761,11 +857,11 @@ void save_session_vars(std::map<std::string, std::string> &varmap)
 	PHP_VAR_NODE *sess_vars = sess_vars_exp_node->var_si_node->var;
 
 	delete sess_vars_exp_node;
-	if ( sess_vars->value.type != PHP_VAL_ARRAY ) {
+	if (sess_vars->value.type != PHP_VAL_ARRAY) {
 		return;
 	}
 
-	for(int i = 0; i < array_get_size(&sess_vars->value); i++) {
+	for (int i = 0; i < array_get_size(&sess_vars->value); i++) {
 		std::string s = array_get_ith_key(&sess_vars->value, i);
 		PHP_VAR_NODE *var = array_get_by_str_key(&sess_vars->value, s);
 		cast_value_str(&var->value);

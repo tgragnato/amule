@@ -27,13 +27,23 @@
 #define ED2KC2CUDP_H
 
 // Extended prot client <-> Extended prot client UDP
-enum ED2KExtendedClientUDP {
-	OP_REASKFILEPING			= 0x90,	// <HASH 16>
-	OP_REASKACK					= 0x91,	// <RANG 2>
-	OP_FILENOTFOUND				= 0x92,	// (null)
-	OP_QUEUEFULL				= 0x93,	// (null)
-	OP_REASKCALLBACKUDP			= 0x94,
-	OP_PORTTEST					= 0xFE	// Connection Test
+enum ED2KExtendedClientUDP
+{
+	OP_REASKFILEPING = 0x90, // <HASH 16>
+	OP_REASKACK = 0x91,      // <RANG 2>
+	OP_FILENOTFOUND = 0x92,  // (null)
+	OP_QUEUEFULL = 0x93,     // (null)
+	OP_REASKCALLBACKUDP = 0x94,
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+	// Empty peer UDP punch: the recipient dials uTP to the sender's observed UDP port.
+	// Distinct from the raw UDP protocol byte NatPeerUdp::OP_NATT_HOLEPUNCH (0xB3).
+	OP_HOLEPUNCH = 0xA1, // (null)
+#endif
+#if defined(AMULE_UTP_TRANSPORT) || defined(AMULE_QUIC_TRANSPORT)
+	// To a punched peer whose datagram no key decoded: the source we saw it from.
+	OP_NATT_SOURCE_ECHO = 0xAB, // <IP 4><PORT 2>
+#endif
+	OP_PORTTEST = 0xFE // Connection Test
 };
 
 #endif // ED2KC2CUDP_H

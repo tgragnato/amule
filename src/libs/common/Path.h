@@ -28,24 +28,15 @@
 #include "../../Types.h"
 #include "Format.h"
 
-
 /**
- * This class wraps a path/filename, serving a purpose much
- * like wxFileName. But in addition CPath serves to enable
- * the handling of "broken" filenames, allowing these to be
- * printed in a meaningful manner, while still allowing
- * access to the actual files in the filesystem.
+ * Wraps a path/filename much as wxFileName does, but also handles "broken"
+ * filenames: they print meaningfully while the real file stays reachable.
  *
- * This class is thread-safe, in that the class is read-only,
- * and any function that returns wxStrings or CPath objects,
- * ensure that an entirely new wxString object is created to
- * circumvent the thread-unsafe reference counting of that
- * class.
+ * Read-only, and every function returning a wxString or CPath builds a fresh
+ * object, so it sidesteps wxString's thread-unsafe reference counting.
  *
- * This class, and its static functions should be used in
- * preference of wxFileName, for the above reason, and so
- * that cross-platform issues can be worked around in a
- * single place.
+ * Prefer this over wxFileName for both reasons, and so cross-platform quirks
+ * are worked around in one place.
  */
 class CPath
 {
@@ -54,35 +45,30 @@ public:
 	CPath();
 
 	/** Constructor. */
-	explicit CPath(const wxString& path);
+	explicit CPath(const wxString &path);
 
 	/** Copy constructor. Creates a deep-copy of the passed object. */
-	CPath(const CPath& other);
-
+	CPath(const CPath &other);
 
 	/**
 	 * Creates a path from one saved in the 'universal' format.
 	 *
-	 * These are to be used when the filenames/paths are saved to
-	 * the local machine, and ensure that locale-changes does not
-	 * affect our ability to find previously known files. This
-	 * should not be used when sending filenames to other clients
-	 * or (currently) the core/gui.
-	 **/
-	static CPath FromUniv(const wxString& path);
+	 * Use for paths written to the local machine, so a locale change cannot
+	 * lose previously known files. Not for paths sent to other clients or
+	 * (currently) the core/gui.
+	 */
+	static CPath FromUniv(const wxString &path);
 	/** Creates an 'universal' path from the specified CPath. */
-	static wxString ToUniv(const CPath& path);
-
+	static wxString ToUniv(const CPath &path);
 
 	/** Assignment operator. */
-	CPath& operator=(const CPath& other);
+	CPath &operator=(const CPath &other);
 	/** Less-than operator. */
-	bool operator<(const CPath& other) const;
+	bool operator<(const CPath &other) const;
 	/** Note that only exact matches are considered equal, see IsSameDir. */
-	bool operator==(const CPath& other) const;
+	bool operator==(const CPath &other) const;
 	/** Note that only exact matches are considered equal, see IsSameDir. */
-	bool operator!=(const CPath& other) const;
-
+	bool operator!=(const CPath &other) const;
 
 	/** Returns true if the filename is valid, false otherwise. */
 	bool IsOk() const;
@@ -91,8 +77,8 @@ public:
 	/** Returns true if the path exists and is a directory, false otherwise. */
 	bool DirExists() const;
 
-
-	enum EAccess {
+	enum EAccess
+	{
 		//! Only check of the file or dir exists.
 		exists,
 		//! If set, checks if a file is readable, or if a dir can be accessed.
@@ -108,7 +94,6 @@ public:
 	/** Returns if if the path is a dir, and the checks were positive. */
 	bool IsFile(EAccess mode) const;
 
-
 	/** Returns the contents of the object in a form suitable for use with wx system-calls. */
 	wxString GetRaw() const;
 	/** Returns the contents of the object in a form suitable for use in the UI. */
@@ -121,124 +106,161 @@ public:
 	/** Returns the full filename, excluding the path. */
 	CPath GetFullName() const;
 
+	/**
+	 * True if this is a single bare file name with no directory component -- i.e. safe to JoinPaths()
+	 * onto a directory without escaping it. False for an empty/invalid path, anything containing a
+	 * path separator (its leaf would differ from the whole), and the "." / ".." directory entries.
+	 * Use it to validate an externally-supplied name before joining it to a trusted directory, so a
+	 * caller cannot use "../" to traverse out (CWE-22).
+	 */
+	bool IsBareFileName() const;
+
+	/**
+	 * Canonical form for a containment test: made absolute, with "." / ".." collapsed and (on POSIX)
+	 * symlinks resolved. A path that does not exist yet is resolved through its deepest existing
+	 * ancestor, the remaining components re-appended. Returns an invalid CPath when this one is
+	 * invalid. Pair with IsContainedIn().
+	 */
+	CPath CanonicalForContainment(bool requireResolved = false) const;
+
+	/**
+	 * True iff this path, canonicalised, is equal to or inside `root` (also canonicalised). The
+	 * comparison is whole-component -- "/data" does not match "/database" -- and case-insensitive
+	 * where the platform's filesystem is. Use it to confine an externally-supplied directory to a
+	 * configured root, so a "../" or a symlink cannot escape it (CWE-22).
+	 */
+	bool IsContainedIn(const CPath &root) const;
+
 	/** Returns the size of the specified file, or wxInvalidSize on failure. */
 	sint64 GetFileSize() const;
 
 	/**
-	 * Compares under the assumption that both objects are dirs, even if
-	 * one or the other lacks a terminal directory-separator. However, an
-	 * empty CPath object will not be considered equal to a path to the root.
+	 * Existence, modification time and size from a single stat().
+	 *
+	 * False when the path is not an existing regular file: a broken symlink, a
+	 * directory, or permissions too strict to stat.
+	 *
+	 * Asking separately costs four round-trips, one of which opens the file.
+	 * The share scan asks once per file, where that is most of a cold walk.
 	 */
-	bool IsSameDir(const CPath& other) const;
+	bool GetFileStat(time_t &mtime, sint64 &size) const;
+
+	/**
+	 * Compares as directories, with or without a trailing separator. An empty
+	 * CPath is still not equal to the root path.
+	 */
+	bool IsSameDir(const CPath &other) const;
+
+	/**
+	 * The canonical string IsSameDir() reduces this path to.
+	 *
+	 * For paths with a separator, equal keys mean IsSameDir() would say true, so
+	 * a caller can group many in one pass instead of comparing every pair. Bare
+	 * filenames are not covered: IsSameDir() uses PATHCMP while this normalises,
+	 * and on Windows wxPATH_NORM_LONG gives PROGRA~1 and "Program Files" the same
+	 * key where PATHCMP calls them different.
+	 *
+	 * For CSharedFileList, where a browse was O(directories x files) calls to
+	 * IsSameDir(), each normalising both sides (issue #898).
+	 */
+	wxString GetDirKey() const;
 
 	/** Returns a CPath created from joining the two objects. */
-	CPath JoinPaths(const CPath& other) const;
+	CPath JoinPaths(const CPath &other) const;
 	/** Returns a CPath with invalid chars removed, and spaces escaped if specified. */
 	CPath Cleanup(bool keepSpaces = true, bool isFAT32 = false) const;
 	/** Returns a CPath with a postfix before the file-extension. Must be ASCII. */
-	CPath AddPostfix(const wxString& postfix) const;
+	CPath AddPostfix(const wxString &postfix) const;
 
 	/** Returns a CPath object with the extension appended. Empty strings are ignored. */
-	CPath AppendExt(const wxString& ext) const;
+	CPath AppendExt(const wxString &ext) const;
 	/** Returns a CPath with the (last, if multiple) extension removed. */
 	CPath RemoveExt() const;
 	/** Returns a CPath object with all extensions removed. */
 	CPath RemoveAllExt() const;
 
-
 	/** Returns true if the the passed path makes up an prefix of this object. */
-	bool StartsWith(const CPath& other) const;
+	bool StartsWith(const CPath &other) const;
 
 	/**
-	 * Get truncated path.
+	 * Get truncated path. Truncates the file's @em name, not the file.
 	 *
-	 * @note This function truncates the @em name of the file, not the file
-	 * itself.
-	 *
-	 * @param length	The truncated path should not exceed this length.
-	 * @param isFilePath	Indicates whether the last part of the path (the
-	 *			file name) should be kept or not, if possible.
-	 * @return	The truncated path, at most @a length long.
+	 * @param isFilePath  keep the last part (the file name) if possible.
 	 */
 	wxString TruncatePath(size_t length, bool isFilePath = false) const;
 
 	/**
-	 * Renames the file 'src' to the file 'dst', overwriting if specified. Note that
-	 * renaming cannot be done across volumes. For that CopyFile is required.
+	 * Renames src to dst. Cannot cross volumes; use CFile::CloneFile for that.
 	 */
-	static bool RenameFile(const CPath& src, const CPath& dst, bool overwrite = false);
+	static bool RenameFile(const CPath &src, const CPath &dst, bool overwrite = false);
+
 	/**
-	 * Copies the file 'src' to the file 'dst', overwriting if specified.
-	 * The silly name is used to avoid conflicts with the #define CopyFile,
-	 * which is set on MSW.
+	 * Replaces the directory entry dst with src on the same volume.
+	 * Creates dst if absent; leaves an existing destination intact on failure.
+	 * Does not fall back to copying or flushing file data to stable storage.
+	 * Clears detail on success; on failure, fills it with the OS error if requested.
+	 * On Windows, retries once after a short wait for sharing/access violations.
 	 */
-	static bool CloneFile(const CPath& src, const CPath& dst, bool overwrite = false);
+	static bool ReplaceEntry(const CPath &src, const CPath &dst, wxString *detail = nullptr);
 
 	/** Makes a backup of a file, by copying the original file to 'src' + 'appendix' */
-	static bool BackupFile(const CPath& src, const wxString& appendix);
+	static bool BackupFile(const CPath &src, const wxString &appendix);
 
 	/** Deletes the specified file, returning true on success. */
-	static bool RemoveFile(const CPath& file);
+	static bool RemoveFile(const CPath &file);
 	/** Deletes the specified directory, returning true on success. */
-	static bool RemoveDir(const CPath& file);
+	static bool RemoveDir(const CPath &file);
 	/** Creates the specified directory, returning true on success. */
-	static bool MakeDir(const CPath& file);
+	static bool MakeDir(const CPath &file);
 
 	/** Returns true if the path exists, and is a file. */
-	static bool FileExists(const wxString& file);
+	static bool FileExists(const wxString &file);
 	/** Returns true if the path exists, and is a directory. */
-	static bool DirExists(const wxString& path);
+	static bool DirExists(const wxString &path);
 
 	/** Returns the size of the specified file, or wxInvalidOffset on failure. */
-	static sint64 GetFileSize(const wxString& file);
+	static sint64 GetFileSize(const wxString &file);
 	/** Returns the modification time the specified file, or (time_t)-1 on failure. */
-	static time_t GetModificationTime(const CPath& file);
+	static time_t GetModificationTime(const CPath &file);
 	/** Returns the free diskspace at the specified path, or wxInvalidOffset on failure. */
-	static sint64 GetFreeSpaceAt(const CPath& path);
+	static sint64 GetFreeSpaceAt(const CPath &path);
 
 private:
 	//! Contains the printable filename, for use in the UI.
-	wxString	m_printable;
+	wxString m_printable;
 	//! Contains the "raw" filename, for use in system-calls,
 	//! as well as in wxWidgets file functions.
-	wxString	m_filesystem;
+	wxString m_filesystem;
 
 	// Is made a friend to avoid needless copying of strings.
-	friend int CmpAny(const CPath& ArgA, const CPath& ArgB);
+	friend int CmpAny(const CPath &ArgA, const CPath &ArgB);
 };
 
 // Make CPath printable in CFormat
-template<>
-inline CFormat& CFormat::operator%(CPath value)
+template <> inline CFormat &CFormat::operator%(CPath value)
 {
-	return this->operator%<const wxString&>(value.GetPrintable());
+	return this->operator% <const wxString &>(value.GetPrintable());
 }
 
 /**
- * Overloaded version of CmpAny for use with CPaths. As this is
- * typically used in the UI, it uses the printable filename in
- * order to get visually correct results.
+ * CmpAny for CPaths. Compares the printable filename, since this is mostly
+ * used in the UI and should sort the way the user sees it.
  */
-inline int CmpAny(const CPath& ArgA, const CPath& ArgB)
+inline int CmpAny(const CPath &ArgA, const CPath &ArgB)
 {
 	return ArgA.m_printable.CmpNoCase(ArgB.m_printable);
 }
 
-
 /**
- * Strips all path separators from the specified end of a path.
- *
- * Note: type must be either leading or trailing.
+ * Strips all path separators from one end of a path. Type must be leading
+ * or trailing.
  */
 wxString StripSeparators(wxString path, wxString::stripType type);
 
-
 /**
- * Joins two paths with the operating system specific path-separator.
- *
- * If any of the parameters are empty, the other parameter is
- * returned unchanged.
+ * Joins two paths with the platform separator. An empty parameter returns
+ * the other unchanged.
  */
-wxString JoinPaths(const wxString& path, const wxString& file);
+wxString JoinPaths(const wxString &path, const wxString &file);
 
 #endif

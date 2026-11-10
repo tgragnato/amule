@@ -25,22 +25,26 @@
 #ifndef ECID_H
 #define ECID_H
 
-#include "../../../Types.h"	// Needed for uint32
+#include "../../../Types.h" // Needed for uint32
 
-/*
- * Class to create unique IDs for Objects transmitted through EC
- * (Partfiles, Knownfiles, clients...)
+#include <atomic>
+
+/**
+ * Creates unique IDs for objects transmitted through EC: partfiles, knownfiles, clients.
  */
-class CECID {
+class CECID
+{
 	// the id
 	uint32 m_ID;
-	// counter to calculate unique ids (defined in ECTag.cpp)
-	static uint32 s_IDCounter;
+	// counter to calculate unique ids (defined in ECTag.cpp). Atomic: files are created on
+	// worker threads too, and a lost update would hand two live objects the same id.
+	static std::atomic<uint32> s_IDCounter;
+
 public:
-	CECID()				{ m_ID = ++s_IDCounter; }
-	CECID(uint32 id)	{ m_ID = id; }
-	uint32 ECID() const	{ return m_ID; }
-	void RenewECID()	{ m_ID = ++s_IDCounter; }
+	CECID() { m_ID = ++s_IDCounter; }
+	CECID(uint32 id) { m_ID = id; }
+	uint32 ECID() const { return m_ID; }
+	void RenewECID() { m_ID = ++s_IDCounter; }
 };
 
 #endif

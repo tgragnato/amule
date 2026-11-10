@@ -23,31 +23,45 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
 #ifndef AMULE_H
 #define AMULE_H
 
+#include "libs/ec/cpp/ECSRP.h"
+// AMULE_DAEMON and wxUSE_GUI give CamuleApp a different base class in each binary. A shared
+// library unit would see another layout than the binary it links into.
+#ifdef AMULE_LIBRARY_UNIT
+#error "amule.h depends on per-binary defines; compile this unit in the amule/amuled targets"
+#endif
 
-#include <wx/app.h>			// Needed for wxApp
-#include <wx/intl.h>			// Needed for wxLocale
+#include <wx/app.h>      // Needed for wxApp
+#include <wx/datetime.h> // Needed for wxDateTime (ED2K/Kad "Connected since")
+#include <wx/intl.h>     // Needed for wxLocale
+#include <wx/timer.h>    // Needed for wxTimer (startup splash poll)
 
+#include "AmuleApiRestart.h"
 
-#include "Types.h"			// Needed for int32, uint16 and uint64
+#include "Types.h"    // Needed for int32, uint16 and uint64
+#include <functional> // Needed for std::function (DeferShutDownToOuterLoop)
 #include <map>
 #include <signal.h>
 
-#include "config.h"			// Needed for ASIO_SOCKETS
+#include "config.h"
 
+class CTerminationProcessAmuleApi;
 class CAbstractFile;
 class CKnownFile;
+class CSplashScreen;
 class ExternalConn;
 class CamuleDlg;
 class CPreferences;
 class CDownloadQueue;
 class CUploadQueue;
 class CPartFileWriteThread;
+class CPartMetWriter;
 class CPartFileHashThread;
 class CUploadDiskIOThread;
+class CMediaProbeThread;
+class CFreeSpaceThread;
 class CPartFileHashResultEvent;
 class CServerConnect;
 class CSharedFileList;
@@ -58,44 +72,44 @@ class CServerList;
 class CListenSocket;
 class CClientList;
 class CKnownFileList;
-class CCanceledFileList;
+class CHashListFile;
 class CSearchList;
+class CBrowseManager;
 class CClientCreditsList;
 class CFriendList;
+class CChatSessionStore;
 class CClientUDPSocket;
 class CIPFilter;
 class UploadBandwidthThrottler;
-#ifdef ASIO_SOCKETS
 class CAsioService;
-#else
-class wxSocketEvent;
-#endif
 class CStatistics;
 class wxCommandEvent;
 class wxCloseEvent;
+class wxIdleEvent;
 class wxFFileOutputStream;
 class CTimer;
 class CTimerEvent;
-class wxSingleInstanceChecker;
+class InstanceLock;
 class CHashingEvent;
+class CMediaProbeEvent;
+class CVerifyLocalDataEvent;
 class CMuleInternalEvent;
 class CCompletionEvent;
 class CAllocFinishedEvent;
 class wxExecuteData;
 class CLoggingEvent;
 
-
-namespace MuleNotify {
-	class CMuleGUIEvent;
+namespace MuleNotify
+{
+class CMuleGUIEvent;
 }
 
 using MuleNotify::CMuleGUIEvent;
 
-
-namespace Kademlia {
-	class CUInt128;
+namespace Kademlia
+{
+class CUInt128;
 }
-
 
 #ifdef AMULE_DAEMON
 #define AMULE_APP_BASE wxAppConsole
@@ -105,64 +119,197 @@ namespace Kademlia {
 #define CORE_TIMER_PERIOD 100
 #endif
 
-#define CONNECTED_ED2K (1<<0)
-#define CONNECTED_KAD_NOT (1<<1)
-#define CONNECTED_KAD_OK (1<<2)
-#define CONNECTED_KAD_FIREWALLED (1<<3)
+// How long the amuleapi EC token file may sit on disk before the core removes it, read or not: long
+// enough for a slow exec on a loaded machine, short enough not to leave a secret at rest.
+#define EC_TOKEN_FILE_TTL_MS 10000
 
+#define CONNECTED_ED2K (1 << 0)
+#define CONNECTED_KAD_NOT (1 << 1)
+#define CONNECTED_KAD_OK (1 << 2)
+#define CONNECTED_KAD_FIREWALLED (1 << 3)
 
-void OnShutdownSignal( int /* sig */ );
-
+void OnShutdownSignal(int /* sig */);
 
 // Base class common to amule, aamuled and amulegui
 class CamuleAppCommon
 {
 private:
-	// Used to detect a previous running instance of aMule
-	wxSingleInstanceChecker*	m_singleInstance;
+	// Detects a previous running instance. InstanceLock replaces wxSingleInstanceChecker on
+	// POSIX so the check survives PID-namespace boundaries (Flatpak).
+	InstanceLock *m_singleInstance;
 
-	bool		CheckPassedLink(const wxString &in, wxString &out, int cat);
-protected:
-	wxString	FullMuleVersion;
-	wxString	OSDescription;
-	wxString	OSType;
-	bool		enable_daemon_fork;
-	bool		ec_config;
-	bool		m_skipConnectionDialog;
-	bool		m_geometryEnabled;
-	wxString	m_geometryString;
-	wxString	m_logFile;
-	wxString	m_appName;
-	wxString	m_PidFile;
+	bool CheckPassedLink(const wxString &in, wxString &out, int cat);
 
-	bool		InitCommon(int argc, wxChar ** argv);
-	void		RefreshSingleInstanceChecker();
-	bool		CheckMuleDirectory(const wxString& desc, const class CPath& directory, const wxString& alternative, class CPath& outDir);
 public:
-	wxString	m_configFile;
+	// Outcome of trying to read a path as a collection.
+	enum CollectionExpansion
+	{
+		// The path isn't a collection; a command-line caller treats it
+		// as a link instead.
+		kNotACollection,
+		// The path named a collection and its links were emitted.
+		kCollectionExpanded,
+		// The path named a collection we could not read. Already logged, and not retried as
+		// a link -- that would emit a second, misleading "invalid eD2k link" error.
+		kCollectionFailed
+	};
+
+	/**
+	 * Expands a .emulecollection into its eD2k links.
+	 *
+	 * Reads the file from this host's filesystem, so a caller holding a remote core's path must
+	 * resolve it first (FileLaunch::ResolvePath). Accepts a plain path or a file:// URL, since
+	 * file managers pass either. Each link goes through CheckPassedLink(), so the caller gets
+	 * the same canonicalisation and category suffix as a link typed on the command line.
+	 * Missing, malformed and empty collections are reported here; the caller only has to stop.
+	 */
+	CollectionExpansion ExpandPassedCollection(const wxString &in, wxArrayString &out, int cat);
+
+	/**
+	 * Queues every collection among @a fileNames into the ED2KLinks file.
+	 *
+	 * The macOS "open document" path: the OS hands us the files the user double-clicked or
+	 * dropped on the Dock icon, which is why anything that is not a collection is skipped
+	 * without complaint. Goes through the ED2KLinks file rather than downloadqueue, which on
+	 * amulegui does not exist until the EC connection is up.
+	 */
+	void OpenCollectionFiles(const wxArrayString &fileNames);
+
+	// Exit status of a one-shot --configure-* run: 0 or 1, and -1 when none ran. Static because
+	// amuled's main() reads it after wxEntry() has destroyed the app.
+	static int ConfigureExitCode();
+
+	// The POSIX daemon launcher waits for a log-open result from its child. Other
+	// binaries and Windows leave the descriptor unset, so reporting is a no-op.
+	static void SetDaemonStartupFd(int fd);
+	static void ReportDaemonStartup(bool success, const char *error = nullptr);
+
+protected:
+	wxString FullMuleVersion;
+	wxString OSDescription;
+	wxString OSType;
+	bool enable_daemon_fork;
+	bool ec_config;
+	bool m_skipConnectionDialog;
+	bool m_geometryEnabled;
+	bool m_disableFatal;
+	wxString m_geometryString;
+	// Default basename until InitCommon selects the absolute log path.
+	wxString m_logFile;
+	wxString m_appName;
+	wxString m_PidFile;
+
+	bool InitCommon(int argc, wxChar **argv);
+
+	/**
+	 * Logs an assertion, with a backtrace, and applies --disable-fatal.
+	 *
+	 * Every app wants this identically -- the log copy is often the only record that survives,
+	 * since the wxWidgets dialog dies with the process if nobody presses Continue -- but only
+	 * the app itself knows which wxWidgets base to hand the assert on to afterwards, so the
+	 * decision is returned rather than acted on here.
+	 *
+	 * @param dialogUsable whether wxWidgets can still put its assert dialog on screen: false
+	 * off the main thread, and false for an app that is not running yet or is already tearing
+	 * down.
+	 * @return true when the caller should call its base OnAssertFailure(). Does not return at
+	 * all when --disable-fatal is set, or when the dialog is unusable: both abort so a
+	 * supervisor sees a non-zero exit and a debugger catches the assert in place.
+	 */
+	bool ReportAssertFailure(const wxChar *file,
+		int line,
+		const wxChar *func,
+		const wxChar *cond,
+		const wxChar *msg,
+		bool dialogUsable);
+
+	void RefreshSingleInstanceChecker();
+	// Drop the single-instance lock and unlink its file. OnExit() calls std::_Exit() to dodge
+	// the wxWebSession teardown crash, which bypasses ~CamuleAppCommon, so this must run
+	// explicitly or the muleLock / muleLockRGUI file lingers between runs.
+	void ReleaseSingleInstance();
+
+	/**
+	 * Postpone a shutdown requested from inside a nested event loop.
+	 *
+	 * amuledlg->Destroy() only queues the frame on wxPendingDelete, drained from the idle
+	 * handler of whichever event loop is running. A modal dialog runs its own, so a shutdown
+	 * started while one is open destroys the main window from under the handlers that opened
+	 * the dialog: ~CamuleDlg walks down to the list control, and DestroyChildren() deletes the
+	 * stack-allocated dialog those frames still own, aborting on a free of stack memory.
+	 *
+	 * Ending the nested loop makes its ShowModal() return, so those frames unwind normally; @a
+	 * retry then runs the teardown from the loop we land in, and several levels of nesting peel
+	 * off one per pass. Driven by idle events rather than CallAfter(), because
+	 * wxEvtHandler::ProcessPendingEvents() re-drains whatever is queued while it runs -- a
+	 * pending-event retry is picked up by the very loop it is waiting to leave, and Exit/re-
+	 * queue live-locks. Idle events come from the loop itself, so it unwinds first.
+	 *
+	 * @return true if the shutdown was postponed and the caller must return without tearing
+	 * anything down.
+	 */
+	bool DeferShutDownToOuterLoop(const std::function<void()> &retry);
+
+	void OnDeferredShutDownIdle(wxIdleEvent &evt);
+
+	// Teardown queued by DeferShutDownToOuterLoop(), run once the nested
+	// event loops have unwound. Non-empty only while one is outstanding.
+	std::function<void()> m_deferredShutDown;
+
+	bool CheckMuleDirectory(const wxString &desc,
+		const class CPath &directory,
+		const wxString &alternative,
+		class CPath &outDir);
+
+public:
+	wxString m_configFile;
 
 	CamuleAppCommon();
 	~CamuleAppCommon();
-	void		AddLinksFromFile();
+
+	void AddLinksFromFile();
 	// URL functions
-	wxString	CreateMagnetLink(const CAbstractFile *f);
-	wxString	CreateED2kLink(const CAbstractFile* f, bool add_source = false, bool use_hostname = false, bool add_cryptoptions = false, bool add_AICH = false);
-	// Who am I ?
+	wxString CreateMagnetLink(const CAbstractFile *f);
+	wxString CreateED2kLink(const CAbstractFile *f,
+		bool add_source = false,
+		bool use_hostname = false,
+		bool add_cryptoptions = false,
+		bool add_AICH = false);
 #ifdef AMULE_DAEMON
-	bool		IsDaemon() const { return true; }
+	bool IsDaemon() const { return true; }
 #else
-	bool		IsDaemon() const { return false; }
+	bool IsDaemon() const { return false; }
 #endif
 
 #ifdef CLIENT_GUI
-	bool		IsRemoteGui() const { return true; }
+	bool IsRemoteGui() const { return true; }
 #else
-	bool		IsRemoteGui() const { return false; }
+	bool IsRemoteGui() const { return false; }
 #endif
 
-	const wxString&	GetMuleAppName() const { return m_appName; }
-	const wxString	GetFullMuleVersion() const;
+	const wxString &GetMuleAppName() const { return m_appName; }
+	const wxString GetFullMuleVersion() const;
 
+#ifdef __WXGTK__
+	// True when the process runs under a Wayland session. xdg-shell deliberately does not tell
+	// clients about iconify state, so tray features that rely on detecting "user just minimized
+	// the window" cannot work there; call sites grey out the relevant prefs.
+	static bool IsWaylandSession();
+#endif
+
+	/// Forces the tray-dependent preferences off where the tray cannot deliver what they
+	/// promise. Both settings hide the main window and leave the tray icon as the only way
+	/// back, so each has to be switched off wherever that icon will not be there: no SNI
+	/// backend and no tray host for wxTaskBarIcon on Linux, a Wayland
+	/// session (no iconify notification to hide on), or the tray icon simply turned off. Called
+	/// by every GUI app before it builds its window -- amuled inherits it harmlessly, having no
+	/// window to hide.
+	static void SanitiseTrayPreferences();
+
+	// Set when a quit was requested out-of-band of the main-window close button (Cmd+Q, Dock
+	// right-click Quit, tray-icon Exit). CamuleDlg::OnClose checks it so HideOnClose only hides
+	// the window for the actual close gesture and never blocks an explicit quit. On the common
+	// base so CamuleApp and CamuleRemoteGuiApp expose the same accessors.
 	bool IsQuitting() const { return m_isQuitting; }
 	void SetQuitting() { m_isQuitting = true; }
 	void ResetQuitting() { m_isQuitting = false; }
@@ -174,7 +321,8 @@ private:
 class CamuleApp : public AMULE_APP_BASE, public CamuleAppCommon
 {
 private:
-	enum APPState {
+	enum APPState
+	{
 		APP_STATE_RUNNING = 0,
 		APP_STATE_SHUTTINGDOWN,
 		APP_STATE_STARTING
@@ -182,40 +330,42 @@ private:
 
 public:
 	CamuleApp();
-	virtual	 ~CamuleApp();
+	virtual ~CamuleApp();
 
-	virtual bool	OnInit();
-	int		OnExit();
+	bool OnInit() override;
+	int OnExit() override;
 #if wxUSE_ON_FATAL_EXCEPTION
-	void		OnFatalException();
+	void OnFatalException() override;
 #endif
-	bool		ReinitializeNetwork(wxString *msg);
+	bool ReinitializeNetwork(wxString *msg);
+	// Rebind only the P2P endpoints affected by changed listening ports.
+	// The External Connections listener and established peer TCP sockets
+	// stay alive.
+	bool RebindP2PSockets(bool tcpPortChanged, bool udpPortChanged, uint16 oldTcpPort, wxString *msg);
 
-	// derived classes may override those
 	virtual int InitGui(bool geometry_enable, wxString &geometry_string);
 
-#ifndef ASIO_SOCKETS
-	// Socket handlers
-	void ListenSocketHandler(wxSocketEvent& event);
-	void UDPSocketHandler(wxSocketEvent& event);
-#endif
+	/// Create a search tab for every search restored from StoredSearches.met. Separate from
+	/// InitGui() because the two cannot share a slot in startup order: the tabs need the
+	/// restored results, and those need the download queue loaded before their status is
+	/// computed, well after the GUI is up. Called from OnInit() right after
+	/// CSearchList::LoadSearches(); a no-op on builds without a search dialog.
+	virtual void RestoreSearchTabs() {}
 
 	virtual int ShowAlert(wxString msg, wxString title, int flags) = 0;
 
-	// Barry - To find out if app is running or shutting/shut down
 	bool IsRunning() const { return (m_app_state == APP_STATE_RUNNING); }
+	// Called where a client, server or friend is removed. EC connections cache the last
+	// value sent per object and only an entry's own removal can free it.
+	void ForgetECObject(uint32 ecid);
 	bool IsOnShutDown() const { return (m_app_state == APP_STATE_SHUTTINGDOWN); }
 
 	// Check ED2K and Kademlia state
 	bool IsFirewalled() const;
-	// Are we connected to at least one network?
 	bool IsConnected() const;
-	// Connection to ED2K
 	bool IsConnectedED2K() const;
 
-	// What about Kad? Is it running?
 	bool IsKadRunning() const;
-	// Connection to Kad
 	bool IsConnectedKad() const;
 	// Check Kad state (TCP)
 	bool IsFirewalledKad() const;
@@ -224,67 +374,73 @@ public:
 	// Check Kad state (LAN mode)
 	bool IsKadRunningInLanMode() const;
 	// Kad stats
-	uint32	GetKadUsers() const;
-	uint32	GetKadFiles() const;
-	uint32	GetKadIndexedSources() const;
-	uint32	GetKadIndexedKeywords() const;
-	uint32	GetKadIndexedNotes() const;
-	uint32	GetKadIndexedLoad() const;
+	uint32 GetKadUsers() const;
+	uint32 GetKadFiles() const;
+	uint32 GetKadIndexedSources() const;
+	uint32 GetKadIndexedKeywords() const;
+	uint32 GetKadIndexedNotes() const;
+	uint32 GetKadIndexedLoad() const;
+	// The counts above are real only once the saved index is loaded.
+	bool IsKadIndexReady() const;
 	// True IP of machine
-	uint32	GetKadIPAddress() const;
+	uint32 GetKadIPAddress() const;
 	// Buddy status
-	uint8	GetBuddyStatus() const;
-	uint32	GetBuddyIP() const;
-	uint32	GetBuddyPort() const;
-	// Kad ID
-	const Kademlia::CUInt128& GetKadID() const;
+	uint8 GetBuddyStatus() const;
+	uint32 GetBuddyIP() const;
+	uint32 GetBuddyPort() const;
+	const Kademlia::CUInt128 &GetKadID() const;
 
 	// Check if we should callback this client
 	bool CanDoCallback(uint32 clientServerIP, uint16 clientServerPort);
 
-	// Misc functions
-	void		OnlineSig(bool zero = false);
-	void		Localize_mule();
-	void		Trigger_New_version(wxString newMule);
+	void OnlineSig(bool zero = false);
+	void Localize_mule();
+	void Trigger_New_version(wxString newMule);
 
-	// shakraw - new EC code using wxSocketBase
-	ExternalConn*	ECServerHandler;
+	ExternalConn *ECServerHandler;
 
 	// return current (valid) public IP or 0 if unknown
 	// If ignorelocal is true, don't use m_localip
-	uint32	GetPublicIP(bool ignorelocal = false) const;
-	void		SetPublicIP(const uint32 dwIP);
+	uint32 GetPublicIP(bool ignorelocal = false) const;
+	void SetPublicIP(const uint32 dwIP);
 
-	uint32	GetED2KID() const;
-	uint32	GetID() const;
+	uint32 GetED2KID() const;
+	uint32 GetID() const;
 
-	// Other parts of the interface and such
-	CPreferences*		glob_prefs;
-	CDownloadQueue*		downloadqueue;
-	CUploadQueue*		uploadqueue;
-	CPartFileWriteThread*	partFileWriteThread;
-	CPartFileHashThread*	partFileHashThread;
-	CServerConnect*		serverconnect;
-	CSharedFileList*	sharedfiles;
-	CServerList*		serverlist;
-	CListenSocket*		listensocket;
-	CClientList*		clientlist;
-	CKnownFileList*		knownfiles;
-	CCanceledFileList*	canceledfiles;
-	CSearchList*		searchlist;
-	CClientCreditsList*	clientcredits;
-	CFriendList*		friendlist;
-	CClientUDPSocket*	clientudp;
-	CStatistics*		m_statistics;
-	CIPFilter*		ipfilter;
-	UploadBandwidthThrottler* uploadBandwidthThrottler;
-	CUploadDiskIOThread*	uploadDiskIOThread;
-#ifdef ASIO_SOCKETS
-	CAsioService*		m_AsioService;
-#endif
+	CPreferences *glob_prefs;
+	CDownloadQueue *downloadqueue;
+	CUploadQueue *uploadqueue;
+	CPartFileWriteThread *partFileWriteThread;
+	CPartFileHashThread *partFileHashThread;
+	CPartMetWriter *partMetWriter;
+	CMediaProbeThread *mediaProbeThread;
+	CFreeSpaceThread *freeSpaceThread;
+	CServerConnect *serverconnect;
+	CSharedFileList *sharedfiles;
+	CServerList *serverlist;
+	CListenSocket *listensocket;
+	CClientList *clientlist;
+	CKnownFileList *knownfiles;
+	CHashListFile *canceledfiles;
+	CSearchList *searchlist;
+	//! Every "View Files" browse in flight. Owns their whole lifecycle; see
+	//! CBrowseManager.
+	CBrowseManager *browsemanager;
+	CClientCreditsList *clientcredits;
+	CFriendList *friendlist;
+	// The core's chat transcript, shared by the local GUI and every EC client so
+	// all three see one conversation. In-memory; emptied by a restart.
+	CChatSessionStore *chatsessions;
+	CClientUDPSocket *clientudp;
+	CStatistics *m_statistics;
+	CIPFilter *ipfilter;
+	UploadBandwidthThrottler *uploadBandwidthThrottler;
+	CUploadDiskIOThread *uploadDiskIOThread; // eMule ref: emule.h:92
+	CAsioService *m_AsioService;
 	wxLocale m_locale;
 
 	void ShutDown();
+	void ReportShutdownStatus(const wxString &status);
 
 	wxString GetLog(bool reset = false);
 	wxString GetServerLog(bool reset = false);
@@ -295,124 +451,274 @@ public:
 #ifdef __DEBUG__
 	void AddSocketDeleteDebug(uint32 socket_pointer, uint32 creation_time);
 #endif
-	void SetOSFiles(const wxString& new_path);
+	void SetOSFiles(const wxString &new_path);
 
-	const wxString& GetOSType() const { return OSType; }
+	const wxString &GetOSType() const { return OSType; }
 
 	void ShowUserCount();
 
 	void ShowConnectionState(bool forceUpdate = false);
 
+	// Wall-clock time of the most recent ed2k/Kad connect, set by ShowConnectionState() on the
+	// false->true transition it already detects, invalid while disconnected. Feeds the desktop
+	// Info panes' "Connected since" row; not wired over EC, so amulegui lacks it.
+	const wxDateTime &GetED2KConnectedSince() const { return m_ed2kConnectedSince; }
+	const wxDateTime &GetKadConnectedSince() const { return m_kadConnectedSince; }
+
 	void StartKad();
 	void StopKad();
+	bool UPnPDiscoveryPending() const;
 
 	/** Bootstraps kad from the specified IP (must be in hostorder). */
 	void BootstrapKad(uint32 ip, uint16 port);
-	/** Updates the nodes.dat file from the specified url. */
-	void UpdateNotesDat(const wxString& str);
-
+	/** Updates the nodes.dat file from the specified url, with the progress dialog if @a showDialog. */
+	void UpdateNotesDat(const wxString &str, bool showDialog = false);
 
 	void DisconnectED2K();
+	void ApplyNetworkChange(bool ed2kWasEnabled, bool kadWasEnabled);
 
 	bool CryptoAvailable() const;
 
 protected:
+	/// Handles asserts in a thread-safe manner. Compiled unconditionally, not just in
+	/// __WXDEBUG__, so the --disable-fatal short-circuit also covers wxWidgets' own release-
+	/// build assertions: Debian/Ubuntu's libwx packages leave wxDEBUG_LEVEL=1, which keeps
+	/// wxASSERT live in release builds and otherwise routes here through wxApp's default
+	/// dialog.
+	void OnAssertFailure(const wxChar *file,
+		int line,
+		const wxChar *func,
+		const wxChar *cond,
+		const wxChar *msg) override;
 
-#ifdef __WXDEBUG__
-	/**
-	 * Handles asserts in a thread-safe manner.
-	 */
-	virtual void OnAssertFailure(const wxChar* file, int line,
-		const wxChar* func, const wxChar* cond, const wxChar* msg);
-#endif
+	void OnUDPDnsDone(CMuleInternalEvent &evt);
+	void OnSourceDnsDone(CMuleInternalEvent &evt);
+	void OnServerDnsDone(CMuleInternalEvent &evt);
 
-	void OnUDPDnsDone(CMuleInternalEvent& evt);
-	void OnSourceDnsDone(CMuleInternalEvent& evt);
-	void OnServerDnsDone(CMuleInternalEvent& evt);
+	void OnTCPTimer(CTimerEvent &evt);
+	void OnCoreTimer(CTimerEvent &evt);
 
-	void OnTCPTimer(CTimerEvent& evt);
-	void OnCoreTimer(CTimerEvent& evt);
+	void OnFinishedHashing(CHashingEvent &evt);
+	void OnHashingDrained(wxThreadEvent &evt);
+	void OnPartFileHashResult(CPartFileHashResultEvent &evt);
+	void OnFinishedAICHHashing(CHashingEvent &evt);
 
-	void OnFinishedHashing(CHashingEvent& evt);
-	void OnPartFileHashResult(CPartFileHashResultEvent& evt);
-	void OnFinishedAICHHashing(CHashingEvent& evt);
-	void OnFinishedCompletion(CCompletionEvent& evt);
-	void OnFinishedAllocation(CAllocFinishedEvent& evt);
-	void OnFinishedHTTPDownload(CMuleInternalEvent& evt);
-	void OnHashingShutdown(CMuleInternalEvent&);
-	void OnNotifyEvent(CMuleGUIEvent& evt);
+#if !defined(CLIENT_GUI) && !defined(AMULE_DAEMON)
+	// Monolithic only: the daemon has no window to put a splash on, and amulegui is a separate
+	// process that does not run this startup at all.
+	//
+	// Kept alive past OnInit because the slowest part of a first run is hashing everything the
+	// scan found unknown, which drains asynchronously. Null once the window is up and the
+	// splash has closed -- the end of the scan, not the end of hashing (#853).
+	CSplashScreen *m_splash = nullptr;
+	// Drives the hashing drain: refreshes the count on the shared-files label and sorts the
+	// rows that arrived since the last tick. Polled rather than driven from the completion
+	// handlers, because the worker clears its current task after posting the completion event,
+	// so a handler-driven update can see the last task still pending and then never run again.
+	// Polling also covers tasks that finish without reaching a handler.
+	wxTimer m_splashPollTimer;
+
+	// One tick of the drain: label, sort, and finish when the queue empties.
+	void UpdateStartupHashProgress();
+	void OnSplashPollTimer(wxTimerEvent &evt);
+	// Ends the download list's batch, sorts and thaws the shared list, shows the main window
+	// and closes the splash. Called when the scan finishes, with hashing still running.
+	void ShowMainWindowAfterScan();
+	// Ends the shared list's batch with its final sort and stops the poll
+	// timer. Safe to call when nothing needed hashing.
+	void FinishStartupHashing();
+#endif // monolithic only
+
+	// CMediaProbeTask marshals results back here so FT_MEDIA_* tags are attached
+	// on the main thread -- the worker never touches CKnownFile state.
+	void OnMediaProbeFinished(CMediaProbeEvent &evt);
+	// CVerifyLocalDataTask likewise hands its result back here, to be recorded on the file.
+	void OnVerifyLocalDataFinished(CVerifyLocalDataEvent &evt);
+	void OnFinishedCompletion(CCompletionEvent &evt);
+	void OnFinishedAllocation(CAllocFinishedEvent &evt);
+	void OnFinishedHTTPDownload(CMuleInternalEvent &evt);
+	void OnHashingShutdown(CMuleInternalEvent &);
+	void OnNotifyEvent(CMuleGUIEvent &evt);
 
 	void SetTimeOnTransfer();
 
 	APPState m_app_state;
+
+	// Media-probe tag and Verify Local Data writes coalesce into one known.met save: every
+	// OnMediaProbeFinished / OnVerifyLocalDataFinished stamps this (uptime ms) and OnCoreTimer
+	// flushes a single Save() once they have been idle for 30 s, avoiding the O(N^2) full-file
+	// rewrite when the whole library is probed at startup. 0 = nothing pending.
+	uint64 m_knownMetDirtiedMs = 0;
 
 	wxString m_emulesig_path;
 	wxString m_amulesig_path;
 
 	uint32 m_dwPublicIP;
 
-	long webserver_pid;
+	// PID type: `int` fits any OS pid we run on -- POSIX pid_t is typically int, and Windows
+	// process IDs are 32-bit DWORDs. `long` was right on LLP64 only by accident.
+	int webserver_pid;
+	int amuleapi_pid;
+	CTerminationProcessAmuleApi *m_amuleApiProcess = nullptr;
+	AmuleApiRestart m_amuleApiRestart;
+	bool m_amuleApiStopping = false;
+	void StartAmuleApi(bool startup);
+	void ScheduleAmuleApiRestart();
+	bool ClearAmuleApiToken();
+	bool ClearAmulewebToken();
+	bool PrepareAmulewebToken();
+
+	// Independent verifier-only credentials for the helpers we spawn. Raw tokens
+	// exist only during the owner-only file handoff and in the child that consumes
+	// them. A dummy verifier makes an absent/revoked token follow the same handshake.
+	ECSRP::Verifier m_ecTokenVerifier;
+	ECSRP::Verifier m_ecWebTokenVerifier;
+	ECSRP::Verifier m_ecDummyTokenVerifier;
+
+	// Uptime-ms deadline after which the token file is removed whether or not the child read
+	// it: a child that dies before reading would leave a live secret at rest. 0 = nothing
+	// pending.
+	uint64 m_ecTokenFileExpiryMs = 0;
+	uint64 m_ecWebTokenFileExpiryMs = 0;
 
 	wxString server_msg;
 
-	CTimer* core_timer;
+	CTimer *core_timer;
+
+public:
+	void OnAmuleApiTerminated(int pid, int status);
+	void OnAmulewebTerminated();
+
+	// Select the API (1) or web (2) child verifier, or the dummy when revoked.
+	const ECSRP::Verifier &GetEcTokenVerifier(uint8_t credential = 1);
+
+#ifdef ENABLE_VERSION_CHECK
+	// Result of the last completed version check, relayed over EC to
+	// amuleapi (the /version "update" object) and read by the UIs.
+	bool IsVersionCheckDone() const { return m_versionCheckDone; }
+	bool IsVersionCheckOutdated() const { return m_versionCheckOutdated; }
+	const wxString &GetVersionCheckLatest() const { return m_versionCheckLatest; }
+	// Unix time the last check completed (0 if never). Relayed so clients
+	// can show how stale the result is (checks are startup-only).
+	time_t GetVersionCheckTimestamp() const { return m_versionCheckTimestamp; }
+
+	// Kick off an async GitHub /releases/latest fetch; CheckNewVersion() stores the outcome.
+	// Used by OnInit and the EC_OP_VERSION_CHECK trigger. False when throttled, so the trigger
+	// caller can report "try again later" rather than hammering the rate limit.
+	bool StartVersionCheck();
+#endif
 
 private:
-	virtual void OnUnhandledException();
+	void OnUnhandledException() override;
 
+#ifdef ENABLE_VERSION_CHECK
 	void CheckNewVersion(uint32 result);
 
-	uint32 m_localip;
-};
+	bool m_versionCheckDone = false;
+	bool m_versionCheckOutdated = false;
+	wxString m_versionCheckLatest;
+	// Unix time the last check completed (0 = never).
+	time_t m_versionCheckTimestamp = 0;
+	// Wall-clock of the last StartVersionCheck() attempt, for throttling
+	// the EC trigger against GitHub's unauthenticated rate limit.
+	time_t m_versionCheckLastAttempt = 0;
+#endif
 
+	uint32 m_localip;
+
+	// Set by ShowConnectionState(); see the GetED2KConnectedSince() /
+	// GetKadConnectedSince() accessors above.
+	wxDateTime m_ed2kConnectedSince;
+	wxDateTime m_kadConnectedSince;
+};
 
 #ifndef AMULE_DAEMON
 
+class CShutdownStatus;
 
-class CamuleGuiBase {
+class CamuleGuiBase
+{
 public:
 	CamuleGuiBase();
-	virtual	 ~CamuleGuiBase();
+	virtual ~CamuleGuiBase();
 
-	wxString	m_FrameTitle;
-	CamuleDlg*	amuledlg;
+	wxString m_FrameTitle;
+	CamuleDlg *amuledlg;
 
-	bool CopyTextToClipboard( wxString strText );
+	bool CopyTextToClipboard(wxString strText);
 	void ResetTitle();
 
+	// Values persisted in /GUI/Appearance. Keep these stable for existing configs.
+	enum class AppearanceChoice
+	{
+		System = 0,
+		Light = 1,
+		Dark = 2
+	};
+
+	/// Apply the GUI-local appearance preference after opening the configuration and
+	/// before creating any windows (required by wxMSW).
+	static void ApplyConfiguredAppearance();
+
+	/// Applies the stored tooltip delay, which wx keeps process-wide.
+	static void ApplyToolTipDelay();
+
 	virtual int InitGui(bool geometry_enable, wxString &geometry_string);
+	//! See CamuleApp::RestoreSearchTabs().
+	void CreateRestoredSearchTabs();
 	virtual int ShowAlert(wxString msg, wxString title, int flags);
 
-	void AddGuiLogLine(const wxString& line);
+	void AddGuiLogLine(const wxString &line);
+
 protected:
-	/**
-	 * This list is used to contain log messages that are to be displayed
-	 * on the GUI, when it is currently impossible to do so. This is in order
-	 * to allows us to queue messages till after the dialog has been created.
-	 */
+	/// Log messages queued for the GUI while it cannot display them yet, i.e. until the dialog
+	/// exists.
 	std::list<wxString> m_logLines;
 };
 
-
 #ifndef CLIENT_GUI
-
 
 class CamuleGuiApp : public CamuleApp, public CamuleGuiBase
 {
 
-    virtual int InitGui(bool geometry_enable, wxString &geometry_string);
+	virtual int InitGui(bool geometry_enable, wxString &geometry_string);
+	// No `override`: this class declares none, and adding the first one
+	// turns -Winconsistent-missing-override into errors on every sibling.
+	virtual void RestoreSearchTabs() { CreateRestoredSearchTabs(); }
 
 	int OnExit();
 	bool OnInit();
 
-	void OnEndSession(wxCloseEvent& evt);
-	void OnQueryEndSession(wxCloseEvent& evt);
+	// Catch alternate quit paths (macOS Dock right-click → Quit)
+	// so we can run ShutDown cleanup even when wxApp skips OnExit.
+	void OnEndSession(wxCloseEvent &evt);
+	void OnQueryEndSession(wxCloseEvent &evt);
 
 #ifdef __WXMAC__
+	// Restore the main window on a Dock-icon click while no aMule window is visible.
+	// wxApp::MacReopenApp does nothing for a hidden frame, so HideOnClose would hide it for
+	// good.
 	virtual void MacReopenApp();
+
+	// Finder "Open With" / double-click on a .emulecollection, and Dock drops. wx defers the
+	// launch event until after OnInit returns, so the config dir is always set by then.
+	virtual void MacOpenFiles(const wxArrayString &fileNames);
+
+	// ed2k:// and magnet: clicks. A safety net, not the usual path: in practice the kAEGetURL
+	// handler in ProtocolHandlerManager_mac.mm receives these. wxNSAppController registers for
+	// the same event and -setEventHandler: replaces per (class, id), so which one is live
+	// depends on load order; either way the URL is queued exactly once.
+	virtual void MacOpenURL(const wxString &url);
 #endif
 
+	void BeginShutdownStatus();
+	CShutdownStatus *m_shutdownStatus = nullptr;
+
 public:
+	CamuleGuiApp();
+
+	void UpdateShutdownStatus(const wxString &status);
+	void FinishShutdownStatus();
 
 	virtual int ShowAlert(wxString msg, wxString title, int flags);
 
@@ -424,25 +730,18 @@ public:
 	DECLARE_EVENT_TABLE()
 };
 
-
 DECLARE_APP(CamuleGuiApp)
 extern CamuleGuiApp *theApp;
 
-
 #else /* !CLIENT_GUI */
-
 
 #include "amule-remote-gui.h"
 
-
 #endif // CLIENT_GUI
-
 
 #define CALL_APP_DATA_LOCK
 
-
 #else /* ! AMULE_DAEMON */
-
 
 class CamuleDaemonApp : public CamuleApp
 {
@@ -452,15 +751,13 @@ private:
 	int OnExit();
 
 	virtual int InitGui(bool geometry_enable, wxString &geometry_string);
-	// The GTK wxApps sets its file name conversion properly
-	// in wxApp::Initialize(), while wxAppConsole::Initialize()
-	// does not, leaving wxConvFile being set to wxConvLibc. File
-	// name conversion should be set otherwise amuled will abort to
-	// handle non-ASCII file names which monolithic amule can handle.
-	// This function are overridden to perform this.
-	virtual bool Initialize(int& argc_, wxChar **argv_);
+	// wxApp::Initialize() sets the file name conversion properly, but
+	// wxAppConsole::Initialize() leaves wxConvFileName as wxConvLibc, on which amuled aborts
+	// for the non-ASCII file names monolithic amule handles. This override sets it.
+	virtual bool Initialize(int &argc_, wxChar **argv_);
 
 public:
+	CamuleDaemonApp();
 
 	bool CopyTextToClipboard(wxString strText);
 

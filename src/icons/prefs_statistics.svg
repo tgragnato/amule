@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <defs>
+    <linearGradient id="frm" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7d6f64"/>
+      <stop offset="1" stop-color="#463d3d"/>
+    </linearGradient>
+    <linearGradient id="cas" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#efd9c2"/>
+      <stop offset="0.5" stop-color="#c1b09c"/>
+      <stop offset="1" stop-color="#9b8a79"/>
+    </linearGradient>
+    <linearGradient id="scr" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#52603f"/>
+      <stop offset="0.16" stop-color="#35812b"/>
+      <stop offset="0.42" stop-color="#12921b"/>
+      <stop offset="1" stop-color="#045a20"/>
+    </linearGradient>
+  </defs>
+  <rect x="0.4" y="1.1" width="15.2" height="14.2" rx="2" fill="url(#frm)"/>
+  <rect x="1.5" y="2.1" width="13" height="12.1" rx="1.2" fill="url(#cas)"/>
+  <rect x="2.9" y="3.4" width="10.2" height="9.5" rx="0.8" fill="url(#scr)" stroke="#3d4b39" stroke-width="0.7"/>
+  <polyline points="3.7,7.5 5.2,5.4 9.6,9.4 12.5,6.2" fill="none" stroke="#55c130" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="3.7,7.5 5.2,5.4 9.6,9.4 12.5,6.2" fill="none" stroke="#c9ff8f" stroke-width="0.45" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

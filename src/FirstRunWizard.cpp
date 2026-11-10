@@ -1,0 +1,732 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
+//
+
+#include "FirstRunWizard.h"
+
+#ifndef AMULE_DAEMON
+
+#include "config.h"
+
+#include <wx/wizard.h>
+#include <wx/sizer.h>
+#include <wx/stattext.h>
+#include <wx/statline.h>
+#include <wx/textctrl.h>
+#include <wx/checkbox.h>
+#include <wx/choice.h>
+#include <wx/spinctrl.h>
+#include <wx/button.h>
+#include <wx/dirdlg.h>
+#include <wx/msgdlg.h>
+#include <wx/valtext.h>
+
+#include "amule.h"                  // Needed for theApp / glob_prefs
+#include "AutostartManager.h"       // Needed for Integrations page autostart toggle
+#include "OtherFunctions.h"         // Needed for SharedFolderHint
+#include "Preferences.h"            // Needed for thePrefs
+#include "ProtocolHandlerManager.h" // Needed for Integrations page URL-scheme toggles
+#include <common/Format.h>
+#include <common/Path.h> // Needed for CPath
+
+namespace
+{
+// A predefined connection profile, carrying two distinct pairs of kByte/s values:
+//   * the suggested rate LIMITS (uploadKBs / downloadKBs, 0 == unlimited), which fill the two spin
+//     controls and become MaxUpload / MaxDownload; and
+//   * the raw line CAPACITY (uploadCapKBs / downloadCapKBs), which becomes MaxGraphUploadRate /
+//     MaxGraphDownloadRate -- the value that scales the statistics graphs and feeds the
+//     dynamic-upload logic. Capacity is never 0, so a fast unlimited-limit line still gets
+//     sensibly scaled graphs.
+//
+// The upload limit is ~80% of raw upstream capacity, leaving ACK and protocol headroom; the
+// download limit is left unlimited.
+//
+// Each profile also carries its own peer limits (maxConnections / maxConnectionsPer5Sec /
+// maxSourcesPerFile). A slow uplink can only usefully feed a handful of peers, so a modest line
+// keeps fewer sources and connections rather than drowning in half-open overhead. They are scaled
+// to each line's upstream CAPACITY here rather than re-derived from the upload-limit field through
+// coarse buckets, which modern presets all sit above.
+struct ConnectionProfile
+{
+	const char *label;
+	int uploadKBs;      // upload limit (0 == unlimited)
+	int downloadKBs;    // download limit (0 == unlimited)
+	int uploadCapKBs;   // raw upstream line capacity
+	int downloadCapKBs; // raw downstream line capacity
+	int maxConnections;
+	int maxConnectionsPer5Sec;
+	int maxSourcesPerFile;
+};
+
+// Labels are wxTRANSLATE-marked (so xgettext extracts them) and
+// translated at display time with wxGetTranslation below.
+const ConnectionProfile s_profiles[] = {
+	{ wxTRANSLATE("Mobile / 4G-5G (20 / 5 Mbit)"), 500, 0, 625, 2500, 300, 20, 400 },
+	{ wxTRANSLATE("ADSL (24 / 1 Mbit)"), 100, 0, 125, 3000, 200, 20, 250 },
+	{ wxTRANSLATE("VDSL (50 / 10 Mbit)"), 1000, 0, 1250, 6250, 400, 25, 500 },
+	{ wxTRANSLATE("Cable (200 / 20 Mbit)"), 2000, 0, 2500, 25000, 500, 30, 600 },
+	{ wxTRANSLATE("Fibre 300 (300 / 100 Mbit)"), 10000, 0, 12500, 37500, 500, 40, 800 },
+	{ wxTRANSLATE("Fibre Gigabit (1000 / 1000 Mbit)"), 0, 0, 125000, 125000, 500, 50, 1000 },
+};
+
+const size_t s_profileCount = sizeof(s_profiles) / sizeof(s_profiles[0]);
+
+struct DerivedLimits
+{
+	int maxConnections;
+	int maxConnectionsPer5Sec;
+	int maxSourcesPerFile;
+};
+
+// Keep the connection count within the OS-aware ceiling: on legacy Windows the half-open-connection
+// limit makes a flat 500, plus a hot 50-per-5s, too aggressive.
+DerivedLimits ClampLimits(DerivedLimits d)
+{
+	const int recommended = thePrefs::GetRecommendedMaxConnections();
+	if (recommended > 0 && d.maxConnections > recommended) {
+		d.maxConnections = recommended;
+	}
+	return d;
+}
+
+// Recommended peer limits for the current upload setting. A preset carries its own per-line
+// numbers; a manually-entered upload limit ("Other") is still bucketed, but on a modern kByte/s
+// scale rather than the old <4/7/13/25/50 tiers, which today's uplinks all exceed. An unlimited (0)
+// upload limit is treated as a fast line. The caller clamps the result through ClampLimits().
+DerivedLimits DeriveLimits(int uploadKBs)
+{
+	const int up = (uploadKBs <= 0) ? 100000 : uploadKBs;
+	if (up < 50) {
+		return { 200, 20, 250 };
+	} else if (up < 200) {
+		return { 300, 20, 400 };
+	} else if (up < 1000) {
+		return { 400, 25, 500 };
+	} else if (up < 2500) {
+		return { 500, 30, 600 };
+	} else if (up < 10000) {
+		return { 500, 40, 800 };
+	}
+	return { 500, 50, 1000 };
+}
+
+// Resolve the limits for the current wizard state: the selected preset's own numbers when a profile
+// is active, otherwise the manually-derived bucket. Always clamped to the OS recommendation.
+DerivedLimits ResolveLimits(int profileSel, int uploadKBs)
+{
+	DerivedLimits d;
+	if (profileSel >= 0 && profileSel < (int)s_profileCount) {
+		const ConnectionProfile &p = s_profiles[profileSel];
+		d = { p.maxConnections, p.maxConnectionsPer5Sec, p.maxSourcesPerFile };
+	} else {
+		d = DeriveLimits(uploadKBs);
+	}
+	return ClampLimits(d);
+}
+
+enum
+{
+	ID_FRW_SPEED = wxID_HIGHEST + 1,
+	ID_FRW_UPLOAD,
+	ID_FRW_BROWSE_INCOMING,
+	ID_FRW_BROWSE_TEMP
+};
+
+class CFirstRunWizard : public wxWizard
+{
+public:
+	CFirstRunWizard(wxWindow *parent, bool needServerMet, bool needNodesDat);
+
+	// Runs the wizard modally. Returns true if the user pressed Finish.
+	bool RunIt() { return RunWizard(m_firstPage); }
+
+	// Pushes the collected choices into the live preferences, saves
+	// them, and reports which bootstrap downloads were requested.
+	void Apply(FirstRunWizard::Result &res);
+
+private:
+	wxWizardPageSimple *BuildNickPage();
+	wxWizardPageSimple *BuildConnectionPage();
+	wxWizardPageSimple *BuildNetworkPage();
+	wxWizardPageSimple *BuildBootstrapPage();
+	wxWizardPageSimple *BuildIntegrationsPage();
+	wxWizardPageSimple *BuildFoldersPage();
+
+	void UpdateDerivedLabel();
+
+	void OnSpeedChoice(wxCommandEvent &evt);
+	void OnUploadChanged(wxSpinEvent &evt);
+	void OnBrowseIncoming(wxCommandEvent &evt);
+	void OnBrowseTemp(wxCommandEvent &evt);
+
+	bool m_needServerMet;
+	bool m_needNodesDat;
+
+	wxWizardPageSimple *m_firstPage = NULL;
+
+	wxTextCtrl *m_nickCtrl = NULL;
+	wxChoice *m_speedCtrl = NULL;
+	wxSpinCtrl *m_uploadCtrl = NULL;
+	wxSpinCtrl *m_downloadCtrl = NULL;
+	wxStaticText *m_derivedLabel = NULL;
+	wxCheckBox *m_ed2kCtrl = NULL;
+	wxCheckBox *m_kadCtrl = NULL;
+	wxSpinCtrl *m_tcpPortCtrl = NULL;
+	wxSpinCtrl *m_udpPortCtrl = NULL;
+	wxCheckBox *m_serverMetCtrl = NULL;
+	wxCheckBox *m_nodesDatCtrl = NULL;
+	wxCheckBox *m_autoUpdateServerCtrl = nullptr;
+	wxCheckBox *m_autostartCtrl = nullptr;
+	wxCheckBox *m_registerEd2kCtrl = nullptr;
+	wxCheckBox *m_registerMagnetCtrl = nullptr;
+	wxCheckBox *m_assocCollectionCtrl = nullptr;
+	wxTextCtrl *m_incomingCtrl = NULL;
+	wxTextCtrl *m_tempCtrl = NULL;
+};
+
+CFirstRunWizard::CFirstRunWizard(wxWindow *parent, bool needServerMet, bool needNodesDat)
+: wxWizard(parent, wxID_ANY, _("aMule first-run setup"))
+, m_needServerMet(needServerMet)
+, m_needNodesDat(needNodesDat)
+{
+	wxWizardPageSimple *nick = BuildNickPage();
+	wxWizardPageSimple *conn = BuildConnectionPage();
+	wxWizardPageSimple *net = BuildNetworkPage();
+	wxWizardPageSimple *boot = BuildBootstrapPage();
+	wxWizardPageSimple *integrations = BuildIntegrationsPage();
+	wxWizardPageSimple *folders = BuildFoldersPage();
+
+	wxWizardPageSimple::Chain(nick, conn);
+	wxWizardPageSimple::Chain(conn, net);
+	wxWizardPageSimple::Chain(net, boot);
+	wxWizardPageSimple::Chain(boot, integrations);
+	wxWizardPageSimple::Chain(integrations, folders);
+
+	m_firstPage = nick;
+
+	GetPageAreaSizer()->Add(nick);
+	UpdateDerivedLabel();
+}
+
+wxWizardPageSimple *CFirstRunWizard::BuildNickPage()
+{
+	wxWizardPageSimple *page = new wxWizardPageSimple(this);
+	wxBoxSizer *sizer = new wxBoxSizer(wxVERTICAL);
+
+	sizer->Add(new wxStaticText(page, wxID_ANY, _("Welcome to aMule!")), 0, wxBOTTOM, 8);
+	sizer->Add(new wxStaticText(page,
+			   wxID_ANY,
+			   _("This short setup will get you connected. You can change\n"
+			     "any of these settings later in Preferences.")),
+		0,
+		wxBOTTOM,
+		12);
+
+	sizer->Add(new wxStaticText(page, wxID_ANY, _("Choose a nickname other peers will see:")),
+		0,
+		wxBOTTOM,
+		4);
+	m_nickCtrl = new wxTextCtrl(page, wxID_ANY, thePrefs::GetUserNick());
+	sizer->Add(m_nickCtrl, 0, wxEXPAND);
+
+	page->SetSizer(sizer);
+	return page;
+}
+
+wxWizardPageSimple *CFirstRunWizard::BuildConnectionPage()
+{
+	wxWizardPageSimple *page = new wxWizardPageSimple(this);
+	wxBoxSizer *sizer = new wxBoxSizer(wxVERTICAL);
+
+	sizer->Add(new wxStaticText(page, wxID_ANY, wxControl::EscapeMnemonics(_("Connection & bandwidth"))),
+		0,
+		wxBOTTOM,
+		8);
+	sizer->Add(new wxStaticText(page,
+			   wxID_ANY,
+			   _("Pick the option that best matches your Internet connection,\n"
+			     "or set the upload and download limits directly below.")),
+		0,
+		wxBOTTOM,
+		12);
+
+	sizer->Add(new wxStaticText(page, wxID_ANY, _("Connection speed:")), 0, wxBOTTOM, 4);
+	m_speedCtrl = new wxChoice(page, ID_FRW_SPEED);
+	for (size_t i = 0; i < s_profileCount; ++i) {
+		m_speedCtrl->Append(wxGetTranslation(s_profiles[i].label));
+	}
+	m_speedCtrl->Append(_("Other / set manually"));
+	m_speedCtrl->SetSelection((int)s_profileCount); // "Other" until a profile is chosen
+	sizer->Add(m_speedCtrl, 0, static_cast<int>(wxEXPAND) | wxBOTTOM, 12);
+
+	wxFlexGridSizer *grid = new wxFlexGridSizer(2, 2, 6, 8);
+	grid->AddGrowableCol(1);
+
+	grid->Add(new wxStaticText(page, wxID_ANY, _("Upload limit (KiB/s, 0 = unlimited):")),
+		0,
+		wxALIGN_CENTER_VERTICAL);
+	m_uploadCtrl = new wxSpinCtrl(page, ID_FRW_UPLOAD);
+	m_uploadCtrl->SetRange(0, 100000);
+	m_uploadCtrl->SetValue(thePrefs::GetMaxUpload());
+	grid->Add(m_uploadCtrl, 0, wxEXPAND);
+
+	grid->Add(new wxStaticText(page, wxID_ANY, _("Download limit (KiB/s, 0 = unlimited):")),
+		0,
+		wxALIGN_CENTER_VERTICAL);
+	m_downloadCtrl = new wxSpinCtrl(page, wxID_ANY);
+	m_downloadCtrl->SetRange(0, 100000);
+	m_downloadCtrl->SetValue(thePrefs::GetMaxDownload());
+	grid->Add(m_downloadCtrl, 0, wxEXPAND);
+
+	sizer->Add(grid, 0, static_cast<int>(wxEXPAND) | wxBOTTOM, 12);
+
+	m_derivedLabel = new wxStaticText(page, wxID_ANY, wxEmptyString);
+	sizer->Add(m_derivedLabel, 0, wxEXPAND);
+
+	page->SetSizer(sizer);
+
+	m_speedCtrl->Bind(wxEVT_CHOICE, &CFirstRunWizard::OnSpeedChoice, this);
+	m_uploadCtrl->Bind(wxEVT_SPINCTRL, &CFirstRunWizard::OnUploadChanged, this);
+
+	return page;
+}
+
+wxWizardPageSimple *CFirstRunWizard::BuildNetworkPage()
+{
+	wxWizardPageSimple *page = new wxWizardPageSimple(this);
+	wxBoxSizer *sizer = new wxBoxSizer(wxVERTICAL);
+
+	sizer->Add(new wxStaticText(page, wxID_ANY, wxControl::EscapeMnemonics(_("Networks & ports"))),
+		0,
+		wxBOTTOM,
+		8);
+	sizer->Add(
+		new wxStaticText(
+			page, wxID_ANY, _("aMule can use two networks. We recommend keeping both enabled.")),
+		0,
+		wxBOTTOM,
+		8);
+
+	// Network labels reuse existing catalog strings so translators do not get wizard-only
+	// duplicates; the guidance sentence above carries the "server-based / serverless"
+	// explanation. Use the project's "eD2k" spelling, an existing catalog string, rather than
+	// the Networks panel's mis-cased "ED2K".
+	m_ed2kCtrl = new wxCheckBox(page, wxID_ANY, _("eD2k"));
+	m_ed2kCtrl->SetValue(thePrefs::GetNetworkED2K());
+	sizer->Add(m_ed2kCtrl, 0, wxBOTTOM, 4);
+
+	m_kadCtrl = new wxCheckBox(page, wxID_ANY, _("Kademlia"));
+	m_kadCtrl->SetValue(thePrefs::GetNetworkKademlia());
+	sizer->Add(m_kadCtrl, 0, wxBOTTOM, 12);
+
+	wxFlexGridSizer *grid = new wxFlexGridSizer(2, 2, 6, 8);
+	grid->AddGrowableCol(1);
+
+	// Port labels mirror the existing Ports-panel wording, trailing spaces included, so the
+	// controls reuse the already-translated msgids instead of introducing wizard-only strings
+	// every translator must redo.
+	grid->Add(new wxStaticText(page, wxID_ANY, _("Standard TCP Port ")), 0, wxALIGN_CENTER_VERTICAL);
+	m_tcpPortCtrl = new wxSpinCtrl(page, wxID_ANY);
+	m_tcpPortCtrl->SetRange(1, 65535);
+	m_tcpPortCtrl->SetValue(thePrefs::GetPort());
+	grid->Add(m_tcpPortCtrl, 0, wxEXPAND);
+
+	grid->Add(new wxStaticText(page, wxID_ANY, _("Extended UDP port (Kad / global search) ")),
+		0,
+		wxALIGN_CENTER_VERTICAL);
+	m_udpPortCtrl = new wxSpinCtrl(page, wxID_ANY);
+	m_udpPortCtrl->SetRange(1, 65535);
+	m_udpPortCtrl->SetValue(thePrefs::GetUDPPort());
+	grid->Add(m_udpPortCtrl, 0, wxEXPAND);
+
+	sizer->Add(grid, 0, static_cast<int>(wxEXPAND) | wxBOTTOM, 12);
+
+	page->SetSizer(sizer);
+	return page;
+}
+
+wxWizardPageSimple *CFirstRunWizard::BuildBootstrapPage()
+{
+	wxWizardPageSimple *page = new wxWizardPageSimple(this);
+	wxBoxSizer *sizer = new wxBoxSizer(wxVERTICAL);
+
+	sizer->Add(new wxStaticText(page, wxID_ANY, _("Bootstrap files")), 0, wxBOTTOM, 8);
+
+	if (m_needServerMet || m_needNodesDat) {
+		sizer->Add(new wxStaticText(page,
+				   wxID_ANY,
+				   _("To get started, aMule needs to know about some peers.\n"
+				     "Select which lists to download now:")),
+			0,
+			wxBOTTOM,
+			8);
+
+		if (m_needServerMet) {
+			m_serverMetCtrl = new wxCheckBox(page, wxID_ANY, _("eD2k server list (server.met)"));
+			m_serverMetCtrl->SetValue(true);
+			sizer->Add(m_serverMetCtrl, 0, wxBOTTOM, 4);
+		}
+		if (m_needNodesDat) {
+			m_nodesDatCtrl = new wxCheckBox(page, wxID_ANY, _("Kad bootstrap nodes (nodes.dat)"));
+			m_nodesDatCtrl->SetValue(true);
+			sizer->Add(m_nodesDatCtrl, 0, wxBOTTOM, 4);
+		}
+	} else {
+		sizer->Add(new wxStaticText(page,
+				   wxID_ANY,
+				   _("Your peer lists are already in place - nothing to download.")),
+			0);
+	}
+
+	// Recurring refresh, distinct from the one-time download above: re-fetch the eD2k server
+	// list from the configured URL on every start (the AutoServerlist pref, off by default and
+	// otherwise only on the Server tab). Shown whether or not a bootstrap download is offered,
+	// and checked so a first-run user gets an up-to-date list without hunting for the setting.
+	m_autoUpdateServerCtrl = new wxCheckBox(page, wxID_ANY, _("Auto-update server list at startup"));
+	m_autoUpdateServerCtrl->SetValue(true);
+	sizer->Add(m_autoUpdateServerCtrl, 0, wxTOP, 8);
+
+	page->SetSizer(sizer);
+	return page;
+}
+
+wxWizardPageSimple *CFirstRunWizard::BuildIntegrationsPage()
+{
+	wxWizardPageSimple *page = new wxWizardPageSimple(this);
+	wxBoxSizer *sizer = new wxBoxSizer(wxVERTICAL);
+
+	sizer->Add(new wxStaticText(page, wxID_ANY, _("Integrations (optional)")), 0, wxBOTTOM, 8);
+	sizer->Add(new wxStaticText(page,
+			   wxID_ANY,
+			   _("Choose how aMule integrates with your system. You can\n"
+			     "change any of these later in Preferences.")),
+		0,
+		wxBOTTOM,
+		12);
+
+	// All three checkboxes reuse the exact strings from the Preferences panel so translators
+	// only see them once. The three backends all live in the OS, not in aMule.conf.
+	m_autostartCtrl = new wxCheckBox(page, wxID_ANY, _("Start aMule automatically when I log in"));
+	m_autostartCtrl->SetValue(AutostartManager::IsEnabled());
+	// Wider gap than the 4 used between rows: autostart is its own thing,
+	// and the three registration toggles below read as a group.
+	sizer->Add(m_autostartCtrl, 0, wxBOTTOM, 12);
+
+	// On macOS the un-register path is a no-op (LaunchServices blocks programmatic reset), so
+	// once aMule already holds the scheme registration the checkbox is not created at all
+	// rather than being dead. On Linux and Windows Disable works, so the box is always created
+	// and reflects live state.
+	bool magnetEnabled = ProtocolHandlerManager::IsEnabled(HandlerTarget::MagnetScheme);
+#ifdef __WXMAC__
+	const bool showEd2kBox = !ProtocolHandlerManager::IsEnabled(HandlerTarget::Ed2kScheme);
+	const bool showMagnetBox = !magnetEnabled;
+	const bool showAssocBox = !ProtocolHandlerManager::IsEnabled(HandlerTarget::CollectionFile);
+#else
+	const bool showEd2kBox = true;
+	const bool showMagnetBox = true;
+	const bool showAssocBox = true;
+#endif
+
+	if (showEd2kBox) {
+		m_registerEd2kCtrl = new wxCheckBox(page, wxID_ANY, _("Register aMule for ed2k:// links"));
+		// Default ON in the wizard (opt-in to the common case). If the
+		// user is already the current handler, honour that too.
+		m_registerEd2kCtrl->SetValue(true);
+		sizer->Add(m_registerEd2kCtrl, 0, wxBOTTOM, 4);
+	}
+
+	if (showMagnetBox) {
+		m_registerMagnetCtrl = new wxCheckBox(page, wxID_ANY, _("Register aMule for magnet: links"));
+		// Default OFF: aMule only handles the eD2k-compatible subset of magnets, so leaving
+		// this off avoids silently stealing BitTorrent magnet clicks. Preserves the current
+		// state if the user opted in elsewhere.
+		m_registerMagnetCtrl->SetValue(magnetEnabled);
+		sizer->Add(m_registerMagnetCtrl, 0, wxBOTTOM, 2);
+		// wxLEFT only: the 20 is the indent under the checkbox. Applying it to wxBOTTOM as
+		// well would leave a 20px gap before whatever comes next, five times the spacing
+		// every other row uses.
+		sizer->Add(new wxStaticText(page,
+				   wxID_ANY,
+				   _("Only eD2k-compatible magnets. Leave off if you use a BitTorrent "
+				     "client.")),
+			0,
+			wxLEFT,
+			20);
+		sizer->AddSpacer(4);
+	}
+
+	if (showAssocBox) {
+		// Third section break, so the page reads as autostart / link handling / file
+		// handling. 8 plus the 4 trailing the block above is the same 12 that follows
+		// autostart, and with the magnet block hidden the 4 after the ed2k row gets there
+		// just the same.
+		sizer->AddSpacer(8);
+		// String reused verbatim from the Preferences panel so translators
+		// only ever see it once.
+		m_assocCollectionCtrl =
+			new wxCheckBox(page, wxID_ANY, _("Open .emulecollection files with aMule"));
+		// Default ON: a collection is only useful opened in an eD2k
+		// client, and nothing else on a typical system claims the type.
+		m_assocCollectionCtrl->SetValue(true);
+		sizer->Add(m_assocCollectionCtrl, 0, wxBOTTOM, 4);
+	}
+
+	page->SetSizer(sizer);
+	return page;
+}
+
+wxWizardPageSimple *CFirstRunWizard::BuildFoldersPage()
+{
+	wxWizardPageSimple *page = new wxWizardPageSimple(this);
+	wxBoxSizer *sizer = new wxBoxSizer(wxVERTICAL);
+
+	sizer->Add(new wxStaticText(page, wxID_ANY, _("Folders (optional)")), 0, wxBOTTOM, 8);
+	sizer->Add(new wxStaticText(page,
+			   wxID_ANY,
+			   _("The defaults are fine for most people. Change them if you\n"
+			     "want downloads on a different (e.g. larger) disk.")),
+		0,
+		wxBOTTOM,
+		12);
+
+	// Folder labels and Browse buttons reuse the existing Directories-panel
+	// strings (PreferencesDirectoriesTab) instead of new wizard-only wording.
+	sizer->Add(new wxStaticText(page, wxID_ANY, _("Destination folder for downloads")), 0, wxBOTTOM, 4);
+	wxBoxSizer *incRow = new wxBoxSizer(wxHORIZONTAL);
+	m_incomingCtrl = new wxTextCtrl(page, wxID_ANY, thePrefs::GetIncomingDir().GetRaw());
+	incRow->Add(m_incomingCtrl, 1, static_cast<int>(wxALIGN_CENTER_VERTICAL) | wxRIGHT, 6);
+	incRow->Add(new wxButton(page, ID_FRW_BROWSE_INCOMING, _("Browse")), 0);
+	sizer->Add(incRow, 0, static_cast<int>(wxEXPAND) | wxBOTTOM, 4);
+
+	sizer->Add(new wxStaticText(page, wxID_ANY, SharedFolderHint()), 0, wxBOTTOM, 12);
+
+	sizer->Add(
+		new wxStaticText(page, wxID_ANY, _("Folder for temporary download files")), 0, wxBOTTOM, 4);
+	wxBoxSizer *tmpRow = new wxBoxSizer(wxHORIZONTAL);
+	m_tempCtrl = new wxTextCtrl(page, wxID_ANY, thePrefs::GetTempDir().GetRaw());
+	tmpRow->Add(m_tempCtrl, 1, static_cast<int>(wxALIGN_CENTER_VERTICAL) | wxRIGHT, 6);
+	tmpRow->Add(new wxButton(page, ID_FRW_BROWSE_TEMP, _("Browse")), 0);
+	sizer->Add(tmpRow, 0, wxEXPAND);
+
+	page->SetSizer(sizer);
+
+	page->Bind(wxEVT_BUTTON, &CFirstRunWizard::OnBrowseIncoming, this, ID_FRW_BROWSE_INCOMING);
+	page->Bind(wxEVT_BUTTON, &CFirstRunWizard::OnBrowseTemp, this, ID_FRW_BROWSE_TEMP);
+
+	return page;
+}
+
+void CFirstRunWizard::UpdateDerivedLabel()
+{
+	if (!m_derivedLabel || !m_uploadCtrl) {
+		return;
+	}
+	DerivedLimits d = ResolveLimits(m_speedCtrl->GetSelection(), m_uploadCtrl->GetValue());
+	m_derivedLabel->SetLabel(CFormat(_("Based on this, aMule will allow up to %i sources per file\n"
+					   "and %i client connections.")) %
+				 d.maxSourcesPerFile % d.maxConnections);
+}
+
+void CFirstRunWizard::OnSpeedChoice(wxCommandEvent &WXUNUSED(evt))
+{
+	int sel = m_speedCtrl->GetSelection();
+	if (sel >= 0 && sel < (int)s_profileCount) {
+		m_uploadCtrl->SetValue(s_profiles[sel].uploadKBs);
+		m_downloadCtrl->SetValue(s_profiles[sel].downloadKBs);
+		UpdateDerivedLabel();
+	}
+}
+
+void CFirstRunWizard::OnUploadChanged(wxSpinEvent &WXUNUSED(evt))
+{
+	// The user typed an upload value by hand -- detach the profile
+	// choice so it doesn't claim a preset that no longer matches.
+	m_speedCtrl->SetSelection((int)s_profileCount);
+	UpdateDerivedLabel();
+}
+
+void CFirstRunWizard::OnBrowseIncoming(wxCommandEvent &WXUNUSED(evt))
+{
+	wxString dir = ::wxDirSelector(_("Destination folder for downloads"),
+		m_incomingCtrl->GetValue(),
+		0,
+		wxDefaultPosition,
+		this);
+	if (!dir.IsEmpty()) {
+		m_incomingCtrl->SetValue(dir);
+	}
+}
+
+void CFirstRunWizard::OnBrowseTemp(wxCommandEvent &WXUNUSED(evt))
+{
+	wxString dir = ::wxDirSelector(
+		_("Folder for temporary download files"), m_tempCtrl->GetValue(), 0, wxDefaultPosition, this);
+	if (!dir.IsEmpty()) {
+		m_tempCtrl->SetValue(dir);
+	}
+}
+
+void CFirstRunWizard::Apply(FirstRunWizard::Result &res)
+{
+	// Nickname -- keep the existing default rather than allowing an
+	// empty nick.
+	wxString nick = m_nickCtrl->GetValue().Trim().Trim(false);
+	if (!nick.IsEmpty()) {
+		thePrefs::SetUserNick(nick);
+	}
+
+	// Bandwidth + the derived peer limits.
+	const int up = m_uploadCtrl->GetValue();
+	const int down = m_downloadCtrl->GetValue();
+	thePrefs::SetMaxUpload(up);
+	thePrefs::SetMaxDownload(down);
+
+	// Line capacity is a separate value from the limits above: it scales the statistics graphs
+	// and feeds the dynamic-upload logic. A still-selected preset supplies its raw capacity;
+	// otherwise the user typed values by hand, so it is estimated from the limits (upload
+	// limits sit ~80% below the raw rate, so cap = limit * 5 / 4). A 0 manual limit tells us
+	// nothing, so the existing capacity is kept rather than zeroed.
+	int upCap = 0;
+	int downCap = 0;
+	const int sel = m_speedCtrl->GetSelection();
+	if (sel >= 0 && sel < (int)s_profileCount) {
+		upCap = s_profiles[sel].uploadCapKBs;
+		downCap = s_profiles[sel].downloadCapKBs;
+	} else {
+		upCap = (up > 0) ? (up * 5 + 3) / 4 : (int)thePrefs::GetMaxGraphUploadRate();
+		downCap = (down > 0) ? down : (int)thePrefs::GetMaxGraphDownloadRate();
+	}
+	if (upCap > 0) {
+		thePrefs::SetMaxGraphUploadRate(upCap);
+	}
+	if (downCap > 0) {
+		thePrefs::SetMaxGraphDownloadRate(downCap);
+	}
+
+	DerivedLimits d = ResolveLimits(sel, up);
+	thePrefs::SetMaxConnections(d.maxConnections);
+	thePrefs::SetMaxConsPerFive(d.maxConnectionsPer5Sec);
+	thePrefs::SetMaxSourcesPerFile(d.maxSourcesPerFile);
+
+	// Networks + ports.
+	thePrefs::SetNetworkED2K(m_ed2kCtrl->GetValue());
+	thePrefs::SetNetworkKademlia(m_kadCtrl->GetValue());
+	thePrefs::SetPort((uint16)m_tcpPortCtrl->GetValue());
+	thePrefs::SetUDPPort((uint16)m_udpPortCtrl->GetValue());
+
+	// Recurring server-list auto-update (see BuildBootstrapPage). Off by default
+	// in preferences; the wizard offers it opted-in.
+	if (m_autoUpdateServerCtrl) {
+		thePrefs::SetAutoServerlist(m_autoUpdateServerCtrl->GetValue());
+	}
+
+	// Folders -- only override the defaults if the user typed something.
+	wxString inc = m_incomingCtrl->GetValue().Trim().Trim(false);
+	if (!inc.IsEmpty()) {
+		thePrefs::SetIncomingDir(CPath(inc));
+	}
+	wxString tmp = m_tempCtrl->GetValue().Trim().Trim(false);
+	if (!tmp.IsEmpty()) {
+		thePrefs::SetTempDir(CPath(tmp));
+	}
+
+	// Integrations page. All three writes go straight to the OS (registry / mimeapps.list /
+	// LaunchServices / autostart store) and none touch aMule.conf, so glob_prefs->Save() below
+	// does not cover them. Enable/Disable silently: on a fresh install the "another handler is
+	// registered" prompt is normally irrelevant, and the user is already choosing aMule here.
+	if (m_autostartCtrl) {
+		if (m_autostartCtrl->GetValue()) {
+			AutostartManager::Enable();
+		} else {
+			AutostartManager::Disable();
+		}
+	}
+	if (m_registerEd2kCtrl) {
+		if (m_registerEd2kCtrl->GetValue()) {
+			ProtocolHandlerManager::Enable(HandlerTarget::Ed2kScheme);
+		} else {
+			ProtocolHandlerManager::Disable(HandlerTarget::Ed2kScheme);
+		}
+	}
+	if (m_assocCollectionCtrl) {
+		if (m_assocCollectionCtrl->GetValue()) {
+			ProtocolHandlerManager::Enable(HandlerTarget::CollectionFile);
+		} else {
+			ProtocolHandlerManager::Disable(HandlerTarget::CollectionFile);
+		}
+	}
+	if (m_registerMagnetCtrl) {
+		if (m_registerMagnetCtrl->GetValue()) {
+			ProtocolHandlerManager::Enable(HandlerTarget::MagnetScheme);
+		} else {
+			ProtocolHandlerManager::Disable(HandlerTarget::MagnetScheme);
+		}
+	}
+
+	// Record that the wizard ran to completion so it is not shown again. Only reached when the
+	// user pressed Finish, so a cancelled run leaves the flag false and the wizard reappears.
+	thePrefs::SetFirstRunWizardDone(true);
+
+	if (theApp->glob_prefs) {
+		theApp->glob_prefs->Save();
+	}
+
+	// Bootstrap downloads (only offered for files that are missing).
+	res.downloadServerMet = m_serverMetCtrl && m_serverMetCtrl->GetValue();
+	res.downloadNodesDat = m_nodesDatCtrl && m_nodesDatCtrl->GetValue();
+}
+
+} // anonymous namespace
+
+namespace FirstRunWizard
+{
+Result Run(wxWindow *parent, bool needServerMet, bool needNodesDat)
+{
+	Result res;
+
+	CFirstRunWizard wizard(parent, needServerMet, needNodesDat);
+	res.finished = wizard.RunIt();
+	if (res.finished) {
+		wizard.Apply(res);
+	} else {
+		// The user cancelled. Only Finish records FirstRunWizardDone, so without this the
+		// wizard would reappear on every launch with no way to dismiss it for good. Offers
+		// the same persistent "don't show again" choice the AppImage integration prompt
+		// uses; re-show is the safe default.
+		wxMessageDialog ask(parent,
+			_("Show this setup wizard again the next time you start aMule?"),
+			_("Setup not finished"),
+			wxYES_NO | wxICON_QUESTION);
+		if (ask.ShowModal() == wxID_NO) {
+			thePrefs::SetFirstRunWizardDone(true);
+			if (theApp->glob_prefs) {
+				theApp->glob_prefs->Save();
+			}
+		}
+	}
+	return res;
+}
+} // namespace FirstRunWizard
+
+#endif // !AMULE_DAEMON

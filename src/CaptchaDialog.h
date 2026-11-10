@@ -25,17 +25,12 @@
 #ifndef CAPTCHADIALOG_H
 #define CAPTCHADIALOG_H
 
-#include <wx/dialog.h>		// Needed for wxDialog
-#include "Types.h"
+#include <wx/dialog.h> // Needed for wxDialog
+#include "ChatSessionStore.h"
 
 /**
- * The ClientDetailDialog class is responsible for showing the info about a client.
- *
- * It shows all releavant data about the client: ip, port, hash, name, client
- * type and version, uploading/downloading data, credits, server... etc
- *
- * It's  wxDialog, modal, with return value always '0'.
- *
+ * Shows a peer's captcha image and takes the user's answer. A modal wxDialog whose return value is
+ * always '0'.
  */
 
 class CCaptchaDialog : public wxDialog
@@ -45,40 +40,37 @@ public:
 	 * Constructor.
 	 *
 	 * @param parent The window that created the dialog.
-	 * @param client The client whose details we're showing.
+	 * @param captchaImage The image to show.
+	 * @param id The captcha's id.
 	 */
-	CCaptchaDialog(wxWindow*parent, const wxImage& captchaImage, uint64 id);
+	CCaptchaDialog(wxWindow *parent, const wxImage &captchaImage, CChatTarget id, uint32 challengeId);
 
-	/**
-	 * Destructor.
-	 */
 	virtual ~CCaptchaDialog();
+	static void CloseForPeer(wxWindow *parent, const CChatTarget &peer, uint32 keepId = 0);
+	static bool Exists(wxWindow *parent, const CChatTarget &peer, uint32 challengeId);
 
 protected:
-
 	/**
-	 * Creates all the data objects in the dialog, filling them accordingly.
-	 *
-	 * Called when the dialog object is created.
+	 * Creates all the data objects in the dialog, filling them accordingly. Called when the
+	 * dialog object is created.
 	 */
 	virtual bool OnInitDialog();
 
 	/**
-	 * Ends the dialog, calling EndModal with return value 0
-	 *
-	 * @param evt The close event, unused right now
+	 * Ends the dialog, calling EndModal with return value 0. @param evt The close event, unused
+	 * right now.
 	 */
-	void OnBnClose(wxCommandEvent& evt);
+	void OnBnClose(wxCommandEvent &evt);
 
 	wxDECLARE_EVENT_TABLE();
 
 private:
+	wxSizer *captchaDlg(wxWindow *parent);
 
-	wxSizer * captchaDlg( wxWindow *parent );
-
-	class wxBitmap * m_captchaBitmap;
-	class wxTextCtrl * m_TextCtrl;
-	uint64 m_id;
+	class wxBitmap *m_captchaBitmap;
+	class wxTextCtrl *m_TextCtrl;
+	CChatTarget m_id;
+	uint32 m_challengeId;
 };
 #endif // CAPTCHADIALOG_H
 // File_checked_for_headers

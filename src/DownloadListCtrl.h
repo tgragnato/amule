@@ -26,214 +26,238 @@
 #ifndef DOWNLOADLISTCTRL_H
 #define DOWNLOADLISTCTRL_H
 
-#include <map>				// Needed for std::multimap
-#include <wx/brush.h>
+#include "MuleVirtualDataViewCtrl.h" // Needed for CMuleVirtualDataViewCtrl
 
-#include "Types.h"			// Needed for uint8
-#include "Constants.h"		// Needed for DownloadItemType
-#include "MuleListCtrl.h"	// Needed for CMuleListCtrl
+#include <set> // Needed for std::set
 
+#define COLUMN_DL_PART 0
+#define COLUMN_DL_NAME 1
+#define COLUMN_DL_SIZE 2
+#define COLUMN_DL_TRANSFERRED 3
+#define COLUMN_DL_COMPLETED 4
+#define COLUMN_DL_SPEED 5
+#define COLUMN_DL_PROGRESS 6
+#define COLUMN_DL_SOURCES 7
+#define COLUMN_DL_PRIORITY 8
+#define COLUMN_DL_STATUS 9
+#define COLUMN_DL_TIMEREMAINING 10
+#define COLUMN_DL_LASTSEENCOMPLETE 11
+#define COLUMN_DL_LASTRECEPTION 12
+//! Always empty. Absorbs the macOS trailing-column sizing; see
+//! CMuleDataViewCtrl::AppendSpacerColumn().
+#define COLUMN_DL_SPACER 13
 
 class CPartFile;
-class wxBitmap;
-class wxRect;
-class wxDC;
-
-struct FileCtrlItem_Struct;
+class wxMenu;
+class wxStaticText;
 
 /**
- * This class is responsible for representing the download queue.
+ * The download queue: the primary widget, where users inspect and manipulate their downloads.
  *
- * The CDownlodListCtrl class is responsible for drawing files being downloaded.
- * It is in many ways primary widget within the application, since it is here that
- * users can inspect and manipulate their current downloads.
- *
+ * Rows are addressed by CPartFile* identity, as CSharedFilesCtrl's are by CKnownFile*. The Progress
+ * column is the one graphic cell (a CBarShader chunk/gap bar plus a completed-progress overlay and
+ * percent text); see CDownloadBarRenderer in the .cpp.
  */
-class CDownloadListCtrl : public CMuleListCtrl
+class CDownloadListCtrl : public CMuleVirtualDataViewCtrl
 {
 public:
-	/**
-	 * Constructor.
-	 *
-	 * @see CMuleListCtrl::CMuleListCtrl for documentation of parameters.
-	 */
-	 CDownloadListCtrl(
-	            wxWindow *parent,
-                wxWindowID winid = -1,
-                const wxPoint &pos = wxDefaultPosition,
-                const wxSize &size = wxDefaultSize,
-                long style = wxLC_ICON,
-                const wxValidator& validator = wxDefaultValidator,
-                const wxString &name = "downloadlistctrl" );
+	CDownloadListCtrl(wxWindow *parent,
+		wxWindowID winid = wxID_ANY,
+		const wxPoint &pos = wxDefaultPosition,
+		const wxSize &size = wxDefaultSize,
+		long style = 0,
+		const wxString &name = "downloadlistctrl");
 
-	/**
-	 * Destructor.
-	 */
-	virtual	~CDownloadListCtrl();
+	~CDownloadListCtrl();
 
+	/// Adds a file to the list; it shows only if it matches the current category, and
+	/// duplicates are ignored. @a deferView creates the model entry alone, without showing or
+	/// sorting -- used for a bulk load (remote GUI first sync) where the caller shows and sorts
+	/// once afterwards via ShowFileList() instead of paying an O(n^2) per-item sort (issue
+	/// #414).
+	void AddFile(CPartFile *file, bool deferView = false);
 
-	/**
-	 * Adds a file to the list, but it wont show unless it matches the current category.
-	 *
-	 * @param A valid pointer to a new partfile.
-	 *
-	 * Please note that duplicates wont be added.
-	 */
-	void AddFile( CPartFile* file );
+	/// Shows every model item in the current category and sorts once, inside Freeze()/Thaw().
+	/// The batch counterpart to AddFile()'s per-item path, used after a deferred bulk load.
+	/// Mirrors CSharedFilesCtrl::ShowFileList().
+	void ShowFileList();
 
-	/**
-	 * Removes the specified file from the list.
-	 *
-	 * @param file A valid pointer of the file to be removed.
-	 *
-	 * This function also removes any sources associated with the file.
-	 */
-	void RemoveFile( CPartFile* file );
+	// The live text filter (SetFilterText) is inherited from CMuleVirtualDataViewCtrl; here it
+	// is AND-ed with the current category, and the rebuild it triggers is RebuildFilteredView()
+	// below. Purely GUI-side, so it behaves the same in the monolithic app and the remote GUI.
 
-	/**
-	 * Shows or hides the sources of a specific file.
-	 *
-	 * @param file A valid pointer to the file to be shown/hidden.
-	 * @param show Whenever or not to show the file.
-	 *
-	 * If the file is hidden, then its sources will also be hidden.
-	 */
-	void ShowFile( CPartFile* file, bool show );
+	/// Bracket a burst of AddFile()/UpdateItem() calls (a reconnect resync, issue #444, or any
+	/// poll that adds a batch of downloads, issue #615) so the list repaints once (Freeze) and
+	/// sorts once instead of per item. Existing rows are updated in place; new rows are
+	/// appended without a per-item sort. EndBatchUpdate() does the single SortList(), unless
+	/// doSort is false.
+	void BeginBatchUpdate();
+	void EndBatchUpdate(bool doSort = true);
 
+	/// Removes @a file from the list.
+	void RemoveFile(CPartFile *file);
 
-	/**
-	 * Updates the state of the specified item, possibly causing a redrawing.
-	 *
-	 * @param toupdate The source or file to be updated.
-	 *
-	 * Calling this function with a file as the argument will ensure that the
-	 * file is hidden/shown depending on its state and the currently selected
-	 * category.
-	 */
-	void UpdateItem(const void* toupdate);
+	/// Shows or hides @a file's own row, per @a show and whether it passes the category + text
+	/// filter.
+	void ShowFile(CPartFile *file, bool show);
 
-	/**
-	 * Returns the current category.
-	 */
-	uint8 GetCategory() const;
+	/// Updates the state of @a toupdate, hiding or showing it for its state and the selected
+	/// category, and redrawing if needed. Always a CPartFile*, kept as const void* for source
+	/// compatibility with existing callers (GuiEvents.cpp's DownloadCtrlUpdateItem).
+	void UpdateItem(const void *toupdate);
+	void RefreshLiveItems();
+	void DeferUpdateItem(const void *item);
 
-	/**
-	 * Changes the displayed category and updates the list of shown files.
-	 *
-	 * @param newCategory The new category to display.
-	 */
-	void ChangeCategory( int newCategory );
+	uint8 GetCategory() const { return m_category; }
 
+	/// Changes the displayed category to @a newCategory and updates the shown files.
+	void ChangeCategory(int newCategory);
 
-	/**
-	 * Clears all completed files from the list.
-	 */
+	/// Clears all completed files from the list.
 	void ClearCompleted();
 
-	/**
-	 * Perform client update when item selection has changed.
-	 */
-	void	DoItemSelectionChanged();
+	/// Performs the client update when the item selection changes.
+	void DoItemSelectionChanged();
+
+	/// Refreshes the "Free space:" label from the core's figure for the filesystem holding the
+	/// part files, red once it no longer covers what is left to download. The warning is
+	/// measured against the whole queue, not the category on screen: there is one temp
+	/// directory for every category (a category chooses where a file lands when it finishes,
+	/// not where it downloads), so every queued file competes for the same space and a per-
+	/// category comparison would only warn once it was already too late. Driven by the GUI
+	/// timer rather than by list changes -- the figure moves on its own as the files grow.
+	void UpdateFreeSpace();
 
 protected:
 	/// Return old column order.
-	wxString GetOldColumnOrder() const;
+	wxString GetOldColumnOrder() const override;
+
+	/// Type-ahead matches the filename, not column 0: column 0 is the part number here, unlike
+	/// every other ported list, so the base's default (GetItemColumnText(item, 0)) would match
+	/// part numbers.
+	wxString GetRowLabel(const wxDataViewItem &item) const override;
+
+	/// Text of one cell, pulled on demand for the cells being drawn.
+	wxString GetItemColumnText(wxUIntPtr item, unsigned column) const override;
+
+	/// Rating/comment smiley on the File Name column, nothing elsewhere.
+	bool GetItemIcon(wxUIntPtr item, unsigned column, wxBitmapBundle &icon) const override;
+
+	/// Paints a row in its category's colour, the behaviour the pre-wxDataView list had in
+	/// OnDrawItem() and the port dropped (issue #1346). Whole row rather than one column, so
+	/// `column` is unused: the old code set the DC foreground once before its column loop.
+	bool GetItemAttr(wxUIntPtr item, unsigned column, wxDataViewItemAttr &attr) const override;
+
+	/// Chunk/gap-bar spans for the Progress column.
+	void GetItemBarFill(wxUIntPtr item, unsigned column, CBarFillSpec &out) const override;
+
+	/// Live auto-sort: re-order when sorted by a column whose value changes as a download
+	/// progresses (transferred, completed, speed, progress, sources, time remaining, last seen
+	/// complete, last reception). Static columns do not auto-resort.
+	bool IsLiveSortColumn() const override;
+
+	/** Pause live auto-sort while the context menu is open. */
+	bool IsMenuOpen() const override { return m_menu != nullptr; }
+
+	/// Single-column comparison for the base's sort chain.
+	int CompareItemData(
+		wxUIntPtr data1, wxUIntPtr data2, unsigned column, bool alt, int modifier) const override;
+
+	/// @see CMuleVirtualDataViewCtrl::RebuildFilteredView
+	void RebuildFilteredView() override;
 
 private:
-	/**
-	 * Updates the displayed number representing the amount of files currently shown.
-	 */
-	void ShowFilesCount( int diff );
+	/// Rebuilds the visible rows from the model in one pass, keeping the files that pass the
+	/// current category + text filter. Used whenever the visible set changes wholesale: a
+	/// category switch, a filter edit, or a deferred bulk load's first ShowFileList().
+	void RebuildVisibleList();
 
+	//! Whether @a file should be displayed in @a category: the category predicate AND-ed with
+	//! the text filter. Non-const because CPartFile::CheckShowItemInGivenCat() is not const.
+	bool IsVisibleInCat(CPartFile *file, int category) const;
 
-	/**
-	 * @see CMuleListCtrl::GetTTSText
-	 */
-	virtual wxString GetTTSText(unsigned item) const;
+	/// Updates the displayed count of files currently shown.
+	void ShowFilesCount(int diff);
 
+	/// Sets the displayed file count to an absolute value.
+	void SetFilesCount(int count);
 
-	/**
-	 * Overloaded function needed for custom drawing of items.
-	 */
-	virtual void OnDrawItem( int item, wxDC* dc, const wxRect& rect, const wxRect& rectHL, bool highlighted );
+	/// Sets the "Total queue size:" label to the combined size of the shown files.
+	void SetTotalSize(uint64 total);
 
-	/**
-	 * Draws a file item.
-	 */
-	void	DrawFileItem( wxDC* dc, int nColumn, const wxRect& rect, FileCtrlItem_Struct* item ) const;
-
-	/**
-	 * Draws the status (chunk) bar for a file.
-	 */
-	void	DrawFileStatusBar( const CPartFile* file, wxDC* dc, const wxRect& rect, bool bFlat ) const;
-
-	static int wxCALLBACK SortProc(wxUIntPtr item1, wxUIntPtr item2, wxIntPtr sortData);
-	static int Compare( const CPartFile* file1, const CPartFile* file2, long lParamSort );
+	/// Delete/F2 key handling; see CMuleDataViewCtrl::OnListKey.
+	bool OnListKey(wxKeyEvent &event) override;
 
 	// Event-handlers for files
-	void	OnCancelFile( wxCommandEvent& event );
-	void	OnSetPriority( wxCommandEvent& event );
-	void	OnSwapSources( wxCommandEvent& event );
-	void	OnSetCategory( wxCommandEvent& event );
-	void	OnSetStatus( wxCommandEvent& event );
-	void	OnClearCompleted( wxCommandEvent& event );
-	void	OnGetLink( wxCommandEvent& event );
-	void	OnGetFeedback( wxCommandEvent& event );
-	void	OnViewFileInfo( wxCommandEvent& event );
-	void	OnViewFileComments( wxCommandEvent& event );
-	void	OnPreviewFile( wxCommandEvent& event );
-
-	// Misc event-handlers
-	void	OnItemActivated( wxListEvent& event );
-	void	OnMouseRightClick( wxListEvent& event );
-	void	OnMouseMiddleClick( wxListEvent& event );
-	void	OnKeyPressed( wxKeyEvent& event );
-	void	OnItemSelectionChanged( wxListEvent& event );
+	void OnCancelFile(wxCommandEvent &event);
+	void OnSetPriority(wxCommandEvent &event);
+	void OnSwapSources(wxCommandEvent &event);
+	void OnSetCategory(wxCommandEvent &event);
+	void OnSetStatus(wxCommandEvent &event);
+	void OnClearCompleted(wxCommandEvent &event);
+	void OnDeleteFromDisk(wxCommandEvent &event);
+	void OnGetLink(wxCommandEvent &event);
+	void OnGetFeedback(wxCommandEvent &event);
+	void OnViewFileInfo(wxCommandEvent &event);
+	void OnViewFileComments(wxCommandEvent &event);
+	void OnEditComment(wxCommandEvent &event);
+	void OnPreviewFile(wxCommandEvent &event);
+	void OnShowInFolder(wxCommandEvent &event);
+	void OnRazorStatsCheck(wxCommandEvent &event);
 
 	/**
-	 * Executes the user-selected preview command on the specified file.
+	 * The item the context menu was built for, by identity rather than row.
 	 *
-	 * @file The file to be previewed.
+	 * The menu's enabled state is decided from this item, so the handlers act on it. A row
+	 * index would not survive the menu being open: PopupMenu runs a nested event loop, so
+	 * timers and EC updates keep mutating the list, and removing a row *above* this one shifts
+	 * every index below it -- the click would act on the neighbouring file. HasItemData() re-
+	 * checks that the item is still present before it is used.
 	 */
-	void PreviewFile(CPartFile* file);
+	wxUIntPtr m_menuItem = 0;
 
-	/**
-	 * Show file detail dialog for item at index
-	 */
-	void ShowFileDetailDialog(long index);
+	void OnItemActivated(wxDataViewEvent &event);
+	void OnItemRightClicked(wxDataViewEvent &event);
 
+	/// Fires DoItemSelectionChanged(), which rebuilds the sources panel, unless a notification
+	/// is already pending -- m_ItemSelectionChangePending stops a burst of selection events (a
+	/// rubber-band over many rows) scheduling more than one.
+	void OnSelectionChanged(wxDataViewEvent &event);
+	//! Set while a DoItemSelectionChanged() notification is pending, so a
+	//! burst of selection events schedules only one.
+	bool m_ItemSelectionChangePending = false;
 
-	//! The type of list used to store items on the listctrl.
-	typedef std::multimap<const void*,FileCtrlItem_Struct*> ListItems;
-	//! Shortcut to the pair-type used on the list.
-	typedef ListItems::value_type ListItemsPair;
-	//! This pair is used when searching for equal-ranges.
-	typedef std::pair< ListItems::iterator, ListItems::iterator > ListIteratorPair;
+	/// Shows the file-detail dialog for the given row.
+	void ShowFileDetailDialog(long row);
 
-	//! This list contains everything shown on the list. Sources are only to
-	//! be found on this list if they are being displayed, whereas files can
-	//! always be found on this list, even if they are currently hidden.
-	ListItems	m_ListItems;
-
+	//! Every known download, shown or hidden by the current category/filter.
+	//! RebuildVisibleList() walks this to decide what to show; AddFile() uses it to reject
+	//! duplicates.
+	std::set<CPartFile *> m_files;
+	std::set<CPartFile *> m_pendingUpdates;
 
 	//! Pointer to the current menu object, used to avoid multiple menus.
-	wxMenu*		m_menu;
-	//! Cached brush object.
-	wxBrush	m_hilightBrush;
-	//! Cached brush object.
-	wxBrush	m_hilightUnfocusBrush;
+	wxMenu *m_menu = nullptr;
 
 	//! The currently displayed category
-	uint8 m_category;
+	uint8 m_category = 0;
 
-	//! Flag if change of item selection is pending
-	bool m_ItemSelectionChangePending;
+	//! True between BeginBatchUpdate()/EndBatchUpdate(): AddFile() appends
+	//! rows but defers the per-item SortList to one final sort (issue #444).
+	bool m_batchUpdate = false;
 
 	//! The number of displayed files
-	int m_filecount;
+	int m_filecount = 0;
+
+	//! Combined size of the displayed files (drives the "Total queue size:" label)
+	uint64 m_shownSize = 0;
+
+	//! The "Free space:" label, resolved by name on first use. Lives in the
+	//! sources pane, so it cannot be reached through GetParent().
+	wxStaticText *m_freeSpaceLabel = nullptr;
+	wxStaticText *m_freeSpaceSepLabel = nullptr;
 
 	wxDECLARE_EVENT_TABLE();
-
 };
 
 #endif

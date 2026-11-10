@@ -23,17 +23,15 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-//
 // Generic state machine implementation
-//
 
 #ifndef STATE_MACHINE_H
 #define STATE_MACHINE_H
 
 #include <queue>
 
-#include <wx/thread.h>		/* For wxMutex, wxMutexLocker	*/
-#include <wx/string.h>		/* For wxString			*/
+#include <wx/thread.h> /* For wxMutex, wxMutexLocker	*/
+#include <wx/string.h> /* For wxString			*/
 
 typedef unsigned int t_sm_state;
 
@@ -42,29 +40,26 @@ typedef unsigned int t_sm_event;
 class CStateMachine
 {
 public:
-	CStateMachine(
-		const wxString &name,
-		const unsigned int maxStates,
-		const t_sm_state initialState );
+	CStateMachine(const wxString &name, const unsigned int maxStates, const t_sm_state initialState);
 	virtual ~CStateMachine() = 0;
 	void Clock();
 	void Schedule(t_sm_event event);
-	t_sm_state GetState() const			{ return m_state; }
-	unsigned int GetClocksInCurrentState() const	{ return m_clocksInCurrentState; }
+	t_sm_state GetState() const { return m_state; }
+	unsigned int GetClocksInCurrentState() const { return m_clocksInCurrentState; }
 	virtual t_sm_state next_state(t_sm_event event) = 0;
 	virtual void process_state(t_sm_state state, bool entry) = 0;
 
 private:
 	void flush_queue();
 
-	t_sm_state		m_state;
-	wxMutex			m_stateMutex;
-	std::queue <t_sm_event>	m_queue;
-	wxMutex			m_queueMutex;
-	const wxString		m_name;
-	const unsigned int	m_maxStates;
-	unsigned int		m_clockCounter;
-	unsigned int		m_clocksInCurrentState;
+	t_sm_state m_state;
+	wxMutex m_stateMutex;
+	std::queue<t_sm_event> m_queue;
+	wxMutex m_queueMutex;
+	const wxString m_name;
+	const unsigned int m_maxStates;
+	unsigned int m_clockCounter;
+	unsigned int m_clocksInCurrentState;
 };
 
 #endif // STATE_MACHINE_H

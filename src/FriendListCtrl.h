@@ -26,37 +26,64 @@
 #ifndef FRIENDLISTCTRL_H
 #define FRIENDLISTCTRL_H
 
-#include "MuleListCtrl.h"
+#include "MuleVirtualDataViewCtrl.h" // Needed for CMuleVirtualDataViewCtrl
 #include "MD4Hash.h"
+
+#define COLUMN_FRIEND_NAME 0
+//! Always empty. Absorbs the macOS trailing-column sizing; see
+//! CMuleDataViewCtrl::AppendSpacerColumn().
+#define COLUMN_FRIEND_SPACER 1
 
 class wxString;
 class CFriend;
 
-class CFriendListCtrl : public CMuleListCtrl
+class CFriendListCtrl : public CMuleVirtualDataViewCtrl
 {
 public:
-	CFriendListCtrl(wxWindow* parent, int id, const wxPoint& pos, wxSize siz, int flags);
+	CFriendListCtrl(wxWindow *parent, int id, const wxPoint &pos, wxSize siz, int flags);
 	~CFriendListCtrl();
 
-	void		UpdateFriend(CFriend* toupdate);
-	void		RemoveFriend(CFriend* todel);
+	void UpdateFriend(CFriend *toupdate);
+	void RemoveFriend(CFriend *todel);
 
 protected:
+	/// Text of the one real column, pulled on demand for the rows being drawn.
+	wxString GetItemColumnText(wxUIntPtr item, unsigned column) const override;
+
+	/// Blue for a linked friend, default text colour for the rest.
+	bool GetItemAttr(wxUIntPtr item, unsigned column, wxDataViewItemAttr &attr) const override;
+
+	/// Case-insensitive name comparison for the base's sort chain.
+	int CompareItemData(
+		wxUIntPtr data1, wxUIntPtr data2, unsigned column, bool alt, int modifier) const override;
+
+	/// The name is the only column, and it can change after insertion -- a friend arrives
+	/// before its name does -- so a refresh may need to move the row under a name sort.
+	bool IsLiveSortColumn() const override { return true; }
+
+	/**
+	 * Delete removes the selected friends; see CMuleDataViewCtrl::OnListKey.
+	 */
+	bool OnListKey(wxKeyEvent &event) override;
+
 	wxDECLARE_EVENT_TABLE();
 
-	void	OnRightClick(wxMouseEvent& event);
+	void OnItemRightClicked(wxDataViewEvent &event);
 
 private:
-	void	OnItemActivated(wxListEvent& event);
+	void OnItemActivated(wxDataViewEvent &event);
+
+	//! Open a chat with a friend, reporting the reason when there is no
+	//! address to reach them on yet. Shared by double-click and the menu.
+	void MessageFriend(CFriend *cur_friend);
 
 	// Menu Items
-	void	OnShowDetails(wxCommandEvent& event);
-	void	OnSendMessage(wxCommandEvent& event);
-	void	OnRemoveFriend(wxCommandEvent& event);
-	void	OnSetFriendslot(wxCommandEvent& event);
-	void	OnAddFriend(wxCommandEvent& event);
-	void	OnViewFiles(wxCommandEvent& event);
-	void	OnKeyPressed(wxKeyEvent& event);
+	void OnShowDetails(wxCommandEvent &event);
+	void OnSendMessage(wxCommandEvent &event);
+	void OnRemoveFriend(wxCommandEvent &event);
+	void OnSetFriendslot(wxCommandEvent &event);
+	void OnAddFriend(wxCommandEvent &event);
+	void OnViewFiles(wxCommandEvent &event);
 };
 
 #endif

@@ -22,84 +22,94 @@
 #ifndef FILEAREA_H
 #define FILEAREA_H
 
-#include "Types.h"		// Needed for uint8_t
+#include "Types.h" // Needed for uint8_t
 
 class CFileAreaSigHandler;
 class CFileAutoClose;
 
 /**
- * This class is used to optimize file read/write using mapped memory
- * if supported.
+ * Optimizes file read/write using mapped memory where supported.
  */
 class CFileArea
 {
-friend class CFileAreaSigHandler;
+	friend class CFileAreaSigHandler;
+
 public:
 	/**
-	 * Creates a uninitialized file area.
+	 * Creates an uninitialized file area.
 	 */
 	CFileArea();
 
-
 	/**
-	 * Destructor, closes the file if opened.
+	 * Closes the file if opened.
 	 */
 	virtual ~CFileArea();
 
 	/**
 	 * Closes the file.
 	 */
-        bool Close();
+	bool Close();
 
 	/**
-	 * Init area with a given piece of file.
-	 *
-	 * @param file   file to read.
-	 * @param offset seek address in file.
-	 * @param count  bytes to read.
-	 *
-	 * Initialize buffer. Buffer will contain data from current file
-	 * position for count length. Buffer will be a memory mapped area
-	 * or a allocated buffer depending on systems.
+	 * Initialises the buffer with @a count bytes of @a file from @a offset. The buffer is a
+	 * memory-mapped area or an allocated one, depending on the system.
 	 */
-	void ReadAt(CFileAutoClose& file, uint64 offset, size_t count);
+	void ReadAt(CFileAutoClose &file, uint64 offset, size_t count);
 
 	/**
-	 * Start a new write
+	 * Starts a new write.
 	 */
-	void StartWriteAt(CFileAutoClose& file, uint64 offset, size_t count);
-
-        /**
-	 * Flushes data not yet written.
-	 */
-	bool FlushAt(CFileAutoClose& file, uint64 offset, size_t count);
+	void StartWriteAt(CFileAutoClose &file, uint64 offset, size_t count);
 
 	/**
-	 * Get buffer that contains data read or to write.
-	 * @return allocated buffer or NULL if not initialized
+	 * Flushes data not yet written. Throws CIOFailureException on failure, retaining the
+	 * buffer so the caller can retry. A failed mapped flush falls back to an allocated
+	 * buffer, so a retry writes the data again rather than only synchronizing clean pages.
+	 */
+	void FlushAt(CFileAutoClose &file, uint64 offset, size_t count);
+
+	/**
+	 * The buffer holding the data read or to be written, or NULL if not initialized.
 	 */
 	uint8_t *GetBuffer() const { return m_buffer; };
 
+	//! Whether the current read still uses file-backed pages.
+	bool IsMapped() const { return m_mmap_buffer != nullptr; }
+
 	/**
-	 * Report error pending
+	 * Touches every page of a memory-mapped read, so its disk reads (and any SIGBUS error)
+	 * happen now rather than wherever the buffer is first used. No-op if not mapped.
+	 */
+	void Prefault();
+
+	/**
+	 * Reports a pending error.
 	 */
 	void CheckError();
+
+	/**
+	 * Runtime switch for the mmap file-I/O path (the MMapEnabled preference). Read once per
+	 * operation at ReadAt()/StartWriteAt() time; an area already opened keeps its mode (see
+	 * m_mmap_buffer), so flipping this mid-transfer only affects later operations and is safe
+	 * with active downloads and uploads. No-op on builds without MMAP_SUPPORTED.
+	 */
+	static void SetMMapEnabled(bool enabled);
+	static bool GetMMapEnabled();
 
 private:
 	//! A CFileArea is neither copyable nor assignable.
 	//@{
-	CFileArea(const CFileArea&);
-	CFileArea& operator=(const CFileArea&);
+	CFileArea(const CFileArea &);
+	CFileArea &operator=(const CFileArea &);
 	//@}
 
 	/**
-	 * Pointer to buffer used for read/write operations.
-	 * If mapped points inside m_mmap_buffer area otherwise
-	 * point to an allocated buffer to be freed.
+	 * Buffer used for read/write operations: points inside m_mmap_buffer when mapped, otherwise
+	 * at an allocated buffer to be freed.
 	 */
 	uint8_t *m_buffer;
 	/**
-	 * Pointer to memory mapped area or NULL if not mapped.
+	 * Memory mapped area, or NULL if not mapped.
 	 */
 	uint8_t *m_mmap_buffer;
 	/**
@@ -107,15 +117,15 @@ private:
 	 */
 	size_t m_length;
 	/**
-	 * Global chain
+	 * Global chain.
 	 */
-	CFileArea* m_next;
+	CFileArea *m_next;
 	/**
-	 * File handle to release
+	 * File handle to release.
 	 */
-	CFileAutoClose * m_file;
+	CFileAutoClose *m_file;
 	/**
-	 * true if error detected
+	 * True if an error was detected.
 	 */
 	bool m_error;
 };

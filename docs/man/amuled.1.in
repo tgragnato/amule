@@ -6,17 +6,20 @@ amuled \- the all\-platform eMule p2p client \- daemonized version
 .SH SYNOPSIS
 .B_untranslated amuled
 .RB [ \-c " " \fI<path> ]
+.RB_untranslated [ \-\-log\-file " " \fI<file> ]
 .RB_untranslated [ \-f ]
 .RB [ \-p " " \fI<path> ]
 .RB_untranslated [ \-e ]
 .RB_untranslated [ \-o ]
 .RB_untranslated [ \-r ]
 .RB_untranslated [ \-\-configure\-autostart " " \fI<on|off> ]
+.RB_untranslated [ \-\-configure\-protocols " " \fI<value> ]
+.RB_untranslated [ \-\-configure\-file\-assoc " " \fI<on|off> ]
 .RB [ \-w " " \fI<path> ]
 .RB_untranslated [ \-d ]
 .RB_untranslated [ \-i ]
 .RB [ \-t " " \fI<num> ]
-.RI [ eD2k-link ]
+.RI [ eD2k-link | collection-file ]
 
 .B_untranslated amuled
 .RB_untranslated [ \-v ]
@@ -27,6 +30,16 @@ amuled \- the all\-platform eMule p2p client \- daemonized version
 .TP
 \fB[ \-c\fR \fI<path>\fR, \fB\-\-config\-dir\fR=\fI<path>\fR \fB]\fR
 Read config from \fI<path>\fR instead of home
+.TP
+\fB[ \-\-log\-file\fR=\fI<file>\fR \fB]\fR
+Write logs to the specified filename instead of the default log file.
+Overrides the \fBLogFilePath\fR setting under \fB[eMule]\fR in \fIamule.conf\fR for this run only.
+Relative paths are resolved against the configuration directory.
+The parent directory must already exist and be writable; it is not created automatically.
+An empty or absent configuration setting uses \fIlogfile\fR in the configuration directory.
+On startup, the previous log is backed up to the same path with \fI.bak\fR appended.
+If the backup cannot be created, a warning is logged and the current session is appended to the existing log.
+Configuration changes take effect after restart.
 .TP
 .B_untranslated [ \-f\fR, \fB\-\-full\-daemon ]\fR
 Forks to background.
@@ -48,6 +61,15 @@ Resets config to default values.
 Enable or disable starting amuled on user login, then exit.
 The OS\-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG \fI.desktop\fR autostart entry.
 .TP
+.B_untranslated [ \-\-configure\-protocols\fR=\fI<value>\fR \fB]\fR
+Enable or disable aMule as the current user's default handler for ed2k:// and magnet: links, then exit.
+\fI<value>\fR is \fBon\fR or \fBoff\fR for both kinds of link, or \fBed2k:on\fR, \fBed2k:off\fR, \fBmagnet:on\fR or \fBmagnet:off\fR for one of them.
+The OS\-specific store is selected automatically: Windows registry, macOS LaunchServices, Linux XDG \fImimeapps.list\fR.
+.TP
+.B_untranslated [ \-\-configure\-file\-assoc\fR=\fI<on|off>\fR \fB]\fR
+Enable or disable aMule as the current user's handler for \fI.emulecollection\fR files, then exit.
+The OS\-specific store is selected automatically: Windows registry, macOS LaunchServices, Linux XDG \fImimeapps.list\fR.
+.TP
 \fB[ \-w\fR \fI<path>\fR, \fB\-\-use\-amuleweb\fR=\fI<path>\fR \fB]\fR
 Specify location of amuleweb binary to \fI<path>\fR.
 .TP
@@ -68,8 +90,8 @@ Displays the current version number.
 .B_untranslated [ \-h\fR, \fB\-\-help ]\fR
 Prints a short usage description.
 .TP
-\fB[ eD2k-link ]\fR
-Adds an eD2k-link to the core.
+\fB[ eD2k-link | collection-file ]\fR
+Adds an eD2k-link, or every link in an eMule collection file, to the core.
 .PP
 The eD2k link to be added can be:
 .RS 3
@@ -82,14 +104,24 @@ a serverlist link, in which case all servers in the list will be added to the se
 .IP \(bu 2
 a magnet link.
 .RE
+.PP
+Alternatively the argument can be the path to an .emulecollection file,
+or a file:// URL naming one, in which case every link it contains is added
+to the download queue.  This is what lets a file manager open a collection
+with aMule.
 .SH FILES
 ~/.aMule/*
+.TP
+.I ~/.aMule/allowed\-remote\-dirs.dat
+The folders a remote EC or amuleapi client may point the incoming, temporary, shared or category download folders at, one absolute path per line. Empty or absent (the default) means every such remote folder change is refused. On a daemon\-only install, such as a container or the Android port with no monolithic aMule to edit the list in its GUI, create or edit this file and restart \fBamuled\fR to allow remote folder changes; relative lines are ignored.
+.SH MEDIA METADATA
+\fBamuled\fR runs its bundled \fBamule\-media\-probe\fR helper on each received file to extract the length, bitrate and codec tags it then publishes to the network. The helper must sit next to the \fBamuled\fR executable. This is on by default (\fBEnabled=1\fR under \fB[MediaMetadata]\fR in \fIamule.conf\fR); set \fBEnabled=0\fR there and restart to turn it off.
 .SH REPORTING BUGS
 Please report bugs either on our forum (\fIhttps://github.com/amule-org/amule/discussions\fR), or in our bugtracker (\fIhttps://github.com/amule-org/amule/issues\fR).
 Please do not report bugs in e-mail, neither to our mailing list nor directly to any team member.
 .SH COPYRIGHT
 aMule and all of its related utilities are distributed under the GNU General Public License.
 .SH SEE ALSO
-.B_untranslated alcc\fR(1), \fBamule\fR(1), \fBamulecmd\fR(1), \fBamulegui\fR(1), \fBamuleweb\fR(1), \fBcas\fR(1), \fBed2k\fR(1)
+.B_untranslated alcc\fR(1), \fBamule\fR(1), \fBamuleapi\fR(1), \fBamulecmd\fR(1), \fBamulegui\fR(1), \fBamuleweb\fR(1), \fBcas\fR(1), \fBed2k\fR(1)
 .SH AUTHOR
 This manpage was written by Vollstrecker <amule@vollstreckernet.de>

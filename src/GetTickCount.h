@@ -27,15 +27,11 @@
 #ifndef GETTICKCOUNT_H
 #define GETTICKCOUNT_H
 
-#include "Types.h"		// Needed for uint32, uint64
+#include "Types.h" // Needed for uint32, uint64
 
-#ifdef _WIN32
-	// GetTickCount64 is a system function in Vista so rename it
-	#define GetTickCount64 GetTickCount_64
-#endif
+#include <atomic>
 
-
-//return units are milliseconds, not seconds!!!
+// return units are milliseconds, not seconds!!!
 uint64 GetTickCount64();
 
 // Functions used to init the timer on GUI
@@ -45,8 +41,9 @@ void StartTickTimer();
 void StopTickTimer();
 
 // A cheap global time (in s) without any function calls updated in OnCoreTimer
-// It counts from app startup, so uint32 shall be enough for a 136 years long session
-extern uint32 TheTime;
+// It counts from app startup, so uint32 shall be enough for a 136 years long session.
+// Atomic: worker threads read it through CFileAutoClose.
+extern std::atomic<uint32> TheTime;
 
 #endif // GETTICKCOUNT_H
 // File_checked_for_headers

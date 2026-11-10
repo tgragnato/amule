@@ -1,0 +1,158 @@
+//
+// This file is part of the aMule Project.
+//
+// Copyright (c) 2003-2026 aMule Team ( https://amule-org.github.io )
+//
+// Any parts of this program derived from the xMule, lMule or eMule project,
+// or contributed by third-party developers are copyrighted by their
+// respective authors.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
+//
+
+#include <muleunit/test.h>
+
+#include <AutostartManager.h>
+
+#include "TestScratchDir.h"
+
+#include <wx/file.h>
+#include <wx/filefn.h>
+#include <wx/filename.h>
+#include <wx/utils.h>
+
+#include <optional>
+
+using namespace muleunit;
+
+namespace
+{
+std::optional<TestScratchDir> g_scratch;
+wxString g_configHome;
+
+void UseScratchConfigHome()
+{
+	g_configHome = g_scratch.emplace(wxT("amule-autostart")).WxPath();
+	wxSetEnv(wxT("XDG_CONFIG_HOME"), g_configHome);
+}
+
+wxString EntryPath()
+{
+	return g_configHome + wxT("/autostart/amule.desktop");
+}
+
+wxString ReadEntry()
+{
+	wxString content;
+	wxFile f(EntryPath());
+	f.ReadAll(&content);
+	return content;
+}
+
+void WriteEntry(const wxString &content)
+{
+	wxFile f;
+	f.Create(EntryPath(), true);
+	f.Write(content);
+}
+
+void Rewrite(const wxString &from, const wxString &to)
+{
+	wxString content = ReadEntry();
+	content.Replace(from, to);
+	WriteEntry(content);
+}
+} // namespace
+
+// Linux only: the Windows and macOS backends write the user's own registry and LaunchAgents,
+// while this one follows $XDG_CONFIG_HOME into a scratch directory.
+DECLARE(AutostartManager)
+void tearDown()
+{
+	g_scratch.reset();
+}
+END_DECLARE;
+
+TEST(AutostartManager, OffWhenTheDesktopSwitchesItOff)
+{
+	UseScratchConfigHome();
+	ASSERT_TRUE(AutostartManager::Enable());
+	ASSERT_TRUE(AutostartManager::IsEnabled());
+
+	// GNOME's switch.
+	Rewrite(wxT("X-GNOME-Autostart-enabled=true"), wxT("X-GNOME-Autostart-enabled=false"));
+	ASSERT_TRUE(!AutostartManager::IsEnabled());
+
+	// KDE's.
+	Rewrite(wxT("X-GNOME-Autostart-enabled=false"), wxT("X-GNOME-Autostart-enabled=true"));
+	Rewrite(wxT("Hidden=false"), wxT("Hidden=true"));
+	ASSERT_TRUE(!AutostartManager::IsEnabled());
+}
+
+TEST(AutostartManager, EnableSwitchesItBackOn)
+{
+	UseScratchConfigHome();
+	ASSERT_TRUE(AutostartManager::Enable());
+	Rewrite(wxT("Hidden=false"), wxT("Hidden=true"));
+
+	ASSERT_TRUE(AutostartManager::Enable());
+	ASSERT_TRUE(AutostartManager::IsEnabled());
+	ASSERT_TRUE(ReadEntry().Contains(wxT("Hidden=false")));
+}
+
+TEST(AutostartManager, SelfHealKeepsItSwitchedOff)
+{
+	UseScratchConfigHome();
+	ASSERT_TRUE(AutostartManager::Enable());
+	const wxString target = AutostartManager::GetTarget();
+	Rewrite(target, wxT("/moved/away/") + wxFileName(target).GetFullName());
+	Rewrite(wxT("X-GNOME-Autostart-enabled=true"), wxT("X-GNOME-Autostart-enabled=false"));
+
+	AutostartManager::SelfHealOnStartup();
+
+	const wxString entry = ReadEntry();
+	ASSERT_TRUE(entry.Contains(wxT("Exec=\"") + target + wxT("\"")));
+	ASSERT_TRUE(entry.Contains(wxT("X-GNOME-Autostart-enabled=false")));
+	ASSERT_TRUE(!AutostartManager::IsEnabled());
+}
+
+TEST(AutostartManager, ReadsThePortalEntryUnderFlatpak)
+{
+	UseScratchConfigHome();
+	// The sandbox's own config dir, which the host never reads, must not be the one used.
+	wxSetEnv(wxT("XDG_CONFIG_HOME"), g_configHome + wxT("/sandbox"));
+	wxSetEnv(wxT("HOST_XDG_CONFIG_HOME"), g_configHome);
+	wxSetEnv(wxT("FLATPAK_ID"), wxT("org.amule.test"));
+	wxFileName::Mkdir(g_configHome + wxT("/autostart"), 0700, wxPATH_MKDIR_FULL);
+	const wxString entry = g_configHome + wxT("/autostart/org.amule.test.desktop");
+	const wxString program = wxFileName(AutostartManager::GetTarget()).GetName();
+
+	wxFile f;
+	f.Create(entry, true);
+	f.Write(wxT("[Desktop Entry]\nType=Application\nExec=flatpak run --command=") + program +
+		wxT(" org.amule.test\nX-Flatpak=org.amule.test\n"));
+	f.Close();
+	const bool ours = AutostartManager::IsEnabled();
+
+	f.Create(entry, true);
+	f.Write(wxT("[Desktop Entry]\nType=Application\nExec=flatpak run --command=amuled org.amule.test\n"));
+	f.Close();
+	const bool daemons = AutostartManager::IsEnabled();
+
+	wxUnsetEnv(wxT("FLATPAK_ID"));
+	wxUnsetEnv(wxT("HOST_XDG_CONFIG_HOME"));
+	ASSERT_TRUE(ours);
+	ASSERT_TRUE(!daemons);
+}

@@ -23,7 +23,7 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include "ServerSocket.h"	// Interface declarations
+#include "ServerSocket.h" // Interface declarations
 
 #include <protocol/Protocols.h>
 #include <common/EventIDs.h>
@@ -31,33 +31,100 @@
 
 #include <wx/tokenzr.h>
 
-#include "Packet.h"		// Needed for CPacket
-#include "updownclient.h"	// Needed for CUpDownClient
-#include "ClientList.h"		// Needed for CClientList
-#include "MemFile.h"		// Needed for CMemFile
-#include "PartFile.h"		// Needed for CPartFile
-#include "SearchList.h"		// Needed for CSearchList
-#include "Preferences.h"	// Needed for CPreferences
-#include "DownloadQueue.h"	// Needed for CDownloadQueue
-#include "ServerList.h"		// Needed for CServerList
-#include "Server.h"		// Needed for CServer
-#include "amule.h"		// Needed for theApp
-#include "Statistics.h"		// Needed for theStats
-#include "AsyncDNS.h" // Needed for CAsyncDNS
+#include "Packet.h"        // Needed for CPacket
+#include "updownclient.h"  // Needed for CUpDownClient
+#include "ClientList.h"    // Needed for CClientList
+#include "MemFile.h"       // Needed for CMemFile
+#include "PartFile.h"      // Needed for CPartFile
+#include "SearchList.h"    // Needed for CSearchList
+#include "Preferences.h"   // Needed for CPreferences
+#include "DownloadQueue.h" // Needed for CDownloadQueue
+#include "ServerList.h"    // Needed for CServerList
+#include "Server.h"        // Needed for CServer
+#include "amule.h"         // Needed for theApp
+#include "Statistics.h"    // Needed for theStats
+#include "AsyncDNS.h"      // Needed for CAsyncDNS
 #include "Logger.h"
 #include <common/Format.h>
 #include "IPFilter.h"
-#include "GuiEvents.h"		// Needed for Notify_*
+#include "SharedFileList.h"   // Needed for CSharedFileList
+#include "NetworkFunctions.h" // Needed for IsGoodIP
+#include "GuiEvents.h"        // Needed for Notify_*
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+#include "LugdunumNatTraversal.h"   // Needed for ParseIdChangeFields
+#include "LugdunumNatCallbackLog.h" // Needed for LogForwardedCallback
+#include "NatServerHolePunch.h"     // Needed for ParseInfo, ParseFailure
+#include "NatServerHolePunchLog.h"  // Needed for LogInfo, LogFailure
+#include "ClientUDPSocket.h"        // Needed for DialLowIdHolePunchPeer
+#endif
+#ifdef ENABLE_IPV6
+#include "AdvertisedIPv6.h" // Needed for AdvertisedIPv6ForPeers
+#endif
 #include <boost/system/error_code.hpp>
 
+#if defined(ENABLE_NATT_SERVER_COORDINATION) && defined(AMULE_UTP_TRANSPORT)
+namespace
+{
+void HandleLowIdHolePunchInfo(
+	CServerConnect *serverconnect, const NatServerHolePunch::Info &info, std::uint64_t now)
+{
+	if (!thePrefs::IsLowIdHolePunchEnabled() || theApp->clientudp == nullptr ||
+		!theApp->clientudp->Ok() || thePrefs::GetEffectiveUDPPort() == 0 || info.udpPort == 0 ||
+		info.tcpPort == 0) {
+		return;
+	}
+	if (info.peerId.has_value()) {
+		// The 0x61 a wake was waiting for, even one the guards below keep us from acting on: the
+		// requester already has its 0x61, so the wake's Lugdunum fallback must not dial it.
+		serverconnect->HolePunchExtensionWakes().Resolve(*info.peerId);
+	}
+	const uint32 peerIP = PeekUInt32(info.peerIP.data());
+	if (!CClientUDPSocket::IsRendezvousPeerAllowed(peerIP)) {
+		AddDebugLogLineN(logServer,
+			CFormat("Ignored OP_LOWID_HOLEPUNCH_INFO endpoint %s") % Uint32toStringIP(peerIP));
+		return;
+	}
+	if (serverconnect->LowIdHolePunchDuplicates().Seen(info.userHash, now) ||
+		!serverconnect->LowIdHolePunchActionLimiter().Admit(now)) {
+		return;
+	}
+	serverconnect->LowIdHolePunchDuplicates().Record(info.userHash, now);
+	// Only a 0x61 naming a peer we asked about makes us its requester; any other, including a
+	// 25-byte one, leaves us the target, who punches and waits for the peer's stream.
+	const bool requester = info.peerId.has_value() &&
+			       serverconnect->LowIdHolePunchPendingRequests().Take(*info.peerId, now);
+	theApp->clientudp->NoteRendezvousAttempt(
+		NatServerHolePunch::RendezvousPath::ServerPunch, peerIP, &info.userHash);
+	// A 0x61 without the field means the server has no fresh view of our UDP, not an unchanged one.
+	uint32 ownUdpIP = 0;
+	if (info.ownUdpIP) {
+		const uint32 seen = PeekUInt32(info.ownUdpIP->data());
+		ownUdpIP = IsGoodIP(seen, true) ? seen : 0;
+	}
+	theApp->clientudp->NoteServerSeenUdpIP(ownUdpIP);
+	const NatServerHolePunch::VouchedPeer peer{ info.userHash, info.peerCrypt };
+	serverconnect->LowIdHolePunchExpectedEndpoints().Register(
+		info.peerIP, info.udpPort, info.tcpPort, now, peer);
+	theApp->clientudp->ExpectNatTPeer(peerIP, info.udpPort, &info.userHash);
+	// The four punches, with the port sweep at 0.5 s, are driven from the core timer.
+	serverconnect->StartLowIdHolePunchSchedule(info.peerIP, info.udpPort, now, info.userHash);
+	AddDebugLogLineN(logServer,
+		CFormat("Client UDP socket: OP_HOLEPUNCH at 0, 0.5, 1 and 2 s to %s") %
+			Uint32_16toStringIP_Port(peerIP, info.udpPort));
+	if (requester) {
+		if (theApp->clientudp->DialLowIdHolePunchPeer(peerIP, info.tcpPort, info.udpPort, peer)) {
+			serverconnect->LowIdHolePunchExpectedEndpoints().NoteDialled(
+				info.peerIP, info.udpPort);
+		}
+	}
+}
+} // namespace
+#endif
 
-//------------------------------------------------------------------------------
 // CServerSocket
-//------------------------------------------------------------------------------
 
-CServerSocket::CServerSocket(CServerConnect* in_serverconnect, const CProxyData *ProxyData)
-:
-CEMSocket(ProxyData)
+CServerSocket::CServerSocket(CServerConnect *in_serverconnect, const CProxyData *ProxyData)
+: CEMSocket(ProxyData)
 {
 	serverconnect = in_serverconnect;
 	connectionstate = 0;
@@ -74,55 +141,79 @@ CEMSocket(ProxyData)
 
 CServerSocket::~CServerSocket()
 {
-	if (cur_server) {
-		delete cur_server;
-	}
+	delete cur_server;
 	cur_server = NULL;
 }
-
 
 void CServerSocket::OnConnect(int nErrorCode)
 {
 	switch (nErrorCode) {
-		case boost::system::errc::success:
-			if (cur_server->HasDynIP()) {
-				uint32 server_ip = GetPeerInt();
-				cur_server->SetID(server_ip);
-				// GetServerByAddress may return NULL, so we must test!
-				// This was the reason why amule would crash when trying to
-				// connect in wxWidgets 2.5.2
-				CServer *pServer = theApp->serverlist->GetServerByAddress(
-					cur_server->GetAddress(), cur_server->GetPort());
-				if (pServer) {
-					pServer->SetID(server_ip);
-				} else {
-					AddDebugLogLineN(logServer, "theApp->serverlist->GetServerByAddress() returned NULL");
-					return;
-				}
+	case boost::system::errc::success:
+		if (cur_server->HasDynIP()) {
+			uint32 server_ip = GetPeerInt();
+			cur_server->SetID(server_ip);
+			// GetServerByAddress may return NULL, so it must be tested: this was
+			// the reason aMule crashed when connecting under wxWidgets 2.5.2.
+			CServer *pServer = theApp->serverlist->GetServerByAddress(
+				cur_server->GetAddress(), cur_server->GetPort());
+			if (pServer) {
+				pServer->SetID(server_ip);
+			} else {
+				AddDebugLogLineN(
+					logServer, "theApp->serverlist->GetServerByAddress() returned NULL");
+				return;
 			}
-			SetConnectionState(CS_WAITFORLOGIN);
-			break;
+		}
+		SetConnectionState(CS_WAITFORLOGIN);
+		break;
 
-		case boost::system::errc::address_in_use:
-		case boost::system::errc::address_not_available:
-		case boost::system::errc::bad_address:
-		case boost::system::errc::connection_refused:
-		case boost::system::errc::host_unreachable:
-		case boost::system::errc::invalid_argument:
-		case boost::system::errc::timed_out:
-			m_bIsDeleting = true;
-			SetConnectionState(CS_SERVERDEAD);
-			serverconnect->DestroySocket(this);
-			return;
+	// Only what the server itself answered counts against it, because CS_SERVERDEAD raises its
+	// failed count and a server past the "remove dead servers" threshold is deleted for good. A
+	// refused connection is evidence about that server.
+	case boost::system::errc::connection_refused:
+		m_bIsDeleting = true;
+		SetConnectionState(CS_SERVERDEAD);
+		serverconnect->DestroySocket(this);
+		return;
 
-		default:
-			m_bIsDeleting = true;
-			SetConnectionState(CS_FATALERROR);
-			serverconnect->DestroySocket(this);
-			return;
+	// Not counted against the server, but the sweep carries on to the next candidate -- which
+	// is what separates these from the CS_FATALERROR default below.
+	//
+	// host_unreachable is the ambiguous one: a router can report it by ICMP for a remote host
+	// that genuinely no longer routes. It is classified here anyway because of how it fails
+	// when the fault is ours: with the link down every server answers that way within
+	// milliseconds, so the whole list accrued failures and was deleted the moment connectivity
+	// returned -- RemoveDeadServers() only runs after a connection succeeds. A server that has
+	// really stopped routing is still counted by the UDP status pings, which have their own
+	// AddFailedCount().
+	//
+	// timed_out is silence, which a dead link gives too. aMule's own CONSERVTIMEOUT counts
+	// nothing, and whether the OS gives up first depends on the platform (about 21 s on Windows,
+	// 75 s on macOS, 127 s on Linux), so counting it emptied the list on Windows alone.
+	//
+	// The rest are unambiguous local socket faults and were never about the server.
+	//
+	// Deliberately not CS_FATALERROR: that calls StopConnectionTry() and waits
+	// CS_RETRYCONNECTTIME, which is right when the whole network is gone -- network_unreachable
+	// and friends still land there via default -- but wrong for one unreachable host, where a
+	// stale entry would stall the sweep for 30 s.
+	case boost::system::errc::address_in_use:
+	case boost::system::errc::address_not_available:
+	case boost::system::errc::bad_address:
+	case boost::system::errc::host_unreachable:
+	case boost::system::errc::invalid_argument:
+	case boost::system::errc::timed_out:
+		m_bIsDeleting = true;
+		SetConnectionState(CS_ERROR);
+		serverconnect->DestroySocket(this);
+		return;
 
+	default:
+		m_bIsDeleting = true;
+		SetConnectionState(CS_FATALERROR);
+		serverconnect->DestroySocket(this);
+		return;
 	}
-
 }
 
 void CServerSocket::OnReceive(int nErrorCode)
@@ -135,440 +226,659 @@ void CServerSocket::OnReceive(int nErrorCode)
 	m_dwLastTransmission = GetTickCount64();
 }
 
-bool CServerSocket::ProcessPacket(const uint8_t* packet, uint32 size, int8 opcode)
+bool CServerSocket::ProcessPacket(const uint8_t *packet, uint32 size, int8 opcode)
 {
 	try {
-		AddDebugLogLineN( logServer, "Processing Server Packet: " );
+		AddDebugLogLineN(logServer, "Processing Server Packet: ");
 
-		switch(opcode) {
-			case OP_SERVERMESSAGE: {
-				/* Kry import of lugdunum 16.40 new features */
-				AddDebugLogLineN( logServer, "Server: OP_SERVERMESSAGE" );
+		switch (opcode) {
+		case OP_SERVERMESSAGE: {
+			/* Kry import of lugdunum 16.40 new features */
+			AddDebugLogLineN(logServer, "Server: OP_SERVERMESSAGE");
 
-				if (size < 3) {
-					throw wxString("Corrupt or invalid server message received (size too small)");
+			if (size < 3) {
+				throw wxString("Corrupt or invalid server message received (size too small)");
+			}
+
+			theStats::AddDownOverheadServer(size);
+			char *buffer = new char[size - 1];
+			memcpy(buffer, &packet[2], size - 2);
+			buffer[size - 2] = 0;
+
+			wxString strMessages(char2unicode(buffer));
+
+			delete[] buffer;
+
+			// 16.40 servers do not send separate OP_SERVERMESSAGE packets for each line;
+			// instead of this they are sending all text lines with one OP_SERVERMESSAGE packet.
+
+			wxStringTokenizer token(strMessages, "\r\n", wxTOKEN_DEFAULT);
+
+			while (token.HasMoreTokens()) {
+				wxString message = token.GetNextToken();
+
+				bool bOutputMessage = true;
+				if (message.StartsWith("server version")) {
+					wxString strVer =
+						message.Mid(15, 64); // truncate string to avoid misuse by
+								     // servers in showing ads
+					strVer.Trim();
+					CServer *eserver = theApp->serverlist->GetServerByAddress(
+						cur_server->GetAddress(), cur_server->GetPort());
+					if (eserver) {
+						eserver->SetVersion(strVer);
+						Notify_ServerRefresh(eserver);
+					}
+				} else if (message.StartsWith("ERROR")) {
+					CServer *pServer = theApp->serverlist->GetServerByAddress(
+						cur_server->GetAddress(), cur_server->GetPort());
+					wxString servername;
+					if (pServer) {
+						servername = pServer->GetListName();
+					} else {
+						servername = _("Server");
+					}
+					AddLogLineN(CFormat(_("ERROR: %s (%s) - %s")) % servername %
+						    Uint32_16toStringIP_Port(
+							    cur_server->GetIP(), cur_server->GetPort()) %
+						    message.Mid(5, message.Len()).Trim(" :"));
+					bOutputMessage = false;
+
+				} else if (message.StartsWith("WARNING")) {
+
+					CServer *pServer = theApp->serverlist->GetServerByAddress(
+						cur_server->GetAddress(), cur_server->GetPort());
+					wxString servername;
+					if (pServer) {
+						servername = pServer->GetListName();
+					} else {
+						servername = _("Server");
+					}
+					AddLogLineN(CFormat(_("WARNING: %s (%s) - %s")) % servername %
+						    Uint32_16toStringIP_Port(
+							    cur_server->GetIP(), cur_server->GetPort()) %
+						    message.Mid(5, message.Len()).Trim(" :"));
+
+					bOutputMessage = false;
 				}
 
-				theStats::AddDownOverheadServer(size);
-				char* buffer = new char[size-1];
-				memcpy(buffer,&packet[2],size-2);
-				buffer[size-2] = 0;
-
-				wxString strMessages(char2unicode(buffer));
-
-				delete[] buffer;
-
-				// 16.40 servers do not send separate OP_SERVERMESSAGE packets for each line;
-				// instead of this they are sending all text lines with one OP_SERVERMESSAGE packet.
-
-				wxStringTokenizer token(strMessages,"\r\n",wxTOKEN_DEFAULT );
-
-				while (token.HasMoreTokens()) {
-					wxString message = token.GetNextToken();
-
-					bool bOutputMessage = true;
-					if (message.StartsWith("server version")) {
-						wxString strVer = message.Mid(15,64); // truncate string to avoid misuse by servers in showing ads
-						strVer.Trim();
-						CServer* eserver = theApp->serverlist->GetServerByAddress(cur_server->GetAddress(),cur_server->GetPort());
+				if (message.Find("[emDynIP: ") != (-1) && message.Find("]") != (-1) &&
+					message.Find("[emDynIP: ") < message.Find("]")) {
+					wxString dynip = message.Mid(message.Find("[emDynIP: ") + 10,
+						message.Find("]") - (message.Find("[emDynIP: ") + 10));
+					dynip.Trim(" ");
+					if (dynip.Length() && dynip.Length() < 51) {
+						CServer *eserver = theApp->serverlist->GetServerByAddress(
+							cur_server->GetAddress(), cur_server->GetPort());
 						if (eserver) {
-							eserver->SetVersion(strVer);
+							eserver->SetDynIP(dynip);
+							cur_server->SetDynIP(dynip);
 							Notify_ServerRefresh(eserver);
 						}
-					} else if (message.StartsWith("ERROR")) {
-						CServer* pServer = theApp->serverlist->GetServerByAddress(cur_server->GetAddress(),cur_server->GetPort());
-						wxString servername;
-						if (pServer) {
-							servername	= pServer->GetListName();
-						} else {
-							servername = _("Server");
-						}
-						AddLogLineN(CFormat( _("ERROR: %s (%s) - %s") )
-							% servername
-							% Uint32_16toStringIP_Port(cur_server->GetIP(), cur_server->GetPort())
-							% message.Mid(5,message.Len()).Trim(" :"));
-						bOutputMessage = false;
-
-					} else if (message.StartsWith("WARNING")) {
-
-						CServer* pServer = theApp->serverlist->GetServerByAddress(cur_server->GetAddress(),cur_server->GetPort());
-						wxString servername;
-						if (pServer) {
-							servername	= pServer->GetListName();
-						} else {
-							servername = _("Server");
-						}
-						AddLogLineN(CFormat( _("WARNING: %s (%s) - %s") )
-							% servername
-							% Uint32_16toStringIP_Port(cur_server->GetIP(), cur_server->GetPort())
-							% message.Mid(5,message.Len()).Trim(" :"));
-
-						bOutputMessage = false;
-					}
-
-					if (message.Find("[emDynIP: ") != (-1) && message.Find("]") != (-1) && message.Find("[emDynIP: ") < message.Find("]")){
-						wxString dynip = message.Mid(message.Find("[emDynIP: ")+10,message.Find("]") - (message.Find("[emDynIP: ")+10));
-						dynip.Trim(" ");
-						if ( dynip.Length() && dynip.Length() < 51){
-							CServer* eserver = theApp->serverlist->GetServerByAddress(cur_server->GetAddress(),cur_server->GetPort());
-							if (eserver){
-								eserver->SetDynIP(dynip);
-								cur_server->SetDynIP(dynip);
-								Notify_ServerRefresh(eserver);
-							}
-						}
-					}
-
-					if (bOutputMessage) {
-						theApp->AddServerMessageLine(message);
 					}
 				}
-				break;
+
+				if (bOutputMessage) {
+					theApp->AddServerMessageLine(message);
+				}
 			}
-			case OP_IDCHANGE: {
-				AddDebugLogLineN(logServer, "Server: OP_IDCHANGE");
+			break;
+		}
+		case OP_IDCHANGE: {
+			AddDebugLogLineN(logServer, "Server: OP_IDCHANGE");
 
-				theStats::AddDownOverheadServer(size);
+			theStats::AddDownOverheadServer(size);
 
-				if (size < 4 /* uint32 (ID)*/) {
-					throw wxString("Corrupt or invalid loginanswer from server received");
-				}
+			if (size < 4 /* uint32 (ID)*/) {
+				throw wxString("Corrupt or invalid loginanswer from server received");
+			}
 
-				CMemFile data(packet, size);
+			CMemFile data(packet, size);
 
-				uint32 new_id = data.ReadUInt32();
+			uint32 new_id = data.ReadUInt32();
 
-				// save TCP flags in 'cur_server'
-				wxASSERT(cur_server);
-				CServer* pServer = NULL;
-				if (cur_server) {
-					uint32 ConnPort = 0;
-					uint32 rport = cur_server->GetConnPort();
-					pServer = theApp->serverlist->GetServerByAddress(cur_server->GetAddress(), rport);
-					if (size >= 4+4 /* uint32 (ID) + uint32 (TCP flags)*/) {
-						cur_server->SetTCPFlags(data.ReadUInt32());
-						if (size >= 4+4+4 /* uint32 (ID) + uint32 (TCP flags) + uint32 (aux port) */) {
-							// aux port login : we should use the 'standard' port of this server to advertise to other clients
-							ConnPort = data.ReadUInt32();
-							cur_server->SetPort(ConnPort);
-							if (cur_server->GetAuxPortsList().IsEmpty()) {
-								cur_server->SetAuxPortsList(CFormat("%u") % rport);
-							}
+			// save TCP flags in 'cur_server'
+			wxASSERT(cur_server);
+			CServer *pServer = NULL;
+			if (cur_server) {
+				uint32 ConnPort = 0;
+				uint32 rport = cur_server->GetConnPort();
+				pServer = theApp->serverlist->GetServerByAddress(
+					cur_server->GetAddress(), rport);
+				if (size >= 4 + 4 /* uint32 (ID) + uint32 (TCP flags)*/) {
+					cur_server->SetTCPFlags(data.ReadUInt32());
+					if (size >= 4+4+4 /* uint32 (ID) + uint32 (TCP flags) + uint32 (aux port) */) {
+						// aux port login : we should use the 'standard' port of this
+						// server to advertise to other clients
+						ConnPort = data.ReadUInt32();
+						cur_server->SetPort(ConnPort);
+						if (cur_server->GetAuxPortsList().IsEmpty()) {
+							cur_server->SetAuxPortsList(CFormat("%u") % rport);
 						}
+					}
+				} else {
+					cur_server->SetTCPFlags(0);
+				}
+#ifdef ENABLE_IPV6
+				if (cur_server->SupportsIPv6Sources()) {
+					AddDebugLogLineN(logServer,
+						"OP_IDCHANGE: server speaks the IPv6 source extension");
+				}
+#endif
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+				if (cur_server->SupportsLugdunumNatCallback()) {
+					AddDebugLogLineN(logServer,
+						"OP_IDCHANGE: server flags include Lugdunum's NAT callback "
+						"bit");
+				}
+				if (cur_server->SupportsLowIdHolePunch()) {
+					AddDebugLogLineN(logServer,
+						"OP_IDCHANGE: server accepts LowID hole punch requests");
+				}
+				if (cur_server->SupportsHolePunchExtension()) {
+					AddDebugLogLineN(logServer,
+						"OP_IDCHANGE: server runs the hole-punch extension");
+				}
+#endif
+				// copy TCP flags into the server in the server list
+				if (pServer) {
+					pServer->SetTCPFlags(cur_server->GetTCPFlags());
+					if (ConnPort) {
+						pServer->SetPort(ConnPort);
+						if (pServer->GetAuxPortsList().IsEmpty()) {
+							pServer->SetAuxPortsList(
+								CFormat("%u") % pServer->GetConnPort());
+						}
+						Notify_ServerRefresh(pServer);
+						Notify_ServerUpdateED2KInfo();
+					}
+				}
+			}
+
+			uint32 dwServerReportedIP = 0;
+			if (size >=
+				4 + 4 + 4 + 4 + 4 /* All of the above + reported ip + obfuscation port */) {
+				dwServerReportedIP = data.ReadUInt32();
+				if (::IsLowID(dwServerReportedIP)) {
+					AddDebugLogLineN(logServer,
+						CFormat(wxT("OP_IDCHANGE: server-reported IP %u is a "
+							    "LowID-shaped value; ignoring")) %
+							dwServerReportedIP);
+					dwServerReportedIP = 0;
+				}
+				if (dwServerReportedIP != 0 && !::IsLowID(new_id) &&
+					dwServerReportedIP != new_id) {
+					AddDebugLogLineN(logServer,
+						CFormat(wxT("OP_IDCHANGE: server-reported IP %u doesn't "
+							    "match assigned HighID %u; ignoring")) %
+							dwServerReportedIP % new_id);
+				}
+				uint32 dwObfuscationTCPPort = data.ReadUInt32();
+				if (dwObfuscationTCPPort != 0) {
+					if (cur_server != NULL) {
+						cur_server->SetObfuscationPortTCP(dwObfuscationTCPPort);
+					}
+					if (pServer != NULL) {
+						pServer->SetObfuscationPortTCP(dwObfuscationTCPPort);
+					}
+				}
+			}
+
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+			if (cur_server != nullptr) {
+				const LugdunumNatTraversal::IdChangeFields idChange =
+					LugdunumNatTraversal::ParseIdChangeFields(packet, size);
+				const uint16 seenTcpPort =
+					idChange.hasYourPort ? static_cast<uint16>(idChange.yourPort) : 0;
+				cur_server->SetSeenTcpPort(seenTcpPort);
+				cur_server->SetLugdunumNatCallbackActive(
+					LugdunumNatTraversal::IsNatCallbackActive(idChange));
+				if (idChange.hasYourPort) {
+					AddDebugLogLineN(logServer,
+						CFormat("OP_IDCHANGE: server sees our TCP port as %u") %
+							seenTcpPort);
+				}
+			}
+#endif
+
+			if (new_id == 0) {
+				uint8 state = thePrefs::GetSmartIdState();
+				if (state > 0) {
+					state++;
+					if (state > 3) {
+						thePrefs::SetSmartIdState(0);
 					} else {
-						cur_server->SetTCPFlags(0);
-					}
-					// copy TCP flags into the server in the server list
-					if (pServer) {
-						pServer->SetTCPFlags(cur_server->GetTCPFlags());
-						if (ConnPort) {
-							pServer->SetPort(ConnPort);
-							if (pServer->GetAuxPortsList().IsEmpty()) {
-								pServer->SetAuxPortsList(CFormat("%u") % pServer->GetConnPort());
-							}
-							Notify_ServerRefresh(pServer);
-							Notify_ServerUpdateED2KInfo();
-						}
+						thePrefs::SetSmartIdState(state);
 					}
 				}
-
-				uint32 dwServerReportedIP = 0;
-				if (size >= 4 + 4 + 4 + 4 + 4 /* All of the above + reported ip + obfuscation port */) {
-					dwServerReportedIP = data.ReadUInt32();
-					if (::IsLowID(dwServerReportedIP)){
-						AddDebugLogLineN(logServer,
-							CFormat(wxT("OP_IDCHANGE: server-reported IP %u is a LowID-shaped value; ignoring"))
-								% dwServerReportedIP);
-						dwServerReportedIP = 0;
-					}
-					if (dwServerReportedIP != 0 && !::IsLowID(new_id) && dwServerReportedIP != new_id) {
-						AddDebugLogLineN(logServer,
-							CFormat(wxT("OP_IDCHANGE: server-reported IP %u doesn't match assigned HighID %u; ignoring"))
-								% dwServerReportedIP % new_id);
-					}
-					uint32 dwObfuscationTCPPort = data.ReadUInt32();
-					if (dwObfuscationTCPPort != 0) {
-						if (cur_server != NULL) {
-							cur_server->SetObfuscationPortTCP(dwObfuscationTCPPort);
-						}
-						if (pServer != NULL) {
-							pServer->SetObfuscationPortTCP(dwObfuscationTCPPort);
-						}
-					}
-				}
-
-				if (new_id == 0) {
+				// The server explicitly assigned no client ID: it gave up on its
+				// HighID-callback verification before we could complete it. This
+				// used to break out of OP_IDCHANGE without ever calling
+				// SetConnectionState(CS_CONNECTED), leaving the socket in limbo
+				// until the 15 s client-side timeout fired (#778). Disconnect
+				// explicitly so the failure is logged and the next retry starts
+				// immediately.
+				AddLogLineC(
+					CFormat(_("Server %s (%s) rejected our login (no client ID "
+						  "assigned). Disconnecting.")) %
+					(pServer ? pServer->GetListName() : wxString(_("Server"))) %
+					Uint32_16toStringIP_Port(cur_server->GetIP(), cur_server->GetPort()));
+				m_bIsDeleting = true;
+				SetConnectionState(CS_DISCONNECTED);
+				serverconnect->DestroySocket(this);
+				return true;
+			}
+			if (thePrefs::GetSmartIdCheck()) {
+				if (!IsLowID(new_id)) {
+					thePrefs::SetSmartIdState(1);
+				} else {
 					uint8 state = thePrefs::GetSmartIdState();
-					if ( state > 0 ) {
+					if (state > 0) {
 						state++;
-						if(state > 3) {
+						if (state > 3) {
 							thePrefs::SetSmartIdState(0);
 						} else {
 							thePrefs::SetSmartIdState(state);
 						}
+						break;
 					}
-					// The server explicitly assigned no client ID -- it
-					// gave up on its HighID-callback verification before
-					// we could complete it.  Pre-fix this silently broke
-					// out of OP_IDCHANGE without ever calling
-					// SetConnectionState(CS_CONNECTED), leaving the socket
-					// in limbo until the 15 s client-side timeout fired
-					// (#778).  Disconnect explicitly so the failure is
-					// surfaced as a clear log line and the next retry
-					// starts immediately instead of after the silent wait.
-					AddLogLineC(CFormat(
-						_("Server %s (%s) rejected our login (no client ID assigned). Disconnecting."))
-						% (pServer ? pServer->GetListName() : wxString(_("Server")))
-						% Uint32_16toStringIP_Port(cur_server->GetIP(), cur_server->GetPort()));
-					m_bIsDeleting = true;
-					SetConnectionState(CS_DISCONNECTED);
-					serverconnect->DestroySocket(this);
-					return true;
 				}
-				if(thePrefs::GetSmartIdCheck()) {
-					if (!IsLowID(new_id)) {
-						thePrefs::SetSmartIdState(1);
+			}
+
+			// we need to know our client when sending our shared files (done indirectly on
+			// SetConnectionState)
+
+			serverconnect->SetClientID(new_id);
+
+			if (::IsLowID(new_id) && dwServerReportedIP != 0) {
+				theApp->SetPublicIP(dwServerReportedIP);
+			}
+
+			if (connectionstate != CS_CONNECTED) {
+				AddDebugLogLineN(logServer, "Connected");
+
+				SetConnectionState(CS_CONNECTED);
+				theApp->OnlineSig(); // Added By Bouc7
+			}
+
+#ifdef ENABLE_IPV6
+			// SetConnectionState(CS_CONNECTED) above is what makes serverconnect's
+			// connectedsocket (and so GetCurrentServer()) point at this connection;
+			// UpdateAdvertisedIPv6() needs it.
+			if (cur_server->SupportsIPv6Updates()) {
+				AddDebugLogLineN(logServer, "OP_IDCHANGE: server accepts OP_IPV6_UPDATE");
+				// The address may have changed between the login and this IDCHANGE.
+				serverconnect->UpdateAdvertisedIPv6(AdvertisedIPv6ForPeers());
+			}
+#endif
+
+			theApp->ShowConnectionState();
+
+			AddLogLineN(CFormat(_("New clientid is %u")) % new_id);
+			if (::IsLowID(new_id)) {
+				AddLogLineC(_("WARNING: You have received Low-ID!"));
+				AddLogLineN(_(
+					"\tMost likely this is because you're behind a firewall or router."));
+				AddLogLineN(_("\tFor more information, please refer to "
+					      "https://amule-org.github.io/docs"));
+			}
+
+			theApp->downloadqueue->ResetLocalServerRequests();
+			break;
+		}
+		case OP_SEARCHRESULT: {
+			AddDebugLogLineN(logServer, "Server: OP_SEARCHRESULT");
+
+			theStats::AddDownOverheadServer(size);
+			CServer *cur_srv = (serverconnect) ? serverconnect->GetCurrentServer() : NULL;
+			theApp->searchlist->ProcessSearchAnswer(packet,
+				size,
+				true /*(cur_srv && cur_srv->GetUnicodeSupport())*/,
+				cur_srv ? cur_srv->GetIP() : 0,
+				cur_srv ? cur_srv->GetPort() : 0);
+			theApp->searchlist->LocalSearchEnd();
+			break;
+		}
+		case OP_FOUNDSOURCES_OBFU:
+		case OP_FOUNDSOURCES: {
+			AddDebugLogLineN(
+				logServer, CFormat("ServerMsg - OP_FoundSources; sources = %u") % packet[16]);
+			theStats::AddDownOverheadServer(size);
+			CMemFile sources(packet, size);
+			CMD4Hash fileid = sources.ReadHash();
+			if (CPartFile *file = theApp->downloadqueue->GetFileByID(fileid)) {
+				const CNetworkAddress *loginIPv6 = nullptr;
+#ifdef ENABLE_IPV6
+				if (IsIPv6SentinelParsingOn()) {
+					loginIPv6 = &GetLoginIPv6();
+				}
+#endif
+				file->AddSources(sources,
+					cur_server->GetIP(),
+					cur_server->GetPort(),
+					SF_LOCAL_SERVER,
+					(opcode == OP_FOUNDSOURCES_OBFU),
+					loginIPv6);
+			} else {
+				AddDebugLogLineN(
+					logServer, "Sources received for unknown file: " + fileid.Encode());
+			}
+			break;
+		}
+		case OP_SERVERSTATUS: {
+			AddDebugLogLineN(logServer, "Server: OP_SERVERSTATUS");
+			// FIXME some statuspackets have a different size -> why? structure?
+			if (size < 8) {
+				throw wxString("Invalid server status packet");
+			}
+			CServer *update = theApp->serverlist->GetServerByAddress(
+				cur_server->GetAddress(), cur_server->GetPort());
+			if (update) {
+				CMemFile data(packet, size);
+				update->SetUserCount(data.ReadUInt32());
+				update->SetFileCount(data.ReadUInt32());
+				Notify_ServerRefresh(update);
+				theApp->ShowUserCount();
+			}
+			break;
+		}
+		// Cleaned.
+		case OP_SERVERIDENT: {
+			AddDebugLogLineN(logServer, "Server: OP_SERVERIDENT");
+			const bool firstIdent =
+				(connectionstate == CS_CONNECTED || connectionstate == CS_WAITFORLOGIN) &&
+				m_offerFilesPolicy.BeginAdvertisement();
+			COfferFilesAdvertisement offerFiles;
+
+			theStats::AddDownOverheadServer(size);
+			if (size < 38) {
+				AddLogLineN(_("Unknown server info received! - too short"));
+				if (firstIdent) {
+					m_offerFilesPolicy.RejectAdvertisement();
+				}
+				// throw wxString("Unknown server info received!");
+				break;
+			}
+			CServer *update = theApp->serverlist->GetServerByAddress(
+				cur_server->GetAddress(), cur_server->GetPort());
+			{
+				CMemFile data(packet, size);
+				CMD4Hash hash = data.ReadHash();
+				if (update && RawPeekUInt32(hash.GetHash()) ==
+						      0x2A2A2A2A) { // No endian problem here
+					const wxString &rstrVersion = update->GetVersion();
+					if (!rstrVersion.IsEmpty()) {
+						update->SetVersion("eFarm " + rstrVersion);
 					} else {
-						uint8 state = thePrefs::GetSmartIdState();
-						if ( state > 0 ) {
-							state++;
-							if(state > 3) {
-								thePrefs::SetSmartIdState(0);
-							} else {
-								thePrefs::SetSmartIdState(state);
-							}
-							break;
+						update->SetVersion("eFarm");
+					}
+				}
+				// Unused
+				/*uint32 nServerIP = */ data.ReadUInt32();
+				/*uint16 nServerPort = */ data.ReadUInt16();
+
+				uint32 nTags = data.ReadUInt32();
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+				bool nattKeepaliveChanged = false;
+#endif
+				for (uint32 i = 0; i < nTags; i++) {
+					// Force Unicode=true rather than relying on the server's
+					// SRV_TCPFLG_UNICODE bit: many real-world servers ship
+					// UTF-8 strings without advertising the capability, and
+					// parsing those bytes as non-Unicode mangles them. Matches
+					// the hardcoded Unicode=true used for search-result parsing
+					// and by the .met-file parse path, which is what stops the
+					// "name correct on first display, garbled a few seconds
+					// later" regression (#831).
+					CTag tag(data, true, false);
+					offerFiles.AddTag(tag);
+					if (update && tag.GetNameID() == ST_SERVERNAME) {
+						update->SetListName(tag.GetStr());
+					} else if (update && tag.GetNameID() == ST_DESCRIPTION) {
+						update->SetDescription(tag.GetStr());
+					}
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+					else if (tag.GetNameID() == ST_NATT_TOKEN && tag.IsHash()) {
+						NatServerHolePunch::Hash token{};
+						std::copy_n(
+							tag.GetHash().GetHash(), token.size(), token.begin());
+						if (m_nattSessionToken != token) {
+							AddDebugLogLineN(logServer,
+								"Server: NAT-T session token received");
+							m_nattSessionToken = token;
+							nattKeepaliveChanged = true;
 						}
+					} else if (tag.GetNameID() == ST_NATT_PROOF && tag.IsInt() &&
+						   tag.GetInt() == 1 && !m_nattKeepaliveProof) {
+						AddDebugLogLineN(
+							logServer, "Server: NAT-T keepalive proof offered");
+						m_nattKeepaliveProof = true;
+						nattKeepaliveChanged = true;
 					}
+#endif
 				}
-
-				// we need to know our client when sending our shared files (done indirectly on SetConnectionState)
-
-				serverconnect->SetClientID(new_id);
-
-				if (::IsLowID(new_id) && dwServerReportedIP != 0) {
-					theApp->SetPublicIP(dwServerReportedIP);
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+				// The login keepalive went out before this ident. Sent after the loop, as the
+				// proof tag may follow the token.
+				if (nattKeepaliveChanged && m_nattSessionToken && m_nattKeepaliveProof) {
+					serverconnect->TrySendLowIdHolePunchKeepalive();
 				}
+#endif
 
-				if (connectionstate != CS_CONNECTED) {
-					AddDebugLogLineN(logServer, "Connected");
-
-					SetConnectionState(CS_CONNECTED);
-					theApp->OnlineSig();       // Added By Bouc7
+				if (firstIdent) {
+					m_offerFilesPolicy.Commit(data.GetPosition() == data.GetLength()
+									  ? offerFiles
+									  : COfferFilesAdvertisement());
 				}
-
-				theApp->ShowConnectionState();
-
-				AddLogLineN(CFormat(_("New clientid is %u")) % new_id);
-				if (::IsLowID(new_id)) {
-					AddLogLineC(_("WARNING: You have received Low-ID!"));
-					AddLogLineN(_("\tMost likely this is because you're behind a firewall or router."));
-					AddLogLineN(_("\tFor more information, please refer to https://amule-org.github.io/docs"));
+				if (firstIdent && m_offerFilesPolicy.Get()) {
+					if (m_offerFilesPublication.EarlyBatchExceeds(
+						    offerFiles.AdvertisedBatchLimit())) {
+						theApp->sharedfiles->RepublishOffered(
+							m_offerFilesPublication);
+					}
+					// Commit the connection's limits only after the complete
+					// advertisement validates. Cached UDP metadata must not hide the
+					// login snapshot.
+					cur_server->SetSoftFiles(offerFiles.SoftLimit());
+					cur_server->SetHardFiles(offerFiles.HardLimit());
+					if (update) {
+						update->SetSoftFiles(offerFiles.SoftLimit());
+						update->SetHardFiles(offerFiles.HardLimit());
+					}
+					AddDebugLogLineN(logServer,
+						CFormat("OFFERFILES v1: soft=%u hard=%u advertised batch=%u "
+							"interval=%u ms; "
+							"bounded batch=%u interval=%u ms; acceleration "
+							"%s") %
+							offerFiles.SoftLimit() % offerFiles.HardLimit() %
+							offerFiles.AdvertisedBatchLimit() %
+							offerFiles.AdvertisedIntervalMs() %
+							offerFiles.BatchLimit(
+								m_offerFilesPublication.Count()) %
+							offerFiles.IntervalMs() %
+							(thePrefs::GetED2KAcceleratedPublication()
+									? "enabled (experimental)"
+									: "disabled"));
+				} else if (firstIdent) {
+					AddDebugLogLineN(logServer,
+						"OFFERFILES: legacy pacing (absent or invalid "
+						"advertisement)");
 				}
-
-				theApp->downloadqueue->ResetLocalServerRequests();
-				break;
-			}
-			case OP_SEARCHRESULT: {
-				AddDebugLogLineN(logServer, "Server: OP_SEARCHRESULT");
-
-				theStats::AddDownOverheadServer(size);
-				CServer* cur_srv = (serverconnect) ?
-					serverconnect->GetCurrentServer() : NULL;
-				theApp->searchlist->ProcessSearchAnswer(
-					packet,
-					size,
-					true /*(cur_srv && cur_srv->GetUnicodeSupport())*/,
-					cur_srv ? cur_srv->GetIP() : 0,
-					cur_srv ? cur_srv->GetPort() : 0);
-				theApp->searchlist->LocalSearchEnd();
-				break;
-			}
-			case OP_FOUNDSOURCES_OBFU:
-			case OP_FOUNDSOURCES: {
-				AddDebugLogLineN(logServer, CFormat("ServerMsg - OP_FoundSources; sources = %u") % packet[16]);
-				theStats::AddDownOverheadServer(size);
-				CMemFile sources(packet,size);
-				CMD4Hash fileid = sources.ReadHash();
-				if (CPartFile* file = theApp->downloadqueue->GetFileByID(fileid)) {
-					file->AddSources(sources, cur_server->GetIP(), cur_server->GetPort(), SF_LOCAL_SERVER, (opcode == OP_FOUNDSOURCES_OBFU));
-				} else {
-					AddDebugLogLineN(logServer, "Sources received for unknown file: " + fileid.Encode());
-				}
-				break;
-			}
-			case OP_SERVERSTATUS: {
-				AddDebugLogLineN(logServer, "Server: OP_SERVERSTATUS");
-				// FIXME some statuspackets have a different size -> why? structure?
-				if (size < 8) {
-					throw wxString("Invalid server status packet");
-				}
-				CServer* update = theApp->serverlist->GetServerByAddress(cur_server->GetAddress(), cur_server->GetPort());
 				if (update) {
-					CMemFile data(packet, size);
-					update->SetUserCount(data.ReadUInt32());
-					update->SetFileCount(data.ReadUInt32());
-					Notify_ServerRefresh( update );
-					theApp->ShowUserCount();
-				}
-				break;
-			}
-			// Cleaned.
-			case OP_SERVERIDENT: {
-				AddDebugLogLineN(logServer, "Server: OP_SERVERIDENT");
-
-				theStats::AddDownOverheadServer(size);
-				if (size<38) {
-					AddLogLineN(_("Unknown server info received! - too short"));
-					// throw wxString("Unknown server info received!");
-					break;
-				}
-				CServer* update = theApp->serverlist->GetServerByAddress(cur_server->GetAddress(),cur_server->GetPort());
-				if (update) {
-					CMemFile data(packet,size);
-					CMD4Hash hash = data.ReadHash();
-					if (RawPeekUInt32(hash.GetHash()) == 0x2A2A2A2A){ // No endian problem here
-						const wxString& rstrVersion = update->GetVersion();
-						if (!rstrVersion.IsEmpty()) {
-							update->SetVersion("eFarm " + rstrVersion);
-						} else {
-							update->SetVersion("eFarm");
-						}
-					}
-					// Unused
-					/*uint32 nServerIP = */data.ReadUInt32();
-					/*uint16 nServerPort = */data.ReadUInt16();
-
-					uint32 nTags = data.ReadUInt32();
-					for (uint32 i = 0; i < nTags; i++){
-						// Force Unicode=true rather than relying on the
-						// server's SRV_TCPFLG_UNICODE bit: many
-						// real-world servers ship UTF-8 strings (emoji
-						// in names, non-ASCII descriptions) without
-						// advertising the capability flag, and parsing
-						// those bytes as non-Unicode mangles them.
-						// Matches the hardcoded Unicode=true already
-						// used for search-result parsing at the top
-						// of this file. The .met-file parse path
-						// (Server.cpp::AddTagFromFile) also uses
-						// hardcoded Unicode=true, so this aligns the
-						// runtime update with the load-time read and
-						// stops the "name correct on first display,
-						// garbled a few seconds later" regression.
-						// (#831)
-						CTag tag(data, true);
-						if (tag.GetNameID() == ST_SERVERNAME){
-							update->SetListName(tag.GetStr());
-						} else if (tag.GetNameID() == ST_DESCRIPTION){
-							update->SetDescription(tag.GetStr());
-						} // No more known tags from server
-					}
-
 					theApp->ShowConnectionState();
 					Notify_ServerRefresh(update);
 				}
+			}
+			break;
+		}
+		// tecxx 1609 2002 - add server's serverlist to own serverlist
+		case OP_SERVERLIST: {
+			AddDebugLogLineN(logServer, "Server: OP_SERVERLIST");
+			// Only asked for when this is on (CServerConnect), so anything else is unsolicited.
+			if (!thePrefs::AddServersFromServer()) {
 				break;
 			}
-			// tecxx 1609 2002 - add server's serverlist to own serverlist
-			case OP_SERVERLIST: {
-				AddDebugLogLineN(logServer, "Server: OP_SERVERLIST");
 
-				// Stack-allocated wrapper so a CEOFException out of any
-				// of the ReadUInt* calls below (empty or truncated
-				// payload from a malicious server) doesn't leak it on
-				// the way out to the function-level catch block at the
-				// end of ProcessPacket (#885).
-				CMemFile servers(packet, size);
-				uint8 count = servers.ReadUInt8();
-				if (((int32)(count*6 + 1) > size)) {
-					count = 0;
+			// Stack-allocated wrapper so a CEOFException out of any of the ReadUInt*
+			// calls below -- an empty or truncated payload from a malicious server --
+			// cannot leak it on the way out (#885).
+			CMemFile servers(packet, size);
+			uint8 count = servers.ReadUInt8();
+			if (((int32)(count * 6 + 1) > size)) {
+				count = 0;
+			}
+			int addcount = 0;
+			while (count) {
+				uint32 ip = servers.ReadUInt32();
+				uint16 port = servers.ReadUInt16();
+				CServer *srv = new CServer(port, // Port
+					Uint32toStringIP(ip));   // Ip
+				srv->SetListName(srv->GetFullIP());
+				if (!theApp->AddServer(srv)) {
+					delete srv;
+				} else {
+					addcount++;
 				}
-				int addcount = 0;
-				while(count) {
-					uint32 ip	= servers.ReadUInt32();
-					uint16 port = servers.ReadUInt16();
-					CServer* srv = new CServer(
-								port ,				// Port
-								Uint32toStringIP(ip));	// Ip
-					srv->SetListName(srv->GetFullIP());
-					if (!theApp->AddServer(srv)) {
-						delete srv;
+				count--;
+			}
+			if (addcount) {
+				AddLogLineN(CFormat(wxPLURAL("Received %d new server",
+						    "Received %d new servers",
+						    addcount)) %
+					    addcount);
+			}
+			theApp->serverlist->SaveServerMet();
+			AddLogLineN(_("Saving of server-list completed."));
+			break;
+		}
+		case OP_CALLBACKREQUESTED: {
+			AddDebugLogLineN(logServer, "Server: OP_CALLBACKREQUESTED");
+
+			theStats::AddDownOverheadServer(size);
+			if (size >= 6) {
+				CMemFile data(packet, size);
+				uint32 dwIP = data.ReadUInt32();
+				uint16 nPort = data.ReadUInt16();
+				// The same rule as for sources: a server must not aim us at loopback or the
+				// LAN.
+				if (!IsGoodIP(dwIP, thePrefs::FilterLanIPs())) {
+					AddDebugLogLineN(logServer,
+						CFormat("Ignored callback request to %s") %
+							Uint32toStringIP(dwIP));
+					break;
+				}
+
+				uint8 byCryptOptions = 0;
+				CMD4Hash achUserHash;
+				if (size >= 23) {
+					byCryptOptions = data.ReadUInt8();
+					;
+					achUserHash = data.ReadHash();
+				}
+
+				CUpDownClient *client = theApp->clientlist->FindClientByIP(dwIP, nPort);
+
+				if (!client) {
+					client = new CUpDownClient(nPort, dwIP, 0, 0, 0, true, true);
+					theApp->clientlist->AddClient(client);
+				}
+				if (size >= 23 && client->HasValidHash()) {
+					if (client->GetUserHash() != achUserHash) {
+						AddDebugLogLineN(logServer,
+							"Reported Userhash from OP_CALLBACKREQUESTED differs "
+							"with our stored hash");
+						// disable crypt support since we dont know which hash is true
+						client->SetCryptLayerRequest(false);
+						client->SetCryptLayerSupport(false);
+						client->SetCryptLayerRequires(false);
 					} else {
-						addcount++;
-					}
-					count--;
-				}
-				if (addcount) {
-					AddLogLineN(CFormat(wxPLURAL("Received %d new server", "Received %d new servers", addcount)) % addcount);
-				}
-				theApp->serverlist->SaveServerMet();
-				AddLogLineN(_("Saving of server-list completed."));
-				break;
-			}
-			case OP_CALLBACKREQUESTED: {
-				AddDebugLogLineN(logServer, "Server: OP_CALLBACKREQUESTED");
-
-				theStats::AddDownOverheadServer(size);
-				if (size >= 6) {
-					CMemFile data(packet,size);
-					uint32 dwIP = data.ReadUInt32();
-					uint16 nPort = data.ReadUInt16();
-
-					uint8 byCryptOptions = 0;
-					CMD4Hash achUserHash;
-					if (size >= 23){
-						byCryptOptions = data.ReadUInt8();;
-						achUserHash = data.ReadHash();
-					}
-
-					CUpDownClient* client = theApp->clientlist->FindClientByIP(dwIP,nPort);
-
-					if (!client) {
-						client = new CUpDownClient(nPort,dwIP,0,0,0, true, true);
-						theApp->clientlist->AddClient(client);
-					}
-					if (size >= 23 && client->HasValidHash()){
-						if (client->GetUserHash() != achUserHash){
-							AddDebugLogLineN(logServer, "Reported Userhash from OP_CALLBACKREQUESTED differs with our stored hash");
-							// disable crypt support since we dont know which hash is true
-							client->SetCryptLayerRequest(false);
-							client->SetCryptLayerSupport(false);
-							client->SetCryptLayerRequires(false);
-						} else {
-							client->SetConnectOptions(byCryptOptions, true, false);
-						}
-					} else if (size >= 23) {
-						client->SetUserHash(achUserHash);
 						client->SetConnectOptions(byCryptOptions, true, false);
 					}
-
-					client->TryToConnect();
+				} else if (size >= 23) {
+					client->SetUserHash(achUserHash);
+					client->SetConnectOptions(byCryptOptions, true, false);
 				}
-				break;
+
+				client->TryToConnect();
 			}
-			case OP_CALLBACK_FAIL: {
-				AddDebugLogLineN(logServer, "Server: OP_CALLBACK_FAIL");
-				break;
+			break;
+		}
+		case OP_CALLBACK_FAIL: {
+			AddDebugLogLineN(logServer, "Server: OP_CALLBACK_FAIL");
+			break;
+		}
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+		case OP_NAT_CALLBACKREQUESTED: {
+			AddDebugLogLineN(logServer, "Server: OP_NAT_CALLBACKREQUESTED");
+			theStats::AddDownOverheadServer(size);
+			// Logged only, as the wiki describes: no reply, no punch. Shares a handler
+			// with the UDP 0xA7 path (ClientUDPSocket.cpp), as NeoMule does.
+			const LugdunumNatTraversal::ForwardedCallback callback =
+				LugdunumNatTraversal::ParseForwardedCallback(packet, size);
+			LugdunumNatTraversal::DispatchForwardedCallback(
+				callback, [&](const LugdunumNatTraversal::ForwardedCallback &forwarded) {
+					LugdunumNatTraversal::LogForwardedCallback(
+						logServer, "OP_NAT_CALLBACKREQUESTED", forwarded);
+#ifdef AMULE_UTP_TRANSPORT
+					if (theApp->clientudp != nullptr) {
+						theApp->clientudp->HandleForwardedCallback(forwarded);
+					}
+#endif
+				});
+			break;
+		}
+		case NatServerTcp::OP_LOWID_HOLEPUNCH_INFO: {
+			AddDebugLogLineN(logServer, "Server: OP_LOWID_HOLEPUNCH_INFO");
+			theStats::AddDownOverheadServer(size);
+			const std::optional<NatServerHolePunch::Info> info =
+				NatServerHolePunch::ParseInfo(packet, size);
+			if (info.has_value()) {
+				NatServerHolePunch::LogInfo(logServer, *info);
+#ifdef AMULE_UTP_TRANSPORT
+				if (cur_server != nullptr && cur_server->SupportsLowIdHolePunch() &&
+					serverconnect->IsConnected()) {
+					HandleLowIdHolePunchInfo(serverconnect, *info, ::GetTickCount64());
+				}
+#endif
 			}
-			case OP_REJECT: {
-				AddDebugLogLineN(logServer, "Server: OP_REJECT");
-				AddLogLineN(_("Server rejected last command"));
-				break;
+			break;
+		}
+		case NatServerTcp::OP_LOWID_HOLEPUNCH_FAIL: {
+			AddDebugLogLineN(logServer, "Server: OP_LOWID_HOLEPUNCH_FAIL");
+			theStats::AddDownOverheadServer(size);
+			const std::optional<NatServerHolePunch::Failure> failure =
+				NatServerHolePunch::ParseFailure(packet, size);
+			if (failure.has_value()) {
+				NatServerHolePunch::LogFailure(logServer, *failure);
+				serverconnect->LowIdHolePunchPendingRequests().Release(failure->targetId);
 			}
-			default:
-				AddDebugLogLineN(logPacketErrors, CFormat("Unknown server packet with OPcode %x") % opcode);
+			break;
+		}
+#endif
+		case OP_REJECT: {
+			AddDebugLogLineN(logServer, "Server: OP_REJECT");
+			AddLogLineN(_("Server rejected last command"));
+			break;
+		}
+		default:
+			AddDebugLogLineN(
+				logPacketErrors, CFormat("Unknown server packet with OPcode %x") % opcode);
 		}
 		return true;
-	} catch (const CInvalidPacket& e) {
-		AddLogLineN(CFormat( _("Bogus packet received from server: %s") ) % e.what());
-	} catch (const CEOFException& e) {
-		AddLogLineN(CFormat( _("Bogus packet received from server: %s") ) % e.what());
-	} catch (const wxString& error) {
-		AddLogLineN(CFormat( _("Unhandled error while processing packet from server: %s") ) % error);
+	} catch (const CInvalidPacket &e) {
+		AddLogLineN(CFormat(_("Bogus packet received from server: %s")) % e.what());
+	} catch (const CEOFException &e) {
+		AddLogLineN(CFormat(_("Bogus packet received from server: %s")) % e.what());
+	} catch (const wxString &error) {
+		AddLogLineN(CFormat(_("Unhandled error while processing packet from server: %s")) % error);
+	}
+	if (opcode == OP_SERVERIDENT) {
+		m_offerFilesPolicy.RejectAdvertisement();
+		return true;
 	}
 
 	// Don't disconnect because of wrong sources.
-	if (opcode==OP_SEARCHRESULT || opcode==OP_FOUNDSOURCES) {
+	if (opcode == OP_SEARCHRESULT || opcode == OP_FOUNDSOURCES) {
 		return true;
 	}
 
@@ -576,11 +886,11 @@ bool CServerSocket::ProcessPacket(const uint8_t* packet, uint32 size, int8 opcod
 	return false;
 }
 
-void CServerSocket::ConnectToServer(CServer* server, bool bNoCrypt)
+void CServerSocket::ConnectToServer(CServer *server, bool bNoCrypt)
 {
 	AddDebugLogLineN(logServer, "Trying to connect");
 
-	if (cur_server){
+	if (cur_server) {
 		wxFAIL;
 		delete cur_server;
 		cur_server = NULL;
@@ -598,40 +908,51 @@ void CServerSocket::ConnectToServer(CServer* server, bool bNoCrypt)
 	if (cur_server->HasDynIP() || !cur_server->GetIP()) {
 		m_IsSolving = true;
 		// Send it to solving thread.
-		CAsyncDNS* dns = new CAsyncDNS(server->GetAddress(), DNS_SERVER_CONNECT, theApp, this);
+		CAsyncDNS *dns = new CAsyncDNS(server->GetAddress(), DNS_SERVER_CONNECT, theApp, this);
 
-		if ( dns->Create() == wxTHREAD_NO_ERROR ) {
-			if ( dns->Run() != wxTHREAD_NO_ERROR ) {
+		if (dns->Create() == wxTHREAD_NO_ERROR) {
+			if (dns->Run() != wxTHREAD_NO_ERROR) {
 				dns->Delete();
-				AddLogLineN(CFormat( _("Cannot create DNS solving thread for connecting to %s") ) % cur_server->GetAddress());
+				AddLogLineN(
+					CFormat(_("Cannot create DNS solving thread for connecting to %s")) %
+					cur_server->GetAddress());
 			}
 		} else {
 			dns->Delete();
-			AddLogLineN(CFormat( _("Cannot create DNS solving thread for connecting to %s") ) % cur_server->GetAddress());
+			AddLogLineN(CFormat(_("Cannot create DNS solving thread for connecting to %s")) %
+				    cur_server->GetAddress());
 		}
 	} else {
 		// Nothing to solve, we already have the IP
 		OnHostnameResolved(cur_server->GetIP());
 	}
-
 }
 
-void CServerSocket::OnError(int DEBUG_ONLY(nErrorCode))
+void CServerSocket::OnError(int nErrorCode)
 {
-	AddDebugLogLineN(logServer, CFormat("Error in serversocket: %s(%s:%i): %u")
-		% cur_server->GetListName() % cur_server->GetFullIP() % cur_server->GetPort() % nErrorCode);
+	AddDebugLogLineN(logServer,
+		CFormat("Error in serversocket: %s(%s:%i): %u") % cur_server->GetListName() %
+			cur_server->GetFullIP() % cur_server->GetPort() % nErrorCode);
 	SetConnectionState(CS_DISCONNECTED);
 }
 
-
-bool CServerSocket::PacketReceived(CPacket* packet)
+bool CServerSocket::PacketReceived(CPacket *packet)
 {
-	AddDebugLogLineN(logServer, CFormat("Server: Packet Received: Prot %x, Opcode %x, Length %u") % packet->GetProtocol() % packet->GetOpCode() % packet->GetPacketSize());
+	AddDebugLogLineN(logServer,
+		CFormat("Server: Packet Received: Prot %x, Opcode %x, Length %u") % packet->GetProtocol() %
+			packet->GetOpCode() % packet->GetPacketSize());
 
 	if (packet->GetProtocol() == OP_PACKEDPROT) {
-		if (!packet->UnPackPacket(250000)){
-			AddDebugLogLineN(logZLib, CFormat("Failed to decompress server TCP packet: protocol=0x%02x  opcode=0x%02x  size=%u")
-				% packet->GetProtocol() % packet->GetOpCode() % packet->GetPacketSize());
+		if (!packet->UnPackPacket(250000)) {
+			if (packet->GetOpCode() == OP_SERVERIDENT &&
+				(connectionstate == CS_CONNECTED || connectionstate == CS_WAITFORLOGIN)) {
+				m_offerFilesPolicy.RejectAdvertisement();
+			}
+			AddDebugLogLineN(logZLib,
+				CFormat("Failed to decompress server TCP packet: protocol=0x%02x  "
+					"opcode=0x%02x  size=%u") %
+					packet->GetProtocol() % packet->GetOpCode() %
+					packet->GetPacketSize());
 			theStats::AddDownOverheadServer(packet->GetPacketSize());
 			return true;
 		}
@@ -642,23 +963,29 @@ bool CServerSocket::PacketReceived(CPacket* packet)
 	if (packet->GetProtocol() == OP_EDONKEYPROT) {
 		ProcessPacket(packet->GetDataBuffer(), packet->GetPacketSize(), packet->GetOpCode());
 	} else {
-		AddDebugLogLineN(logServer, CFormat("Received server TCP packet with unknown protocol: protocol=0x%02x  opcode=0x%02x  size=%u")
-			% packet->GetProtocol() % packet->GetOpCode() % packet->GetPacketSize());
+		AddDebugLogLineN(logServer,
+			CFormat("Received server TCP packet with unknown protocol: protocol=0x%02x  "
+				"opcode=0x%02x  size=%u") %
+				packet->GetProtocol() % packet->GetOpCode() % packet->GetPacketSize());
 		theStats::AddDownOverheadServer(packet->GetPacketSize());
 	}
 
 	return true;
 }
 
-
 void CServerSocket::OnClose(int WXUNUSED(nErrorCode))
 {
 	CEMSocket::OnClose(0);
 
 	switch (connectionstate) {
-		case CS_WAITFORLOGIN:	SetConnectionState(CS_SERVERFULL);		break;
-		case CS_CONNECTED:	SetConnectionState(CS_DISCONNECTED);	break;
-		default:				SetConnectionState(CS_NOTCONNECTED);
+	case CS_WAITFORLOGIN:
+		SetConnectionState(CS_SERVERFULL);
+		break;
+	case CS_CONNECTED:
+		SetConnectionState(CS_DISCONNECTED);
+		break;
+	default:
+		SetConnectionState(CS_NOTCONNECTED);
 	}
 
 	serverconnect->DestroySocket(this);
@@ -666,6 +993,12 @@ void CServerSocket::OnClose(int WXUNUSED(nErrorCode))
 
 void CServerSocket::SetConnectionState(sint8 newstate)
 {
+	if (newstate != CS_CONNECTED) {
+		m_offerFilesPolicy.Reset();
+		m_offerFilesPublication.Reset();
+	} else {
+		m_offerFilesPolicy.IdAssigned(GetTickCount64());
+	}
 	connectionstate = newstate;
 	if (newstate < CS_CONNECTING) {
 		serverconnect->ConnectionFailed(this);
@@ -676,28 +1009,49 @@ void CServerSocket::SetConnectionState(sint8 newstate)
 	}
 }
 
-
-void CServerSocket::SendPacket(CPacket* packet, bool delpacket, bool controlpacket, uint32 actualPayloadSize)
+void CServerSocket::SendPacket(CPacket *packet, bool delpacket, bool controlpacket, uint32 actualPayloadSize)
 {
-	m_dwLastTransmission = GetTickCount64();
-	CEMSocket::SendPacket(packet, delpacket, controlpacket, actualPayloadSize);
+	TrySendPacket(packet, delpacket, controlpacket, actualPayloadSize);
 }
 
+bool CServerSocket::TrySendPacket(
+	CPacket *packet, bool delpacket, bool controlpacket, uint32 actualPayloadSize)
+{
+	m_dwLastTransmission = GetTickCount64();
+	return CEMSocket::TrySendPacket(packet, delpacket, controlpacket, actualPayloadSize);
+}
 
-void CServerSocket::OnHostnameResolved(uint32 ip) {
+void CServerSocket::OnHostnameResolved(uint32 ip)
+{
 
+	// ConnectToServer() calls straight in here with the address it already had whenever no
+	// lookup was needed, which is most of server.met, and that path succeeds just as well with
+	// the link down. Only a resolver that actually answered is evidence about DNS, so record
+	// what got us here.
+	const bool didLookup = m_IsSolving;
 	m_IsSolving = false;
 	if (ip) {
-		if (theApp->ipfilter->IsFiltered(ip, true)) {
-			AddLogLineC(CFormat( _("Server IP %s (%s) is filtered.  Not connecting.") )
-				% Uint32toStringIP(ip) % cur_server->GetAddress() );
+		if (didLookup) {
+			// DNS answered, so a *different* server failing to resolve during this
+			// sweep is about that server rather than about our link -- see
+			// CServerConnect::HostnameResolvedThisSweep().
+			serverconnect->NoteHostnameResolved();
+		}
+
+		// A hostname skipped the address checks AddServer() makes, and a server can set its own
+		// with [emDynIP: ...], so check what it resolved to.
+		if (!IsGoodServerIP(ip, thePrefs::FilterLanIPs()) || theApp->ipfilter->IsFiltered(ip, true)) {
+			AddLogLineC(CFormat(_("Server IP %s (%s) is filtered.  Not connecting.")) %
+				    Uint32toStringIP(ip) % cur_server->GetAddress());
 			OnConnect(boost::system::errc::invalid_argument);
 		} else {
 			amuleIPV4Address addr;
 			addr.Hostname(ip);
 			uint16 nPort = 0;
 			wxString useObfuscation;
-			if ( !m_bNoCrypt && thePrefs::IsServerCryptLayerTCPRequested() && cur_server->GetObfuscationPortTCP() != 0 && cur_server->SupportsObfuscationTCP()){
+			if (!m_bNoCrypt && thePrefs::IsServerCryptLayerTCPRequested() &&
+				cur_server->GetObfuscationPortTCP() != 0 &&
+				cur_server->SupportsObfuscationTCP()) {
 				nPort = cur_server->GetObfuscationPortTCP();
 				useObfuscation = _("using protocol obfuscation.");
 				SetConnectionEncryption(true, NULL, true);
@@ -707,25 +1061,37 @@ void CServerSocket::OnHostnameResolved(uint32 ip) {
 			}
 
 			addr.Service(nPort);
+			m_connectPort = nPort;
 
-			AddLogLineN(CFormat( _("Connecting to %s (%s - %s:%i) %s") )
-				% cur_server->GetListName()
-				% cur_server->GetAddress()
-				% cur_server->GetFullIP()
-				% nPort
-				% useObfuscation
-			);
+			AddLogLineN(CFormat(_("Connecting to %s (%s - %s:%i) %s")) %
+				    cur_server->GetListName() % cur_server->GetAddress() %
+				    cur_server->GetFullIP() % nPort % useObfuscation);
 
-			AddDebugLogLineN(logServer, CFormat("Server %s(%s) Port %i")
-				% cur_server->GetAddress() % Uint32toStringIP(ip) % cur_server->GetConnPort());
+			AddDebugLogLineN(logServer,
+				CFormat("Server %s(%s) Port %i") % cur_server->GetAddress() %
+					Uint32toStringIP(ip) % cur_server->GetConnPort());
 			Connect(addr, false);
 		}
 	} else {
-		AddLogLineC(CFormat( _("Could not solve dns for server %s: Unable to connect!") )
-			% cur_server->GetAddress() );
-		OnConnect(boost::system::errc::host_unreachable);
-	}
+		AddLogLineC(CFormat(_("Could not solve dns for server %s: Unable to connect!")) %
+			    cur_server->GetAddress());
 
+		// Decided here rather than by handing OnConnect() a synthesised host_unreachable,
+		// which is what this used to do: a name that does not resolve is not a socket
+		// error, and the two want opposite answers.
+		//
+		// An unresolvable hostname is the commonest way an eD2k server actually dies, so it
+		// is the main thing "remove dead servers" prunes on. But with the link down nothing
+		// resolves, and counting that against every server in turn is what emptied the list
+		// (issue #887). Blame it only once DNS has answered for something else this sweep.
+		//
+		// The first server in a sweep therefore cannot be blamed; a genuinely dead entry is
+		// caught on a later one. Erring that way costs a delay, while erring the other way
+		// costs the server list.
+		m_bIsDeleting = true;
+		SetConnectionState(serverconnect->HostnameResolvedThisSweep() ? CS_SERVERDEAD : CS_ERROR);
+		serverconnect->DestroySocket(this);
+	}
 }
 uint32 CServerSocket::GetServerIP() const
 {

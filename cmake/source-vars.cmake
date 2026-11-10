@@ -4,17 +4,26 @@ if (BUILD_MONOLITHIC OR BUILD_DAEMON)
 		kademlia/kademlia/Prefs.cpp
 		kademlia/kademlia/Search.cpp
 		kademlia/kademlia/UDPFirewallTester.cpp
+		kademlia/utils/LookupDiagnosticsSnapshot.cpp
 		kademlia/net/KademliaUDPListener.cpp
+		kademlia/net/SearchExpression.cpp
 		kademlia/net/PacketTracking.cpp
 		kademlia/routing/Contact.cpp
 		kademlia/routing/RoutingZone.cpp
 		amule.cpp
 		BaseClient.cpp
+		CaptchaGenerator.cpp
+		BrowseLifecycle.cpp
+		BrowseManager.cpp
+		BrowseStore.cpp
+		ChatSessionStore.cpp
 		ClientCreditsList.cpp
 		ClientList.cpp
 		ClientTCPSocket.cpp
 		ClientUDPSocket.cpp
 		CorruptionBlackBox.cpp
+		CompletedFileDeletion.cpp
+		DeadSourceList.cpp
 		DownloadBandwidthThrottler.cpp
 		DownloadClient.cpp
 		DownloadQueue.cpp
@@ -24,15 +33,21 @@ if (BUILD_MONOLITHIC OR BUILD_DAEMON)
 		EncryptedStreamSocket.cpp
 		EncryptedDatagramSocket.cpp
 		ExternalConn.cpp
+		FirstRunWizard.cpp
 		FriendList.cpp
 		IPFilter.cpp
+		KadAICHVotes.cpp
 		KnownFileList.cpp
 		ListenSocket.cpp
 		MuleUDPSocket.cpp
+		NatServerKeepaliveProof.cpp
+		OfferFilesPolicy.cpp
 		SearchFile.cpp
 		SearchList.cpp
+		SearchPacket.cpp
 		ServerConnect.cpp
 		ServerList.cpp
+		ServerMet.cpp
 		ServerSocket.cpp
 		ServerUDPSocket.cpp
 		SHAHashSet.cpp
@@ -41,43 +56,97 @@ if (BUILD_MONOLITHIC OR BUILD_DAEMON)
 		UploadBandwidthThrottler.cpp
 		UploadClient.cpp
 		UploadDiskIOThread.cpp
+		UploadStorageMap.cpp
+		UploadPacketBuilder.cpp
 		UploadQueue.cpp
 		PartFileWriteThread.cpp
 		PartFileHashThread.cpp
+		PartMetWriter.cpp
+		MediaProbeThread.cpp
+		FreeSpaceThread.cpp
+		FreeSpaceSamples.cpp
 		ThreadTasks.cpp
 	)
+
+	if (ENABLE_UTP)
+		list (APPEND CORE_SOURCES UtpLibraryAdapter.cpp UtpStreamAcceptor.cpp)
+	endif()
+	if (ENABLE_QUIC)
+		list (APPEND CORE_SOURCES QuicContext.cpp QuicGnuTlsSession.cpp QuicNgtcp2Adapter.cpp QuicSocketTransport.cpp QuicStreamAcceptor.cpp)
+	endif()
+
+	# Only compiled in when the switch is on. Every call site is behind the
+	# same guard, so with the switch off these two would be dead weight in
+	# the binary; the unit tests compile them directly, so gating them here
+	# costs no coverage.
+	if (ENABLE_KAD_NODE_PROTECTION)
+		list (APPEND CORE_SOURCES
+			kademlia/net/FastKad.cpp
+			kademlia/net/SafeKad.cpp
+		)
+	endif()
 endif()
 
 if (BUILD_MONOLITHIC OR BUILD_REMOTEGUI)
 	set (GUI_SOURCES
+		# wxArtProvider subclass + the C TU it pulls icon bytes
+		# from. ${AMULE_ICON_DATA_C} resolves to either the build-
+		# generated copy (Python3 found at configure → regenerated
+		# from src/icons/*.png and their .svg twins by
+		# src/icons/embed_icons.py) or the checked-in fallback
+		# (Python3 missing → use the file as committed). See
+		# src/CMakeLists.txt for the resolution.
 		CamuleArtProvider.cpp
+		MenuIcons.cpp
 		${AMULE_ICON_DATA_C}
 		AddFriend.cpp
 		amule-gui.cpp
 		AppImageIntegration.cpp
 		amuleDlg.cpp
+		AboutDialog.cpp
+		VersionCheck.cpp
+		BrowseListModel.cpp
 		CatDialog.cpp
 		ChatSelector.cpp
 		ChatWnd.cpp
 		ClientDetailDialog.cpp
+		ClientHistoryListCtrl.cpp
+		ClientListSplitter.cpp
+		ClientNameCell.cpp
+		ClientNameCellDrawing.cpp
+		ClientNameListCtrl.cpp
+		ClientRowListCtrl.cpp
+		ClientContextActions.cpp
+		ClientsListCtrl.cpp
+		ClientsWnd.cpp
 		CommentDialog.cpp
 		CommentDialogLst.cpp
 		DirectoryTreeCtrl.cpp
 		DownloadListCtrl.cpp
 		FileDetailDialog.cpp
+		FileLaunch.cpp
 		FriendListCtrl.cpp
 		GenericClientListCtrl.cpp
 		KadDlg.cpp
 		MuleTrayIcon.cpp
+		# Compiled per-executable rather than into the shared muleappgui
+		# static lib: its #ifdef CLIENT_GUI branches need the consuming
+		# target's define, which a single shared object cannot provide.
+		muuli_wdr.cpp
 		OScopeCtrl.cpp
 		PrefsUnifiedDlg.cpp
 		SearchDlg.cpp
+		SearchMetadataPanel.cpp
+			SearchHistory.cpp
 		SearchListCtrl.cpp
+		SearchColumnFit.cpp
+		SearchListModel.cpp
 		ServerListCtrl.cpp
 		ServerWnd.cpp
 		SharedDirsApplyTask.cpp
 		SharedFilePeersListCtrl.cpp
 		SharedFilesCtrl.cpp
+		SharedFilesReloadProgress.cpp
 		SharedFilesWnd.cpp
 		SourceListCtrl.cpp
 		StatisticsDlg.cpp
@@ -85,24 +154,38 @@ if (BUILD_MONOLITHIC OR BUILD_REMOTEGUI)
 	)
 
 	if (APPLE)
-		list (APPEND GUI_SOURCES MacAppHelper.mm)
+		# Obj-C++ helper for AppKit access (NSApp activation policy
+		# toggle for "minimize to tray" — drops the Dock icon while
+		# the main window is hidden so no Dock thumbnail is left).
+		list (APPEND GUI_SOURCES MacAppHelper.mm MenuIcons_mac.mm NativeTrayIcon_mac.mm)
 	endif()
 endif()
 
 if (BUILD_MONOLITHIC OR BUILD_DAEMON OR BUILD_REMOTEGUI)
 	set (COMMON_SOURCES
+		kademlia/utils/LookupDiagnostics.cpp
+		kademlia/utils/LookupDiagnosticsEC.cpp
 		amuleAppCommon.cpp
+		AppImageEnv.cpp
 		AutostartManager.cpp
+		ProtocolHandlerManager.cpp
+		$<$<BOOL:${APPLE}>:ProtocolHandlerManager_mac.mm>
 		ClientRef.cpp
+		ClientVersionString.cpp
 		ECSpecialMuleTags.cpp
+		ExternalCommand.cpp
 		GetTickCount.cpp
 		GuiEvents.cpp
 		HTTPDownload.cpp
+		InstanceLock.cpp
+		AbstractFile.cpp
 		KnownFile.cpp
 		Logger.cpp
+		MediaProbe.cpp
 		PartFile.cpp
 		Preferences.cpp
 		Proxy.cpp
+		ShareExclude.cpp
 		Server.cpp
 		Statistics.cpp
 		StatTree.cpp

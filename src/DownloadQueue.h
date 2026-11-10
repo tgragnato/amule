@@ -26,13 +26,18 @@
 #ifndef DOWNLOADQUEUE_H
 #define DOWNLOADQUEUE_H
 
-#include "MD4Hash.h"		// Needed for CMD4Hash
-#include "ObservableQueue.h"	// Needed for CObservableQueue
-#include "GetTickCount.h"	// Needed for GetTickCount64
+#include "MD4Hash.h"                 // Needed for CMD4Hash
+#include "ObservableQueue.h"         // Needed for CObservableQueue
+#include "GetTickCount.h"            // Needed for GetTickCount64
+#include "GlobalSourceQueue.h"       // Needed for CGlobalSourceQueue
+#include "Refill.h"                  // Needed for CRefill
+#include <protocol/ed2k/Constants.h> // Needed for LOCALSERVER_SOURCE_REQUESTS
 
-
+#include <atomic> // Needed for std::atomic (m_listGeneration)
 #include <deque>
-
+#include <functional> // Needed for std::function (LoadProgressCb)
+#include <map>
+#include <vector> // Needed for std::vector (GetPartFileDirs)
 
 class CSharedFileList;
 class CSearchFile;
@@ -46,332 +51,225 @@ class CED2KFileLink;
 class CED2KServerLink;
 class CED2KServerListLink;
 class CPath;
+class CNetworkAddress;
 
-namespace Kademlia {
-	class CUInt128;
+namespace Kademlia
+{
+class CUInt128;
 }
 
-/**
- * The download queue houses all active downloads.
- *
- *
- * This class should be thread-safe.
- */
-class CDownloadQueue : public CObservableQueue<CPartFile*>
+/// The download queue: every active download. Should be thread-safe.
+class CDownloadQueue : public CObservableQueue<CPartFile *>
 {
 public:
-	/**
-	 * Constructor.
-	 */
 	CDownloadQueue();
 
-	/**
-	 * Destructor.
-	 */
 	~CDownloadQueue();
 
-	/** Loads met-files from the specified directory. */
-	void	LoadMetFiles(const CPath& path);
+	// Progress hook for the part-file load, mirroring CSharedFileList::ReloadYieldCb. Called
+	// once per part file with the index just loaded and the total, which -- unlike the shared-
+	// file scan -- is known before the loop starts, the directory being enumerated into a
+	// vector first.
+	using LoadProgressCb = std::function<void(size_t /*loaded*/, size_t /*total*/)>;
 
-	/**
-	 * Main worker function.
-	 */
-	void	Process();
+	void LoadMetFiles(const CPath &path, const LoadProgressCb &progressCb = nullptr);
 
+	/// Main worker function.
+	void Process();
 
-	/**
-	 * Returns a pointer to the file with the specified hash, or NULL.
-	 *
-	 * @param filehash The hash to search for.
-	 * @return The corresponding file or NULL.
-	 */
-	CPartFile* GetFileByID(const CMD4Hash& filehash) const;
+	/// The file with hash @a filehash, or NULL.
+	CPartFile *GetFileByID(const CMD4Hash &filehash) const;
 
-	/**
-	 * Returns the file at the specified position in the file-list, or NULL if invalid.
-	 *
-	 * @param A valid position in the file-list.
-	 * @return A valid pointer or NULL if the index was invalid.
-	 */
-	CPartFile* GetFileByIndex(unsigned int idx) const;
+	/// The file at index @a idx in the file-list, or NULL if out of range.
+	CPartFile *GetFileByIndex(unsigned int idx) const;
 
+	/// True if the file is already being shared or downloaded. @a requestedName is the name it
+	/// was requested under; when that differs from the name already held under the hash, it is
+	/// appended to the log line so the message can be matched to the download command.
+	bool IsFileExisting(const CMD4Hash &fileid, const wxString &requestedName = wxEmptyString);
 
-	/**
-	 * Returns true if the file is currently being shared or downloaded
-	 */
-	bool	IsFileExisting(const CMD4Hash& fileid) const;
+	/// True if @a file is on the download queue.
+	bool IsPartFile(const CKnownFile *file) const;
 
-	/**
-	 * Returns true if the specified file is on the download-queue.
-	 */
-	bool	IsPartFile(const CKnownFile* file) const;
-
-	/**
-	 * Updates the file's download active time
-	 */
+	/// Updates the files' download active time.
 	void OnConnectionState(bool bConnected);
 
+	/// Starts a download from search result @a toadd in @a category, unless an identical file
+	/// is already being downloaded or shared.
+	void AddSearchToDownload(CSearchFile *toadd, uint8 category);
+
+	/// Adds existing partfile @a newfile to the queue in @a category, stopped if @a paused.
+	void AddDownload(CPartFile *newfile, bool paused, uint8 category);
+
+	/// Removes @a toremove from the queue, adding it to the completed list if @a
+	/// keepAsCompleted.
+	void RemoveFile(CPartFile *toremove, bool keepAsCompleted = false);
+
+	/// Saves the source-seeds of every file on the queue.
+	void SaveSourceSeeds();
+
+	/// Loads the source-seeds of every file on the queue.
+	void LoadSourceSeeds();
+
+	/// Adds a potential new source to @a sender, checked against the existing clients: it is
+	/// queued as appropriate, or deleted if it duplicates one. @a source may be deleted.
+	void CheckAndAddSource(CPartFile *sender, CUpDownClient *source);
+
+	/// Like CheckAndAddSource, but @a source is assumed valid and is not checked for being a
+	/// duplicate.
+	void CheckAndAddKnownSource(CPartFile *sender, CUpDownClient *source);
+
+	/// Removes @a toremove from both normal source lists, the A4AF lists and the downloadqueue
+	/// widget, and resets its requestfile. @a bDoStatsUpdate asks the affected files to update
+	/// their statistics; @a updatewindow is unused. True if the source was found and removed.
+	bool RemoveSource(CUpDownClient *toremove, bool updatewindow = true, bool bDoStatsUpdate = true);
+
+	/// The queued client with this IP and UDP port, found through the file sources, or NULL.
+	CUpDownClient *GetDownloadClientByIP_UDP(uint32 dwIP, uint16 nUDPPort) const;
+
+	/// Queues @a sender for source-requesting from the connected server.
+	void SendLocalSrcRequest(CPartFile *sender);
+
+	/// Removes @a pFile from the server-request queue.
+	void RemoveLocalServerRequest(CPartFile *pFile);
+
+	/// Resets all queued server-requests.
+	void ResetLocalServerRequests();
+
+	/// Starts the next paused file on the queue by priority, honouring categories when the
+	/// preference is on.
+	void StartNextFile(CPartFile *oldfile);
+
+	/// Resets the category of every file in category @a cat.
+	void ResetCatParts(uint8 cat);
+
+	/// Sets the priority of every file in category @a cat.
+	void SetCatPrio(uint8 cat, uint8 newprio);
+
+	/// Sets the status of every file in category @a cat.
+	void SetCatStatus(uint8 cat, int newstatus);
+
+	/// Current number of queued files.
+	uint16 GetFileCount() const;
+	//! The directories holding the part files, each once.
+	std::vector<CPath> GetPartFileDirs() const;
+
 	/**
-	 * Starts a new download based on the specified search-result.
+	 * Changes whenever a file enters or leaves the list(s) this snapshots.
 	 *
-	 * @param toadd The search-result to add.
-	 * @param category The category to assign to the new download.
+	 * A change token, not a count: a reload clears and re-adds, so it advances once per file.
+	 * All a caller may conclude is "same value means nothing entered or left". Comparing sizes
+	 * would be wrong -- an add and a remove between two polls is a net-zero size change that
+	 * still has to reconcile.
 	 *
-	 * The download will only be started if no identical files are either
-	 * being downloaded or shared currently.
-	 */
-	void	AddSearchToDownload(CSearchFile* toadd, uint8 category);
-
-
-	/**
-	 * Adds an existing partfile to the queue.
+	 * Lets a caller that only needs "did membership change" skip the snapshot. CopyFileList is
+	 * O(n) and the EC file-list reconcile runs it on every poll for every connected client,
+	 * almost always to find nothing came or went.
 	 *
-	 * @param newfile The file to add.
-	 * @param paused If the file should be stopped when added.
-	 * @param category The category to assign to the file.
+	 * Read it BEFORE CopyFileList, never after. Read first and the value can only be older than
+	 * the snapshot; a change racing in between just makes the next poll redo the work. Read
+	 * after, and a change landing between the copy and the read is recorded as already seen,
+	 * and lost.
 	 */
-	void	AddDownload(CPartFile* newfile, bool paused, uint8 category);
+	uint64 GetListGeneration() const { return m_listGeneration.load(std::memory_order_relaxed); }
 
+	void CopyFileList(std::vector<CPartFile *> &out_list, bool includeCompleted = false) const;
 
-	/**
-	 * Removes the specified file from the queue.
-	 *
-	 * @param toremove A pointer to the file object to be removed.
-	 * @param keepAsCompleted If true add the removed file to the list of completed files.
-	 */
-	void	RemoveFile(CPartFile* toremove, bool keepAsCompleted = false);
+	/// Current number of downloading files.
+	uint16 GetDownloadingFileCount() const;
 
+	/// Current number of paused files.
+	uint16 GetPausedFileCount() const;
 
-	/**
-	 * Saves the source-seeds of every file on the queue.
-	 */
-	void	SaveSourceSeeds();
+	/// Called when a DNS lookup finishes.
+	void OnHostnameResolved(uint32 ip);
 
-	/**
-	 * Loads the source-seeds of every file on the queue.
-	 */
-	void	LoadSourceSeeds();
+	/// Adds an ed2k or magnet link to the download queue.
+	bool AddLink(const wxString &link, uint8 category = 0);
 
+	/// Batch variant of AddLink. Per-link failures are still logged with the protocol reason,
+	/// plus one aggregated dialog at the end of the batch.
+	void AddLinks(const wxArrayString &links, uint8 category = 0);
 
-	/**
-	 * Adds a potiential new client to the specified file.
-	 *
-	 * @param sender The owner of the new source.
-	 * @param source The client in question, might be deleted!
-	 *
-	 * This function will check the new client against the already existing
-	 * clients. The source will then be queued as is appropriate, or deleted
-	 * if it is duplicate of an existing client.
-	 */
-	void    CheckAndAddSource(CPartFile* sender, CUpDownClient* source);
+	bool AddED2KLink(const wxString &link, uint8 category = 0);
+	bool AddED2KLink(const CED2KLink *link, uint8 category = 0);
+	bool AddED2KLink(const CED2KFileLink *link, uint8 category = 0);
+	bool AddED2KLink(const CED2KServerLink *link);
+	bool AddED2KLink(const CED2KServerListLink *link);
 
-	/**
-	 * This function adds already known source to the specified file.
-	 *
-	 * @param sender The owner of the new source.
-	 * @param source The client in question.
-	 *
-	 * This function acts like CheckAndAddSource, with the exception that no
-	 * checks are made to see if the client is a duplicate. It is assumed that
-	 * it is in fact a valid client.
-	 */
-	void    CheckAndAddKnownSource(CPartFile* sender, CUpDownClient* source);
+	/// Stops source-requests from non-connected servers.
+	void StopUDPRequests();
 
-
-	/**
-	 * Removes the specified client completely.
-	 *
-	 * @param toremove The client to be removed.
-	 * @param updatewindow NOT USED!
-	 * @param bDoStatsUdpate Specifies if the affected files should update their statistics.
-	 * @return True if the sources was found and removed.
-	 *
-	 * This function will remove the specified source from both normal source
-	 * lists, A4AF lists and the downloadqueue-widget. The requestfile of the
-	 * source is also reset.
-	 */
-	bool	RemoveSource(CUpDownClient* toremove, bool updatewindow = true, bool bDoStatsUpdate = true);
-
-
-	/**
-	 * Finds the queued client by IP and UDP-port, by looking at file-sources.
-	 *
-	 * @param dwIP The IP-address of the client.
-	 * @param nUDPPort The UDP-port of the client.
-	 * @return The matching client or NULL if none was found.
-	 */
-	CUpDownClient* GetDownloadClientByIP_UDP(uint32 dwIP, uint16 nUDPPort) const;
-
-
-	/**
-	 * Queues the specified file for source-requestion from the connected server.
-	 */
-	void	SendLocalSrcRequest(CPartFile* sender);
-
-	/**
-	 * Removes the specified server from the request-queue.
-	 */
-	void	RemoveLocalServerRequest(CPartFile* pFile);
-
-	/**
-	 * Resets all queued server-requests.
-	 */
-	void	ResetLocalServerRequests();
-
-
-	/**
-	 * Starts the next paused file on the queue, going after priority.
-	 * Also checks for categories if enabled on preferences.
-	 */
-	void	StartNextFile(CPartFile* oldfile);
-
-
-	/**
-	 * Resets the category of all files with the specified category.
-	 */
-	void	ResetCatParts(uint8 cat);
-
-	/**
-	 * Sets the priority of all files with the specified category.
-	 */
-	void	SetCatPrio(uint8 cat, uint8 newprio);
-
-	/**
-	 * Sets the status of all files with the specified category.
-	 */
-	void	SetCatStatus(uint8 cat, int newstatus);
-
-	/**
-	 * Returns the current number of queued files.
-	 */
-	uint16	GetFileCount() const;
-
-	/**
-	 * Makes a copy of the file list.
-	 */
-	void	CopyFileList(std::vector<CPartFile*>& out_list, bool includeCompleted = false) const;
-
-	/**
-	 * Returns the current number of downloading files.
-	 */
-	uint16	GetDownloadingFileCount() const;
-
-	/**
-	 * Returns the current number of paused files.
-	 */
-	uint16	GetPausedFileCount() const;
-
-
-	/**
-	 * This function is called when a DNS lookup is finished.
-	 */
-	void	OnHostnameResolved(uint32 ip);
-
-
-	/**
-	 * Adds an ed2k or magnet link to download queue.
-	 */
-	bool	AddLink( const wxString& link, uint8 category = 0 );
-
-	/**
-	 * Batch variant of AddLink. Per-link failures are still logged with the
-	 * specific protocol reason; on top of that, a single aggregated dialog
-	 * is shown at the end of the batch (one popup for N failed links).
-	 */
-	void	AddLinks( const wxArrayString& links, uint8 category = 0 );
-
-	bool	AddED2KLink( const wxString& link, uint8 category = 0 );
-	bool	AddED2KLink( const CED2KLink* link, uint8 category = 0 );
-	bool	AddED2KLink( const CED2KFileLink* link, uint8 category = 0 );
-	bool	AddED2KLink( const CED2KServerLink* link );
-	bool	AddED2KLink( const CED2KServerListLink* link );
-
-
-	/**
-	 * Returns the current server which is beening queried by UDP packets.
-	 */
-	CServer* GetUDPServer() const;
-
-	/**
-	 * Set the server to query through UDP packest.
-	 */
-	void	SetUDPServer( CServer* server );
-
-
-	/**
-	 * Stop the source-requests from non-connected servers.
-	 */
-	void	StopUDPRequests();
+	/// Puts a download just added or resumed first in every non-connected server's global
+	/// source request queue.
+	void RequestGlobalSources(const CMD4Hash &fileHash);
 
 	/* Kad Stuff */
 
-	/**
-	 * Add a Kad source to a download
-	 */
-	 void	KademliaSearchFile(uint32_t searchID, const Kademlia::CUInt128* pcontactID, const Kademlia::CUInt128* pkadID, uint8_t type, uint32_t ip, uint16_t tcp, uint16_t udp, uint32_t buddyip, uint16_t buddyport, uint8_t byCryptOptions);
+	/// Adds a Kad source to a download.
+	void KademliaSearchFile(uint32_t searchID,
+		const Kademlia::CUInt128 *pcontactID,
+		const Kademlia::CUInt128 *pkadID,
+		uint8_t type,
+		uint32_t ip,
+		uint16_t tcp,
+		uint16_t udp,
+		uint32_t buddyip,
+		uint16_t buddyport,
+		uint8_t byCryptOptions,
+		const CNetworkAddress &publishedIPv6);
 
-	CPartFile* GetFileByKadFileSearchID(uint32 id) const;
+	CPartFile *GetFileByKadFileSearchID(uint32 id) const;
 
-	bool	DoKademliaFileRequest();
+	bool DoKademliaFileRequest();
 
-	void	SetLastKademliaFileRequest()	{lastkademliafilerequest = ::GetTickCount64();}
+	void SetLastKademliaFileRequest() { lastkademliafilerequest = ::GetTickCount64(); }
 
-	uint32	GetRareFileThreshold() const { return m_rareFileThreshold; }
-	uint32	GetCommonFileThreshold() const { return m_commonFileThreshold; }
+	uint32 GetRareFileThreshold() const { return m_rareFileThreshold; }
+	uint32 GetCommonFileThreshold() const { return m_commonFileThreshold; }
 
-	/**
-	 * Remove a file from the list of completed downloads.
-	 */
-	void	ClearCompleted(const ListOfUInts32 & ecids);
+	/// Removes files from the list of completed downloads.
+	void ClearCompleted(const ListOfUInts32 &ecids);
 
 private:
-	/**
-	 * This function initializes new observers with the current contents of the queue.
-	 */
-	virtual void ObserverAdded( ObserverType* o );
+	/// Initialises a new observer with the current contents of the queue.
+	virtual void ObserverAdded(ObserverType *o);
 
-
-	/**
-	 * Helper-function, sorts the filelist so that high-priority files are first.
-	 */
-	void	DoSortByPriority();
+	/// Sorts the filelist so that high-priority files come first.
+	void DoSortByPriority();
 
 	/** Checks that there is enough free spaces for temp-files at that specified path. */
-	void	CheckDiskspace(const CPath& path);
+	//! @a probe: query the disk (startup only), else use CFreeSpaceThread's sample.
+	void CheckDiskspace(const CPath &path, bool probe);
 
-	/**
-	 * Stops performing UDP requests.
-	 */
-	void	DoStopUDPRequests();
+	void ProcessLocalRequests();
 
+	/// Sends the next non-connected server whose queue allows it one global source request.
+	void SendGlobalSources();
+	CGlobalSourceQueue &GlobalSources(const CServer *server);
+	void SendGlobGetSourcesUDPPacket(CMemFile &data, CServer *server);
 
-	void	ProcessLocalRequests();
-
-	bool	SendNextUDPPacket();
-	int		GetMaxFilesPerUDPServerPacket() const;
-	bool	SendGlobGetSourcesUDPPacket(CMemFile& data);
-
-	void	AddToResolve(const CMD4Hash& fileid, const wxString& pszHostname, uint16 port, const wxString& hash, uint8 cryptoptions);
+	void AddToResolve(const CMD4Hash &fileid,
+		const wxString &pszHostname,
+		uint16 port,
+		const wxString &hash,
+		uint8 cryptoptions);
 
 	//! The mutex associated with this class, mutable to allow for const functions.
 	mutable wxMutex m_mutex;
 
+	uint32 m_datarate;
+	uint64 m_lastDiskCheck;
+	uint64 m_lastsorttime;
+	uint64 m_lastudpstattime;
+	uint64 m_nLastED2KLinkCheck;
+	CRefill m_localRequests{ LOCALSERVER_SOURCE_REQUESTS, LOCALSERVER_MS_PER_SOURCE_REQUEST };
+	uint8 m_udcounter;
+	// Keyed by address and port, so a server's queue outlives its object.
+	std::map<std::pair<wxString, uint16>, CGlobalSourceQueue> m_globalSources;
+	size_t m_globalSourcesNext = 0;
 
-	uint32		m_datarate;
-	uint64		m_lastDiskCheck;
-	uint64		m_lastudpsearchtime;
-	uint64		m_lastsorttime;
-	uint64		m_lastudpstattime;
-	uint64		m_nLastED2KLinkCheck;
-	uint8		m_cRequestsSentToServer;
-	uint64		m_dwNextTCPSrcReq;
-	uint8		m_udcounter;
-	CServer*	m_udpserver;
-
-
-	/**
-	 * Structure used to store sources with dynamic hostnames.
-	 */
+	/// Stores a source with a dynamic hostname.
 	struct Hostname_Entry
 	{
 		//! The ID of the file the source provides.
@@ -386,31 +284,29 @@ private:
 		uint8 cryptoptions;
 	};
 
-	std::deque<Hostname_Entry>	m_toresolve;
+	std::deque<Hostname_Entry> m_toresolve;
 
-	typedef std::deque<CPartFile*> FileQueue;
+	typedef std::deque<CPartFile *> FileQueue;
 	FileQueue m_filelist;
+	// See GetListGeneration(). Bumped under m_mutex wherever m_filelist OR m_completedDownloads
+	// gains or loses an entry -- CopyFileList draws from both when includeCompleted is set,
+	// which is how the EC reconcile calls it.
+	std::atomic<uint64> m_listGeneration{ 0 };
 
-	typedef std::list<CPartFile*> FileList;
-	FileList		m_localServerReqQueue;
+	typedef std::list<CPartFile *> FileList;
+	FileList m_localServerReqQueue;
 
 	//! List of downloads completed and still on display
-	FileList		m_completedDownloads;
-
-	//! Observer used to keep track of which servers have yet to be asked for sources
-	CQueueObserver<CServer*>	m_queueServers;
-
-	//! Observer used to keep track of which file to send UDP requests for
-	CQueueObserver<CPartFile*>	m_queueFiles;
+	FileList m_completedDownloads;
 
 	/* Kad Stuff */
-	uint64		lastkademliafilerequest;
+	uint64 lastkademliafilerequest;
 
 	//! Threshold for rare files, dynamically based on the sources for each.
-	uint32		m_rareFileThreshold;
+	uint32 m_rareFileThreshold;
 
 	//! Threshold for common files, dynamically based on the sources for each.
-	uint32		m_commonFileThreshold;
+	uint32 m_commonFileThreshold;
 };
 
 #endif // DOWNLOADQUEUE_H

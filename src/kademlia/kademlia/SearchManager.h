@@ -36,17 +36,21 @@ Any mod that changes anything within the Kademlia side will not be allowed to ad
 there client on the eMule forum..
 */
 
-#ifndef __SEARCHMANAGER_H__
-#define __SEARCHMANAGER_H__
+#ifndef SEARCHMANAGER_H
+#define SEARCHMANAGER_H
 
 #include "../utils/UInt128.h"
+#include "../utils/KadUDPKey.h"
+#include "../utils/LookupDiagnostics.h"
 #include "../routing/Maps.h"
 #include "../../Tag.h"
+#include <memory>
 
 class CMemFile;
 
 ////////////////////////////////////////
-namespace Kademlia {
+namespace Kademlia
+{
 ////////////////////////////////////////
 
 class CSearch;
@@ -54,7 +58,7 @@ class CRoutingZone;
 class CKadClientSearcher;
 
 typedef std::list<wxString> WordList;
-typedef std::map<CUInt128, CSearch*> SearchMap;
+typedef std::map<CUInt128, std::unique_ptr<CSearch>> SearchMap;
 
 class CSearchManager
 {
@@ -62,6 +66,9 @@ class CSearchManager
 	friend class CKademlia;
 
 public:
+	static wxString GetLookupDiagnostics();
+	static void GetLookupSnapshots(
+		std::vector<LookupSnapshot> &active, std::deque<LookupSnapshot> &recent);
 
 	static bool IsSearching(uint32_t searchID) noexcept;
 	static void StopSearch(uint32_t searchID, bool delayDelete);
@@ -69,54 +76,87 @@ public:
 
 	// Search for a particular file
 	// Will return unique search id, returns zero if already searching for this file.
-	static CSearch* PrepareLookup(uint32_t type, bool start, const CUInt128& id);
+	static CSearch *PrepareLookup(uint32_t type, bool start, const CUInt128 &id);
 
-	// Will return unique search id, returns zero if already searching for this keyword.
-	static CSearch* PrepareFindKeywords(const wxString& keyword, uint32_t searchTermsDataSize, const uint8_t *searchTermsData, uint32_t searchid);
+	// Returns a started search, or throws on failure, including a busy target.
+	static CSearch *PrepareFindKeywords(const wxString &keyword,
+		uint32_t searchTermsDataSize,
+		const uint8_t *searchTermsData,
+		uint32_t searchid);
 
-	static bool StartSearch(CSearch* search);
+	// Takes ownership on success, rejection, and exception.
+	static bool StartSearch(CSearch *search);
 
-	static void ProcessResponse(const CUInt128& target, uint32_t fromIP, uint16_t fromPort, ContactList *results);
-	static void ProcessResult(const CUInt128& target, const CUInt128& answer, TagPtrList *info);
-	static void ProcessPublishResult(const CUInt128& target, const uint8_t load, const bool loadResponse);
+	static void ProcessResponse(const CUInt128 &target,
+		uint32_t fromIP,
+		uint16_t fromPort,
+		const CKadUDPKey &senderKey,
+		ContactList *results);
+	static void ProcessResult(const CUInt128 &target,
+		const CUInt128 &answer,
+		TagPtrList *info,
+		uint32_t fromIP,
+		uint16_t fromPort);
+	static void ProcessResultReply(const CUInt128 &target, uint32_t fromIP, uint16_t fromPort);
+	static void ProcessPublishResult(const CUInt128 &target, const uint8_t load, const bool loadResponse);
 
-	static void GetWords(const wxString& str, WordList *words, bool allowDuplicates = false);
+	static void GetWords(const wxString &str, WordList *words, bool allowDuplicates = false);
 
 	static void UpdateStats() noexcept;
 
-	static bool AlreadySearchingFor(const CUInt128& target) noexcept { return m_searches.count(target) > 0; }
+	static bool AlreadySearchingFor(const CUInt128 &target) noexcept
+	{
+		return m_searches.count(target) > 0;
+	}
 
-	// Find a CSearch by searchID (m_searches is keyed by target hash;
-	// this iterates) and invoke its RequestMoreResults().  Returns true
-	// if a reask was dispatched, false if no matching search was found
-	// or RequestMoreResults declined (cap reached / no eligible peer).
-	// Wired up on the search dialog "More" button.
-	static bool RequestMoreResults(uint32_t searchID);
+	// Find a CSearch by searchID (m_searches is keyed by target hash, so this iterates) and
+	// invoke its RequestMoreResults().
+	//
+	// Returns whether the search can still be widened by a later press -- `fired ||
+	// CanReaskMore()` -- so false only when reasking is over for good. NOT "did a reask go
+	// out": a press made while no responded peer is left to reask YET still returns true,
+	// because that clears as soon as another peer answers and a UI must keep its control.
+	//
+	// `out_fired`, when given, receives whether a reask actually went out. The two genuinely
+	// differ -- the reask spending the last of the budget fires and leaves the search un-
+	// widenable -- and a log line wants the second, a control's enabled state the first.
+	static bool RequestMoreResults(uint32_t searchID, bool *out_fired = nullptr);
 
-	// True if the given searchID corresponds to an active Kad search.
-	// Used by the search dialog to gate "More" button enable state on
-	// the currently-selected tab being a Kad search (vs ED2K).
+	// True if the given searchID is an active Kad search. The search dialog uses it to gate the
+	// "More" button on the selected tab being a Kad search rather than ED2K.
 	static bool IsKadSearch(uint32_t searchID);
 
-	static const wxChar* GetInvalidKeywordChars() { return L" ()[]{}<>,._-!?:;\\/\""; }
+	// Advances m_nextID past a restored Kad search's persisted id, so the next Kad search this
+	// session cannot be handed the same one: m_nextID restarts at SEARCH_ID_KAD_MASK every
+	// launch, so without this a restored search and the first new Kad search after a restart
+	// collide deterministically.
+	static void ReserveSearchId(uint32_t id)
+	{
+		if (id > m_nextID) {
+			m_nextID = id;
+		}
+	}
+
+	static const wxChar *GetInvalidKeywordChars() { return L" ()[]{}<>,._-!?:;\\/\""; }
 
 	static void CancelNodeFWCheckUDPSearch();
 	static bool FindNodeFWCheckUDP();
-	static bool IsFWCheckUDPSearch(const CUInt128& target);
+	static bool IsFWCheckUDPSearch(const CUInt128 &target);
 
 private:
-
-	static void FindNode(const CUInt128& id, bool complete);
-	static bool FindNodeSpecial(const CUInt128& id, CKadClientSearcher *requester);
+	static void RememberLookup(CSearch &search);
+	static void DeleteSearch(SearchMap::iterator it);
+	static void FindNode(const CUInt128 &id, bool complete);
+	static bool FindNodeSpecial(const CUInt128 &id, CKadClientSearcher *requester);
 	static void CancelNodeSpecial(CKadClientSearcher *requester);
 
 	static void JumpStart();
 
-	static uint32_t  m_nextID;
+	static uint32_t m_nextID;
 	static SearchMap m_searches;
 };
 
-} // End namespace
+} // namespace Kademlia
 
-#endif // __SEARCHMANAGER_H__
+#endif // SEARCHMANAGER_H
 // File_checked_for_headers

@@ -23,10 +23,8 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
 #ifndef KNOWNFILE_H
 #define KNOWNFILE_H
-
 
 #include "MD4Hash.h"
 #include "SHAHashSet.h"
@@ -35,55 +33,74 @@
 #include <common/Path.h>
 
 #include "kademlia/kademlia/Indexed.h"
-#include <ec/cpp/ECID.h>	// Needed for CECID
-#include <atomic>		// Needed for std::atomic (m_ecGen)
-
+#include <ec/cpp/ECID.h> // Needed for CECID
+#include <atomic>        // Needed for std::atomic (m_ecGen)
+#include <list>          // Needed for FileRatingList
 
 #ifdef CLIENT_GUI
 #include <ec/cpp/ECSpecialTags.h>
-#include "RLE.h"			// Needed for RLE_Data, PartFileEncoderData
+#include "RLE.h" // Needed for RLE_Data, PartFileEncoderData
 #endif
 
-#include "Constants.h"		// Needed for PS_*, PR_*
-#include "ClientRef.h"		// Needed for CClientRef
+#include "Constants.h"             // Needed for PS_*, PR_*
+#include "ClientRef.h"             // Needed for CClientRef
+#include "VerifyLocalDataResult.h" // Needed for CVerifyLocalDataResult
+
+#include "SharedFileVerifySchedule.h" // Needed for CSharedFileVerifySchedule
 
 class CFileDataIO;
+class CMemFile;
 class CPacket;
 class CTag;
-
+class CUpDownClient;
 
 namespace Kademlia
 {
-	class CEntry;
+class CEntry;
 }
-
 
 typedef vector<CMD4Hash> ArrayOfCMD4Hash;
 
-
 typedef vector<CTag> ArrayOfCTag;
 
+// A single community rating/comment entry, from a connected ed2k client or from a Kad NOTES lookup.
+// Lives on CAbstractFile so downloads (CPartFile) and search results (CSearchFile) share it.
+class SFileRating
+{
+public:
+	wxString UserName;
+	wxString FileName;
+	sint16 Rating;
+	wxString Comment;
+
+public:
+	SFileRating(const wxString &u, const wxString &f, sint16 r, const wxString &c);
+	SFileRating(const CUpDownClient &client);
+};
+
+typedef std::list<SFileRating> FileRatingList;
 
 class CFileStatistic
 {
 	friend class CKnownFilesRem;
+
 public:
 	CFileStatistic(CKnownFile *parent);
-	void	AddRequest();
-	void	AddAccepted();
-	void    AddTransferred(uint64 bytes);
-	uint16	GetRequests() const			{return requested;}
-	uint16	GetAccepts() const			{return accepted;}
-	uint64  GetTransferred() const			{return transferred;}
-	uint32	GetAllTimeRequests() const		{return alltimerequested;}
-	void	SetAllTimeRequests(uint32 new_value)	{ alltimerequested = new_value; };
-	uint32	GetAllTimeAccepts() const		{return alltimeaccepted;}
-	void	SetAllTimeAccepts(uint32 new_value)	{ alltimeaccepted = new_value; };
-	uint64	GetAllTimeTransferred() const		{return alltimetransferred;}
-	void	SetAllTimeTransferred(uint64 new_value)	{ alltimetransferred = new_value; };
+	void AddRequest();
+	void AddAccepted();
+	void AddTransferred(uint64 bytes);
+	uint16 GetRequests() const { return requested; }
+	uint16 GetAccepts() const { return accepted; }
+	uint64 GetTransferred() const { return transferred; }
+	uint32 GetAllTimeRequests() const { return alltimerequested; }
+	void SetAllTimeRequests(uint32 new_value) { alltimerequested = new_value; };
+	uint32 GetAllTimeAccepts() const { return alltimeaccepted; }
+	void SetAllTimeAccepts(uint32 new_value) { alltimeaccepted = new_value; };
+	uint64 GetAllTimeTransferred() const { return alltimetransferred; }
+	void SetAllTimeTransferred(uint64 new_value) { alltimetransferred = new_value; };
 
 private:
-	CKnownFile* fileParent;
+	CKnownFile *fileParent;
 	uint16 requested;
 	uint64 transferred;
 	uint16 accepted;
@@ -93,80 +110,135 @@ private:
 };
 
 /*
-                             CPartFile
-                           /
-                CKnownFile
-              /
+			     CPartFile
+			   /
+		CKnownFile
+	      /
 CAbstractFile
-              \
-                CSearchFile
+	      \
+		CSearchFile
 */
 class CAbstractFile
 {
 public:
 	CAbstractFile();
-	explicit CAbstractFile(const CAbstractFile& other);
+	explicit CAbstractFile(const CAbstractFile &other);
 	virtual ~CAbstractFile() {}
 
-	const CPath&	GetFileName() const	{ return m_fileName; }
-	const CMD4Hash&	GetFileHash() const	{ return m_abyFileHash; }
+	const CPath &GetFileName() const { return m_fileName; }
+	const CMD4Hash &GetFileHash() const { return m_abyFileHash; }
 
-	uint64	GetFileSize() const	{ return m_nFileSize;}
-	bool	IsLargeFile() const	{ return m_nFileSize > (uint64)OLD_MAX_FILE_SIZE; }
+	uint64 GetFileSize() const { return m_nFileSize; }
+	bool IsLargeFile() const { return m_nFileSize > (uint64)OLD_MAX_FILE_SIZE; }
 
-	virtual void SetFileSize(uint64 nFileSize)	{ m_nFileSize = nFileSize; }
-	virtual void SetFileName(const CPath& filename);
+	virtual void SetFileSize(uint64 nFileSize) { m_nFileSize = nFileSize; }
+	virtual void SetFileName(const CPath &filename);
 
 	/* Tags and Notes handling */
 	uint32 GetIntTagValue(uint8 tagname) const;
-	uint32 GetIntTagValue(const wxString& tagname) const;
-	bool GetIntTagValue(uint8 tagname, uint32& ruValue) const;
-	const wxString& GetStrTagValue(uint8 tagname) const;
-	const wxString& GetStrTagValue(const wxString& tagname) const;
-	const CTag *GetTag(const wxString& tagname) const;
-	const CTag *GetTag(const wxString& tagname, uint8 tagtype) const;
+	uint32 GetIntTagValue(const wxString &tagname) const;
+	bool GetIntTagValue(uint8 tagname, uint32 &ruValue) const;
+	const wxString &GetStrTagValue(uint8 tagname) const;
+	const wxString &GetStrTagValue(const wxString &tagname) const;
+	const CTag *GetTag(const wxString &tagname) const;
+	const CTag *GetTag(const wxString &tagname, uint8 tagtype) const;
 	const CTag *GetTag(uint8 tagname) const;
 	const CTag *GetTag(uint8 tagname, uint8 tagtype) const;
 	void AddTagUnique(const CTag &pTag);
-	const ArrayOfCTag& GetTags() const { return m_taglist; }
-	void AddNote(Kademlia::CEntry* pEntry);
-	const CKadEntryPtrList& getNotes() const { return m_kadNotes; }
+	// Drop the tag with this numeric id, if present. The counterpart to AddTagUnique: without
+	// it a re-probe can only add or replace, never clear, so a field the probe no longer finds
+	// keeps whatever value was there, including one inherited unverified from a search result.
+	bool RemoveTag(uint8 tagname);
+	const ArrayOfCTag &GetTags() const { return m_taglist; }
+	void AddNote(Kademlia::CEntry *pEntry);
+	const CKadEntryPtrList &getNotes() const { return m_kadNotes; }
+
+	// Append the community ratings/comments retrieved on demand from Kad (one entry per
+	// responding node) to `list`. Shared by downloads and search results; the source-client
+	// half of a download's comments is added by CPartFile. Core-only: on amulegui the notes
+	// ride the EC channel as a prebuilt list.
+	void GetKadNotesComments(FileRatingList &list) const;
+
+	// GetRatingAndComments() minus the entries the comment filter hides. Everything that shows
+	// comments goes through this, so the filter applies alike to source comments and Kad notes,
+	// in the dialog and over EC.
+	void GetShownRatingAndComments(FileRatingList &list) const;
+
+	// Collect the ratings/comments to display for this file. On the daemon the base version
+	// returns just the Kad notes, and CPartFile overrides it to prepend its connected-source
+	// comments. On amulegui every file type returns the same EC-streamed cache through the
+	// base.
+	virtual void GetRatingAndComments(FileRatingList &list) const;
+
+#ifdef CLIENT_GUI
+	// amulegui cache of the ratings/comments the daemon streams over EC. One implementation for
+	// downloads, shared files and search results: the remote containers fill it from the
+	// EC_TAG_PARTFILE_COMMENTS container, and the base GetRatingAndComments hands it back.
+	const FileRatingList &GetFileRatingList() const { return m_FileRatingList; }
+	void ClearFileRatingList() { m_FileRatingList.clear(); }
+	void AddFileRatingList(const wxString &u, const wxString &f, sint16 r, const wxString &c)
+	{
+		m_FileRatingList.push_back(SFileRating(u, f, r, c));
+	}
+#endif
+
+	// Start an on-demand Kad NOTES lookup for this file's community ratings/comments. Works for
+	// any file the daemon can size locally: the shared list, the download queue, or the current
+	// search results. False if Kad is unavailable, a lookup is already running, or the file is
+	// not eligible. A no-op stub on amulegui, which triggers it over EC.
+	bool RequestKadNoteSearch();
+
+	// True while an on-demand Kad NOTES lookup for this file's comments/ratings
+	// is in flight. Set by RequestKadNoteSearch, cleared when the CSearch ends.
+	void SetKadCommentSearchRunning(bool running) { m_kadCommentSearchRunning = running; }
+	bool IsKadCommentSearchRunning() const { return m_kadCommentSearchRunning; }
 
 	/* Comment and rating */
-	virtual const wxString&	GetFileComment() const { return m_strComment; }
-	virtual int8	GetFileRating()		const { return m_iRating; }
+	virtual const wxString &GetFileComment() const { return m_strComment; }
+	virtual int8 GetFileRating() const { return m_iRating; }
 
-	bool	HasComment() const		{ return m_hasComment; }
-	bool	HasRating() const		{ return (m_iUserRating != 0); }
-	int8	UserRating() const		{ return m_iUserRating; }
+	bool HasComment() const { return m_hasComment; }
+	bool HasRating() const { return (m_iUserRating != 0); }
+	int8 UserRating() const { return m_iUserRating; }
+
+	// Recompute the cached "has rating/comment" markers from the current sources. No-op for a
+	// search result, which has none; CPartFile overrides to refresh its download-list
+	// indicator.
+	virtual void UpdateFileRatingCommentAvail() {}
 
 protected:
 	//! CAbstractFile is not assignable.
-	CAbstractFile& operator=(const CAbstractFile);
+	CAbstractFile &operator=(const CAbstractFile);
 
-	CMD4Hash	m_abyFileHash;
+	CMD4Hash m_abyFileHash;
 	// comment/rating are read from the config and cached in these variables,
 	// so make them mutable to allow GetFileComment() to be a const method
-	mutable	wxString	m_strComment;
-	mutable	int8		m_iRating;
-	bool		m_hasComment;
-	int8		m_iUserRating;
-	ArrayOfCTag	m_taglist;
+	mutable wxString m_strComment;
+	mutable int8 m_iRating;
+	bool m_hasComment;
+	int8 m_iUserRating;
+	ArrayOfCTag m_taglist;
 	CKadEntryPtrList m_kadNotes;
+	bool m_kadCommentSearchRunning;
+
+#ifdef CLIENT_GUI
+	//! amulegui cache of the ratings/comments streamed from the daemon over EC.
+	FileRatingList m_FileRatingList;
+#endif
 
 private:
-	uint64		m_nFileSize;
-	CPath		m_fileName;
+	uint64 m_nFileSize;
+	CPath m_fileName;
 };
-
 
 class CSearchFile;
 class CFile;
 
-
 class CKnownFile : public CAbstractFile, public CECID
 {
-friend class CHashingTask;
+	friend class CHashingTask;
+	friend class CVerifyLocalDataTask;
+
 public:
 	CKnownFile();
 	CKnownFile(uint32 ecid);
@@ -175,49 +247,46 @@ public:
 	virtual ~CKnownFile();
 
 	/**
-	 * EC-change generation tracking. Each CKnownFile carries a monotonic
-	 * generation number that increments whenever any field exported via
-	 * `CEC_SharedFile_Tag` / `CEC_PartFile_Tag` mutates. Per-connection
-	 * INC_UPDATE handlers compare a file's `m_ecGen` against the
-	 * "highest gen they have already sent" and skip files that have not
-	 * changed since — turning the O(N) per-INC_UPDATE iteration on a 91k-
-	 * shareset node into O(files-actually-changed).
+	 * EC-change generation tracking. Each CKnownFile carries a monotonic generation number that
+	 * increments whenever any field exported via `CEC_SharedFile_Tag` / `CEC_PartFile_Tag`
+	 * mutates. Per-connection INC_UPDATE handlers compare a file's `m_ecGen` against the
+	 * highest gen they have already sent and skip files that have not changed since -- turning
+	 * the O(N) per-INC_UPDATE iteration on a 91k-shareset node into O(files-actually-changed).
 	 *
-	 * The counter is a single process-wide atomic, so every Mark…() call
-	 * yields a unique-and-strictly-ascending gen across all files and
-	 * threads. Per-file `m_ecGen` reads/writes are atomic for the
-	 * upload-disk-IO / hashing-thread call sites that flow through
+	 * The counter is a single process-wide atomic, so every Mark...() call yields a unique,
+	 * strictly ascending gen across all files and threads. Per-file `m_ecGen` reads and writes
+	 * are atomic for the upload-disk-IO / hashing-thread call sites that flow through
 	 * `CFileStatistic::Add{Request,Accepted,Transferred}()`.
 	 *
-	 * See ExternalConn / `Get_EC_Response_GetUpdate` for the consumer
-	 * side of this contract and #713 for context.
+	 * See ExternalConn / `Get_EC_Response_GetUpdate` for the consumer side of this contract,
+	 * and #713 for context.
 	 */
-	void		MarkECChanged();
-	uint64		GetECGen() const		{ return m_ecGen.load(std::memory_order_relaxed); }
-	static uint64	GetGlobalECGen()		{ return s_globalEcGen.load(std::memory_order_relaxed); }
+	void MarkECChanged();
+	uint64 GetECGen() const { return m_ecGen.load(std::memory_order_relaxed); }
+	static uint64 GetGlobalECGen() { return s_globalEcGen.load(std::memory_order_relaxed); }
 
-	void SetFilePath(const CPath& filePath);
-	const CPath& GetFilePath() const { return m_filePath; }
+	void SetFilePath(const CPath &filePath);
+	const CPath &GetFilePath() const { return m_filePath; }
 
 	// virtual functions for CKnownFile and CPartFile:
-	virtual	bool	IsPartFile() const	{return false;}		// true if not completed
-	virtual bool	IsCompleted() const	{ return true; }	// true if completed
-	virtual bool	IsCPartFile() const	{ return false; }	// true if it's a CPartFile
+	virtual bool IsPartFile() const { return false; }  // true if not completed
+	virtual bool IsCompleted() const { return true; }  // true if completed
+	virtual bool IsCPartFile() const { return false; } // true if it's a CPartFile
 
-	virtual bool	LoadFromFile(const CFileDataIO* file);	//load date, hashset and tags from a .met file
-	virtual uint8	GetStatus(bool WXUNUSED(ignorepause) = false) const { return PS_COMPLETE; }
-	bool	WriteToFile(CFileDataIO* file);
+	virtual bool LoadFromFile(const CFileDataIO *file); // load date, hashset and tags from a .met file
+	virtual uint8 GetStatus(bool WXUNUSED(ignorepause) = false) const { return PS_COMPLETE; }
+	bool WriteToFile(CFileDataIO *file);
 	time_t GetLastChangeDatetime() const { return m_lastDateChanged; }
 	void SetLastChangeDatetime(time_t t) { m_lastDateChanged = t; }
 
 	virtual void SetFileSize(uint64 nFileSize);
 
 	// local available part hashs
-	size_t	GetHashCount() const	{return m_hashlist.size();}
-	const CMD4Hash&	GetPartHash(uint16 part) const;
+	size_t GetHashCount() const { return m_hashlist.size(); }
+	const CMD4Hash &GetPartHash(uint16 part) const;
 
 	// nr. of part hashs according the file size wrt ED2K protocol
-	uint32	GetED2KPartHashCount() const { return m_iED2KPartHashCount; }
+	uint32 GetED2KPartHashCount() const { return m_iED2KPartHashCount; }
 
 	// nr. of 9MB parts (file data)
 	inline uint16 GetPartCount() const { return m_iPartCount; }
@@ -229,54 +298,109 @@ public:
 	uint32 GetPartSize(uint16 part) const { return part == m_iPartCount - 1 ? m_sizeLastPart : PARTSIZE; }
 
 	// file upload priority
-	uint8	GetUpPriority()	 const		{return m_iUpPriority;}
-	void	SetUpPriority(uint8 newUpPriority, bool bSave=true);
-	bool	IsAutoUpPriority() const		{return m_bAutoUpPriority;}
-	void	SetAutoUpPriority(bool flag);
-	void	UpdateAutoUpPriority();
+	uint8 GetUpPriority() const { return m_iUpPriority; }
+	void SetUpPriority(uint8 newUpPriority, bool bSave = true);
+	bool IsAutoUpPriority() const { return m_bAutoUpPriority; }
+	void SetAutoUpPriority(bool flag);
+	void UpdateAutoUpPriority();
 #ifdef CLIENT_GUI
-	uint16	GetQueuedCount() const { return m_queuedCount; }
+	uint16 GetQueuedCount() const { return m_queuedCount; }
+	// Live upload activity received over EC (issue #466). amulegui has no m_ClientUploadList,
+	// so these mirror the core getters below by returning the last values decoded in
+	// CKnownFilesRem::ProcessItemUpdate.
+	uint32 GetUploadDatarate() const { return m_uploadDatarateEC; }
+	uint16 GetTransferringClientCount() const { return m_transferringClientCountEC; }
 #else
-	uint16	GetQueuedCount() const { return (uint16) m_ClientUploadList.size(); }
+	uint16 GetQueuedCount() const { return (uint16)m_ClientUploadList.size(); }
+	// Live upload activity for this shared file (issue #466), summarised from
+	// m_ClientUploadList -- the upload-side analogue of the download speed and transferring-
+	// source counts. Core-only: amulegui receives these over EC rather than computing them.
+	uint32 GetUploadDatarate() const;          // sum of per-client one-second display speeds (B/s)
+	uint16 GetTransferringClientCount() const; // clients currently US_UPLOADING
+	void VerifyLocalData() const;
+	// Called on the main thread for valid upload requests; never waits for the check.
+	void MaybeScheduleVerification();
+	// The part status sent to peers: count 0 means "every part", else a bitmap. A complete file
+	// withholds the parts a check found corrupt; CPartFile sends the parts it has.
+	virtual void WritePartStatus(CMemFile *file);
+	// Ends the upload sessions of this file that have blocks queued in a corrupt part, and sends
+	// those peers the current part status. The others keep their slot.
+	void EndCorruptUploadSessions();
 #endif
 
-	bool	LoadHashsetFromFile(const CFileDataIO* file, bool checkhash);
-	void	AddUploadingClient(CUpDownClient* client);
-	void	RemoveUploadingClient(CUpDownClient* client);
+	// Timestamp of the last time data was uploaded for this file, and when the file was
+	// completed or first shared (issue #466). Both persisted in known.met (FT_LASTUPLOADED /
+	// FT_SHAREDSINCE); 0 = unknown. Available in both builds so the EC round-trip carries them
+	// to amulegui.
+	time_t GetLastUpload() const { return m_lastUploadDatetime; }
+	void SetLastUpload(time_t t) { m_lastUploadDatetime = t; }
+	time_t GetDateShared() const { return m_dateShared; }
+	void SetDateShared(time_t t) { m_dateShared = t; }
+
+	// Last "Verify Local Data" outcome, persisted in known.met. Set on the main thread only, from
+	// CamuleApp::OnVerifyLocalDataFinished -- CVerifyLocalDataTask never writes it directly.
+	const CVerifyLocalDataResult &GetVerifyResult() const { return m_verifyResult; }
+	void SetVerifyResult(const CVerifyLocalDataResult &result) { m_verifyResult = result; }
+	void ClearVerifyResult() { m_verifyResult = CVerifyLocalDataResult(); }
+
+	bool LoadHashsetFromFile(const CFileDataIO *file, bool checkhash);
+	void AddUploadingClient(CUpDownClient *client);
+	void RemoveUploadingClient(CUpDownClient *client);
 
 	// comment
-	const wxString&	GetFileComment()	const	{ if (!m_bCommentLoaded) LoadComment(); return m_strComment; }
-	int8	GetFileRating()			const	{ if (!m_bCommentLoaded) LoadComment(); return m_iRating; }
+	const wxString &GetFileComment() const
+	{
+		if (!m_bCommentLoaded)
+			LoadComment();
+		return m_strComment;
+	}
+	int8 GetFileRating() const
+	{
+		if (!m_bCommentLoaded)
+			LoadComment();
+		return m_iRating;
+	}
 
-	void	SetFileCommentRating(const wxString& strNewComment, int8 iNewRating);
-	void	SetPublishedED2K( bool val );
-	bool	GetPublishedED2K() const	{return m_PublishedED2K;}
+	void SetFileCommentRating(const wxString &strNewComment, int8 iNewRating);
+	void SetPublishedED2K(bool val);
+	bool GetPublishedED2K() const { return m_PublishedED2K; }
 
 	/* Kad stuff */
-	uint32	GetKadFileSearchID() const { return kadFileSearchID; }
+	uint32 GetKadFileSearchID() const { return kadFileSearchID; }
 	// KAD TODO: This must be used on KadSearchListCtrl too once imported
-	void	SetKadFileSearchID(uint32 id) { kadFileSearchID = id; } // John - Don't use this unless you know what your are DOING!! (Hopefully I do.. :)
-	const Kademlia::WordList& GetKadKeywords() const { return wordlist; }
+	void SetKadFileSearchID(uint32 id)
+	{
+		kadFileSearchID = id;
+	} // John - Don't use this unless you know what your are DOING!! (Hopefully I do.. :)
+	const Kademlia::WordList &GetKadKeywords() const { return wordlist; }
 	// KAD TODO: If we add the proper column to SharedFilesCtrl, this is the function.
-	uint32	GetLastPublishTimeKadSrc() const { return m_lastPublishTimeKadSrc; }
-	void	SetLastPublishTimeKadSrc(uint32 time, uint32 buddyip) { m_lastPublishTimeKadSrc = time; m_lastBuddyIP = buddyip;}
+	uint32 GetLastPublishTimeKadSrc() const { return m_lastPublishTimeKadSrc; }
+	void SetLastPublishTimeKadSrc(uint32 time, uint32 buddyip, uint16 buddyport = 0)
+	{
+		m_lastPublishTimeKadSrc = time;
+		m_lastBuddyIP = buddyip;
+		m_lastBuddyPort = buddyport;
+	}
 	// Another unused function, useful for the shared files control column
-	uint32	GetLastPublishBuddy() const { return m_lastBuddyIP; }
-	void	SetLastPublishTimeKadNotes(uint32 time) {m_lastPublishTimeKadNotes = time;}
-	uint32	GetLastPublishTimeKadNotes() const { return m_lastPublishTimeKadNotes; }
+	uint32 GetLastPublishBuddy() const { return m_lastBuddyIP; }
+	void SetLastPublishTimeKadNotes(uint32 time) { m_lastPublishTimeKadNotes = time; }
+	uint32 GetLastPublishTimeKadNotes() const { return m_lastPublishTimeKadNotes; }
 
-	bool	PublishSrc();
-	bool	PublishNotes();
+	bool PublishSrc();
+	bool PublishNotes();
 
-	// TODO: This must be implemented if we ever want to have metadata.
-	uint32	GetMetaDataVer() const { return /*m_uMetaDataVer*/ 0; }
+	// Nonzero when this file has verified media metadata attached, probed by MediaProbe at
+	// share-add time. Derived from tag presence: a nonzero FT_MEDIA_LENGTH is the only source
+	// of this tag in aMule, so its presence is the "probed, with data worth publishing" signal
+	// Kad's publisher gates on.
+	uint32 GetMetaDataVer() const;
 
 	// file sharing
-	virtual	CPacket*	CreateSrcInfoPacket(const CUpDownClient* forClient, uint8 byRequestedVersion, uint16 nRequestedOptions);
-	void	CreateOfferedFilePacket(CMemFile* files, class CServer* pServer, CUpDownClient* pClient);
+	virtual CPacket *CreateSrcInfoPacket(
+		const CUpDownClient *forClient, uint8 byRequestedVersion, uint16 nRequestedOptions);
+	void CreateOfferedFilePacket(CMemFile *files, class CServer *pServer, CUpDownClient *pClient) const;
 
-	virtual void	UpdatePartsInfo();
-
+	virtual void UpdatePartsInfo();
 
 	CFileStatistic statistic;
 
@@ -290,52 +414,47 @@ public:
 	SourceSet m_ClientUploadList;
 	ArrayOfUInts16 m_AvailPartFrequency;
 
-	/**
-	 * Returns a base-16 encoding of the master hash, or
-	 * an empty string if no such hash exists.
-	 */
+	/// Base-16 encoding of the master hash, or an empty string if there is none.
 	wxString GetAICHMasterHash() const;
 	/** Returns true if the AICH-Hashset is valid, and verified or complete. */
 	bool HasProperAICHHashSet() const;
 
-	/**
-	 * Updates the frequency of uploading parts from with the data the client provides.
-	 *
-	 * @param client The clients whose uploading parts should be considered.
-	 * @param increment If true, the counts are incremented, otherwise they are decremented.
-	 *
-	 * This functions updates the frequency list of file-upparts, using the clients
-	 * upparts-status. This function should be called by clients every time they update their
-	 * upparts-status, or when they are added or removed from the file.
-	 */
-	void UpdateUpPartsFrequency( CUpDownClient* client, bool increment );
+	/// Updates the frequency list of uploading file parts from @a client's upparts-status,
+	/// incrementing or decrementing per @a increment. Clients should call it whenever they
+	/// update their upparts-status, and when they are added to or removed from the file.
+	void UpdateUpPartsFrequency(CUpDownClient *client, bool increment);
 
-	static void CreateHashFromHashlist(const ArrayOfCMD4Hash& hashes, CMD4Hash* Output);
+	static void CreateHashFromHashlist(const ArrayOfCMD4Hash &hashes, CMD4Hash *Output);
 
-	void	ClearPriority();
+	void ClearPriority();
 
-	time_t	m_lastDateChanged;
+	time_t m_lastDateChanged;
 
-	// "Last time aMule saw this exact (name, date, size) match a real
-	// file." Refreshed by CKnownFileList::FindKnownFile and the
-	// "already on the list" branch in Append. Persisted via
-	// FT_LASTSEEN. Drives the TTL prune in CKnownFileList::Save --
-	// records whose lastSeen is older than the TTL window are dropped
-	// (both live and duplicate-list entries), capping known.met
-	// growth at a function of *recently active* unique hashes
-	// rather than lifetime-of-the-profile uniques.
-	uint32	GetLastSeen() const { return m_lastSeen; }
-	void	SetLastSeen(uint32 t) { m_lastSeen = t; }
+	// Live upload activity (issue #466), persisted in known.met so it survives restarts.
+	// m_lastUploadDatetime is stamped whenever data is sent for this file; m_dateShared once,
+	// when the file is completed or first shared. 0 = unknown.
+	time_t m_lastUploadDatetime;
+	time_t m_dateShared;
+
+	CVerifyLocalDataResult m_verifyResult;
+	CSharedFileVerifySchedule m_autoVerifySchedule;
+
+	// "Last time aMule saw this exact (name, date, size) match a real file." Refreshed by
+	// CKnownFileList::FindKnownFile and the "already on the list" branch in Append, persisted
+	// via FT_LASTSEEN. Drives the TTL prune in CKnownFileList::Save, capping known.met growth
+	// at a function of RECENTLY ACTIVE unique hashes rather than lifetime-of-the-profile ones.
+	uint32 GetLastSeen() const { return m_lastSeen; }
+	void SetLastSeen(uint32 t) { m_lastSeen = t; }
 
 	virtual wxString GetFeedback() const;
 
-	void	SetShowSources( bool val )	{ m_showSources = val; }
-	bool	ShowSources() const			{ return m_showSources; }
-	void	SetShowPeers( bool val )	{ m_showPeers = val; }
-	bool	ShowPeers()	const			{ return m_showPeers; }
+	void SetShowSources(bool val) { m_showSources = val; }
+	bool ShowSources() const { return m_showSources; }
+	void SetShowPeers(bool val) { m_showPeers = val; }
+	bool ShowPeers() const { return m_showPeers; }
 
-	virtual	void SetHashingProgress(uint16) const {}	// does something for CPartFile only
-	uint16	GetHashingProgress() const	{ return m_hashingProgress; }
+	virtual void SetHashingProgress(uint16 val) const;
+	uint16 GetHashingProgress() const { return m_hashingProgress; }
 
 #ifdef CLIENT_GUI
 	CKnownFile(const CEC_SharedFile_Tag *);
@@ -343,81 +462,84 @@ public:
 	RLE_Data m_partStatus;
 
 private:
-	uint8	m_iUpPriorityEC;
-	uint16	m_queuedCount;
+	uint8 m_iUpPriorityEC;
+	uint16 m_queuedCount;
+	uint32 m_uploadDatarateEC;
+	uint16 m_transferringClientCountEC;
 
 protected:
 	//! The AICH master-hash, if it is known.
-	wxString	m_AICHMasterHash;
+	wxString m_AICHMasterHash;
 #else
-	virtual void SetFileName(const CPath& filename);
+	virtual void SetFileName(const CPath &filename);
 
 	// AICH
-	CAICHHashSet* GetAICHHashset() const		{ return m_pAICHHashSet; }
-	void SetAICHHashset(CAICHHashSet* val)		{ m_pAICHHashSet = val; }
+	CAICHHashSet *GetAICHHashset() const { return m_pAICHHashSet; }
+	void SetAICHHashset(CAICHHashSet *val) { m_pAICHHashSet = val; }
 
 protected:
-	CAICHHashSet*	m_pAICHHashSet;
+	CAICHHashSet *m_pAICHHashSet;
 #endif
 
-	bool	LoadTagsFromFile(const CFileDataIO* file);
-	bool	LoadDateFromFile(const CFileDataIO* file);
-	void	LoadComment() const;
+	bool LoadTagsFromFile(const CFileDataIO *file);
+	bool LoadDateFromFile(const CFileDataIO *file);
+	void LoadComment() const;
 	ArrayOfCMD4Hash m_hashlist;
-	CPath	m_filePath;
+	CPath m_filePath;
 
-	static void CreateHashFromFile(class CFileAutoClose& file, uint64 offset, uint32 Length, CMD4Hash* Output, CAICHHashTree* pShaHashOut);
-	static void CreateHashFromInput(const uint8_t* input, uint32 Length, CMD4Hash* Output, CAICHHashTree* pShaHashOut);
+	static void CreateHashFromFile(class CFileAutoClose &file,
+		uint64 offset,
+		uint32 Length,
+		CMD4Hash *Output,
+		CAICHHashTree *pShaHashOut);
+	static void CreateHashFromInput(
+		const uint8_t *input, uint32 Length, CMD4Hash *Output, CAICHHashTree *pShaHashOut);
 
-	mutable bool	m_bCommentLoaded;
-	uint16	m_iPartCount;
-	uint16  m_iED2KPartCount;
-	uint16	m_iED2KPartHashCount;
-	uint32	m_sizeLastPart;			// size of the last part
-	uint8	m_iUpPriority;
-	bool	m_bAutoUpPriority;
-	bool	m_PublishedED2K;
-	// Index of part being hashed, 0: no hashing in progress.
-	// The known file is const in the hashing thread, so rather drill this little hole by making it mutable
-	// than opening it all up.
-	mutable	uint16 m_hashingProgress;
+	mutable bool m_bCommentLoaded;
+	uint16 m_iPartCount;
+	uint16 m_iED2KPartCount;
+	uint16 m_iED2KPartHashCount;
+	uint32 m_sizeLastPart; // size of the last part
+	uint8 m_iUpPriority;
+	bool m_bAutoUpPriority;
+	bool m_PublishedED2K;
+	// Index of the part being hashed, 0 for no hashing in progress. The known file is const in
+	// the hashing thread, so drill this little hole with mutable rather than opening it all up.
+	mutable uint16 m_hashingProgress;
 
 	/* Kad stuff */
 	Kademlia::WordList wordlist;
-	uint32	kadFileSearchID;
-	uint32	m_lastPublishTimeKadSrc;
-	uint32	m_lastPublishTimeKadNotes;
-	uint32	m_lastBuddyIP;
+	uint32 kadFileSearchID;
+	uint32 m_lastPublishTimeKadSrc;
+	uint32 m_lastPublishTimeKadNotes;
+	uint32 m_lastBuddyIP;
+	uint16 m_lastBuddyPort;
 
-	uint32	m_lastSeen;
+	uint32 m_lastSeen;
 
-	bool	m_showSources;
-	bool	m_showPeers;
+	bool m_showSources;
+	bool m_showPeers;
 
 public:
 	/**
 	 * Returns the ed2k:// link for this file, cached for EC response building.
 	 *
-	 * `CreateED2kLink` is hot in EC response construction (the GUI / web /
-	 * cmd clients call GET_SHARED_FILES at FULL or INC_UPDATE levels and
-	 * the listener rebuilds every shared-file tag every cycle). Its CFormat
-	 * + filename Cleanup work was the single biggest CPU consumer on EC
-	 * dispatch in profiling (see #713). Cache the "no sources" base form
-	 * here; the optional |sources,IP:port|/ suffix is a tiny CFormat
-	 * appended at request time and depends on dynamic state
-	 * (IsConnected / IsFirewalled / GetID / GetPort) that the cache cannot
-	 * hold.
+	 * `CreateED2kLink` is hot in EC response construction (the GUI / web / cmd clients call
+	 * GET_SHARED_FILES at FULL or INC_UPDATE levels and the listener rebuilds every shared-file
+	 * tag every cycle). Its CFormat + filename Cleanup work was the single biggest CPU consumer
+	 * on EC dispatch in profiling (see #713). Cache the "no sources" base form here; the
+	 * optional |sources,IP:port|/ suffix is a tiny CFormat appended at request time and depends
+	 * on dynamic state (IsConnected / IsFirewalled / GetID / GetPort) the cache cannot hold.
 	 *
-	 * Invalidated by `SetFileName` (the only user-facing event that
-	 * affects the link body — filename, size and hash are otherwise stable
-	 * across the lifetime of a CKnownFile / CPartFile).
+	 * Invalidated by `SetFileName`, the only user-facing event that affects the link body --
+	 * filename, size and hash are otherwise stable across the lifetime of a CKnownFile /
+	 * CPartFile.
 	 */
-	const wxString& GetCachedED2kLinkBase() const;
+	const wxString &GetCachedED2kLinkBase() const;
 
 	/**
-	 * Full ed2k:// link as needed by EC responses — cached base + the
-	 * source suffix when add_source is true. The caller decides
-	 * add_source from current ED2K connection state.
+	 * Full ed2k:// link as needed by EC responses: cached base plus the source suffix when
+	 * add_source is true. The caller decides add_source from current ED2K connection state.
 	 */
 	wxString GetED2kLinkForEC(bool add_source) const;
 
@@ -428,8 +550,8 @@ private:
 	/** Common initializations for constructors. */
 	void Init();
 
-	// EC change-generation tracking — see public MarkECChanged() doc above.
-	std::atomic<uint64> m_ecGen{0};
+	// EC change-generation tracking -- see public MarkECChanged() doc above.
+	std::atomic<uint64> m_ecGen{ 0 };
 	static std::atomic<uint64> s_globalEcGen;
 };
 

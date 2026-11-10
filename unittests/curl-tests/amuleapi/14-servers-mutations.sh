@@ -1,0 +1,381 @@
+#!/usr/bin/env bash
+#
+# amuleapi 14-servers-mutations — server lifecycle mutations.
+#
+# Endpoints:
+#   POST   /api/v1/servers                   — add by {address, name?}
+#   POST   /api/v1/servers/{ecid}/connect    — connect to one server
+#   PATCH  /api/v1/servers/{ecid}            — set priority / permanent flag
+#   DELETE /api/v1/servers/{ecid}            — remove from the list
+#
+# All keyed by ECID on the URL — the EC ops (CONNECT/REMOVE) actually
+# identify the server by IPv4+port server-side, so the handler looks
+# up the cache entry by ECID and builds the EC_TAG_SERVER tag from the
+# cached IP+port. Phase 5c also fixed a latent /servers[].address
+# bug: the GET_UPDATE (Phase 4f) per-server tag carries IP/port in
+# CHILD tags (EC_TAG_SERVER_IP + EC_TAG_SERVER_PORT) rather than the
+# outer-tag IPv4 shape the legacy GET_SERVER_LIST used. /servers[]
+# was showing "0.0.0.0:0" for every entry; smoke pins the fix.
+#
+# Test server: a real eMule server (185.65.45.144:4232 = eDonkey
+# Sicherheit) the operator added to amuled's serverlist before
+# starting the smoke. We POST a duplicate to test the
+# amuled-rejected error path, then DELETE the original.
+
+set -u
+set -o pipefail
+
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+
+# Test server (host:port). The operator's daemon has a few dozen
+# servers configured; the smoke adds a name we can target by string
+# search and cleans it up at the end.
+TEST_ADDRESS="185.65.45.144:4232"
+TEST_NAME="14-servers-mutations-smoke-tag"
+
+_preflight
+
+echo "amuleapi 14-servers-mutations smoke @ $HOST"
+
+ADMIN_TOKEN=$(_login "$ADMIN_PASS")
+[ -n "$ADMIN_TOKEN" ] || _die "admin login failed"
+
+GUEST_TOKEN=$(_login "$GUEST_PASS")
+HAVE_GUEST=0
+[ -n "$GUEST_TOKEN" ] && HAVE_GUEST=1
+
+sleep 4
+
+# --- 1. /servers[] address parse fix — must not be "0.0.0.0:0". ---
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/servers"
+_assert_status 200 "GET /servers → 200"
+
+# The operator's daemon has servers in its list with real IPs.
+# Smoke would pass on an empty list (no servers means no parse path
+# to exercise), but if there ARE servers, NONE should report the
+# all-zeros sentinel — that was the GET_UPDATE child-tag parse bug.
+N=$(printf '%s' "$CURL_BODY" | jq '.servers | length')
+if [ "$N" -gt 0 ]; then
+	BOGUS=$(printf '%s' "$CURL_BODY" | jq \
+		'[.servers[] | select(.address == "0.0.0.0:0")] | length')
+	if [ "$BOGUS" = "0" ]; then
+		_pass "/servers[].address parses real IP:port (no \"0.0.0.0:0\" entries, $N servers checked)"
+	else
+		_fail "/servers[].address parse regression" \
+			"$BOGUS / $N entries report \"0.0.0.0:0\""
+	fi
+	# `ecid` field must be present (URL key for the mutation endpoints).
+	BAD_ECID=$(printf '%s' "$CURL_BODY" | jq '[.servers[] | select(.ecid == null)] | length')
+	if [ "$BAD_ECID" = "0" ]; then
+		_pass "/servers[].ecid populated for every entry"
+	else
+		_fail "/servers[].ecid missing" \
+			"$BAD_ECID entries lack the ecid field"
+	fi
+else
+	echo "    info: daemon has 0 servers configured; parse-bug check skipped"
+fi
+
+# --- 2. Auth + admin gate. -----------------------------------------
+_curl -X POST -H "Content-Type: application/json" \
+	-d "{\"address\":\"$TEST_ADDRESS\"}" "$API/servers"
+_assert_status 401 "POST /servers (no token) → 401"
+
+_curl -X DELETE "$API/servers/1"
+_assert_status 401 "DELETE /servers/{ecid} (no token) → 401"
+
+_curl -X POST "$API/servers/1/connect"
+_assert_status 401 "POST /servers/{ecid}/connect (no token) → 401"
+
+if [ "$HAVE_GUEST" = "1" ]; then
+	_curl -X POST -H "Authorization: Bearer $GUEST_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d "{\"address\":\"$TEST_ADDRESS\"}" "$API/servers"
+	_assert_status 403 "POST /servers (guest) → 403"
+	_curl -X DELETE -H "Authorization: Bearer $GUEST_TOKEN" \
+		"$API/servers/1"
+	_assert_status 403 "DELETE /servers/{ecid} (guest) → 403"
+	_curl -X POST -H "Authorization: Bearer $GUEST_TOKEN" \
+		"$API/servers/1/connect"
+	_assert_status 403 "POST /servers/{ecid}/connect (guest) → 403"
+else
+	echo "    info: no guest pass; admin-gate skipped"
+fi
+
+# --- 3. POST /servers happy path — add the tagged server. ---------
+#
+# amuled treats duplicate (host:port) adds as rejections; if the
+# server already exists with the same address, we'll get 400
+# amuled_rejected. Strip any prior tag of the same name first so the
+# smoke is idempotent (no DELETE in the orchestrator yet for older
+# entries).
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d "{\"address\":\"$TEST_ADDRESS\",\"name\":\"$TEST_NAME\"}" \
+	"$API/servers"
+# Accept 202 (accepted) OR 400 (already in list — server was added
+# by a prior smoke or the operator). Both are valid endings.
+#
+# 202 with no body, not 201 + the created object: EC_OP_SERVER_ADD answers
+# success or failure and never returns the server it made, so a body here
+# could only be reconstructed from the snapshot after an inline refresh.
+# The caller re-reads /servers, which it had to do anyway.
+if [ "$CURL_STATUS" = "202" ]; then
+	_pass "POST /servers (add tagged server) → 202"
+	_assert_body_empty "POST /servers sends no body"
+elif [ "$CURL_STATUS" = "400" ]; then
+	ERR_CODE=$(printf '%s' "$CURL_BODY" | jq -r '.error.code')
+	if [ "$ERR_CODE" = "amuled_rejected" ]; then
+		_pass "POST /servers (already in list) → 400 amuled_rejected"
+	else
+		_fail "POST /servers" \
+			"got 400 with unexpected error.code=$ERR_CODE"
+	fi
+else
+	_fail "POST /servers" \
+		"expected 202 or 400, got $CURL_STATUS" \
+		"body: $CURL_BODY"
+fi
+
+# Wait for the new server to land in cache (no inline refresh needed
+# — POST handler runs RefresherTick before returning).
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/servers"
+ECID=$(printf '%s' "$CURL_BODY" \
+	| jq -r --arg n "$TEST_NAME" \
+	  '[.servers[] | select(.name == $n)] | first | .ecid // empty')
+if [ -n "$ECID" ] && [ "$ECID" != "null" ]; then
+	_pass "Tagged server present in /servers (ecid=$ECID)"
+else
+	_fail "Tagged server lookup" \
+		"could not find server with name=$TEST_NAME in /servers"
+	_die "cannot continue without the test server ECID"
+fi
+
+# --- 4. POST /servers error paths. ---------------------------------
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{}' "$API/servers"
+_assert_status 400 "POST /servers (no address) → 400"
+
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"address":"no-colon"}' "$API/servers"
+_assert_status 400 "POST /servers (no colon in address) → 400"
+
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d 'not json' "$API/servers"
+_assert_status 400 "POST /servers (malformed JSON) → 400"
+
+# --- 5. POST /servers/{ecid}/connect. ------------------------------
+#
+# This kicks off an ed2k connect attempt. amuled accepts the command
+# (returns NOOP); the actual TCP connect is async. 202 Accepted, no body:
+# `ecid` came from the URL and the outcome only shows up later on
+# /status.ed2k.state and the SSE stream.
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/servers/$ECID/connect"
+_assert_status 202 "POST /servers/{ecid}/connect → 202"
+_assert_body_empty 'connect sends no body'
+
+# Bad ECID → 400 (path can't parse), or 404 (parses but no match).
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/servers/not-a-number/connect"
+_assert_status 400 "POST /servers/not-a-number/connect → 400"
+
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/servers/4294967295/connect"
+_assert_status 404 "POST /servers/{unknown ecid}/connect → 404"
+
+# --- 5b. PATCH /servers/{ecid} — priority + permanent (#692). ------
+# The SRV_PR_* wire values are not monotone (NORMAL=0, HIGH=1, LOW=2),
+# so round-tripping every name through the API is what actually proves
+# the reverse mapping, not just that a 200 came back.
+for PRIO in high low normal; do
+	_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d "{\"priority\":\"$PRIO\"}" "$API/servers/$ECID"
+	_assert_status 200 "PATCH /servers/{ecid} priority=$PRIO → 200"
+	_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/servers"
+	GOT=$(printf '%s' "$CURL_BODY" | jq -r --argjson e "$ECID" \
+		'.servers[] | select(.ecid == $e) | .priority')
+	if [ "$GOT" = "$PRIO" ]; then
+		_pass "priority=$PRIO round-trips through GET /servers"
+	else
+		_fail "priority round-trip" "set $PRIO, GET returned $GOT"
+	fi
+done
+
+# permanent flag, both directions.
+for FLAG in true false; do
+	_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d "{\"permanent\":$FLAG}" "$API/servers/$ECID"
+	_assert_status 200 "PATCH /servers/{ecid} permanent=$FLAG → 200"
+	_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/servers"
+	GOT=$(printf '%s' "$CURL_BODY" | jq -r --argjson e "$ECID" \
+		'.servers[] | select(.ecid == $e) | .permanent')
+	if [ "$GOT" = "$FLAG" ]; then
+		_pass "permanent=$FLAG round-trips through GET /servers"
+	else
+		_fail "permanent round-trip" "set $FLAG, GET returned $GOT"
+	fi
+done
+
+# Both fields in one body.
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"priority":"high","permanent":true}' "$API/servers/$ECID"
+_assert_status 200 "PATCH /servers/{ecid} priority+permanent together → 200"
+# The response is the full server object as it now stands, not an {ok} ack:
+# a PATCH answers with the state the caller just produced, so no re-read is
+# needed to see it.
+_assert_json_eq '.ecid' "$ECID" 'PATCH response is the server object, keyed by ecid'
+_assert_json_eq '.priority' high 'PATCH response carries the new priority'
+_assert_json_eq '.permanent' true 'PATCH response carries the new permanent flag'
+_assert_json_eq '. | has("ok")' false 'PATCH response has no constant ok field'
+
+# --- 5c. PATCH error paths. ----------------------------------------
+_curl -X PATCH -H "Content-Type: application/json" \
+	-d '{"priority":"high"}' "$API/servers/$ECID"
+_assert_status 401 "PATCH /servers/{ecid} (no token) → 401"
+
+if [ "$HAVE_GUEST" = "1" ]; then
+	_curl -X PATCH -H "Authorization: Bearer $GUEST_TOKEN" \
+		-H "Content-Type: application/json" \
+		-d '{"priority":"high"}' "$API/servers/$ECID"
+	_assert_status 403 "PATCH /servers/{ecid} (guest) → 403"
+fi
+
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" -d '{}' "$API/servers/$ECID"
+_assert_status 400 "PATCH /servers/{ecid} empty body → 400"
+
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"priority":"urgent"}' "$API/servers/$ECID"
+_assert_status 400 "PATCH /servers/{ecid} unknown priority → 400"
+
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"permanent":"yes"}' "$API/servers/$ECID"
+_assert_status 400 "PATCH /servers/{ecid} non-bool permanent → 400"
+
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"priority":"high"}' "$API/servers/not-a-number"
+_assert_status 400 "PATCH /servers/not-a-number → 400"
+
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"priority":"high"}' "$API/servers/999999"
+_assert_status 404 "PATCH /servers/{unknown ecid} → 404 (EC no-ops silently, #692)"
+
+# --- 6. DELETE /servers/{ecid} happy path + no-stale invariant. ---
+# Section 5's connect may have reached the test server by now. amuled refuses to delete the
+# server it is connected to, as the desktop GUI does: pin that, then disconnect.
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/status"
+ED2K_STATE=$(printf '%s' "$CURL_BODY" | jq -r '.ed2k.state // empty')
+ED2K_SERVER=$(printf '%s' "$CURL_BODY" | jq -r '.ed2k | "\(.server_ip):\(.server_port)"')
+if [ "$ED2K_STATE" = "connected" ] && [ "$ED2K_SERVER" = "$TEST_ADDRESS" ]; then
+	_curl -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" "$API/servers/$ECID"
+	_assert_status 400 "DELETE /servers/{ecid} of the connected server → 400"
+	_assert_json_eq '.error.code' amuled_rejected \
+		'deleting the connected server carries error.code=amuled_rejected'
+else
+	_skip "DELETE of the connected server (not connected to $TEST_ADDRESS)"
+fi
+if [ "$ED2K_STATE" = "connecting" ] || [ "$ED2K_SERVER" = "$TEST_ADDRESS" ]; then
+	_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+		-d '{"network":"ed2k"}' "$API/networks/disconnect"
+	_assert_status 202 "POST /networks/disconnect before DELETE → 202"
+fi
+
+# 5b left the server permanent, so amuled lists it in staticservers.dat, which it reloads on
+# start. DELETE must drop it from there too, or it comes back after a restart. AMULE_CONFIG_DIR
+# is the connected amuled's config dir.
+STATIC_FILE="${AMULE_CONFIG_DIR:-}/staticservers.dat"
+if [ -n "${AMULE_CONFIG_DIR:-}" ]; then
+	if grep -qF "$TEST_ADDRESS," "$STATIC_FILE" 2>/dev/null; then
+		_pass "permanent server is listed in staticservers.dat before DELETE"
+	else
+		_fail "staticservers.dat before DELETE" "$TEST_ADDRESS not listed in $STATIC_FILE"
+	fi
+fi
+
+_curl -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/servers/$ECID"
+# 204, no body: `ecid` came from the URL and `ok` restated the status code.
+_assert_status 204 "DELETE /servers/$ECID → 204"
+_assert_body_empty 'DELETE sends no body'
+
+# Immediate GET — entry must be gone from the cache.
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/servers"
+STILL_THERE=$(printf '%s' "$CURL_BODY" \
+	| jq --arg n "$TEST_NAME" \
+	  '[.servers[] | select(.name == $n)] | length')
+if [ "$STILL_THERE" = "0" ]; then
+	_pass "/servers no longer contains the deleted tagged server (no stale cache)"
+else
+	_fail "/servers staleness after DELETE" \
+		"$TEST_NAME still present after DELETE"
+fi
+
+if [ -n "${AMULE_CONFIG_DIR:-}" ]; then
+	if grep -qF "$TEST_ADDRESS," "$STATIC_FILE" 2>/dev/null; then
+		_fail "staticservers.dat after DELETE" "$TEST_ADDRESS still listed in $STATIC_FILE"
+	else
+		_pass "DELETE drops the permanent server from staticservers.dat"
+	fi
+else
+	_skip "staticservers.dat checks (AMULE_CONFIG_DIR unset)"
+fi
+
+# --- 7. DELETE error paths. ----------------------------------------
+_curl -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/servers/$ECID"
+_assert_status 404 "DELETE /servers/{just-deleted ecid} → 404"
+
+_curl -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/servers/not-a-number"
+_assert_status 400 "DELETE /servers/not-a-number → 400"
+
+# --- 8. ip:port selector: malformed is 400, unknown is 404. --------
+# /servers/by-address/{address} takes an "<ip>:<port>" selector where the
+# ECID routes take a number. Parsing and lookup are separate outcomes: a
+# selector that cannot be parsed is the caller's mistake (400), one that
+# parses but names no server we hold is simply absent (404), so the two do
+# not collapse onto one status.
+# The address form has its own path, so a colon is not what selects the
+# handler: a value without one reaches the same place and is rejected for
+# being a malformed address rather than for looking like an ECID.
+for bad in "not-an-ip:4242" "1.2.3.4:" ":4242" "1.2.3.4:0" "1.2.3.4:70000" \
+	"1.2.3.4:abc" "999.1.1.1:4242" "no-colon-at-all"; do
+	_curl -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" \
+		"$API/servers/by-address/$bad"
+	_assert_status 400 "DELETE /servers/by-address/$bad (malformed address) → 400"
+done
+
+# Well-formed but absent: TEST-NET-1 (RFC 5737), never a real server.
+_curl -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/servers/by-address/192.0.2.1:4242"
+_assert_status 404 "DELETE /servers/by-address/192.0.2.1:4242 (unknown server) → 404"
+_assert_json_eq '.error.code' not_found \
+	'unknown ip:port carries error.code=not_found'
+
+# Same split on the other two routes that take the selector.
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/servers/by-address/not-an-ip:4242/connect"
+_assert_status 400 "POST /servers/by-address/not-an-ip:4242/connect (malformed) → 400"
+
+_curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+	"$API/servers/by-address/192.0.2.1:4242/connect"
+_assert_status 404 "POST /servers/by-address/192.0.2.1:4242/connect (unknown) → 404"
+
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" -d '{"permanent":true}' \
+	"$API/servers/by-address/not-an-ip:4242"
+_assert_status 400 "PATCH /servers/by-address/not-an-ip:4242 (malformed) → 400"
+
+# --- Summary. -----------------------------------------------------
+_summary

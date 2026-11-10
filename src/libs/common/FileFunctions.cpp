@@ -23,42 +23,41 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
-#include <wx/dir.h>		// Needed for wxDir
-#include <wx/fs_zip.h>		// Needed for wxZipFSHandler
-#include <wx/wfstream.h>	// wxFileInputStream
-#include <wx/zipstrm.h>		// Needed for wxZipInputStream
-#include <wx/zstream.h>		// Needed for wxZlibInputStream
-#include <wx/log.h>		// Needed for wxSysErrorMsg
+#include <wx/dir.h>      // Needed for wxDir
+#include <wx/fs_zip.h>   // Needed for wxZipFSHandler
+#include <wx/tarstrm.h>  // Needed for wxTarInputStream
+#include <wx/wfstream.h> // wxFileInputStream
+#include <wx/zipstrm.h>  // Needed for wxZipInputStream
+#include <wx/zstream.h>  // Needed for wxZlibInputStream
+#include <wx/log.h>      // Needed for wxSysErrorMsg
 
 #ifdef __WXMAC__
 #include <zlib.h> // Do_not_auto_remove
 #endif
-#include <algorithm>		// Needed for std::min
+#include <algorithm> // Needed for std::min
+#include <cstring>   // Needed for memcmp
+#include <memory>    // Needed for std::unique_ptr
+
+#include <dirent.h>   // opendir / readdir for ListSubdirectories
+#include <sys/stat.h> // chmod / stat for RestrictToOwner
 
 #include "FileFunctions.h"
 #include "StringFunctions.h"
-#include "SmartPtr.h"		// Needed for CSmartPtr
+#include "SmartPtr.h" // Needed for CSmartPtr
 
-//
 // This class assumes that the following line has been executed:
 //
 //	wxConvFileName = &aMuleConvBrokenFileNames;
 //
-// This line is necessary so that wxWidgets handles unix file names correctly.
-//
-CDirIterator::CDirIterator(const CPath& dir)
-	: wxDir(dir.GetRaw())
+// It is necessary for wxWidgets to handle unix file names correctly.
+CDirIterator::CDirIterator(const CPath &dir)
+: wxDir(dir.GetRaw())
 {
 }
 
+CDirIterator::~CDirIterator() {}
 
-CDirIterator::~CDirIterator()
-{
-}
-
-
-CPath CDirIterator::GetFirstFile(FileType type, const wxString& mask, int extraFlags)
+CPath CDirIterator::GetFirstFile(FileType type, const wxString &mask, int extraFlags)
 {
 	if (!IsOpened()) {
 		return CPath();
@@ -72,7 +71,6 @@ CPath CDirIterator::GetFirstFile(FileType type, const wxString& mask, int extraF
 	return CPath(fileName);
 }
 
-
 CPath CDirIterator::GetNextFile()
 {
 	wxString fileName;
@@ -83,22 +81,61 @@ CPath CDirIterator::GetNextFile()
 	return CPath(fileName);
 }
 
+std::vector<CPath> ListSubdirectories(const CPath &dir)
+{
+	std::vector<CPath> subdirs;
+#if defined(DT_DIR)
+	// readdir() already says what each entry is. Only a symlink, or an entry the filesystem
+	// leaves untyped, needs a stat() -- one that follows the link, as wxDir does. Paths and
+	// names go through wxConvFileName both ways, again as wxDir does.
+	const wxCharBuffer base = dir.GetRaw().mb_str(wxConvFile);
+	DIR *handle = opendir(base.data());
+	if (handle == nullptr) {
+		return subdirs;
+	}
+	const std::string prefix = std::string(base.data()) + '/';
+	for (const dirent *entry = readdir(handle); entry != nullptr; entry = readdir(handle)) {
+		const char *name = entry->d_name;
+		if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) {
+			continue;
+		}
+		bool isDir = entry->d_type == DT_DIR;
+		if (entry->d_type == DT_LNK || entry->d_type == DT_UNKNOWN) {
+			struct stat st;
+			isDir = ::stat((prefix + name).c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+		}
+		if (isDir) {
+			const wxString converted(name, wxConvFile);
+			if (!converted.empty()) {
+				subdirs.emplace_back(converted);
+			}
+		}
+	}
+	closedir(handle);
+#else
+	// FindNextFile() hands wxDir each entry's attributes, so there is no per-entry cost here.
+	CDirIterator it(dir);
+	for (CPath sub = it.GetFirstFile(CDirIterator::Dir); sub.IsOk(); sub = it.GetNextFile()) {
+		subdirs.push_back(sub);
+	}
+#endif
+	return subdirs;
+}
 
-bool CDirIterator::HasSubDirs(const wxString& spec)
+bool CDirIterator::HasSubDirs(const wxString &spec)
 {
 	// Checking IsOpened() in case we don't have permissions to read that dir.
 	return IsOpened() && wxDir::HasSubDirs(spec);
 }
 
-
-static EFileType GuessFiletype(const wxString& file)
+static EFileType GuessFiletype(const wxString &file)
 {
 	wxFile archive(file, wxFile::read);
 	if (!archive.IsOpened()) {
 		return EFT_Error;
 	}
-	static const uint8 UTF8bom[3] = {0xEF, 0xBB, 0xBF};
-	uint8 head[10] = {0, 0};
+	static const uint8 UTF8bom[3] = { 0xEF, 0xBB, 0xBF };
+	uint8 head[10] = { 0, 0 };
 	int read = archive.Read(head, std::min<off_t>(10, archive.Length()));
 
 	if (read == wxInvalidOffset || read == 0) {
@@ -114,12 +151,17 @@ static EFileType GuessFiletype(const wxString& file)
 		return EFT_Met;
 	}
 
+	// Tar has no magic at the start: the header opens with the member's name, which would pass
+	// the text check below. POSIX ("ustar\0") and GNU ("ustar  ") both put "ustar" at 257.
+	char tarMagic[5];
+	if (archive.Seek(257) == 257 && archive.Read(tarMagic, 5) == 5 && memcmp(tarMagic, "ustar", 5) == 0) {
+		return EFT_Tar;
+	}
+
 	// Check at most the first ten chars, if all are printable,
 	// then we can probably assume it is ascii text-file.
 	for (int i = 0; i < read; ++i) {
-		if (!(		isprint(head[i])
-				||	isspace(head[i])
-				||	(i < 3 && head[i] == UTF8bom[i]))) {
+		if (!(isprint(head[i]) || isspace(head[i]) || (i < 3 && head[i] == UTF8bom[i]))) {
 			return EFT_Unknown;
 		}
 	}
@@ -127,53 +169,68 @@ static EFileType GuessFiletype(const wxString& file)
 	return EFT_Text;
 }
 
+// Update archives come from a URL a server-list link can name. The real files (ipfilter.dat,
+// server.met, GeoIP databases) stay far below this cap, and nesting deeper than .tar.gz is
+// refused, so a small archive cannot fill the disk or unpack to itself forever.
+static const size_t MAX_UNPACKED_SIZE = 256 * 1024 * 1024;
+static const int MAX_UNPACK_DEPTH = 3;
 
 /**
- * Replaces the zip-archive with "guarding.p2p" or "ipfilter.dat",
- * if either of those files are found in the archive.
+ * True if the member's name, without its folder, matches any pattern in @a files.
  */
-static bool UnpackZipFile(const wxString& file, const char* files[])
+static bool IsWantedMember(const wxString &internalName, const char *files[])
+{
+	const wxString name = internalName.AfterLast('/').Lower();
+	for (int i = 0; files[i]; i++) {
+		if (wxMatchWild(wxString(files[i]).Lower(), name, false)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * Replaces the zip archive with the first member matching @a files.
+ */
+static bool UnpackZipFile(const wxString &file, const char *files[])
 {
 	wxTempFile target(file);
 	CSmartPtr<wxZipEntry> entry;
 	wxFFileInputStream fileInputStream(file);
 	wxZipInputStream zip(fileInputStream);
-	bool run = true;
-	while (run) {
+	while (true) {
 		entry.reset(zip.GetNextEntry());
 		if (entry.get() == NULL) {
 			break;
 		}
-		// access meta-data
-		wxString name = entry->GetName();
 		// We only care about the files specified in the array
 		// probably needed to weed out included nfos
-		for (int i = 0; run && files[i]; i++) {
-			if (name.CmpNoCase(files[i]) == 0) {
-				// we found the entry we want
-				// read 'zip' to access the entry's data
-				char buffer[10240];
-				while (!zip.Eof()) {
-					zip.Read(buffer, sizeof(buffer));
-					if (zip.LastRead() == 0) {
-						// Stream stuck (e.g. unsupported compression
-						// method on this entry). wxZipInputStream
-						// doesn't advance its EOF flag in this case,
-						// so the original loop spun forever -- on a
-						// malformed eMule-security IPFilter feed it
-						// emitted gigabytes of "Error: unsupported
-						// Zip compression method" inside seconds
-						// (#376). Bail and let the caller treat this
-						// download as failed; the next fetch will
-						// pick up the clean copy.
-						run = false;
-						break;
-					}
-					target.Write(buffer, zip.LastRead());
-				}
-				run = false;
-			}
+		if (entry->IsDir() || !IsWantedMember(entry->GetInternalName(), files)) {
+			continue;
 		}
+		char buffer[10240];
+		size_t written = 0;
+		while (!zip.Eof()) {
+			zip.Read(buffer, sizeof(buffer));
+			if (zip.LastRead() == 0) {
+				// Stream stuck, e.g. an unsupported compression
+				// method on this entry. wxZipInputStream does not
+				// advance its EOF flag then, so the original loop
+				// spun forever -- on a malformed eMule-security
+				// IPFilter feed it emitted gigabytes of "Error:
+				// unsupported Zip compression method" within
+				// seconds (#376). Bail and let the caller treat
+				// this download as failed; the next fetch picks up
+				// the clean copy.
+				break;
+			}
+			written += zip.LastRead();
+			if (written > MAX_UNPACKED_SIZE) {
+				return false;
+			}
+			target.Write(buffer, zip.LastRead());
+		}
+		break;
 	}
 
 	if (target.Length()) {
@@ -184,15 +241,44 @@ static bool UnpackZipFile(const wxString& file, const char* files[])
 	return false;
 }
 
+/**
+ * Replaces the tar archive with the first member matching @a files.
+ */
+static bool UnpackTarFile(const wxString &file, const char *files[])
+{
+	wxTempFile target(file);
+	wxFFileInputStream fileInputStream(file);
+	wxTarInputStream tar(fileInputStream);
+	while (true) {
+		std::unique_ptr<wxTarEntry> entry(tar.GetNextEntry());
+		if (!entry) {
+			return false;
+		}
+		if (entry->IsDir() || !IsWantedMember(entry->GetInternalName(), files)) {
+			continue;
+		}
+		char buffer[10240];
+		size_t written = 0;
+		while (tar.Read(buffer, sizeof(buffer)).LastRead() > 0) {
+			written += tar.LastRead();
+			if (written > MAX_UNPACKED_SIZE || !target.Write(buffer, tar.LastRead())) {
+				return false;
+			}
+		}
+		// A truncated download ends the member early: keep nothing rather than half a file.
+		return written > 0 && written == static_cast<size_t>(entry->GetSize()) && target.Commit();
+	}
+}
 
 /**
  * Unpacks a GZip file and replaces the archive.
  */
-static bool UnpackGZipFile(const wxString& file)
+static bool UnpackGZipFile(const wxString &file)
 {
 	wxTempFile target(file);
 
 	bool write = false;
+	size_t written = 0;
 
 #ifdef __WXMAC__
 	// AddDebugLogLineN( logFileIO, "Reading gzip stream" );
@@ -205,18 +291,24 @@ static bool UnpackGZipFile(const wxString& file)
 		while (int bytesRead = gzread(inputFile, buffer, sizeof(buffer))) {
 			if (bytesRead > 0) {
 				// AddDebugLogLineN(logFileIO, CFormat("Read %u bytes") % bytesRead);
+				written += bytesRead;
+				if (written > MAX_UNPACKED_SIZE) {
+					write = false;
+					break;
+				}
 				target.Write(buffer, bytesRead);
 			} else if (bytesRead < 0) {
 				wxString errString;
 				int gzerrnum;
-				const char* gzerrstr = gzerror(inputFile, &gzerrnum);
+				const char *gzerrstr = gzerror(inputFile, &gzerrnum);
 				if (gzerrnum == Z_ERRNO) {
 					errString = wxSysErrorMsg();
 				} else {
 					errString = wxString::FromAscii(gzerrstr);
 				}
 
-				// AddDebugLogLineN( logFileIO, "Error reading gzip stream (" + errString + ")" );
+				// AddDebugLogLineN( logFileIO, "Error reading gzip stream (" + errString +
+				// ")" );
 				write = false;
 				break;
 			}
@@ -225,7 +317,8 @@ static bool UnpackGZipFile(const wxString& file)
 		// AddDebugLogLineN( logFileIO, "End reading gzip stream" );
 		gzclose(inputFile);
 	} else {
-		// AddDebugLogLineN( logFileIO, "Error opening gzip file (" + wxString(wxSysErrorMsg()) + ")" );
+		// AddDebugLogLineN( logFileIO, "Error opening gzip file (" + wxString(wxSysErrorMsg()) + ")"
+		// );
 	}
 #else
 	{
@@ -240,6 +333,10 @@ static bool UnpackGZipFile(const wxString& file)
 
 			// AddDebugLogLineN(logFileIO, CFormat("Read %u bytes") % inputStream.LastRead());
 			if (inputStream.LastRead()) {
+				written += inputStream.LastRead();
+				if (written > MAX_UNPACKED_SIZE) {
+					break;
+				}
 				target.Write(buffer, inputStream.LastRead());
 			} else {
 				break;
@@ -248,7 +345,7 @@ static bool UnpackGZipFile(const wxString& file)
 
 		// AddDebugLogLineN( logFileIO, "End reading gzip stream" );
 
-		write = inputStream.IsOk() || inputStream.Eof();
+		write = written <= MAX_UNPACKED_SIZE && (inputStream.IsOk() || inputStream.Eof());
 	}
 #endif
 
@@ -260,32 +357,68 @@ static bool UnpackGZipFile(const wxString& file)
 	return write;
 }
 
-
-UnpackResult UnpackArchive(const CPath& path, const char* files[])
+static UnpackResult UnpackArchiveAt(const CPath &path, const char *files[], int depth)
 {
 	const wxString file = path.GetRaw();
 
 	// Attempt to discover the filetype and uncompress
 	EFileType type = GuessFiletype(file);
+	if ((type == EFT_Zip || type == EFT_GZip || type == EFT_Tar) && depth >= MAX_UNPACK_DEPTH) {
+		return UnpackResult(false, EFT_Error);
+	}
 	switch (type) {
-		case EFT_Zip:
-			if (UnpackZipFile(file, files)) {
-				// Unpack nested archives if needed.
-				return UnpackResult(true, UnpackArchive(path, files).second);
-			} else {
-				return UnpackResult(false, EFT_Error);
-			}
+	case EFT_Zip:
+		if (UnpackZipFile(file, files)) {
+			// Unpack nested archives if needed.
+			return UnpackResult(true, UnpackArchiveAt(path, files, depth + 1).second);
+		} else {
+			return UnpackResult(false, EFT_Error);
+		}
 
-		case EFT_GZip:
-			if (UnpackGZipFile(file)) {
-				// Unpack nested archives if needed.
-				return UnpackResult(true, UnpackArchive(path, files).second);
-			} else {
-				return UnpackResult(false, EFT_Error);
-			}
+	case EFT_GZip:
+		if (UnpackGZipFile(file)) {
+			// Unpack nested archives if needed.
+			return UnpackResult(true, UnpackArchiveAt(path, files, depth + 1).second);
+		} else {
+			return UnpackResult(false, EFT_Error);
+		}
 
-		default:
-			return UnpackResult(false, type);
+	case EFT_Tar:
+		if (UnpackTarFile(file, files)) {
+			// Unpack nested archives if needed.
+			return UnpackResult(true, UnpackArchiveAt(path, files, depth + 1).second);
+		} else {
+			return UnpackResult(false, EFT_Error);
+		}
+
+	default:
+		return UnpackResult(false, type);
 	}
 }
+
+UnpackResult UnpackArchive(const CPath &path, const char *files[])
+{
+	return UnpackArchiveAt(path, files, 0);
+}
+bool RestrictToOwner(const CPath &file)
+{
+	if (!file.FileExists()) {
+		return false;
+	}
+	const wxCharBuffer path = file.GetRaw().mb_str(wxConvFile);
+	struct stat st;
+	if (::stat(path.data(), &st) != 0) {
+		return false;
+	}
+	// Only act when something is actually loose, so the common case is a
+	// single stat and no write to the filesystem.
+	const mode_t loose = st.st_mode & (S_IRWXG | S_IRWXO);
+	if (loose == 0) {
+		return false;
+	}
+	// mulecommon sits below the logger, so report the outcome to the caller
+	// rather than logging here.
+	return ::chmod(path.data(), S_IRUSR | S_IWUSR) == 0;
+}
+
 // File_checked_for_headers

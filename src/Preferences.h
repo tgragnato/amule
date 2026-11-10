@@ -26,28 +26,39 @@
 #ifndef PREFERENCES_H
 #define PREFERENCES_H
 
-#include "MD4Hash.h"			// Needed for CMD4Hash
+#include "PowerManagement.h"
+#include "MD4Hash.h" // Needed for CMD4Hash
+#ifdef ENABLE_IPV6
+#include "AdvertisedIPv6.h"
+#endif
 
-#include <wx/arrstr.h>			// Needed for wxArrayString
+#include <wx/arrstr.h> // Needed for wxArrayString
 
 #include <map>
+#include <utility>
+#include <vector>
 
 #include "Proxy.h"
+#include "ShareExclude.h"
 #include "OtherStructs.h"
+#include "SourceSearchLimits.h"
+#include "WriteBufferLimits.h"
 
-#include <common/ClientVersion.h>	// Needed for __GIT__
+#include <common/ClientVersion.h> // Needed for __GIT__
 
 class CPreferences;
 class wxConfigBase;
 class wxWindow;
 
-enum EViewSharedFilesAccess {
+enum EViewSharedFilesAccess
+{
 	vsfaEverybody = 0,
 	vsfaFriends = 1,
 	vsfaNobody = 2
 };
 
-enum AllCategoryFilter {
+enum AllCategoryFilter
+{
 	acfAll = 0,
 	acfAllOthers,
 	acfIncomplete,
@@ -67,123 +78,92 @@ enum AllCategoryFilter {
 };
 
 /**
- * Base-class for automatically loading and saving of preferences.
+ * Base class for automatically loading and saving preferences.
  *
- * The purpose of this class is to perform two tasks:
- * 1) To load and save a variable using wxConfig
- * 2) If nescecarry, to synchronize it with a widget
+ * It does two things: load and save a variable using wxConfig, and where necessary keep it
+ * in sync with a widget. This pure-virtual class is the base of all the Cfg types below and
+ * exposes the entire interface.
  *
- * This pure-virtual class servers as the base of all the Cfg types
- * defined below, and exposes the entire interface.
- *
- * Please note that for reasons of simplicity these classes dont provide
- * direct access to the variables they maintain, as there is no real need
- * for this.
- *
- * To create a sub-class you need only provide the Load/Save functionality,
- * as it is given that not all variables have a widget associated.
+ * For simplicity these classes give no direct access to the variables they maintain, since
+ * nothing needs it. A subclass need only provide Load/Save: not every variable has a widget.
  */
 class Cfg_Base
 {
 public:
 	/**
-	 * Constructor.
-	 *
-	 * @param keyname This is the keyname under which the variable is to be saved.
+	 * @param keyname The key under which the variable is to be saved.
 	 */
-	Cfg_Base( const wxString& keyname )
-	 : m_key( keyname ),
-	   m_changed( false )
-	{}
+	Cfg_Base(const wxString &keyname)
+	: m_key(keyname)
+	, m_changed(false)
+	{
+	}
 
-	/**
-	 * Destructor.
-	 */
 	virtual ~Cfg_Base() {}
 
 	/**
-	 * This function loads the associated variable from the provided config object.
+	 * Loads the associated variable from the provided config object.
 	 */
-	virtual void LoadFromFile(wxConfigBase* cfg) = 0;
+	virtual void LoadFromFile(wxConfigBase *cfg) = 0;
 	/**
-	 * This function saves the associated variable to the provided config object.
+	 * Saves the associated variable to the provided config object.
 	 */
-	virtual void SaveToFile(wxConfigBase* cfg) = 0;
+	virtual void SaveToFile(wxConfigBase *cfg) = 0;
 
 	/**
 	 * Syncs the variable with the contents of the widget.
-	 *
-	 * @return True of success, false otherwise.
 	 */
-	virtual bool TransferFromWindow()	{ return false; }
+	virtual bool TransferFromWindow() { return false; }
 	/**
 	 * Syncs the widget with the contents of the variable.
-	 *
-	 * @return True of success, false otherwise.
 	 */
-	virtual bool TransferToWindow()		{ return false; }
+	virtual bool TransferToWindow() { return false; }
 
 	/**
-	 * Connects a widget with the specified ID to the Cfg object.
+	 * Connects a widget with the specified ID to the Cfg object. Only meaningful for Cfg classes
+	 * that can interact with a widget, see Cfg_Tmpl::ConnectToWidget().
 	 *
 	 * @param id The ID of the widget.
-	 * @param parent A pointer to the widgets parent, to speed up searches.
-	 * @return True on success, false otherwise.
-	 *
-	 * This function only makes sense for Cfg-classes that have the capability
-	 * to interact with a widget, see Cfg_Tmpl::ConnectToWidget().
+	 * @param parent A pointer to the widget's parent, to speed up searches.
 	 */
-	virtual	bool ConnectToWidget( int WXUNUSED(id), wxWindow* WXUNUSED(parent) = NULL )	{ return false; }
+	virtual bool ConnectToWidget(int WXUNUSED(id), wxWindow *WXUNUSED(parent) = NULL) { return false; }
 
 	/**
-	 * Gets the key associated with Cfg object.
-	 *
-	 * @return The config-key of this object.
+	 * Pushes the default value into the associated widget, if any. The change is only reflected
+	 * in the widget, not committed to the variable, so a subsequent Cancel leaves the stored
+	 * value untouched (OK commits it via TransferFromWindow like any other edit).
 	 */
-	virtual const wxString& GetKey()	{ return m_key; }
-
+	virtual bool ResetToDefault() { return false; }
 
 	/**
-	 * Specifies if the variable has changed since the TransferFromWindow() call.
-	 *
-	 * @return True if the variable has changed, false otherwise.
+	 * @return The config key of this object.
 	 */
-	virtual bool HasChanged()			{ return m_changed; }
+	virtual const wxString &GetKey() { return m_key; }
 
+	/**
+	 * @return True if the variable has changed since the TransferFromWindow() call.
+	 */
+	virtual bool HasChanged() { return m_changed; }
 
 protected:
 	/**
 	 * Sets the changed status.
-	 *
-	 * @param changed The new status.
 	 */
-	virtual void SetChanged( bool changed )
-	{
-		m_changed = changed;
-	};
+	virtual void SetChanged(bool changed) { m_changed = changed; };
 
 private:
-
 	//! The Config-key under which to save the variable
-	wxString	m_key;
+	wxString m_key;
 
 	//! The changed-status of the variable
-	bool		m_changed;
-};
-
-
-class Cfg_Lang_Base {
-public:
-	virtual void UpdateChoice(int pos);
+	bool m_changed;
 };
 
 const int cntStatColors = 15;
 
-
 //! This typedef is a shortcut similar to the theApp shortcut, but uses :: instead of .
 //! It only allows access to static preference functions, however this is to be desired anyway.
 typedef CPreferences thePrefs;
-
 
 class CPreferences
 {
@@ -193,701 +173,1178 @@ public:
 	CPreferences();
 	~CPreferences();
 
-	void			Save();
-	void			SaveCats();
-	// Read shareddir-explicit.dat, shareddir-recursive.dat, and
-	// shareddir.dat from disk; recompute shareddir_list as the union
-	// of the explicit list and the recursive expansion; reconcile any
-	// drift from external writers (e.g. a Docker entrypoint script
-	// that edits shareddir.dat directly and then calls Reload via
-	// EC); rewrite shareddir.dat as the new union. Safe to call from
-	// startup, the EC ReloadSharedFiles command, the UI Reload
-	// button, and the watcher's debounced reload.
-	void			ReloadSharedFolders();
-	// Persist all three shared-dir files: shareddir-explicit.dat,
-	// shareddir-recursive.dat (the two canonical sources of truth)
-	// and shareddir.dat (regenerated as the union, for backwards
-	// compatibility with older binaries and scripts that read it).
-	// Called by CSharedDirWatcher after it auto-appends a
-	// newly-created subdirectory so the change survives a restart
-	// without forcing a full preferences.dat write.
-	void			SaveSharedFolders();
-	// True iff `path` is in shareddir_recursive_list or is a
-	// descendant of an entry there. Used by the watcher to decide
-	// whether auto-add of a new subdir / cold-discovered subdir is
-	// authorised: non-recursive share roots do NOT auto-collect new
-	// subdirs, recursive roots do.
-	bool			IsRecursiveAncestor(const CPath & path) const;
+	void Save();
+	void SaveCats();
+	// Read shareddir-explicit.dat and shareddir-recursive.dat, recompute shareddir_list as the
+	// union of the explicit list and the recursive expansion, and save both files. A legacy
+	// shareddir.dat is migrated when neither file exists yet, and otherwise ignored; either
+	// way it is removed.
+	void ReloadSharedFolders();
+	// The two files as saved, with no tree walk and nothing written: until ReloadSharedFolders()
+	// runs, shareddir_list holds the explicit folders and the recursive roots.
+	void LoadSavedSharedFolders();
+	// Persist shareddir-explicit.dat and shareddir-recursive.dat. False if either write failed.
+	bool SaveSharedFolders();
+	// For a client that knows only the union (EC_TAG_DIRECTORIES_SHARED): what no recursive root
+	// covers becomes the explicit list. Recursive roots are unchanged.
+	void SetSharedFoldersFromUnion(const std::vector<CPath> &dirs);
+	// True iff `path` is in shareddir_recursive_list or descends from an entry there through no
+	// excluded folder. The watcher gates auto-add on this: non-recursive share roots do not
+	// collect new subdirs, recursive ones do.
+	bool IsRecursiveAncestor(const CPath &path) const;
+	// True iff `path` lies under a recursive share root only through an excluded folder.
+	bool IsInExcludedFolder(const CPath &path) const;
+	// The same, against `roots` instead of shareddir_recursive_list.
+	static bool IsInExcludedFolder(const std::vector<CPath> &roots, const CPath &path);
+	// Subfolder names seen by the last recursive expansion, excluded ones included, for the
+	// exclusion preview. `truncated` makes any count taken from `out` a lower bound.
+	void GetExpandedFolderNames(wxArrayString &out, bool &truncated) const;
 
-	static const wxString&	GetConfigDir()			{ return s_configDir; }
-	static void		SetConfigDir(const wxString& dir) { s_configDir = dir; }
+	// Allowed-roots confinement for remote (EC / amuleapi) folder changes -- incoming, temp,
+	// shared folders and category paths. The roots are local daemon configuration, loaded from
+	// allowed-remote-dirs.dat and never settable over EC. Empty by default, which refuses every
+	// remote folder change (the opt-in gate). "Only changes are checked" is the caller's job: a
+	// value equal to what is stored, or an entry already in the stored list, is left alone.
+	void LoadAllowedRemoteDirRoots();
+	void SaveAllowedRemoteDirRoots();
+	static wxString GetAllowedRemoteDirsFile() { return s_configDir + "allowed-remote-dirs.dat"; }
+	// True iff a remote client may point a folder preference at `dir`: `dir` is equal to or inside
+	// one of the configured roots (CPath::IsContainedIn resolves ".." and symlinks). No roots -> false.
+	bool IsRemoteDirChangeAllowed(const CPath &dir) const;
 
-	static bool		Score()				{ return s_scorsystem; }
-	static void		SetScoreSystem(bool val)	{ s_scorsystem = val; }
-	static bool		Reconnect()			{ return s_reconnect; }
-	static void		SetReconnect(bool val)		{ s_reconnect = val; }
-	static bool		DeadServer()			{ return s_deadserver; }
-	static void		SetDeadServer(bool val)		{ s_deadserver = val; }
-	static const wxString&	GetUserNick()			{ return s_nick; }
-	static void		SetUserNick(const wxString& nick) { s_nick = nick; }
-	static Cfg_Lang_Base * GetCfgLang()		{ return s_cfgLang; }
+	static const wxString &GetConfigDir() { return s_configDir; }
+	static void SetConfigDir(const wxString &dir) { s_configDir = dir; }
 
-	static const wxString&	GetAddress()			{ return s_Addr; }
-	static uint16		GetPort()			{ return s_port; }
-	static void		SetPort(uint16 val);
-	static uint16		GetUDPPort()			{ return s_udpport; }
-	static uint16		GetEffectiveUDPPort()	{ return s_UDPEnable ? s_udpport : 0; }
-	static void		SetUDPPort(uint16 val)		{ s_udpport = val; }
-	static bool		IsUDPDisabled()			{ return !s_UDPEnable; }
-	static void		SetUDPDisable(bool val)		{ s_UDPEnable = !val; }
-	static const CPath&	GetIncomingDir()		{ return s_incomingdir; }
-	static void		SetIncomingDir(const CPath& dir){ s_incomingdir = dir; }
-	static const CPath&	GetTempDir()			{ return s_tempdir; }
-	static void		SetTempDir(const CPath& dir)	{ s_tempdir = dir; }
-	static const CMD4Hash&	GetUserHash()			{ return s_userhash; }
-	static void		SetUserHash(const CMD4Hash& h)	{ s_userhash = h; }
-	static uint32		GetMaxUpload()			{ return s_maxupload; }
-	static uint32		GetSlotAllocation()		{ return s_slotallocation; }
-	static bool		IsICHEnabled()			{ return s_ICH; }
-	static void		SetICHEnabled(bool val)		{ s_ICH = val; }
-	static bool		IsTrustingEveryHash()		{ return s_AICHTrustEveryHash; }
-	static void		SetTrustingEveryHash(bool val)	{ s_AICHTrustEveryHash = val; }
-	static bool		AutoServerlist()		{ return s_autoserverlist; }
-	static void		SetAutoServerlist(bool val)	{ s_autoserverlist = val; }
-	static bool		DoMinToTray()			{ return s_mintotray; }
-	static bool		ShowNotifications()		{ return s_notify; }
-	static void		SetMinToTray(bool val)		{ s_mintotray = val; }
-	static bool		UseTrayIcon()			{ return s_trayiconenabled; }
-	static void		SetUseTrayIcon(bool val)	{ s_trayiconenabled = val; }
-	static bool		HideOnClose()			{ return s_hideonclose; }
-	static void		SetHideOnClose(bool val)	{ s_hideonclose = val; }
-	static bool		IsAppImageIntegrationDeclined()		{ return s_appimageIntegrationDeclined; }
-	static void		SetAppImageIntegrationDeclined(bool val) { s_appimageIntegrationDeclined = val; }
-	static bool		DoAutoConnect()			{ return s_autoconnect; }
-	static void		SetAutoConnect(bool inautoconnect)
-						{s_autoconnect = inautoconnect; }
-	static bool		AddServersFromServer()		{ return s_addserversfromserver; }
-	static void		SetAddServersFromServer(bool val) { s_addserversfromserver = val; }
-	static bool		AddServersFromClient()		{ return s_addserversfromclient; }
-	static void		SetAddServersFromClient(bool val) { s_addserversfromclient = val; }
-	static uint16		GetTrafficOMeterInterval()	{ return s_trafficOMeterInterval; }
-	static void		SetTrafficOMeterInterval(uint16 in)
-						{ s_trafficOMeterInterval = in; }
-	static uint16		GetStatsInterval()		{ return s_statsInterval;}
-	static void		SetStatsInterval(uint16 in)	{ s_statsInterval = in; }
-	static bool		IsConfirmExitEnabled()		{ return s_confirmExit; }
-	static bool		FilterLanIPs()			{ return s_filterLanIP; }
-	static void		SetFilterLanIPs(bool val)	{ s_filterLanIP = val; }
-	static bool		ParanoidFilter()			{ return s_paranoidfilter; }
-	static void		SetParanoidFilter(bool val)	{ s_paranoidfilter = val; }
-	static bool		IsOnlineSignatureEnabled()	{ return s_onlineSig; }
-	static void		SetOnlineSignatureEnabled(bool val) { s_onlineSig = val; }
-	static uint32		GetMaxGraphUploadRate()		{ return s_maxGraphUploadRate; }
-	static uint32		GetMaxGraphDownloadRate()	{ return s_maxGraphDownloadRate; }
-	static void		SetMaxGraphUploadRate(uint32 in){ s_maxGraphUploadRate=in; }
-	static void		SetMaxGraphDownloadRate(uint32 in)
-						{ s_maxGraphDownloadRate = in; }
+	// True when this process started without an existing preferences.dat. Captured in the
+	// constructor, before the file is created, so the first-run wizard shows exactly once. Always
+	// false in the remote GUI.
+	static bool IsFirstRun() { return s_firstRun; }
 
-	static uint32		GetMaxDownload()		{ return s_maxdownload; }
-	static uint16		GetMaxConnections()		{ return s_maxconnections; }
-	static uint16		GetMaxSourcePerFile()		{ return s_maxsourceperfile; }
-	static uint16		GetMaxSourcePerFileSoft() {
-					uint16 temp = (uint16)(s_maxsourceperfile*0.9);
-					if( temp > 1000 ) return 1000;
-                                        return temp; }
-	static uint16		GetMaxSourcePerFileUDP() {
-					uint16 temp = (uint16)(s_maxsourceperfile*0.75);
-					if( temp > 100 ) return 100;
-                                        return temp; }
-	static uint16		GetDeadserverRetries()		{ return s_deadserverretries; }
-	static void		SetDeadserverRetries(uint16 val) { s_deadserverretries = val; }
-	static uint64		GetServerKeepAliveTimeout()	{ return s_dwServerKeepAliveTimeoutMins*60000; }
-	static void		SetServerKeepAliveTimeout(uint64 val)	{ s_dwServerKeepAliveTimeoutMins = val/60000; }
+	// True once the first-run wizard was actually completed (the user pressed Finish). Unlike
+	// IsFirstRun(), which is only inferred from a missing preferences.dat, this is a persisted
+	// flag (/eMule/FirstRunWizardDone), so it separates a completed run from a cancelled one and
+	// re-triggers the wizard when cleared. Always false in the remote GUI.
+	static bool IsFirstRunWizardDone() { return s_firstRunWizardDone; }
+	static void SetFirstRunWizardDone(bool val) { s_firstRunWizardDone = val; }
 
-	static const wxString&	GetLanguageID()			{ return s_languageID; }
-	static void		SetLanguageID(const wxString& new_id)	{ s_languageID = new_id; }
-	static uint8		CanSeeShares()			{ return s_iSeeShares; }
-	static void		SetCanSeeShares(uint8 val)	{ s_iSeeShares = val; }
+	static bool Score() { return s_scorsystem; }
+	static void SetScoreSystem(bool val) { s_scorsystem = val; }
+	static bool Reconnect() { return s_reconnect; }
+	static void SetReconnect(bool val) { s_reconnect = val; }
+	static bool DeadServer() { return s_deadserver; }
+	static void SetDeadServer(bool val) { s_deadserver = val; }
+	static const wxString &GetUserNick() { return s_nick; }
+	static void SetUserNick(const wxString &nick) { s_nick = nick; }
 
-	static uint8		GetStatsMax()			{ return s_statsMax; }
-	static bool		UseFlatBar()			{ return (s_depth3D==0); }
-	static uint8		GetStatsAverageMinutes()	{ return s_statsAverageMinutes; }
-	static void		SetStatsAverageMinutes(uint8 in){ s_statsAverageMinutes = in; }
+	static const wxString &GetAddress() { return s_Addr; }
+	static void SetAddress(const wxString &val) { s_Addr = val; }
+	static const wxString &GetNetworkInterface() { return s_NetworkInterface; }
+	static void SetNetworkInterface(const wxString &val) { s_NetworkInterface = val; }
+#ifdef ENABLE_IPV6
+	// Raw and unvalidated, so an unsupported value can be reported as written; map it with
+	// AddressFamilyPolicy::FamiliesFromSetting().
+	static long GetAddressFamiliesSetting() { return s_addressFamiliesSetting; }
+	static void SetAddressFamiliesSetting(long val) { s_addressFamiliesSetting = val; }
+	static EIPv6AdvertisingMode GetAdvertiseIPv6Mode()
+	{
+		return static_cast<EIPv6AdvertisingMode>(s_advertiseIPv6Mode);
+	}
+	static void SetAdvertiseIPv6Mode(EIPv6AdvertisingMode mode)
+	{
+		s_advertiseIPv6Mode = static_cast<int>(mode);
+	}
+#ifdef CLIENT_GUI
+	// Whether the daemon's last prefs reply carried EC_TAG_CONN_ADDRESS_FAMILIES; absent means an
+	// old daemon or one without ENABLE_IPV6, which is not the same as "IPv4 only".
+	static bool GetAddressFamiliesTagSupported() { return s_addressFamiliesTagSupported; }
+	static void SetAddressFamiliesTagSupported(bool val) { s_addressFamiliesTagSupported = val; }
+#endif
+#endif
+	static uint16 GetPort() { return s_port; }
+	static void SetPort(uint16 val);
+	static uint16 GetUDPPort() { return s_udpport; }
+	static uint16 GetEffectiveUDPPort() { return s_UDPEnable ? s_udpport : 0; }
+	static void SetUDPPort(uint16 val) { s_udpport = val; }
+	static bool IsUDPDisabled() { return !s_UDPEnable; }
+	static void SetUDPDisable(bool val) { s_UDPEnable = !val; }
+	static const CPath &GetIncomingDir() { return s_incomingdir; }
+	static void SetIncomingDir(const CPath &dir) { s_incomingdir = dir; }
+	static const CPath &GetTempDir() { return s_tempdir; }
+	static void SetTempDir(const CPath &dir) { s_tempdir = dir; }
+	static const CMD4Hash &GetUserHash() { return s_userhash; }
+	static void SetUserHash(const CMD4Hash &h) { s_userhash = h; }
+	static uint32 GetMaxUpload() { return s_maxupload; }
+	static uint32 GetSlotAllocation() { return s_slotallocation; }
+	static bool IsICHEnabled() { return s_ICH; }
+	// Request-triggered verification interval in days; zero disables automatic checks.
+	static uint32 GetSharedFileReverifyDays() { return s_sharedFileReverifyDays; }
+	static void SetSharedFileReverifyDays(uint32 days)
+	{
+		if (days <= 3650) {
+			s_sharedFileReverifyDays = days;
+		}
+	}
+	static void SetICHEnabled(bool val) { s_ICH = val; }
+	static bool IsTrustingEveryHash() { return s_AICHTrustEveryHash; }
+	static void SetTrustingEveryHash(bool val) { s_AICHTrustEveryHash = val; }
+	static bool AutoServerlist() { return s_autoserverlist; }
+	static void SetAutoServerlist(bool val) { s_autoserverlist = val; }
+	static bool DoMinToTray() { return s_mintotray; }
+	static bool ShowNotifications() { return s_notify; }
+	// Whether the Search tab's Name field keeps a dropdown history of past
+	// queries (amule-org/amule#641). Query history only -- not the results.
+	static bool RememberSearchHistory() { return s_rememberSearchHistory; }
+	static void SetMinToTray(bool val) { s_mintotray = val; }
+	static bool UseTrayIcon() { return s_trayiconenabled; }
+	static void SetUseTrayIcon(bool val) { s_trayiconenabled = val; }
+	static bool HideOnClose() { return s_hideonclose; }
+	static void SetHideOnClose(bool val) { s_hideonclose = val; }
+	static bool IsAppImageIntegrationDeclined() { return s_appimageIntegrationDeclined; }
+	static void SetAppImageIntegrationDeclined(bool val) { s_appimageIntegrationDeclined = val; }
+	static bool DoAutoConnect() { return s_autoconnect; }
+	static void SetAutoConnect(bool inautoconnect) { s_autoconnect = inautoconnect; }
+	static bool AddServersFromServer() { return s_addserversfromserver; }
+	static void SetAddServersFromServer(bool val) { s_addserversfromserver = val; }
+	static bool AddServersFromClient() { return s_addserversfromclient; }
+	static void SetAddServersFromClient(bool val) { s_addserversfromclient = val; }
+	static uint16 GetTrafficOMeterInterval() { return s_trafficOMeterInterval; }
+	static void SetTrafficOMeterInterval(uint16 in) { s_trafficOMeterInterval = in; }
+	static uint16 GetStatsInterval() { return s_statsInterval; }
+	static void SetStatsInterval(uint16 in) { s_statsInterval = in; }
+	static bool IsConfirmExitEnabled() { return s_confirmExit; }
+	static bool FilterLanIPs() { return s_filterLanIP; }
+	static void SetFilterLanIPs(bool val) { s_filterLanIP = val; }
+	static bool ParanoidFilter() { return s_paranoidfilter; }
+	static void SetParanoidFilter(bool val) { s_paranoidfilter = val; }
+	static bool IsOnlineSignatureEnabled() { return s_onlineSig; }
+	static void SetOnlineSignatureEnabled(bool val) { s_onlineSig = val; }
+	static uint32 GetMaxGraphUploadRate() { return s_maxGraphUploadRate; }
+	static uint32 GetMaxGraphDownloadRate() { return s_maxGraphDownloadRate; }
+	static void SetMaxGraphUploadRate(uint32 in) { s_maxGraphUploadRate = in; }
+	static void SetMaxGraphDownloadRate(uint32 in) { s_maxGraphDownloadRate = in; }
 
-	static bool		GetStartMinimized()		{ return s_startMinimized; }
-	static void		SetStartMinimized(bool instartMinimized)
-					{ s_startMinimized = instartMinimized;}
-	static bool		GetSmartIdCheck()		{ return s_smartidcheck; }
-	static void		SetSmartIdCheck( bool in_smartidcheck )
-						{ s_smartidcheck = in_smartidcheck; }
-	static uint8		GetSmartIdState()		{ return s_smartidstate; }
-	static void		SetSmartIdState( uint8 in_smartidstate )
-						{ s_smartidstate = in_smartidstate; }
-	static bool		GetVerbose()			{ return s_bVerbose; }
-	static void		SetVerbose(bool val)		{ s_bVerbose = val; }
-	static bool		GetVerboseLogfile()			{ return s_bVerboseLogfile; }
-	static void		SetVerboseLogfile(bool val)		{ s_bVerboseLogfile = val; }
-	static bool		GetPreviewPrio()		{ return s_bpreviewprio; }
-	static void		SetPreviewPrio(bool in)		{ s_bpreviewprio = in; }
-	static bool		StartNextFile()			{ return s_bstartnextfile; }
-	static bool		StartNextFileSame()		{ return s_bstartnextfilesame; }
-	static bool		StartNextFileAlpha()		{ return s_bstartnextfilealpha; }
-	static void		SetStartNextFile(bool val)	{ s_bstartnextfile = val; }
-	static void		SetStartNextFileSame(bool val)	{ s_bstartnextfilesame = val; }
-	static void		SetStartNextFileAlpha(bool val)	{ s_bstartnextfilealpha = val; }
-	static bool		ShowOverhead()			{ return s_bshowoverhead; }
-	static void		SetNewAutoUp(bool m_bInUAP)	{ s_bUAP = m_bInUAP; }
-	static bool		GetNewAutoUp()			{ return s_bUAP; }
-	static void		SetNewAutoDown(bool m_bInDAP)	{ s_bDAP = m_bInDAP; }
-	static bool		GetNewAutoDown()		{ return s_bDAP; }
+	static uint32 GetMaxDownload() { return s_maxdownload; }
+	static uint16 GetMaxConnections() { return s_maxconnections; }
+	// OS-aware ceiling for the connection count (the half-open-connection limit on legacy
+	// Windows). Default MaxConnections, and the clamp on the wizard's derived limits.
+	static int32 GetRecommendedMaxConnections();
+	static uint16 GetMaxSourcePerFile() { return s_maxsourceperfile; }
+	static uint16 GetMaxSourcePerFileSoft()
+	{
+		uint16 temp = (uint16)(s_maxsourceperfile * 0.9);
+		if (temp > 1000)
+			return 1000;
+		return temp;
+	}
+	static uint16 GetMaxSourcePerFileUDP()
+	{
+		uint16 temp = (uint16)(s_maxsourceperfile * 0.75);
+		if (temp > 100)
+			return 100;
+		return temp;
+	}
+	static uint16 GetDeadserverRetries() { return s_deadserverretries; }
+	static void SetDeadserverRetries(uint16 val) { s_deadserverretries = val; }
+	static uint64 GetServerKeepAliveTimeout() { return s_dwServerKeepAliveTimeoutMins * 60000; }
+	static void SetServerKeepAliveTimeout(uint64 val) { s_dwServerKeepAliveTimeoutMins = val / 60000; }
 
-	static const wxString&	GetVideoPlayer()		{ return s_VideoPlayer; }
+	// Concurrent files that may search Kad for sources at once (was the
+	// KADEMLIATOTALFILE constant). Compared against a uint8 source-count.
+	static uint16 GetKadMaxSourceSearches() { return s_kadMaxSourceSearches; }
+	static void SetKadMaxSourceSearches(uint64 val)
+	{
+		s_kadMaxSourceSearches = static_cast<uint16>(KAD_MAX_SOURCE_SEARCHES.Clamp(val));
+	}
+	// Per-file Kad re-search interval (was KADEMLIAREASKTIME). Stored in
+	// minutes; returned/accepted in milliseconds to match the tick arithmetic.
+	static uint64 GetKadSourceReaskTime() { return s_kadSourceReaskMins * 60000; }
+	static void SetKadSourceReaskTime(uint64 val)
+	{
+		s_kadSourceReaskMins = KAD_SOURCE_REASK_MINUTES.Clamp(val / 60000);
+	}
+	// Interval before re-asking a known source (was FILEREASKTIME). Same
+	// minutes-stored / milliseconds-exposed convention.
+	static uint64 GetSourceReaskTime() { return s_sourceReaskMins * 60000; }
+	static void SetSourceReaskTime(uint64 val)
+	{
+		s_sourceReaskMins = SOURCE_REASK_MINUTES.Clamp(val / 60000);
+	}
 
-	static uint32		GetFileBufferSize()		{ return s_iFileBufferSize*15000; }
-	static void		SetFileBufferSize(uint32 val)	{ s_iFileBufferSize = val/15000; }
-	static uint32		GetQueueSize()			{ return s_iQueueSize*100; }
-	static void		SetQueueSize(uint32 val)	{ s_iQueueSize = val/100; }
+	static const wxString &GetLanguageID() { return s_languageID; }
+	static void SetLanguageID(const wxString &new_id) { s_languageID = new_id; }
+	static uint8 CanSeeShares() { return s_iSeeShares; }
+	static void SetCanSeeShares(uint8 val) { s_iSeeShares = val; }
 
-	static uint8		Get3DDepth()			{ return s_depth3D;}
-	static bool		AddNewFilesPaused()		{ return s_addnewfilespaused; }
-	static void		SetAddNewFilesPaused(bool val)	{ s_addnewfilespaused = val; }
+	static uint8 GetStatsMax() { return s_statsMax; }
+	static bool UseFlatBar() { return (s_depth3D == 0); }
+	static uint8 GetStatsAverageMinutes() { return s_statsAverageMinutes; }
+	static void SetStatsAverageMinutes(uint8 in) { s_statsAverageMinutes = in; }
 
-	static void		SetMaxConsPerFive(int in)	{ s_MaxConperFive=in; }
+	static bool GetStartMinimized() { return s_startMinimized; }
+	static void SetStartMinimized(bool instartMinimized) { s_startMinimized = instartMinimized; }
+	static bool GetSmartIdCheck() { return s_smartidcheck; }
+	static void SetSmartIdCheck(bool in_smartidcheck) { s_smartidcheck = in_smartidcheck; }
+	static uint8 GetSmartIdState() { return s_smartidstate; }
+	static void SetSmartIdState(uint8 in_smartidstate) { s_smartidstate = in_smartidstate; }
+	static bool GetVerbose() { return s_bVerbose; }
+	static void SetVerbose(bool val);
+	static bool GetVerboseLogfile() { return s_bVerboseLogfile; }
+	static void SetVerboseLogfile(bool val);
+#ifdef CLIENT_GUI
+	struct CoreDebugCategory
+	{
+		wxString name;
+		bool enabled;
+	};
+	// The connected core's categories, never persisted. Empty when the core does not report them.
+	static const std::vector<CoreDebugCategory> &GetCoreDebugCategories()
+	{
+		return s_coreDebugCategories;
+	}
+	static void SetCoreDebugCategories(std::vector<CoreDebugCategory> categories)
+	{
+		s_coreDebugCategories = std::move(categories);
+	}
+	// GetVerbose() and GetVerboseLogfile() are this GUI's own log. These are the core's.
+	static bool GetCoreVerbose() { return s_coreVerbose; }
+	static void SetCoreVerbose(bool val) { s_coreVerbose = val; }
+	static bool GetCoreVerboseLogfile() { return s_coreVerboseLogfile; }
+	static void SetCoreVerboseLogfile(bool val) { s_coreVerboseLogfile = val; }
+#endif
+	static bool GetPreviewPrio() { return s_bpreviewprio; }
+	static void SetPreviewPrio(bool in) { s_bpreviewprio = in; }
+	static bool StartNextFile() { return s_bstartnextfile; }
+	static bool StartNextFileSame() { return s_bstartnextfilesame; }
+	static bool StartNextFileAlpha() { return s_bstartnextfilealpha; }
+	static void SetStartNextFile(bool val) { s_bstartnextfile = val; }
+	static void SetStartNextFileSame(bool val) { s_bstartnextfilesame = val; }
+	static void SetStartNextFileAlpha(bool val) { s_bstartnextfilealpha = val; }
+	static bool ShowOverhead() { return s_bshowoverhead; }
+	static void SetNewAutoUp(bool m_bInUAP) { s_bUAP = m_bInUAP; }
+	static bool GetNewAutoUp() { return s_bUAP; }
+	static void SetNewAutoDown(bool m_bInDAP) { s_bDAP = m_bInDAP; }
+	static bool GetNewAutoDown() { return s_bDAP; }
 
-	static uint16		GetMaxConperFive()		{ return s_MaxConperFive; }
-	static uint16		GetDefaultMaxConperFive();
+	static const wxString &GetVideoPlayer() { return s_VideoPlayer; }
 
-	static bool		IsSafeServerConnectEnabled()	{ return s_safeServerConnect; }
-	static void		SetSafeServerConnectEnabled(bool val) { s_safeServerConnect = val; }
+	// Runtime capability, learned from the daemon by amulegui and never persisted.
+	static bool IsWriteBufferLimitSupported() { return s_writeBufferLimitSupported; }
+	static void SetWriteBufferLimitSupported(bool val) { s_writeBufferLimitSupported = val; }
+	static uint32 GetWriteBufferLimitMiB() { return s_writeBufferLimitMiB; }
+	static uint64 GetWriteBufferLimitBytes()
+	{
+		return s_writeBufferLimitMiB * WriteBufferLimits::bytesPerMiB;
+	}
+	static void SetWriteBufferLimitMiB(uint64 val)
+	{
+		s_writeBufferLimitMiB = static_cast<uint32>(std::min<uint64>(
+			std::max<uint64>(val, WriteBufferLimits::minMiB), WriteBufferLimits::maxMiB));
+	}
+	static uint32 GetFileBufferSize() { return s_iFileBufferSize * 15000; }
+	static void SetFileBufferSize(uint32 val) { s_iFileBufferSize = val / 15000; }
+	static uint32 GetQueueSize() { return s_iQueueSize * 100; }
+	static void SetQueueSize(uint32 val) { s_iQueueSize = val / 100; }
 
-	static bool		IsCheckDiskspaceEnabled()			{ return s_checkDiskspace; }
-	static void		SetCheckDiskspaceEnabled(bool val)	{ s_checkDiskspace = val; }
-	static uint32	GetMinFreeDiskSpaceMB()				{ return s_uMinFreeDiskSpace; }
-	static uint64	GetMinFreeDiskSpace()				{ return s_uMinFreeDiskSpace * 1048576ull; }
-	static void		SetMinFreeDiskSpaceMB(uint32 val)	{ s_uMinFreeDiskSpace = val; }
+	static uint8 Get3DDepth() { return s_depth3D; }
+	static bool AddNewFilesPaused() { return s_addnewfilespaused; }
+	static void SetAddNewFilesPaused(bool val) { s_addnewfilespaused = val; }
 
-	static const wxString&	GetYourHostname()		{ return s_yourHostname; }
-	static void		SetYourHostname(const wxString& s)	{ s_yourHostname = s; }
+	static void SetMaxConsPerFive(int in) { s_MaxConperFive = in; }
 
-	static void		SetMaxUpload(uint32 in);
-	static void		SetMaxDownload(uint32 in);
-	static void		SetSlotAllocation(uint32 in)	{ s_slotallocation = (in >= 1) ? in : 1; };
+	static uint16 GetMaxConperFive() { return s_MaxConperFive; }
+	static uint16 GetDefaultMaxConperFive();
+
+	static bool IsSafeServerConnectEnabled() { return s_safeServerConnect; }
+	static void SetSafeServerConnectEnabled(bool val) { s_safeServerConnect = val; }
+
+	static bool GetEndgame() { return s_Endgame; }
+	static void SetEndgame(bool val) { s_Endgame = val; }
+
+	static bool IsCheckDiskspaceEnabled() { return s_checkDiskspace; }
+	static void SetCheckDiskspaceEnabled(bool val) { s_checkDiskspace = val; }
+	static uint32 GetMinFreeDiskSpaceMB() { return s_uMinFreeDiskSpace; }
+	static uint64 GetMinFreeDiskSpace() { return s_uMinFreeDiskSpace * 1048576ull; }
+	static void SetMinFreeDiskSpaceMB(uint32 val) { s_uMinFreeDiskSpace = val; }
+
+	static const wxString &GetYourHostname() { return s_yourHostname; }
+	static void SetYourHostname(const wxString &s) { s_yourHostname = s; }
+
+	static void SetMaxUpload(uint32 in);
+	static void SetMaxDownload(uint32 in);
+	static void SetSlotAllocation(uint32 in) { s_slotallocation = (in >= 1) ? in : 1; };
 
 	typedef std::vector<CPath> PathList;
-	// The effective set of shared directories at runtime, computed at
-	// load time as `shareddir_explicit_list ∪ expand(shareddir_recursive_list)`.
-	// Persisted as the union to shareddir.dat for backwards compatibility
-	// with older binaries and external scripts that read/write that file.
-	// Live consumers (share scan, watcher) treat this as authoritative.
+	// The effective set of shared directories at runtime, computed at load time as the explicit
+	// list plus the expansion of the recursive one. Not saved: live consumers treat it as
+	// authoritative, and the next load recomputes it.
 	PathList shareddir_list;
 
-	// User-explicit non-recursive share roots. Each entry shares only
-	// the files directly under it -- subdirectories are NOT followed.
-	// New subdirs created at runtime under an explicit-only root are
-	// NOT auto-shared (CSharedDirWatcher::RegisterNewSubdirectory
-	// gates on "ancestor is recursive"). Persisted to
-	// shareddir-explicit.dat. Migration: a pre-existing shareddir.dat
-	// with no shareddir-recursive.dat is loaded entirely into this
-	// list, which preserves the user's existing path set without
-	// silently upgrading anything to recursive (safer default).
+	// User-explicit non-recursive share roots (shareddir-explicit.dat): only the files directly
+	// under each entry are shared, and new subdirs created at runtime are NOT auto-shared
+	// (CSharedDirWatcher::RegisterNewSubdirectory gates on "ancestor is recursive"). A legacy
+	// shareddir.dat migrates entirely into this list, so nothing is silently made recursive.
 	PathList shareddir_explicit_list;
 
-	// User-explicit recursive share roots. Each entry contributes
-	// itself AND every descendant directory to shareddir_list at
-	// load time (cold expansion). New subdirs created at runtime
-	// under a recursive root are auto-added by the watcher's HOT
-	// path. Persisted to shareddir-recursive.dat -- a separate file
-	// so older binaries that read shareddir.dat see the already-
-	// expanded union and behave correctly, while round-tripping
-	// shareddir.dat through an older binary preserves the recursive
-	// intent in this file.
+	// User-explicit recursive share roots (shareddir-recursive.dat): each contributes itself and
+	// every descendant directory to shareddir_list at load time, and new subdirs are auto-added
+	// by the watcher.
 	PathList shareddir_recursive_list;
 
-	wxArrayString addresses_list;
+	// Local-only allow-list of roots that confine remote folder changes (see the accessors above).
+	// Empty by default. Loaded from allowed-remote-dirs.dat; never read from or written over EC.
+	PathList allowed_remote_dir_roots;
 
-	static bool		AutoConnectStaticOnly()		{ return s_autoconnectstaticonly; }
-	static void		SetAutoConnectStaticOnly(bool val) { s_autoconnectstaticonly = val; }
-	static bool		GetUPnPEnabled()		{ return s_UPnPEnabled; }
-	static void		SetUPnPEnabled(bool val)	{ s_UPnPEnabled = val; }
-	static bool		GetUPnPECEnabled()		{ return s_UPnPECEnabled; }
-	static void		SetUPnPECEnabled(bool val)	{ s_UPnPECEnabled = val; }
-	static bool		GetUPnPWebServerEnabled()	{ return s_UPnPWebServerEnabled; }
-	static void		SetUPnPWebServerEnabled(bool val){ s_UPnPWebServerEnabled = val; }
-	static uint16		GetUPnPTCPPort()		{ return s_UPnPTCPPort; }
-	static void		SetUPnPTCPPort(uint16 val)	{ s_UPnPTCPPort = val; }
-	static bool		IsManualHighPrio()		{ return s_bmanualhighprio; }
-	static void		SetManualHighPrio(bool val)	{ s_bmanualhighprio = val; }
-	void			LoadCats();
-	static const wxString&	GetDateTimeFormat()		{ return s_datetimeformat; }
+	// A user-configured remote->local path-prefix substitution, for amuleGUI against a daemon on
+	// another machine whose filesystem is otherwise reachable. remotePrefix is an opaque string
+	// in the daemon's own path syntax -- never a CPath, which has no notion of a second machine's
+	// separator convention. localPrefix is a real path here, so it is a CPath.
+	struct PathMapping
+	{
+		wxString remotePrefix;
+		CPath localPrefix;
+	};
+	typedef std::vector<PathMapping> PathMappingList;
+
+	const PathMappingList &GetPathMappings() const { return m_pathMappings; }
+	void SetPathMappings(const PathMappingList &mappings) { m_pathMappings = mappings; }
+
+	/**
+	 * Rewrites `remotePath` (as reported by the daemon, e.g. via EC_TAG_KNOWNFILE_PATH) through
+	 * the first configured mapping whose remotePrefix is a prefix of it -- list order decides,
+	 * not prefix length. Returns `remotePath` unchanged when no mapping matches (including when
+	 * the list is empty, the default), or on a non-CLIENT_GUI build (the monolithic app's own
+	 * paths never need remapping). Pure string substitution: the daemon-side comparison never
+	 * goes through CPath, which would silently apply this host's separator conventions to a path
+	 * that is not this host's.
+	 */
+	wxString ApplyPathMapping(const wxString &remotePath) const;
+
+	/**
+	 * Trims trailing separators from a daemon-supplied path prefix, in either OS convention.
+	 *
+	 * Not StripSeparators(), which uses *this* host's separator set: on a POSIX build that set
+	 * has no '\\', so a Windows daemon's "D:\\dl\\" would keep its trailing separator and
+	 * ApplyPathMapping() would run the two halves together with nothing between them -- the same
+	 * corruption the trailing-separator trim exists to prevent, surviving in the mirror
+	 * direction. The daemon's OS is not knowable here, which is also why the prefix boundary test
+	 * accepts either character.
+	 */
+	static wxString TrimRemotePrefix(const wxString &prefix);
+
+	static bool AutoConnectStaticOnly() { return s_autoconnectstaticonly; }
+	static void SetAutoConnectStaticOnly(bool val) { s_autoconnectstaticonly = val; }
+	static bool GetUPnPEnabled() { return s_UPnPEnabled; }
+	static void SetUPnPEnabled(bool val) { s_UPnPEnabled = val; }
+	static bool GetUPnPECEnabled() { return s_UPnPECEnabled; }
+	static void SetUPnPECEnabled(bool val) { s_UPnPECEnabled = val; }
+	static bool GetUPnPWebServerEnabled() { return s_UPnPWebServerEnabled; }
+	static void SetUPnPWebServerEnabled(bool val) { s_UPnPWebServerEnabled = val; }
+	static uint16 GetUPnPTCPPort() { return s_UPnPTCPPort; }
+	static void SetUPnPTCPPort(uint16 val) { s_UPnPTCPPort = val; }
+	// Runtime capability (not persisted): whether the connected daemon is built with UPnP,
+	// advertised over EC. False by default, so a pre-3.1 daemon (which never sends the tag) keeps
+	// the P2P-UPnP controls greyed rather than showing a dead toggle.
+	static bool GetUPnPAvailable() { return s_UPnPAvailable; }
+	static void SetUPnPAvailable(bool val) { s_UPnPAvailable = val; }
+	static bool IsManualHighPrio() { return s_bmanualhighprio; }
+	static void SetManualHighPrio(bool val) { s_bmanualhighprio = val; }
+	void LoadCats();
 	// Download Categories
-	uint32			AddCat(Category_Struct* cat);
-	void			RemoveCat(size_t index);
-	uint32			GetCatCount();
-	Category_Struct* GetCategory(size_t index);
-	const CPath&	GetCatPath(uint8 index);
-	uint32			GetCatColor(size_t index);
-	bool			CreateCategory(Category_Struct *& category, const wxString& name, const CPath& path,
-						const wxString& comment, uint32 color, uint8 prio);
-	bool			UpdateCategory(uint8 cat, const wxString& name, const CPath& path,
-						const wxString& comment, uint32 color, uint8 prio);
+	uint32 AddCat(Category_Struct *cat);
+	void RemoveCat(size_t index);
+	//! May the caller commit the removal now? Always yes here: this process owns the list.
+	//! amulegui hides this to defer until the daemon replies (amule-org/amule#1231); bound by
+	//! static type, like RemoveCat already is.
+	bool RequestRemoveCat(size_t) { return true; }
+	uint32 GetCatCount();
+	Category_Struct *GetCategory(size_t index);
+	const CPath &GetCatPath(uint8 index);
+	uint32 GetCatColor(size_t index);
+	bool CreateCategory(Category_Struct *&category,
+		const wxString &name,
+		const CPath &path,
+		const wxString &comment,
+		uint32 color,
+		uint8 prio);
+	bool UpdateCategory(uint8 cat,
+		const wxString &name,
+		const CPath &path,
+		const wxString &comment,
+		uint32 color,
+		uint8 prio);
 
-	static AllCategoryFilter	GetAllcatFilter()		{ return s_allcatFilter; }
-	static void		SetAllcatFilter(AllCategoryFilter in)	{ s_allcatFilter = in; }
-
-	static bool		ShowAllNotCats()		{ return s_showAllNotCats; }
+	static AllCategoryFilter GetAllcatFilter() { return s_allcatFilter; }
+	static void SetAllcatFilter(AllCategoryFilter in) { s_allcatFilter = in; }
 
 	// WebServer
-	static uint16		GetWSPort()			{ return s_nWebPort; }
-	static void		SetWSPort(uint16 uPort)		{ s_nWebPort=uPort; }
-	static uint16		GetWebUPnPTCPPort()		{ return s_nWebUPnPTCPPort; }
-	static void		SetWebUPnPTCPPort(uint16 val)	{ s_nWebUPnPTCPPort = val; }
-	static const wxString&	GetWSPass()			{ return s_sWebPassword; }
-	static void		SetWSPass(const wxString& pass)	{ s_sWebPassword = pass; }
-	static const wxString&	GetWSPath()			{ return s_sWebPath; }
-	static void		SetWSPath(const wxString& path)	{ s_sWebPath = path; }
-	static bool		GetWSIsEnabled()		{ return s_bWebEnabled; }
-	static void		SetWSIsEnabled(bool bEnable)	{ s_bWebEnabled=bEnable; }
-	static bool		GetWebUseGzip()			{ return s_bWebUseGzip; }
-	static void		SetWebUseGzip(bool bUse)	{ s_bWebUseGzip=bUse; }
-	static uint32		GetWebPageRefresh()		{ return s_nWebPageRefresh; }
-	static void		SetWebPageRefresh(uint32 nRefresh) { s_nWebPageRefresh=nRefresh; }
-	static bool		GetWSIsLowUserEnabled()		{ return s_bWebLowEnabled; }
-	static void		SetWSIsLowUserEnabled(bool in)	{ s_bWebLowEnabled=in; }
-	static const wxString&	GetWSLowPass()			{ return s_sWebLowPassword; }
-	static void		SetWSLowPass(const wxString& pass)	{ s_sWebLowPassword = pass; }
-	static const wxString&	GetWebTemplate()		{ return s_WebTemplate; }
-	static void		SetWebTemplate(const wxString& val) { s_WebTemplate = val; }
+	static uint16 GetWSPort() { return s_nWebPort; }
+	static void SetWSPort(uint16 uPort) { s_nWebPort = uPort; }
+	static const wxString &GetWSPass() { return s_sWebPassword; }
+	static void SetWSPass(const wxString &pass) { s_sWebPassword = pass; }
+	static const wxString &GetWSPath() { return s_sWebPath; }
+	static void SetWSPath(const wxString &path) { s_sWebPath = path; }
+	static bool GetWSIsEnabled() { return s_bWebEnabled; }
+	static void SetWSIsEnabled(bool bEnable) { s_bWebEnabled = bEnable; }
 
-	static void		SetMaxSourcesPerFile(uint16 in) { s_maxsourceperfile=in;}
-	static void		SetMaxConnections(uint16 in)	{ s_maxconnections =in;}
+	// amuleapi (REST/SSE API daemon). Auto-started by amule as a child
+	// process when enabled, mirroring the WebServer autorun above.
+	static bool GetAmuleApiIsEnabled() { return s_bAmuleApiEnabled; }
+	static void SetAmuleApiIsEnabled(bool bEnable) { s_bAmuleApiEnabled = bEnable; }
+	static uint16 GetAmuleApiPort() { return s_nAmuleApiPort; }
+	static void SetAmuleApiPort(uint16 uPort) { s_nAmuleApiPort = uPort; }
+	static const wxString &GetAmuleApiBindAddress() { return s_sAmuleApiBindAddress; }
+	static void SetAmuleApiBindAddress(const wxString &addr) { s_sAmuleApiBindAddress = addr; }
+	// amuleapi's credentials are NOT stored here. They live in amuleapi-passwords, salted and
+	// stretched, read and written through webcommon/Credentials.h; see AmuleApiCredentials.h.
+	//
+	// The two password fields below are pending *requests*: an MD5 hex digest the user just
+	// typed, waiting to be hashed into the credential file, and empty the rest of the time. Empty
+	// therefore means "leave the stored password alone", which is what lets an EC client change
+	// the port without resending a password it can never read back.
+	static const wxString &GetAmuleApiPass() { return s_sAmuleApiPassword; }
+	static void SetAmuleApiPass(const wxString &pass) { s_sAmuleApiPassword = pass; }
+	static const wxString &GetAmuleApiGuestPass() { return s_sAmuleApiGuestPassword; }
+	static void SetAmuleApiGuestPass(const wxString &pass) { s_sAmuleApiGuestPassword = pass; }
 
-	static bool		ShowCatTabInfos()		{ return s_showCatTabInfos; }
-	static void		ShowCatTabInfos(bool in)	{ s_showCatTabInfos=in; }
+	// Guest access is on exactly when a guest credential is stored, so this mirrors the credential
+	// file rather than being a preference of its own: turning it off is what clears the stored
+	// guest password.
+	static bool GetAmuleApiGuestIsEnabled() { return s_bAmuleApiGuestEnabled; }
+	static void SetAmuleApiGuestIsEnabled(bool enable) { s_bAmuleApiGuestEnabled = enable; }
+
+	// Whether an admin credential is stored. Display only -- there is no setter over EC, because
+	// the digest can never be read back out of the credential file. On amulegui this is whatever
+	// the daemon reported.
+	static bool GetAmuleApiAdminIsSet() { return s_bAmuleApiAdminIsSet; }
+	static void SetAmuleApiAdminIsSet(bool isSet) { s_bAmuleApiAdminIsSet = isSet; }
+	static const wxString &GetAmuleApiPath() { return s_sAmuleApiPath; }
+	static void SetAmuleApiPath(const wxString &path) { s_sAmuleApiPath = path; }
+	static bool GetWebUseGzip() { return s_bWebUseGzip; }
+	static void SetWebUseGzip(bool bUse) { s_bWebUseGzip = bUse; }
+	static uint32 GetWebPageRefresh() { return s_nWebPageRefresh; }
+	static void SetWebPageRefresh(uint32 nRefresh) { s_nWebPageRefresh = nRefresh; }
+	static bool GetWSIsLowUserEnabled() { return s_bWebLowEnabled; }
+	static void SetWSIsLowUserEnabled(bool in) { s_bWebLowEnabled = in; }
+	static const wxString &GetWSLowPass() { return s_sWebLowPassword; }
+	static void SetWSLowPass(const wxString &pass) { s_sWebLowPassword = pass; }
+	static const wxString &GetWebTemplate() { return s_WebTemplate; }
+	static void SetWebTemplate(const wxString &val) { s_WebTemplate = val; }
+
+	static void SetMaxSourcesPerFile(uint16 in) { s_maxsourceperfile = in; }
+	static void SetMaxConnections(uint16 in) { s_maxconnections = in; }
+
+	static bool ShowCatTabInfos() { return s_showCatTabInfos; }
+	static void ShowCatTabInfos(bool in) { s_showCatTabInfos = in; }
 
 	// External Connections
-	static bool		AcceptExternalConnections()	{ return s_AcceptExternalConnections; }
-	static void			EnableExternalConnections( bool val ) { s_AcceptExternalConnections = val; }
-	static const wxString&	GetECAddress()			{ return s_ECAddr; }
-	static uint32		ECPort()			{ return s_ECPort; }
-	static void			SetECPort(uint32 val) { s_ECPort = val; }
-	static const wxString&	ECPassword()			{ return s_ECPassword; }
-	static void		SetECPass(const wxString& pass)	{ s_ECPassword = pass; }
-	static bool		IsTransmitOnlyUploadingClients() { return s_TransmitOnlyUploadingClients; }
+	static bool AcceptExternalConnections() { return s_AcceptExternalConnections; }
+
+	static void EnableExternalConnections(bool val) { s_AcceptExternalConnections = val; }
+	static const wxString &GetECAddress() { return s_ECAddr; }
+	static const wxString &GetECNetworkInterface() { return s_ECNetworkInterface; }
+	static void SetECNetworkInterface(const wxString &val) { s_ECNetworkInterface = val; }
+	static uint32 ECPort() { return s_ECPort; }
+	// EC password-exchange throttle. Config-only (no dialog field); see the
+	// registration in Preferences.cpp for why.
+	static uint32 ECAuthFailureWindowSeconds() { return s_ECAuthFailureWindowSeconds; }
+	static uint32 ECAuthFailureThreshold() { return s_ECAuthFailureThreshold; }
+	static uint32 ECAuthLockoutSeconds() { return s_ECAuthLockoutSeconds; }
+	static void SetECPort(uint32 val) { s_ECPort = val; }
+	static const wxString &ECPasswordVerifier() { return s_ECPasswordVerifier; }
+#ifndef CLIENT_GUI
+	static bool SetECPass(const wxString &pass);
+	static bool SetECPasswordVerifier(const wxString &record);
+	static const wxString &ECPasswordLoadError() { return s_ECPasswordLoadError; }
+#endif
+	static const wxString &PendingECPass() { return s_ECPasswordInput; }
+	static void ClearPendingECPass()
+	{
+		s_ECPasswordInput = s_ECPasswordVerifier.IsEmpty() ? "" : "********";
+	}
+	static void SetECPasswordLoadError(const wxString &error) { s_ECPasswordLoadError = error; }
+	static void LoadECVerifier(const wxString &verifier)
+	{
+		const bool placeholder = s_ECPasswordInput.IsEmpty() || s_ECPasswordInput == "********";
+		s_ECPasswordVerifier = verifier;
+		if (placeholder)
+			ClearPendingECPass();
+	}
+	static bool IsTransmitOnlyUploadingClients() { return s_TransmitOnlyUploadingClients; }
 
 	// Fast ED2K Links Handler Toggling
-	static bool		GetFED2KLH()			{ return s_FastED2KLinksHandler; }
+	static bool GetFED2KLH() { return s_FastED2KLinksHandler; }
 
 	// Ip filter
-	static bool		IsFilteringClients()		{ return s_IPFilterClients; }
-	static void		SetFilteringClients(bool val);
-	static bool		IsFilteringServers()		{ return s_IPFilterServers; }
-	static void		SetFilteringServers(bool val);
-	static uint8		GetIPFilterLevel()		{ return s_filterlevel;}
-	static void		SetIPFilterLevel(uint8 level);
-	static bool		IPFilterAutoLoad()		{ return s_IPFilterAutoLoad; }
-	static void		SetIPFilterAutoLoad(bool val)	{ s_IPFilterAutoLoad = val; }
-	static const wxString&	IPFilterURL()			{ return s_IPFilterURL; }
-	static void		SetIPFilterURL(const wxString& url)	{ s_IPFilterURL = url; }
-	static bool		UseIPFilterSystem()		{ return s_IPFilterSys; }
-	static void		SetIPFilterSystem(bool val)	{ s_IPFilterSys = val; }
+	static bool IsFilteringClients() { return s_IPFilterClients; }
+	static void SetFilteringClients(bool val);
+	static bool IsFilteringServers() { return s_IPFilterServers; }
+	static void SetFilteringServers(bool val);
+	static uint8 GetIPFilterLevel() { return s_filterlevel; }
+	static void SetIPFilterLevel(uint8 level);
+	static bool IPFilterAutoLoad() { return s_IPFilterAutoLoad; }
+	static void SetIPFilterAutoLoad(bool val) { s_IPFilterAutoLoad = val; }
+	static const wxString &IPFilterURL() { return s_IPFilterURL; }
+	static void SetIPFilterURL(const wxString &url) { s_IPFilterURL = url; }
+	static bool UseIPFilterSystem() { return s_IPFilterSys; }
+	static void SetIPFilterSystem(bool val) { s_IPFilterSys = val; }
 
 	// Source seeds On/Off
-	static bool		GetSrcSeedsOn()			{ return s_UseSrcSeeds; }
-	static void		SetSrcSeedsOn(bool val)		{ s_UseSrcSeeds = val; }
+	static bool GetSrcSeedsOn() { return s_UseSrcSeeds; }
+	static void SetSrcSeedsOn(bool val) { s_UseSrcSeeds = val; }
 
-	static bool		IsSecureIdentEnabled()			{ return s_SecIdent; }
-	static void		SetSecureIdentEnabled(bool val)	{ s_SecIdent = val; }
+	static bool IsSecureIdentEnabled() { return s_SecIdent; }
+	static void SetSecureIdentEnabled(bool val) { s_SecIdent = val; }
 
-	static bool		GetExtractMetaData()			{ return s_ExtractMetaData; }
-	static void		SetExtractMetaData(bool val)	{ s_ExtractMetaData = val; }
+	static bool ShowProgBar() { return s_ProgBar; }
+	static bool ShowPercent() { return s_Percent; }
 
-	static bool		ShowProgBar()			{ return s_ProgBar; }
-	static bool		ShowPercent()			{ return s_Percent; }
+	static bool GetAllocFullFile() { return s_allocFullFile; };
+	static void SetAllocFullFile(bool val) { s_allocFullFile = val; }
 
-	static bool		GetAllocFullFile()		{ return s_allocFullFile; };
-	static void		SetAllocFullFile(bool val)	{ s_allocFullFile = val; }
+	// Memory-mapped file I/O for part files (see CFileArea). Runtime-toggleable; the value is
+	// pushed into CFileArea::SetMMapEnabled() when it is loaded or changed. Only meaningful on
+	// MMAP_SUPPORTED builds.
+	static bool GetMMapEnabled() { return s_mmapEnabled; }
+	static void SetMMapEnabled(bool val) { s_mmapEnabled = val; }
 
-	static bool		CreateFilesSparse()		{ return s_createFilesSparse; }
+	// Runtime capability: is mmap compiled into the core we drive? Mirrors the local
+	// MMAP_SUPPORTED on the monolithic/daemon; on the remote GUI it is what the daemon advertised
+	// over EC. The mmap checkbox and the EC value are both gated on it.
+	static bool GetMMapSupported() { return s_mmapSupported; }
+	static void SetMMapSupported(bool val) { s_mmapSupported = val; }
+
+	static bool CreateFilesSparse() { return s_createFilesSparse; }
 	// Beware! This function reverts the value it gets, that's why the name is also different!
 	// In EC we send/receive the reverted value, that's the reason for a reverse setter.
-	static void		CreateFilesNormal(bool val)	{ s_createFilesSparse = !val; }
+	static void CreateFilesNormal(bool val) { s_createFilesSparse = !val; }
 
-	static wxString		GetBrowser();
+	static wxString GetBrowser();
 
-	static const wxString&	GetSkin()			{ return s_Skin; }
+	static const wxString &GetSkin() { return s_Skin; }
 
-	static bool		VerticalToolbar()		{ return s_ToolbarOrientation; }
+	static bool VerticalToolbar() { return s_ToolbarOrientation; }
 
-	static const CPath&	GetOSDir()			{ return s_OSDirectory; }
-	static uint16		GetOSUpdate()			{ return s_OSUpdate; }
+	//! Live column sorting: auto-reorder the GUI lists as their values change
+	//! (gates the throttled auto-resort; manual header-click sort is unaffected).
+	static bool LiveListSort() { return s_liveListSort; }
 
-	static uint8		GetToolTipDelay()		{ return s_iToolDelayTime; }
+	static const CPath &GetOSDir() { return s_OSDirectory; }
+	static void SetOSDir(const CPath &val) { s_OSDirectory = val; }
+	static uint16 GetOSUpdate() { return s_OSUpdate; }
+	static void SetOSUpdate(uint16 val) { s_OSUpdate = val; }
 
-	static void		UnsetAutoServerStart();
-	static void		CheckUlDlRatio();
+	static uint8 GetToolTipDelay() { return s_iToolDelayTime; }
 
-	static void BuildItemList( const wxString& appdir );
+	static void UnsetAutoServerStart();
+	static void CheckUlDlRatio();
+
+	static void BuildItemList(const wxString &appdir);
 	static void EraseItemList();
 
-	static void LoadAllItems(wxConfigBase* cfg);
-	static void SaveAllItems(wxConfigBase* cfg);
+	static void LoadAllItems(wxConfigBase *cfg);
+	static void SaveAllItems(wxConfigBase *cfg);
 
 #ifndef __GIT__
-	static bool		ShowVersionOnTitle()		{ return s_showVersionOnTitle; }
+	static bool ShowVersionOnTitle() { return s_showVersionOnTitle; }
 #else
-	static bool		ShowVersionOnTitle()		{ return true; }
+	static bool ShowVersionOnTitle() { return true; }
 #endif
-	static uint8_t		GetShowRatesOnTitle()		{ return s_showRatesOnTitle; }
-	static void		SetShowRatesOnTitle(uint8_t val) { s_showRatesOnTitle = val; }
+	static uint8_t GetShowRatesOnTitle() { return s_showRatesOnTitle; }
+	static void SetShowRatesOnTitle(uint8_t val) { s_showRatesOnTitle = val; }
 
 	// Message Filters
 
-	static bool		MustFilterMessages()		{ return s_MustFilterMessages; }
-	static void		SetMustFilterMessages(bool val)	{ s_MustFilterMessages = val; }
-	static bool		IsFilterAllMessages()		{ return s_FilterAllMessages; }
-	static void		SetFilterAllMessages(bool val)	{ s_FilterAllMessages = val; }
-	static bool		MsgOnlyFriends()		{ return s_msgonlyfriends;}
-	static void		SetMsgOnlyFriends(bool val)	{ s_msgonlyfriends = val; }
-	static bool		MsgOnlySecure()			{ return s_msgsecure;}
-	static void		SetMsgOnlySecure(bool val)	{ s_msgsecure = val; }
-	static bool		IsFilterByKeywords()		{ return s_FilterSomeMessages; }
-	static void		SetFilterByKeywords(bool val)	{ s_FilterSomeMessages = val; }
-	static const wxString&	GetMessageFilterString()	{ return s_MessageFilterString; }
-	static void		SetMessageFilterString(const wxString& val) { s_MessageFilterString = val; }
-	static bool		IsMessageFiltered(const wxString& message);
-	static bool		ShowMessagesInLog()		{ return s_ShowMessagesInLog; }
-	static bool		IsAdvancedSpamfilterEnabled()	{ return s_IsAdvancedSpamfilterEnabled;}
-	static bool		IsChatCaptchaEnabled()	{ return IsAdvancedSpamfilterEnabled() && s_IsChatCaptchaEnabled; }
+	static bool MustFilterMessages() { return s_MustFilterMessages; }
+	static void SetMustFilterMessages(bool val) { s_MustFilterMessages = val; }
+	static bool IsFilterAllMessages() { return s_FilterAllMessages; }
+	static void SetFilterAllMessages(bool val) { s_FilterAllMessages = val; }
+	static bool MsgOnlyFriends() { return s_msgonlyfriends; }
+	static void SetMsgOnlyFriends(bool val) { s_msgonlyfriends = val; }
+	static bool MsgOnlySecure() { return s_msgsecure; }
+	static void SetMsgOnlySecure(bool val) { s_msgsecure = val; }
+	static bool IsFilterByKeywords() { return s_FilterSomeMessages; }
+	static void SetFilterByKeywords(bool val) { s_FilterSomeMessages = val; }
+	static const wxString &GetMessageFilterString() { return s_MessageFilterString; }
+	static void SetMessageFilterString(const wxString &val) { s_MessageFilterString = val; }
+	static bool IsMessageFiltered(const wxString &message);
+	static bool ShowMessagesInLog() { return s_ShowMessagesInLog; }
+	static void SetShowMessagesInLog(bool val) { s_ShowMessagesInLog = val; }
+	static bool IsAdvancedSpamfilterEnabled() { return s_IsAdvancedSpamfilterEnabled; }
+	static void SetAdvancedSpamfilterEnabled(bool val) { s_IsAdvancedSpamfilterEnabled = val; }
+	static bool IsChatCaptchaEnabled() { return s_IsChatCaptchaEnabled; }
+	static void SetChatCaptchaEnabled(bool val) { s_IsChatCaptchaEnabled = val; }
+#ifdef CLIENT_GUI
+	static bool GetChatSpamFilterSupported() { return s_chatSpamFilterSupported; }
+	static void SetChatSpamFilterSupported(bool val) { s_chatSpamFilterSupported = val; }
+#else
+	static bool GetChatSpamFilterSupported() { return true; }
+#endif
 
-	static bool		FilterComments()		{ return s_FilterComments; }
-	static void		SetFilterComments(bool val)	{ s_FilterComments = val; }
-	static const wxString&	GetCommentFilterString()	{ return s_CommentFilterString; }
-	static void		SetCommentFilterString(const wxString& val) { s_CommentFilterString = val; }
-	static bool		IsCommentFiltered(const wxString& comment);
+	static bool FilterComments() { return s_FilterComments; }
+	static void SetFilterComments(bool val) { s_FilterComments = val; }
+	static const wxString &GetCommentFilterString() { return s_CommentFilterString; }
+	static void SetCommentFilterString(const wxString &val) { s_CommentFilterString = val; }
+	static bool IsCommentFiltered(const wxString &comment);
 
 	// Can't have it return a reference, will need a pointer later.
-	static const CProxyData *GetProxyData()			{ return &s_ProxyData; }
+	static const CProxyData *GetProxyData() { return &s_ProxyData; }
+	static void SetProxyData(const CProxyData &val) { s_ProxyData = val; }
 
 	// Hidden files
 
 	static bool ShareHiddenFiles() { return s_ShareHiddenFiles; }
 	static void SetShareHiddenFiles(bool val) { s_ShareHiddenFiles = val; }
 
-	// Automatic rescan of shared directories via wxFileSystemWatcher.
-	// On by default; when disabled, the user must hit "Reload shared
-	// files" manually after adding files to a share.
+	// Automatic rescan of shared directories via wxFileSystemWatcher. When
+	// disabled, the user must hit "Reload shared files" manually.
 	static bool AutoRescanSharedDirs() { return s_AutoRescanSharedDirs; }
 	static void SetAutoRescanSharedDirs(bool val) { s_AutoRescanSharedDirs = val; }
 
-	// Whether shared-folder walks should descend into symbolic links.
-	// Default true to preserve historical behaviour; turning it off
-	// passes wxDIR_NO_FOLLOW to the iterator so symlinked files and
-	// directories are skipped entirely.
+	// Whether shared-folder walks descend into symbolic links. Default true for historical
+	// behaviour; off passes wxDIR_NO_FOLLOW to the iterator, skipping symlinked files and
+	// directories entirely.
 	static bool FollowSymlinksInShares() { return s_FollowSymlinksInShares; }
 	static void SetFollowSymlinksInShares(bool val) { s_FollowSymlinksInShares = val; }
 
-	static bool AutoSortDownload()		{ return s_AutoSortDownload; }
-	static bool AutoSortDownload(bool val)	{ bool tmp = s_AutoSortDownload; s_AutoSortDownload = val; return tmp; }
+	// Shared-file exclusion by name. Patterns are a '|'-separated list of
+	// wildcards, or a single regex when ExcludeSharePatternsUseRegex().
+	static const wxString &GetExcludeSharePatterns() { return s_ExcludeSharePatterns; }
+	static void SetExcludeSharePatterns(const wxString &val) { s_ExcludeSharePatterns = val; }
+	static bool ExcludeSharePatternsUseRegex() { return s_ExcludeSharePatternsUseRegex; }
+	static void SetExcludeSharePatternsUseRegex(bool val) { s_ExcludeSharePatternsUseRegex = val; }
+
+	// (Re)compile the live filter from the current pattern string + mode.
+	// Call after loading prefs or after the Directories panel changes them.
+	static void RecompileShareExcludeFilter()
+	{
+		s_ShareExcludeFilter.Compile(s_ExcludeSharePatterns, s_ExcludeSharePatternsUseRegex);
+	}
+	// True if the shared-file or folder basename matches the live exclusion filter.
+	static bool IsShareExcluded(const wxString &fileName)
+	{
+		return s_ShareExcludeFilter.Matches(fileName);
+	}
+	// True if a folder below `root`, up to and including `path`, matches the live exclusion
+	// filter. `root` itself is never tested: the user picked it.
+	static bool HasExcludedFolderBelow(const CPath &root, const CPath &path);
+	// How many names in the list a candidate (pattern, useRegex) would exclude -- for the
+	// Directories panel's live preview, which tests a typed-but-unsaved pattern without touching
+	// the live filter. wxNOT_FOUND if the regex does not compile.
+	static int PreviewExcludeCount(
+		const wxString &patterns, bool useRegex, const wxArrayString &fileNames);
 
 	// Version check
 
 	static bool GetCheckNewVersion() { return s_NewVersionCheck; }
 	static void SetCheckNewVersion(bool val) { s_NewVersionCheck = val; }
+	// Runtime-only (not persisted): whether the connected daemon can perform version checks. The
+	// remote GUI reads it to hide the "check for new version" checkbox against a daemon that
+	// cannot.
+	static bool GetVersionCheckAvailable() { return s_versionCheckAvailable; }
+	static void SetVersionCheckAvailable(bool val) { s_versionCheckAvailable = val; }
+
+	// Media metadata: the bundled helper probes local files for Length / Bitrate / Codec.
+	// The legacy ffprobe path accessors remain for EC/API compatibility.
+	static bool GetMediaMetadataEnabled() { return s_MediaMetadataEnabled; }
+	static void SetMediaMetadataEnabled(bool val) { s_MediaMetadataEnabled = val; }
+	// The core found its helper. A remote GUI keeps what the core reported.
+	static bool IsMediaMetadataAvailable();
+	static void SetMediaMetadataAvailable(bool val) { s_MediaMetadataAvailable = val; }
+	static const wxString &GetMediaMetadataFFProbePath()
+	{
+		static const wxString empty;
+		return empty;
+	}
+	static void SetMediaMetadataFFProbePath(const wxString &) {} // Reserved compatibility field; ignored.
 
 	// Networks
-	static bool GetNetworkKademlia()		{ return s_ConnectToKad; }
-	static void SetNetworkKademlia(bool val)	{ s_ConnectToKad = val; }
-	static bool GetNetworkED2K()			{ return s_ConnectToED2K; }
-	static void SetNetworkED2K(bool val)		{ s_ConnectToED2K = val; }
+	static bool GetNetworkKademlia() { return s_ConnectToKad; }
+	static void SetNetworkKademlia(bool val) { s_ConnectToKad = val; }
+	static bool GetNetworkED2K() { return s_ConnectToED2K; }
+	static void SetNetworkED2K(bool val) { s_ConnectToED2K = val; }
+
+	// Request OFFERFILES v1 at login and follow the pacing a server advertises.
+	static bool GetED2KAcceleratedPublication() { return s_ED2KAcceleratedPublication; }
+	static void SetED2KAcceleratedPublication(bool val) { s_ED2KAcceleratedPublication = val; }
+
+	// Kad protocol version 0x0a (AICH keyword storage). When enabled, aMule advertises
+	// Kad version 0x0a and processes AICH hashes in keyword publish/search. When disabled,
+	// aMule stays at 0x08 for maximum backward compatibility with older Kad peers.
+	static bool GetKadProtocol10() { return s_KadProtocol10; }
+	static void SetKadProtocol10(bool val) { s_KadProtocol10 = val; }
+
+	// When enabled, reject AICH publish tags from nodes advertising Kad version < 0x09.
+	// Default off: this can reject legitimate publishers whose routing-table version is
+	// stale. SelectCandidate() requires >= 2 reported publishers of the hash when KadProtocol10 is on;
+	// this applies regardless of this setting.
+	static bool GetKadStrictAichPublishers() { return s_KadStrictAichPublishers; }
+	static void SetKadStrictAichPublishers(bool val) { s_KadStrictAichPublishers = val; }
+	// Runtime capability (not persisted): does the core know the two options above? Always true
+	// for monolithic amule. amulegui learns it from the core, which before 3.2 neither sends
+	// nor applies them.
+	static bool IsKadProtocol10Supported() { return s_KadProtocol10Supported; }
+	static void SetKadProtocol10Supported(bool val) { s_KadProtocol10Supported = val; }
 
 	// Statistics
-	static unsigned		GetMaxClientVersions()		{ return s_maxClientVersions; }
+	static unsigned GetMaxClientVersions() { return s_maxClientVersions; }
 
 	// Dropping slow sources
-	static bool GetDropSlowSources()					{ return s_DropSlowSources; }
+	static bool GetDropSlowSources() { return s_DropSlowSources; }
 
 	// server.met and nodes.dat urls
-	static const wxString& GetKadNodesUrl() { return s_KadURL; }
-	static void SetKadNodesUrl(const wxString& url) { s_KadURL = url; }
+	static const wxString &GetKadNodesUrl() { return s_KadURL; }
+	static void SetKadNodesUrl(const wxString &url) { s_KadURL = url; }
 
-	static const wxString& GetEd2kServersUrl() { return s_Ed2kURL; }
-	static void SetEd2kServersUrl(const wxString& url) { s_Ed2kURL = url; }
+	static wxArrayString GetServerListURLs();
+	static bool SetServerListURLs(const wxArrayString &urls);
+	static wxString GetEd2kServersUrl();
+	static bool SetEd2kServersUrl(const wxString &url);
 
 	// Crypt
-	static bool		IsClientCryptLayerSupported()		{return s_IsClientCryptLayerSupported;}
-	static bool		IsClientCryptLayerRequested()		{return IsClientCryptLayerSupported() && s_bCryptLayerRequested;}
-	static bool		IsClientCryptLayerRequired()		{return IsClientCryptLayerRequested() && s_IsClientCryptLayerRequired;}
-	static bool		IsClientCryptLayerRequiredStrict()	{return false;} // not even incoming test connections will be answered
-	static bool		IsServerCryptLayerUDPEnabled()		{return IsClientCryptLayerSupported();}
-	static bool		IsServerCryptLayerTCPRequested()	{return IsClientCryptLayerRequested();}
-	static bool		IsServerCryptLayerTCPRequired()		{return IsClientCryptLayerRequired();}
-	static uint32	GetKadUDPKey()						{return s_dwKadUDPKey;}
-	static uint8	GetCryptTCPPaddingLength()			{return s_byCryptTCPPaddingLength;}
+	static bool IsClientCryptLayerSupported() { return s_IsClientCryptLayerSupported; }
+	static bool IsClientCryptLayerRequested()
+	{
+		return IsClientCryptLayerSupported() && s_bCryptLayerRequested;
+	}
+	static bool IsClientCryptLayerRequired()
+	{
+		return IsClientCryptLayerRequested() && s_IsClientCryptLayerRequired;
+	}
+	static bool IsClientCryptLayerRequiredStrict()
+	{
+		return false;
+	} // not even incoming test connections will be answered
+	static bool IsServerCryptLayerUDPEnabled() { return IsClientCryptLayerSupported(); }
+	static bool IsServerCryptLayerTCPRequested() { return IsClientCryptLayerRequested(); }
+	static bool IsServerCryptLayerTCPRequired() { return IsClientCryptLayerRequired(); }
+	static uint32 GetKadUDPKey() { return s_dwKadUDPKey; }
+	static uint8 GetCryptTCPPaddingLength() { return s_byCryptTCPPaddingLength; }
 
-	static void		SetClientCryptLayerSupported(bool v)	{s_IsClientCryptLayerSupported = v;}
-	static void		SetClientCryptLayerRequested(bool v)	{s_bCryptLayerRequested = v; }
-	static void		SetClientCryptLayerRequired(bool v)		{s_IsClientCryptLayerRequired = v;}
+#ifdef AMULE_QUIC_TRANSPORT
+	// Runtime opt-in for QUIC NAT traversal: gates QUIC NAT-T probes, dials,
+	// capability advertisements and answers. amule.conf-only, off by default --
+	// no widget, no EC tag. Independent from the legacy server-coordinated NAT settings.
+	static bool IsQuicNatTEnabled() { return s_QuicNatTEnabled; }
+#endif
 
-	// GeoIP
-	static bool				IsGeoIPEnabled()		{return s_GeoIPEnabled;}
-	static void				SetGeoIPEnabled(bool v)	{s_GeoIPEnabled = v;}
-	static const wxString&	GetGeoIPUpdateUrl()		{return s_GeoIPUpdateUrl;}
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+	// Runtime opt-in for Lugdunum's NAT callback: gates the login opt-in, the
+	// OP_NAT_CALLBACKREQUEST send and keeping LowID server sources. amule.conf-only, off by
+	// default -- no widget, no EC tag.
+	static bool IsLugdunumNatCallbackEnabled() { return s_LugdunumNatCallbackEnabled; }
+	// Runtime opt-in for ed2k-server's LowID hole punch: gates the CT_EMULE_UDPPORTS login tag,
+	// the OP_SERVER_NATT_KEEPALIVE send, the OP_LOWID_HOLEPUNCH_REQUEST send and keeping LowID
+	// server sources from such a server. amule.conf-only, off by default -- no widget, no EC tag.
+	static bool IsLowIdHolePunchEnabled() { return s_LowIdHolePunchEnabled; }
+#endif
+
+	static void SetClientCryptLayerSupported(bool v) { s_IsClientCryptLayerSupported = v; }
+	static void SetClientCryptLayerRequested(bool v) { s_bCryptLayerRequested = v; }
+	static void SetClientCryptLayerRequired(bool v) { s_IsClientCryptLayerRequired = v; }
+
+	// GeoIP / IP2Country. Which provider supplies the .mmdb, persisted as strings ("dbip",
+	// "maxmind", "custom") so the config file stays readable across releases; see Preferences.cpp
+	// for the legacy GeoLiteCountryUpdateUrl -> custom migration.
+	enum GeoIPSource
+	{
+		GeoIPSourceDBIP = 0,
+		GeoIPSourceMaxMind = 1,
+		GeoIPSourceCustom = 2
+	};
+
+	static bool IsGeoIPEnabled() { return s_GeoIPEnabled; }
+	static void SetGeoIPEnabled(bool v) { s_GeoIPEnabled = v; }
+	static GeoIPSource GetGeoIPSource();
+	static void SetGeoIPSource(GeoIPSource v);
+	// Source of the currently-loaded geoip.mmdb, as distinct from GetGeoIPSource(), which selects
+	// the NEXT download. Updated by CIP2Country::DownloadFinished so the status line still
+	// attributes a loaded DB after the user flips the dropdown to a source they have not
+	// downloaded from. Empty means hand-installed (or migrated from the legacy path), and the
+	// status line then shows "Loaded" with no attribution.
+	static const wxString &GetGeoIPLoadedSource() { return s_GeoIPLoadedSource; }
+	static void SetGeoIPLoadedSource(GeoIPSource v);
+	static const wxString &GetGeoIPMaxMindLicense() { return s_GeoIPMaxMindLicense; }
+	static void SetGeoIPMaxMindLicense(const wxString &v) { s_GeoIPMaxMindLicense = v; }
+	static const wxString &GetGeoIPCustomUrl() { return s_GeoIPCustomUrl; }
+	static void SetGeoIPCustomUrl(const wxString &v) { s_GeoIPCustomUrl = v; }
+	static bool IsGeoIPAutoUpdate() { return s_GeoIPAutoUpdate; }
+	static void SetGeoIPAutoUpdate(bool v) { s_GeoIPAutoUpdate = v; }
+	// Runtime capability (not persisted): does the *core* have GeoIP compiled in? Always true for
+	// monolithic amule; on amulegui it comes from EC_TAG_IP2COUNTRY_SUPPORTED, so the GeoIP panel
+	// can disable itself.
+	static bool IsGeoIPSupported() { return s_GeoIPSupported; }
+	static void SetGeoIPSupported(bool v) { s_GeoIPSupported = v; }
+	// Live GeoIP status mirrored from the daemon over EC, for amulegui's prefs
+	// panel. Monolithic amule reads the live resolver and ignores these.
+	static bool IsGeoIPStatusLoaded() { return s_GeoIPStatusLoaded; }
+	static void SetGeoIPStatusLoaded(bool v) { s_GeoIPStatusLoaded = v; }
+	static bool IsGeoIPStatusDownloading() { return s_GeoIPStatusDownloading; }
+	static void SetGeoIPStatusDownloading(bool v) { s_GeoIPStatusDownloading = v; }
+	static const wxString &GetGeoIPStatusLastResult() { return s_GeoIPStatusLastResult; }
+	static void SetGeoIPStatusLastResult(const wxString &v) { s_GeoIPStatusLastResult = v; }
+	static const wxString &GetGeoIPStatusLoadedSource() { return s_GeoIPStatusLoadedSource; }
+	static void SetGeoIPStatusLoadedSource(const wxString &v) { s_GeoIPStatusLoadedSource = v; }
+
+	// Transient "Update now" trigger: amulegui's prefs panel sets it before SendChangesToRemote()
+	// so the outgoing packet carries an UPDATE_NOW tag, asking the daemon to refresh its GeoIP DB.
+	// Cleared after the send, and never set by the daemon, whose own outbound serialization
+	// therefore never emits the tag.
+	static bool IsGeoIPUpdateRequested() { return s_GeoIPUpdateRequested; }
+	static void SetGeoIPUpdateRequested(bool v) { s_GeoIPUpdateRequested = v; }
+
+	// Resolved download URL for the selected source: DB-IP gets a month substituted into the
+	// template, MaxMind has credentials inserted at the URL-userinfo position, Custom is the
+	// stored URL verbatim. Empty if the source is not configured.
+	//
+	// monthOffset (DB-IP only) shifts the templated month. DB-IP often publishes the new month's
+	// file a few days late, so the update path retries with -1 to ride out the early-of-month
+	// gap.
+	static wxString GetGeoIPResolvedDownloadUrl(int monthOffset = 0);
+
+	// Legacy v2.x single-URL setting, kept only for the one-shot migration in
+	// LoadPreferences(). Query GetGeoIPResolvedDownloadUrl() instead.
+	static const wxString &GetGeoIPUpdateUrl() { return s_GeoIPUpdateUrl; }
 
 	// Stats server
-	static const wxString&	GetStatsServerName()		{return s_StatsServerName;}
-	static const wxString&	GetStatsServerURL()		{return s_StatsServerURL;}
+	static const wxString &GetStatsServerName() { return s_StatsServerName; }
+	static const wxString &GetStatsServerURL() { return s_StatsServerURL; }
 
 	// HTTP download
-	static wxString	GetLastHTTPDownloadURL(uint8 t);
-	static void		SetLastHTTPDownloadURL(uint8 t, const wxString& val);
+	static wxString GetLastHTTPDownloadURL(uint8 t);
+	static void SetLastHTTPDownloadURL(uint8 t, const wxString &val);
 
 	// Sleep
-	static bool		GetPreventSleepWhileDownloading() { return s_preventSleepWhileDownloading; }
-	static void		SetPreventSleepWhileDownloading(bool status) { s_preventSleepWhileDownloading = status; }
+	static PowerManagement::SleepMode GetSleepMode()
+	{
+		return PowerManagement::NormalizeMode(s_sleepMode);
+	}
+
 protected:
-	static	int32 GetRecommendedMaxConnections();
-
 	//! Temporary storage for statistic-colors.
-	static unsigned long	s_colors[cntStatColors];
+	static unsigned long s_colors[cntStatColors];
 	//! Reference for checking if the colors has changed.
-	static unsigned long	s_colors_ref[cntStatColors];
+	static unsigned long s_colors_ref[cntStatColors];
 
-	typedef std::vector<Cfg_Base*>			CFGList;
-	typedef std::map<int, Cfg_Base*>		CFGMap;
-	typedef std::vector<Category_Struct*>	CatList;
+	typedef std::vector<Cfg_Base *> CFGList;
+	typedef std::map<int, Cfg_Base *> CFGMap;
+	typedef std::vector<Category_Struct *> CatList;
 
-
-	static CFGMap	s_CfgList;
-	static CFGList	s_MiscList;
-	CatList			m_CatList;
+	static CFGMap s_CfgList;
+	static CFGList s_MiscList;
+	CatList m_CatList;
 
 private:
 	void LoadPreferences();
 	void SavePreferences();
 
-protected:
-	static wxString	s_configDir;
+	// GUI-local only: never read from or written to over EC, unlike LoadCats()/SaveCats() or
+	// LoadSharedDirsRemote()/SendSharedDirsToRemote(). These go straight to wxConfigBase::Get()
+	// rather than through the Cfg_Base walk that CEC_Prefs_Packet draws from, which is what keeps
+	// path mappings off EC.
+	void LoadPathMappings();
+	void SavePathMappings();
 
-////////////// USER
-	static wxString	s_nick;
+	PathMappingList m_pathMappings;
+
+	// See GetExpandedFolderNames(). Capped like CSharedFileList's excluded file names: nothing
+	// bounds how many folders a tree holds.
+	wxArrayString m_expandedFolderNames;
+	bool m_expandedFolderNamesTruncated = false;
+	static const size_t kMaxExpandedFolderNamesTracked = 100000;
+
+protected:
+	static wxString s_configDir;
+	static bool s_firstRun;
+	static bool s_firstRunWizardDone;
+
+	////////////// USER
+	static wxString s_nick;
 
 	static CMD4Hash s_userhash;
 
-	static Cfg_Lang_Base * s_cfgLang;
-
-////////////// CONNECTION
-	static uint32	s_maxupload;
-	static uint32	s_maxdownload;
-	static uint32	s_slotallocation;
+	////////////// CONNECTION
+	static uint32 s_maxupload;
+	static uint32 s_maxdownload;
+	static uint32 s_slotallocation;
 	static wxString s_Addr;
-	static uint16	s_port;
-	static uint16	s_udpport;
-	static bool	s_UDPEnable;
-	static uint16	s_maxconnections;
-	static bool	s_reconnect;
-	static bool	s_autoconnect;
-	static bool	s_autoconnectstaticonly;
-	static bool	s_UPnPEnabled;
-	static bool	s_UPnPECEnabled;
-	static bool	s_UPnPWebServerEnabled;
-	static uint16	s_UPnPTCPPort;
+	static wxString s_NetworkInterface;
+#ifdef ENABLE_IPV6
+	static long s_addressFamiliesSetting;
+	// Stored as an int because Cfg_Int stages integers; the accessors above are the typed view.
+	static int s_advertiseIPv6Mode;
+#ifdef CLIENT_GUI
+	static bool s_addressFamiliesTagSupported;
+#endif
+#endif
+	static uint16 s_port;
+	static uint16 s_udpport;
+	static bool s_UDPEnable;
+	static uint16 s_maxconnections;
+	static bool s_reconnect;
+	static bool s_autoconnect;
+	static bool s_autoconnectstaticonly;
+	static bool s_UPnPEnabled;
+	static bool s_UPnPECEnabled;
+	static bool s_UPnPWebServerEnabled;
+	static uint16 s_UPnPTCPPort;
+	static bool s_UPnPAvailable;
 
-////////////// PROXY
+	////////////// PROXY
 	static CProxyData s_ProxyData;
 
-////////////// SERVERS
-	static bool	s_autoserverlist;
-	static bool	s_deadserver;
+	////////////// SERVERS
+	static bool s_autoserverlist;
+	static bool s_deadserver;
 
-////////////// FILES
-	static CPath	s_incomingdir;
-	static CPath	s_tempdir;
-	static bool	s_ICH;
-	static bool	s_AICHTrustEveryHash;
+	////////////// FILES
+	static CPath s_incomingdir;
+	static CPath s_tempdir;
+	static bool s_ICH;
+	static uint32 s_sharedFileReverifyDays;
+	static bool s_AICHTrustEveryHash;
 
-////////////// GUI
-	static uint8	s_depth3D;
+	////////////// GUI
+	static uint8 s_depth3D;
 
-	static bool	s_scorsystem;
-	static bool	s_hideonclose;
-	static bool	s_appimageIntegrationDeclined;
-	static bool	s_mintotray;
-	static bool	s_notify;
-	static bool	s_trayiconenabled;
-	static bool	s_addnewfilespaused;
-	static bool	s_addserversfromserver;
-	static bool	s_addserversfromclient;
-	static uint16	s_maxsourceperfile;
-	static uint16	s_trafficOMeterInterval;
-	static uint16	s_statsInterval;
-	static uint32	s_maxGraphDownloadRate;
-	static uint32	s_maxGraphUploadRate;
-	static bool	s_confirmExit;
+	static bool s_scorsystem;
+	static bool s_hideonclose;
+	static bool s_appimageIntegrationDeclined;
+	static bool s_mintotray;
+	static bool s_notify;
+	static bool s_rememberSearchHistory;
+	static bool s_trayiconenabled;
+	static bool s_addnewfilespaused;
+	static bool s_addserversfromserver;
+	static bool s_addserversfromclient;
+	static uint16 s_maxsourceperfile;
+	static uint16 s_trafficOMeterInterval;
+	static uint16 s_statsInterval;
+	static uint32 s_maxGraphDownloadRate;
+	static uint32 s_maxGraphUploadRate;
+	static bool s_confirmExit;
 
+	static bool s_filterLanIP;
+	static bool s_paranoidfilter;
+	static bool s_onlineSig;
 
-	static bool	s_filterLanIP;
-	static bool	s_paranoidfilter;
-	static bool	s_onlineSig;
+	static wxString s_languageID;
+	static uint8 s_iSeeShares;     // 0=everybody 1=friends only 2=noone
+	static uint8 s_iToolDelayTime; // tooltip delay time in seconds
+	static uint16 s_deadserverretries;
+	static uint64 s_dwServerKeepAliveTimeoutMins;
 
-	static wxString	s_languageID;
-	static uint8	s_iSeeShares;		// 0=everybody 1=friends only 2=noone
-	static uint8	s_iToolDelayTime;	// tooltip delay time in seconds
-	static uint8	s_splitterbarPosition;
-	static uint16	s_deadserverretries;
-	static uint64	s_dwServerKeepAliveTimeoutMins;
+	static uint8 s_statsMax;
+	static uint8 s_statsAverageMinutes;
 
-	static uint8	s_statsMax;
-	static uint8	s_statsAverageMinutes;
-
-	static bool	s_bpreviewprio;
-	static bool	s_smartidcheck;
-	static uint8	s_smartidstate;
-	static bool	s_safeServerConnect;
-	static bool	s_startMinimized;
-	static uint16	s_MaxConperFive;
-	static bool	s_checkDiskspace;
-	static uint32	s_uMinFreeDiskSpace;
-	static wxString	s_yourHostname;
-	static bool	s_bVerbose;
+	static bool s_bpreviewprio;
+	static bool s_smartidcheck;
+	static uint8 s_smartidstate;
+	static bool s_safeServerConnect;
+	static bool s_Endgame;
+	static bool s_startMinimized;
+	static uint16 s_MaxConperFive;
+	// Source-search tuning (see the matching accessors). Reask intervals are stored in minutes so
+	// the getters can widen to milliseconds without narrowing.
+	static uint16 s_kadMaxSourceSearches;
+	static uint64 s_kadSourceReaskMins;
+	static uint64 s_sourceReaskMins;
+	static bool s_checkDiskspace;
+	static uint32 s_uMinFreeDiskSpace;
+	static wxString s_yourHostname;
+	static bool s_bVerbose;
 	static bool s_bVerboseLogfile;
-	static bool	s_bmanualhighprio;
-	static bool	s_bstartnextfile;
-	static bool	s_bstartnextfilesame;
-	static bool	s_bstartnextfilealpha;
-	static bool	s_bshowoverhead;
-	static bool	s_bDAP;
-	static bool	s_bUAP;
+	static bool s_bmanualhighprio;
+	static bool s_bstartnextfile;
+	static bool s_bstartnextfilesame;
+	static bool s_bstartnextfilealpha;
+	static bool s_bshowoverhead;
+	static bool s_bDAP;
+	static bool s_bUAP;
 
 #ifndef __GIT__
-	static bool	s_showVersionOnTitle;
+	static bool s_showVersionOnTitle;
 #endif
-	static uint8_t	s_showRatesOnTitle;	// 0=no, 1=after app name, 2=before app name
+	static uint8_t s_showRatesOnTitle; // 0=no, 1=after app name, 2=before app name
 
-	static wxString	s_VideoPlayer;
-	static bool	s_showAllNotCats;
+	static wxString s_VideoPlayer;
 
-	static bool	s_msgonlyfriends;
-	static bool	s_msgsecure;
+	static bool s_msgonlyfriends;
+	static bool s_msgsecure;
 
-	static uint8	s_iFileBufferSize;
-	static uint8	s_iQueueSize;
+	static uint8 s_iFileBufferSize;
+	static uint32 s_writeBufferLimitMiB;
+	static bool s_writeBufferLimitSupported;
+	static uint8 s_iQueueSize;
 
-	static wxString	s_datetimeformat;
-
-	static bool	s_ToolbarOrientation;
+	static bool s_ToolbarOrientation;
+	static bool s_liveListSort;
 
 	// Web Server [kuchin]
-	static wxString	s_sWebPassword;
-	static wxString	s_sWebPath;
-	static wxString	s_sWebLowPassword;
-	static uint16	s_nWebPort;
-	static uint16	s_nWebUPnPTCPPort;
-	static bool	s_bWebEnabled;
-	static bool	s_bWebUseGzip;
-	static uint32	s_nWebPageRefresh;
-	static bool	s_bWebLowEnabled;
+	static wxString s_sWebPassword;
+	static wxString s_sWebPath;
+	static wxString s_sWebLowPassword;
+	static uint16 s_nWebPort;
+	static uint16 s_nWebUPnPTCPPort;
+	static bool s_bWebEnabled;
+	static bool s_bWebUseGzip;
+
+	// amuleapi (REST/SSE API daemon) autorun.
+	static bool s_bAmuleApiEnabled;
+	static uint16 s_nAmuleApiPort;
+	static wxString s_sAmuleApiBindAddress;
+	static wxString s_sAmuleApiPassword;
+	static wxString s_sAmuleApiGuestPassword;
+	static bool s_bAmuleApiGuestEnabled;
+	static bool s_bAmuleApiAdminIsSet;
+	static wxString s_sAmuleApiPath;
+	static uint32 s_nWebPageRefresh;
+	static bool s_bWebLowEnabled;
 	static wxString s_WebTemplate;
 
-	static bool	s_showCatTabInfos;
+	static bool s_showCatTabInfos;
 	static AllCategoryFilter s_allcatFilter;
 
 	// Kry - external connections
-	static bool	s_AcceptExternalConnections;
+	static bool s_AcceptExternalConnections;
 	static wxString s_ECAddr;
-	static uint32	s_ECPort;
-	static wxString	s_ECPassword;
-	static bool		s_TransmitOnlyUploadingClients;
+	static wxString s_ECNetworkInterface;
+	static uint32 s_ECPort;
+	static uint32 s_ECAuthFailureWindowSeconds;
+	static uint32 s_ECAuthFailureThreshold;
+	static uint32 s_ECAuthLockoutSeconds;
+	static wxString s_ECPasswordVerifier;
+	static wxString s_ECPasswordLoadError;
+	static wxString s_ECPasswordInput;
+	static bool s_TransmitOnlyUploadingClients;
 
 	// Kry - IPFilter
-	static bool	s_IPFilterClients;
-	static bool	s_IPFilterServers;
-	static uint8	s_filterlevel;
-	static bool	s_IPFilterAutoLoad;
+	static bool s_IPFilterClients;
+	static bool s_IPFilterServers;
+	static uint8 s_filterlevel;
+	static bool s_IPFilterAutoLoad;
 	static wxString s_IPFilterURL;
-	static bool	s_IPFilterSys;
+	static bool s_IPFilterSys;
 
 	// Kry - Source seeds on/off
-	static bool	s_UseSrcSeeds;
+	static bool s_UseSrcSeeds;
 
-	static bool	s_ProgBar;
-	static bool	s_Percent;
+	static bool s_ProgBar;
+	static bool s_Percent;
 
 	static bool s_SecIdent;
 
-	static bool	s_ExtractMetaData;
+	static bool s_allocFullFile;
+	static bool s_mmapEnabled;
+	static bool s_mmapSupported;
+	static bool s_createFilesSparse;
 
-	static bool	s_allocFullFile;
-	static bool	s_createFilesSparse;
+	static wxString s_CustomBrowser;
+	static bool s_BrowserTab; // Jacobo221 - Open in tabs if possible
 
-	static wxString	s_CustomBrowser;
-	static bool	s_BrowserTab;     // Jacobo221 - Open in tabs if possible
+	static CPath s_OSDirectory;
+	static uint16 s_OSUpdate;
 
-	static CPath	s_OSDirectory;
-	static uint16	s_OSUpdate;
+	static wxString s_Skin;
 
-	static wxString	s_Skin;
-
-	static bool	s_FastED2KLinksHandler;	// Madcat - Toggle Fast ED2K Links Handler
+	static bool s_FastED2KLinksHandler; // Madcat - Toggle Fast ED2K Links Handler
 
 	// Message Filtering
-	static bool	s_MustFilterMessages;
-	static wxString	s_MessageFilterString;
-	static bool	s_FilterAllMessages;
-	static bool	s_FilterSomeMessages;
-	static bool	s_ShowMessagesInLog;
-	static bool	s_IsAdvancedSpamfilterEnabled;
-	static bool	s_IsChatCaptchaEnabled;
+	static bool s_MustFilterMessages;
+	static wxString s_MessageFilterString;
+	static bool s_FilterAllMessages;
+	static bool s_FilterSomeMessages;
+	static bool s_ShowMessagesInLog;
+	static bool s_IsAdvancedSpamfilterEnabled;
+	static bool s_IsChatCaptchaEnabled;
+#ifdef CLIENT_GUI
+	static bool s_chatSpamFilterSupported;
+	static std::vector<CoreDebugCategory> s_coreDebugCategories;
+	static bool s_coreVerbose;
+	static bool s_coreVerboseLogfile;
+#endif
 
-	static bool	s_FilterComments;
-	static wxString	s_CommentFilterString;
-
+	static bool s_FilterComments;
+	static wxString s_CommentFilterString;
 
 	// Hidden files sharing
-	static bool	s_ShareHiddenFiles;
+	static bool s_ShareHiddenFiles;
 
 	// Auto-rescan of shared dirs via wxFileSystemWatcher.
-	static bool	s_AutoRescanSharedDirs;
+	static bool s_AutoRescanSharedDirs;
 
 	// Follow symlinks while walking shared dirs.
-	static bool	s_FollowSymlinksInShares;
+	static bool s_FollowSymlinksInShares;
 
-	static bool s_AutoSortDownload;
+	// Shared-file exclusion by name: the raw pattern string, the mode
+	// flag, and the compiled filter derived from them.
+	static wxString s_ExcludeSharePatterns;
+	static bool s_ExcludeSharePatternsUseRegex;
+	static CShareExcludeFilter s_ShareExcludeFilter;
 
 	// Version check
 	static bool s_NewVersionCheck;
+	// Runtime-only capability of the connected daemon (not persisted).
+	static bool s_versionCheckAvailable;
+
+	// Media metadata (issue #140)
+	static bool s_MediaMetadataEnabled;
+	static bool s_MediaMetadataAvailable;
 
 	// Kad
 	static bool s_ConnectToKad;
 	static bool s_ConnectToED2K;
+	static bool s_ED2KAcceleratedPublication;
+	static bool s_KadProtocol10;
+	static bool s_KadStrictAichPublishers;
+	static bool s_KadProtocol10Supported;
 
 	// Statistics
-	static	unsigned	s_maxClientVersions;	// 0 = unlimited
+	static unsigned s_maxClientVersions; // 0 = unlimited
 
 	// Drop slow sources if needed
 	static bool s_DropSlowSources;
 
-	static wxString s_Ed2kURL;
+	static wxArrayString s_serverListURLs;
 	static wxString s_KadURL;
 
 	// Crypt
 	static bool s_IsClientCryptLayerSupported;
 	static bool s_IsClientCryptLayerRequired;
 	static bool s_bCryptLayerRequested;
-	static uint32	s_dwKadUDPKey;
+	static uint32 s_dwKadUDPKey;
 	static uint8 s_byCryptTCPPaddingLength;
+#ifdef AMULE_QUIC_TRANSPORT
+	static bool s_QuicNatTEnabled;
+#endif
+#ifdef ENABLE_NATT_SERVER_COORDINATION
+	static bool s_LugdunumNatCallbackEnabled;
+	static bool s_LowIdHolePunchEnabled;
+#endif
 
-	// GeoIP
+	// GeoIP / IP2Country
 	static bool s_GeoIPEnabled;
-	static wxString s_GeoIPUpdateUrl;
+	static bool s_GeoIPSupported; // runtime capability, not persisted (defaults true)
+	// Runtime-only live status mirrored from the daemon (not persisted).
+	static bool s_GeoIPStatusLoaded;
+	static bool s_GeoIPStatusDownloading;
+	static wxString s_GeoIPStatusLastResult;
+	static wxString s_GeoIPStatusLoadedSource;
+	static bool s_GeoIPUpdateRequested; // transient "Update now" trigger, not persisted
+	static wxString
+		s_GeoIPSource; // serialised enum: "dbip" / "maxmind" / "custom" -- next-download selector
+	static wxString s_GeoIPLoadedSource; // same shape -- provenance of the currently-loaded geoip.mmdb
+	static wxString s_GeoIPMaxMindLicense;
+	static wxString s_GeoIPCustomUrl;
+	static bool s_GeoIPAutoUpdate;
+	static wxString s_GeoIPUpdateUrl; // legacy v2.x single-URL, kept for migration only
 
 	// Sleep vetoing
-	static bool s_preventSleepWhileDownloading;
+	static int s_sleepMode;
 
 	// Stats server
 	static wxString s_StatsServerName;
 	static wxString s_StatsServerURL;
 };
-
 
 #endif // PREFERENCES_H
 // File_checked_for_headers

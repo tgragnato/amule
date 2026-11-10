@@ -24,44 +24,47 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-#include "Statistics.h"		// Interface declarations
+#include "Statistics.h" // Interface declarations
+#ifndef CLIENT_GUI
+#include "kademlia/kademlia/Kademlia.h"
+#include "kademlia/routing/RoutingZone.h"
+#endif
 
 #include <protocol/ed2k/ClientSoftware.h>
 
-#include <ec/cpp/ECTag.h>		// Needed for CECTag
+#include <ec/cpp/ECTag.h> // Needed for CECTag
 
 #ifndef CLIENT_GUI
-	#ifndef AMULE_DAEMON
-		#include <common/Format.h>		// Needed for CFormat
-	#endif
-	#include "CFile.h"		// Needed for CFile access
-	#include <common/Path.h>	// Needed for JoinPaths
-	#include "DataToText.h"		// Needed for GetSoftName()
-	#include "ListenSocket.h"	// (tree, GetAverageConnections)
-	#include "ServerList.h"		// Needed for CServerList (tree)
-	#include <cmath>		// Needed for std::floor
-	#include "updownclient.h"	// Needed for CUpDownClient
+#ifndef AMULE_DAEMON
+#include <common/Format.h> // Needed for CFormat
+#endif
+#include "CFile.h"        // Needed for CFile access
+#include <common/Path.h>  // Needed for JoinPaths
+#include "DataToText.h"   // Needed for GetSoftName()
+#include "ListenSocket.h" // (tree, GetAverageConnections)
+#include "ServerList.h"   // Needed for CServerList (tree)
+#include <cmath>          // Needed for std::floor
+#include "updownclient.h" // Needed for CUpDownClient
 #else
-	#include "GetTickCount.h"	// Needed for GetTickCount64()
-	#include <ec/cpp/RemoteConnect.h>		// Needed for CRemoteConnect
+#include "GetTickCount.h"         // Needed for GetTickCount64()
+#include <ec/cpp/RemoteConnect.h> // Needed for CRemoteConnect
 #endif
 
-#include "amule.h"		// Needed for theApp
+#include "amule.h" // Needed for theApp
 #include <wx/intl.h>
 #include "Logger.h"
-#include "Preferences.h"	// Needed for thePrefs
+#include "Preferences.h" // Needed for thePrefs
 
 #ifdef __BSD__
-	// glibc -> bsd libc
-	#define round rint
+// glibc -> bsd libc
+#define round rint
 #else
-	#define round(x) floor(x+0.5)
+#define round(x) floor(x + 0.5)
 #endif /* __BSD__ */
 
-
-#ifndef CLIENT_GUI
-
 /*----- CPreciseRateCounter -----*/
+// Shared with CLIENT_GUI: used by the runAvg trend ([1]) in CStatistics::ComputeAverages, which
+// both builds drive through CStatistics::GetHistory.
 
 void CPreciseRateCounter::CalculateRate(uint64_t now)
 {
@@ -99,23 +102,24 @@ void CPreciseRateCounter::CalculateRate(uint64_t now)
 	}
 }
 
+#ifndef CLIENT_GUI
 
 /*----- CStatTreeItemRateCounter -----*/
 
 #ifndef AMULE_DAEMON
 wxString CStatTreeItemRateCounter::GetDisplayString() const
 {
-	return CFormat(wxGetTranslation(m_label)) % CastItoSpeed(m_show_maxrate ? (uint32)m_max_rate : (uint32)m_rate);
+	return CFormat(wxGetTranslation(m_label)) %
+	       CastItoSpeed(m_show_maxrate ? (uint32)m_max_rate : (uint32)m_rate);
 }
 #endif
 
-void CStatTreeItemRateCounter::AddECValues(CECTag* tag) const
+void CStatTreeItemRateCounter::AddECValues(CECTag *tag) const
 {
 	CECTag value(EC_TAG_STAT_NODE_VALUE, m_show_maxrate ? (uint32)m_max_rate : (uint32)m_rate);
 	value.AddTag(CECTag(EC_TAG_STAT_VALUE_TYPE, (uint8)EC_VALUE_SPEED));
 	tag->AddTag(value);
 }
-
 
 /*----- CStatTreeItemPeakConnections -----*/
 
@@ -126,164 +130,179 @@ wxString CStatTreeItemPeakConnections::GetDisplayString() const
 }
 #endif
 
-void CStatTreeItemPeakConnections::AddECValues(CECTag* tag) const
+void CStatTreeItemPeakConnections::AddECValues(CECTag *tag) const
 {
 	tag->AddTag(CECTag(EC_TAG_STAT_NODE_VALUE, (uint64)theStats::GetPeakConnections()));
 }
 
-
 /*----- CStatistics -----*/
 
-// Static variables
-
 // Rate counters
-CPreciseRateCounter*		CStatistics::s_upOverheadRate;
-CPreciseRateCounter*		CStatistics::s_downOverheadRate;
-CStatTreeItemRateCounter*	CStatistics::s_uploadrate;
-CStatTreeItemRateCounter*	CStatistics::s_downloadrate;
+CDisplayRateCounter CStatistics::s_displayUploadRate;
+CDisplayRateCounter CStatistics::s_displayDownloadRate;
+CDisplayRateCounter CStatistics::s_displayUpOverheadRate;
+CDisplayRateCounter CStatistics::s_displayDownOverheadRate;
+CPreciseRateCounter *CStatistics::s_upOverheadRate;
+CPreciseRateCounter *CStatistics::s_downOverheadRate;
+CStatTreeItemRateCounter *CStatistics::s_uploadrate;
+CStatTreeItemRateCounter *CStatistics::s_downloadrate;
 
 #else /* CLIENT_GUI */
 
-uint64	CStatistics::s_start_time;
-uint64	CStatistics::s_statData[sdTotalItems];
+uint64 CStatistics::s_start_time;
+uint64 CStatistics::s_statData[sdTotalItems];
 
 #endif /* !CLIENT_GUI / CLIENT_GUI */
 
 // Tree root
-CStatTreeItemBase*		CStatistics::s_statTree;
+CStatTreeItemBase *CStatistics::s_statTree;
 
 #ifndef CLIENT_GUI
 // Uptime
-CStatTreeItemTimer*		CStatistics::s_uptime;
+CStatTreeItemTimer *CStatistics::s_uptime;
 
 // Upload
-CStatTreeItemUlDlCounter*	CStatistics::s_sessionUpload;
-CStatTreeItemPacketTotals*	CStatistics::s_totalUpOverhead;
-CStatTreeItemPackets*		CStatistics::s_fileReqUpOverhead;
-CStatTreeItemPackets*		CStatistics::s_sourceXchgUpOverhead;
-CStatTreeItemPackets*		CStatistics::s_serverUpOverhead;
-CStatTreeItemPackets*		CStatistics::s_kadUpOverhead;
-CStatTreeItemCounter*		CStatistics::s_cryptUpOverhead;
-CStatTreeItemNativeCounter*	CStatistics::s_activeUploads;
-CStatTreeItemNativeCounter*	CStatistics::s_waitingUploads;
-CStatTreeItemCounter*		CStatistics::s_totalSuccUploads;
-CStatTreeItemCounter*		CStatistics::s_totalFailedUploads;
-CStatTreeItemCounter*		CStatistics::s_totalUploadTime;
+CStatTreeItemUlDlCounter *CStatistics::s_sessionUpload;
+CStatTreeItemPacketTotals *CStatistics::s_totalUpOverhead;
+CStatTreeItemPackets *CStatistics::s_fileReqUpOverhead;
+CStatTreeItemPackets *CStatistics::s_sourceXchgUpOverhead;
+CStatTreeItemPackets *CStatistics::s_serverUpOverhead;
+CStatTreeItemPackets *CStatistics::s_kadUpOverhead;
+CStatTreeItemCounter *CStatistics::s_cryptUpOverhead;
+CStatTreeItemNativeCounter *CStatistics::s_activeUploads;
+CStatTreeItemNativeCounter *CStatistics::s_waitingUploads;
+CStatTreeItemCounter *CStatistics::s_totalSuccUploads;
+CStatTreeItemCounter *CStatistics::s_totalFailedUploads;
+CStatTreeItemCounter *CStatistics::s_totalUploadTime;
 
 // Download
-CStatTreeItemUlDlCounter*	CStatistics::s_sessionDownload;
-CStatTreeItemPacketTotals*	CStatistics::s_totalDownOverhead;
-CStatTreeItemPackets*		CStatistics::s_fileReqDownOverhead;
-CStatTreeItemPackets*		CStatistics::s_sourceXchgDownOverhead;
-CStatTreeItemPackets*		CStatistics::s_serverDownOverhead;
-CStatTreeItemPackets*		CStatistics::s_kadDownOverhead;
-CStatTreeItemCounter*		CStatistics::s_cryptDownOverhead;
-CStatTreeItemCounter*		CStatistics::s_foundSources;
-CStatTreeItemNativeCounter*	CStatistics::s_activeDownloads;
+CStatTreeItemUlDlCounter *CStatistics::s_sessionDownload;
+CStatTreeItemPacketTotals *CStatistics::s_totalDownOverhead;
+CStatTreeItemPackets *CStatistics::s_fileReqDownOverhead;
+CStatTreeItemPackets *CStatistics::s_sourceXchgDownOverhead;
+CStatTreeItemPackets *CStatistics::s_serverDownOverhead;
+CStatTreeItemPackets *CStatistics::s_kadDownOverhead;
+CStatTreeItemCounter *CStatistics::s_cryptDownOverhead;
+CStatTreeItemCounter *CStatistics::s_foundSources;
+CStatTreeItemNativeCounter *CStatistics::s_activeDownloads;
 
 // Connection
-CStatTreeItemReconnects*	CStatistics::s_reconnects;
-CStatTreeItemTimer*		CStatistics::s_sinceFirstTransfer;
-CStatTreeItemTimer*		CStatistics::s_sinceConnected;
-CStatTreeItemCounterMax*	CStatistics::s_activeConnections;
-CStatTreeItemMaxConnLimitReached* CStatistics::s_limitReached;
-CStatTreeItemSimple*		CStatistics::s_avgConnections;
+CStatTreeItemReconnects *CStatistics::s_reconnects;
+CStatTreeItemTimer *CStatistics::s_sinceFirstTransfer;
+CStatTreeItemTimer *CStatistics::s_sinceConnected;
+CStatTreeItemCounterMax *CStatistics::s_activeConnections;
+CStatTreeItemMaxConnLimitReached *CStatistics::s_limitReached;
+CStatTreeItemSimple *CStatistics::s_avgConnections;
 
 // Clients
-CStatTreeItemHiddenCounter*	CStatistics::s_clients;
-CStatTreeItemCounter*		CStatistics::s_unknown;
-//CStatTreeItem			CStatistics::s_lowID;
-//CStatTreeItem			CStatistics::s_secIdentOnOff;
+CStatTreeItemHiddenCounter *CStatistics::s_clients;
+CStatTreeItemCounter *CStatistics::s_unknown;
 #ifdef __DEBUG__
-CStatTreeItemNativeCounter*	CStatistics::s_hasSocket;
+CStatTreeItemNativeCounter *CStatistics::s_hasSocket;
 #endif
-CStatTreeItemNativeCounter*	CStatistics::s_filtered;
-CStatTreeItemNativeCounter*	CStatistics::s_banned;
+CStatTreeItemNativeCounter *CStatistics::s_filtered;
+CStatTreeItemNativeCounter *CStatistics::s_banned;
+#ifdef ENABLE_KAD_NODE_PROTECTION
+CStatTreeItemNativeCounter *CStatistics::s_kadBanned;
+#endif
+
+// NAT traversal and IPv6 traffic
+#if defined(ENABLE_NATT_SERVER_COORDINATION) && defined(AMULE_UTP_TRANSPORT)
+CStatTreeItemCounter *CStatistics::s_lowIdToLowIdUpload;
+CStatTreeItemCounter *CStatistics::s_lowIdToLowIdDownload;
+CStatTreeItemNativeCounter *CStatistics::s_serverHolePunchAttempts;
+CStatTreeItemNativeCounter *CStatistics::s_serverHolePunchSuccesses;
+CStatTreeItemNativeCounter *CStatistics::s_lugdunumCallbackAttempts;
+CStatTreeItemNativeCounter *CStatistics::s_lugdunumCallbackSuccesses;
+#endif
+#ifdef AMULE_UTP_TRANSPORT
+CStatTreeItemNativeCounter *CStatistics::s_utpStreamMoves;
+#endif
+#ifdef ENABLE_IPV6
+CStatTreeItemCounter *CStatistics::s_ipv6Upload;
+CStatTreeItemCounter *CStatistics::s_ipv6Download;
+#endif
 
 // Servers
-CStatTreeItemSimple*		CStatistics::s_workingServers;
-CStatTreeItemSimple*		CStatistics::s_failedServers;
-CStatTreeItemNativeCounter*	CStatistics::s_totalServers;
-CStatTreeItemNativeCounter*	CStatistics::s_deletedServers;
-CStatTreeItemNativeCounter*	CStatistics::s_filteredServers;
-CStatTreeItemSimple*		CStatistics::s_usersOnWorking;
-CStatTreeItemSimple*		CStatistics::s_filesOnWorking;
-CStatTreeItemSimple*		CStatistics::s_totalUsers;
-CStatTreeItemSimple*		CStatistics::s_totalFiles;
-CStatTreeItemSimple*		CStatistics::s_serverOccupation;
+CStatTreeItemSimple *CStatistics::s_workingServers;
+CStatTreeItemSimple *CStatistics::s_failedServers;
+CStatTreeItemNativeCounter *CStatistics::s_totalServers;
+CStatTreeItemNativeCounter *CStatistics::s_deletedServers;
+CStatTreeItemNativeCounter *CStatistics::s_filteredServers;
+CStatTreeItemSimple *CStatistics::s_usersOnWorking;
+CStatTreeItemSimple *CStatistics::s_filesOnWorking;
+CStatTreeItemSimple *CStatistics::s_totalUsers;
+CStatTreeItemSimple *CStatistics::s_totalFiles;
+CStatTreeItemSimple *CStatistics::s_serverOccupation;
 
 // Shared files
-CStatTreeItemCounter*		CStatistics::s_numberOfShared;
-CStatTreeItemCounter*		CStatistics::s_sizeOfShare;
+CStatTreeItemCounter *CStatistics::s_numberOfShared;
+CStatTreeItemCounter *CStatistics::s_sizeOfShare;
 
 // Kad
-uint64_t			CStatistics::s_kadNodesTotal;
-uint16_t			CStatistics::s_kadNodesCur;
+uint64_t CStatistics::s_kadNodesTotal;
+uint16_t CStatistics::s_kadNodesCur;
 
 // Totals
-uint64_t			CStatistics::s_totalSent;
-uint64_t			CStatistics::s_totalReceived;
+uint64_t CStatistics::s_totalSent;
+uint64_t CStatistics::s_totalReceived;
 
-bool				CStatistics::s_statsNeedSave;
+// Published by CFreeSpaceThread; unknown until its first sample lands.
+std::atomic<sint64> CStatistics::s_tempFreeSpace{ FREE_SPACE_UNKNOWN };
+std::atomic<sint64> CStatistics::s_incomingFreeSpace{ FREE_SPACE_UNKNOWN };
 
+bool CStatistics::s_statsNeedSave;
 
 CStatistics::CStatistics()
-	: m_graphRunningAvgDown(thePrefs::GetStatsAverageMinutes() * 60 * 1000, true),
-	  m_graphRunningAvgUp(thePrefs::GetStatsAverageMinutes() * 60 * 1000, true),
-	  m_graphRunningAvgKad(thePrefs::GetStatsAverageMinutes() * 60 * 1000, true)
+: m_graphRunningAvgDown(thePrefs::GetStatsAverageMinutes() * 60 * 1000, true)
+, m_graphRunningAvgUp(thePrefs::GetStatsAverageMinutes() * 60 * 1000, true)
+, m_graphRunningAvgKad(thePrefs::GetStatsAverageMinutes() * 60 * 1000, true)
 {
 	uint64 start_time = GetTickCount64();
 
-	// Init graphs
-
 	average_minutes = thePrefs::GetStatsAverageMinutes();
 
-	HR hr = {0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0, 0};
+	HR hr = { 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0, 0 };
 	hrInit = hr;
-	nHistRanges = 7;	// =ceil(log(max_update_delay)/log(2))
+	nHistRanges = 7; // =ceil(log(max_update_delay)/log(2))
 	nPointsPerRange = GetPointsPerRange();
-	bitsHistClockMask = (1 << (nHistRanges-1)) - 1;
+	bitsHistClockMask = (1 << (nHistRanges - 1)) - 1;
 	aposRecycle = new listPOS[nHistRanges];
-	listPOS *ppos = aposRecycle+nHistRanges-1;
-	for (int i=nHistRanges; i>0; --i) {  // permanently allocated history list
+	listPOS *ppos = aposRecycle + nHistRanges - 1;
+	for (int i = nHistRanges; i > 0; --i) { // permanently allocated history list
 		listHR.push_back(hr);
 		*ppos-- = --listHR.end();
-		for (int j=nPointsPerRange; j>1; --j)
+		for (int j = nPointsPerRange; j > 1; --j)
 			listHR.push_back(hr);
 	}
 
-	// Init rate counters outside the tree
-
+	s_displayUploadRate.Reset();
+	s_displayDownloadRate.Reset();
+	s_displayUpOverheadRate.Reset();
+	s_displayDownOverheadRate.Reset();
 	s_upOverheadRate = new CPreciseRateCounter(5000);
 	s_downOverheadRate = new CPreciseRateCounter(5000);
-
-	// Init Tree
 
 	InitStatsTree();
 	s_uptime->SetStartTime(start_time);
 
-	// Load saved statistics
 	Load();
 	s_statsNeedSave = false;
 }
-
 
 CStatistics::~CStatistics()
 {
 	// clearing listHR frees the memory occupied by the nodes
 	listHR.clear();
-	delete [] aposRecycle;
+	delete[] aposRecycle;
 
 	delete s_statTree;
 
-	// delete items not in the tree
 	delete s_totalUploadTime;
 
-	// delete rate counters outside the tree
 	delete s_upOverheadRate;
 	delete s_downOverheadRate;
 }
-
 
 void CStatistics::Load()
 {
@@ -300,23 +319,29 @@ void CStatistics::Load()
 				s_totalReceived = f.ReadUInt64();
 			}
 		}
-	} catch (const CSafeIOException& e) {
+	} catch (const CSafeIOException &e) {
 		AddLogLineN(e.what());
 	}
 }
-
 
 void CStatistics::Save()
 {
 	if (s_statsNeedSave) {
 		CFile f;
 
-		if (f.Open(JoinPaths(thePrefs::GetConfigDir(), "statistics.dat"), CFile::write)) {
-			f.WriteUInt8(0);	/* version */
-			f.WriteUInt64(s_totalSent);
-			f.WriteUInt64(s_totalReceived);
+		try {
+			if (f.Open(JoinPaths(thePrefs::GetConfigDir(), "statistics.dat"), CFile::write)) {
+				f.WriteUInt8(0); /* version */
+				f.WriteUInt64(s_totalSent);
+				f.WriteUInt64(s_totalReceived);
+				// Explicit so a buffered write error surfaces here, not in the destructor.
+				f.Close();
+			}
+			s_statsNeedSave = false;
+		} catch (const CIOFailureException &e) {
+			// Leave s_statsNeedSave set so the next tick retries.
+			AddDebugLogLineC(logGeneral, "IO failure while saving statistics: " + e.what());
 		}
-		s_statsNeedSave = false;
 	}
 }
 
@@ -327,77 +352,69 @@ void CStatistics::CalculateRates()
 	s_upOverheadRate->CalculateRate(now);
 	s_downloadrate->CalculateRate(now);
 	s_uploadrate->CalculateRate(now);
+	s_displayUploadRate.CalculateRate(now);
+	s_displayDownloadRate.CalculateRate(now);
+	s_displayUpOverheadRate.CalculateRate(now);
+	s_displayDownOverheadRate.CalculateRate(now);
 }
-
-
 
 /* ------------------------------- GRAPHS ---------------------------- */
 
 /*
-History List
-
-  The basic idea here is that we want to keep as much history as we can without paying
-a high price in terms of memory space.  Because we keep the history for display purposes,
-we can take advantage of the fact that when the period shown in the graphs is long
-then each pixel represents a long period.  So as the most recent history we keep one
-window full of points at a resolution of 1 second, the next window full at 2 seconds,
-the next at 4 seconds and so on, up to the maximum desired.  This way there is always
-at least one sample point per pixel for any update delay set by the user, and the
-memory required grows with the *log* of the total time period covered.
-  The history is kept in a doubly-linked list, with the most recent snapshot at the tail.
-The number of nodes in the list is fixed, and there are no calls to RemoveHead() and
-AddTail() which would add overhead and contribute to memory fragmentation.  Instead,
-every second when a new point gets recorded, one of the existing nodes is recycled;
-it is disjoined from its present place, put at the tail of the list, and then gets
-filled with new data.   [Emilio Sandoz]
-  This unfortunately does not work with stl classes, as none of them supports moving
-a node to another place, so we have to erase and re-add nodes.
-*/
+ * History list.
+ *
+ * We want to keep as much history as possible without paying much memory for it. Since the history
+ * exists for display, we can exploit the fact that a long period shown in the graphs means each
+ * pixel covers a long period: the most recent history is one window of points at 1 second
+ * resolution, the next window at 2 seconds, the next at 4, and so on up to the maximum. That gives
+ * at least one sample point per pixel for any update delay the user sets, while memory grows with
+ * the *log* of the total period covered.
+ *
+ * The history is a doubly-linked list with the most recent snapshot at the tail. The node count is
+ * fixed, and there are no RemoveHead()/AddTail() calls, which would add overhead and fragment
+ * memory. Instead each second, when a new point is recorded, an existing node is recycled: detached
+ * from its place, put at the tail, then filled with new data. [Emilio Sandoz] This unfortunately
+ * does not work with stl classes, none of which supports moving a node, so we erase and re-add.
+ */
 
 void CStatistics::RecordHistory()
-{	// First we query and compute some values, then we store them in the history list
+{ // First we query and compute some values, then we store them in the history list
 
-	// A few comments about the use of double and float in computations:
-	// Even on a hi-res screen our graphs will have 10 bits of resolution at most,
-	// so the 24 bits resolution of a float on 32 bit Intel processors is more than
-	// enough for all displayed values.  Rate computations however, and especially
-	// running average computations, use differences (delta bytes/ delta time), and
-	// for long uptimes the difference between two timestamps can lose too much
-	// accuracy because the large mantissa causes less significant bits to be dropped
-	// (same for the difference between two cumulative byte counts).  [We don't store
-	// these values as integers because they will be used in floating point calculations,
-	// and we want to perform the conversion only once).  Therefore timestamps and
-	// Kbyte counts are stored in the history as doubles, while computed values use
-	// float (to save space and execution time).
+	// Timestamps and Kbyte counts are stored in the history as doubles, computed values as
+	// float. A float's 24 bits are more than enough for anything the graphs display, but rate
+	// and running-average computations work on differences (delta bytes / delta time), and for
+	// long uptimes the large mantissa of a timestamp or cumulative byte count drops too many
+	// significant bits. They are not kept as integers because the conversion would then happen
+	// on every use.
 
-/*
-	Store values; first determine the node to be recycled (using the bits in iClock)
+	/*
+		Store values; first determine the node to be recycled (using the bits in iClock)
 
-    oldest records ----------------- listHR ------------------ youngest records
+	    oldest records ----------------- listHR ------------------ youngest records
 
-	O-[Range 2^n sec]-O- ... -O-[Range 4 sec]-O-[Range 2 sec]-O-[Range 1 sec]-O
-	|                 |       |               |               > every 2 secs -^
-	|                 |  ...  |                >--------------- every 4 secs -^
-	|                 |       >------------------------ recycle every 8 secs -^
-	|                 |                                                 ...
-	|                 >-the node at this position is recycled every 2^n secs -^
-	>-------------------(ditto for the oldest node at the head of the list) --^
-	^                                                         ^
-    aposRecycle[nHistRanges-1]               ...              aposRecycle[0]  Tail
-*/
-	listPOS		*ppos;
-	static int	iClock;
-	int		iClockPrev = iClock++;
-	int		bits = (iClockPrev^iClock) & iClock;  // identify the highest changed bit
+		O-[Range 2^n sec]-O- ... -O-[Range 4 sec]-O-[Range 2 sec]-O-[Range 1 sec]-O
+		|                 |       |               |               > every 2 secs -^
+		|                 |  ...  |                >--------------- every 4 secs -^
+		|                 |       >------------------------ recycle every 8 secs -^
+		|                 |                                                 ...
+		|                 >-the node at this position is recycled every 2^n secs -^
+		>-------------------(ditto for the oldest node at the head of the list) --^
+		^                                                         ^
+	    aposRecycle[nHistRanges-1]               ...              aposRecycle[0]  Tail
+	*/
+	listPOS *ppos;
+	static int iClock;
+	int iClockPrev = iClock++;
+	int bits = (iClockPrev ^ iClock) & iClock; // identify the highest changed bit
 	if (bits <= bitsHistClockMask) {
 		ppos = aposRecycle;
-		while ((bits /= 2) != 0)  // count to the highest bit that was just toggled to 1
+		while ((bits /= 2) != 0) // count to the highest bit that was just toggled to 1
 			++ppos;
 		// recycle one node and jump over the next to move it to the next higher range
 		listHR.push_back(**ppos);
 		*ppos = ++listHR.erase(*ppos);
 	} else {
-		ppos = aposRecycle+nHistRanges-1;
+		ppos = aposRecycle + nHistRanges - 1;
 		// recycle the node at the head; there is no higher range to move nodes into
 		listHR.push_back(**ppos);
 		*ppos = listHR.erase(*ppos);
@@ -419,16 +436,26 @@ void CStatistics::RecordHistory()
 	phr->kadNodesCur = s_kadNodesCur;
 }
 
+#endif // !CLIENT_GUI -- GetHistory + ComputeAverages are shared with
+       // CLIENT_GUI's CStatistics so COScopeCtrl::PlotHistory has a
+       // single implementation for both builds.
 
-unsigned CStatistics::GetHistory(	// Assemble arrays of sample points for a graph
-	unsigned cntPoints,		// number of sample points to assemble
-	double sStep,			// time difference between sample points
-	double sFinal,			// latest allowed timestamp
-	const std::vector<float *> &ppf,// an array of pointers to arrays of floats for the result
-	StatsGraphType which_graph)	// the graph which will receive the points
+unsigned CStatistics::GetHistory(        // Assemble arrays of sample points for a graph
+	unsigned cntPoints,              // number of sample points to assemble
+	double sStep,                    // time difference between sample points
+	double sFinal,                   // latest allowed timestamp
+	const std::vector<float *> &ppf, // an array of pointers to arrays of floats for the result
+	StatsGraphType which_graph)      // the graph which will receive the points
 {
-	if (sStep==0.0 || cntPoints==0) {
-		return(0);
+	if (sStep == 0.0 || cntPoints == 0) {
+		return (0);
+	}
+
+	// CLIENT_GUI builds start with an empty list, unlike the monolithic constructor which pre-
+	// allocates every record, and the rbegin() below is dereferenced before the rend() test --
+	// so a paint arriving before the first graph reply would read an invalid iterator.
+	if (listHR.empty()) {
+		return (0);
 	}
 
 	float *pf1 = ppf[0];
@@ -439,19 +466,17 @@ unsigned CStatistics::GetHistory(	// Assemble arrays of sample points for a grap
 
 	// start of list should be an integer multiple of the sampling period for samples
 	// to be consistent when the graphs are resized horizontally
-	double	sTarget;
+	double sTarget;
 	if (sFinal >= 0.0) {
 		sTarget = sFinal;
 	} else {
-		sTarget = sStep==1.0 ?
-			pos->sTimestamp :
-			std::floor(pos->sTimestamp/sStep) * sStep;
+		sTarget = sStep == 1.0 ? pos->sTimestamp : std::floor(pos->sTimestamp / sStep) * sStep;
 	}
 
 	HR **ahr = NULL, **pphr = NULL;
-	bool bRateGraph = (which_graph != GRAPH_CONN);	// rate graph or connections graph?
+	bool bRateGraph = (which_graph != GRAPH_CONN); // rate graph or connections graph?
 	if (bRateGraph) {
-		ahr = new HR* [cntPoints];
+		ahr = new HR *[cntPoints];
 		pphr = ahr;
 	}
 
@@ -460,20 +485,20 @@ unsigned CStatistics::GetHistory(	// Assemble arrays of sample points for a grap
 			++pos;
 			continue;
 		}
-		if (bRateGraph) {		// assemble an array of pointers for ComputeAverages
+		if (bRateGraph) { // assemble an array of pointers for ComputeAverages
 			*pphr++ = &(*pos);
-		} else {			// or build the arrays if possible
+		} else { // or build the arrays if possible
 			*pf1++ = (float)pos->cntUploads;
 			*pf2++ = (float)pos->cntConnections;
 			*pf3++ = (float)pos->cntDownloads;
 		}
-		if (++cntFilled  == cntPoints) {	// enough points
+		if (++cntFilled == cntPoints) { // enough points
 			break;
 		}
-		if (pos->sTimestamp == 0.0) {		// reached beginning of uptime
+		if (pos->sTimestamp == 0.0) { // reached beginning of uptime
 			break;
 		}
-		if ((sTarget -= sStep) <= 0.0) {	// don't overshoot the beginning
+		if ((sTarget -= sStep) <= 0.0) { // don't overshoot the beginning
 			if (bRateGraph) {
 				*pphr++ = &hrInit;
 			} else {
@@ -485,7 +510,7 @@ unsigned CStatistics::GetHistory(	// Assemble arrays of sample points for a grap
 	}
 
 	if (bRateGraph) {
-		if  (cntFilled > 0) {
+		if (cntFilled > 0) {
 			ComputeAverages(pphr, pos, cntFilled, sStep, ppf, which_graph);
 		}
 		delete[] ahr;
@@ -494,49 +519,52 @@ unsigned CStatistics::GetHistory(	// Assemble arrays of sample points for a grap
 	return cntFilled;
 }
 
+#ifndef CLIENT_GUI
 
-unsigned CStatistics::GetHistoryForWeb(  // Assemble arrays of sample points for the webserver
-	unsigned cntPoints,		// maximum number of sample points to assemble
-	double sStep,			// time difference between sample points
-	double *sStart,			// earliest allowed timestamp
-	uint32 **graphData)		// a pointer to a pointer that will point to the graph data array
+unsigned CStatistics::GetHistoryForWeb( // Assemble arrays of sample points for the webserver
+	unsigned cntPoints,             // maximum number of sample points to assemble
+	double sStep,                   // time difference between sample points
+	double *sStart,                 // earliest allowed timestamp
+	uint32 **graphData)             // a pointer to a pointer that will point to the graph data array
 {
 	if (*sStart < 0.0) {
 		*sStart = 0.0;
 	}
-	if (sStep==0.0 || cntPoints==0)
-		return(0);
-	unsigned	cntFilled = 0;
-	listRPOS	pos = listHR.rbegin();
-	double		LastTimeStamp = pos->sTimestamp;
-	double		sTarget = LastTimeStamp;
+	if (sStep == 0.0 || cntPoints == 0)
+		return (0);
+	unsigned cntFilled = 0;
+	listRPOS pos = listHR.rbegin();
+	double LastTimeStamp = pos->sTimestamp;
+	double sTarget = LastTimeStamp;
 
-	HR	**pphr = new HR *[cntPoints];
+	HR **pphr = new HR *[cntPoints];
 
 	while (pos != listHR.rend()) {
 		if (pos->sTimestamp > sTarget) {
-			++pos;	// find next history record
+			++pos; // find next history record
 			continue;
 		}
 		pphr[cntFilled] = &(*pos);
-		if (++cntFilled  == cntPoints)		// enough points
+		if (++cntFilled == cntPoints) // enough points
 			break;
-		if (pos->sTimestamp <= *sStart)		// reached beginning of requested time
+		if (pos->sTimestamp <= *sStart) // reached beginning of requested time
 			break;
-		if ((sTarget -= sStep) <= 0.0) {	// don't overshoot the beginning
+		if ((sTarget -= sStep) <= 0.0) { // don't overshoot the beginning
 			pphr[cntFilled++] = NULL;
 			break;
 		}
 	}
 
 	if (cntFilled) {
-		*graphData = new uint32 [4 * cntFilled];
+		*graphData = new uint32[4 * cntFilled];
 		if (*graphData) {
 			for (unsigned int i = 0; i < cntFilled; i++) {
 				HR *phr = pphr[cntFilled - i - 1];
 				if (phr) {
-					(*graphData)[4 * i    ] = ENDIAN_HTONL((uint32)(phr->kBpsDownCur * 1024.0));
-					(*graphData)[4 * i + 1] = ENDIAN_HTONL((uint32)(phr->kBpsUpCur * 1024.0));
+					(*graphData)[4 * i] =
+						ENDIAN_HTONL((uint32)(phr->kBpsDownCur * 1024.0));
+					(*graphData)[4 * i + 1] =
+						ENDIAN_HTONL((uint32)(phr->kBpsUpCur * 1024.0));
 					(*graphData)[4 * i + 2] = ENDIAN_HTONL((uint32)phr->cntConnections);
 					(*graphData)[4 * i + 3] = ENDIAN_HTONL((uint32)phr->kadNodesCur);
 				} else {
@@ -549,16 +577,14 @@ unsigned CStatistics::GetHistoryForWeb(  // Assemble arrays of sample points for
 		*graphData = NULL;
 	}
 
-	delete [] pphr;
+	delete[] pphr;
 
 	*sStart = LastTimeStamp;
 
 	return cntFilled;
 }
 
-
-unsigned CStatistics::GetHistoryForGui(
-	unsigned cntPoints,
+unsigned CStatistics::GetHistoryForGui(unsigned cntPoints,
 	double sStep,
 	double *sStart,
 	uint32 **graphData,
@@ -581,12 +607,12 @@ unsigned CStatistics::GetHistoryForGui(
 	if (sStep == 0.0 || cntPoints == 0) {
 		return 0;
 	}
-	unsigned	cntFilled = 0;
-	listRPOS	pos = listHR.rbegin();
-	double		LastTimeStamp = pos->sTimestamp;
-	double		sTarget = LastTimeStamp;
+	unsigned cntFilled = 0;
+	listRPOS pos = listHR.rbegin();
+	double LastTimeStamp = pos->sTimestamp;
+	double sTarget = LastTimeStamp;
 
-	HR	**pphr = new HR *[cntPoints];
+	HR **pphr = new HR *[cntPoints];
 
 	while (pos != listHR.rend()) {
 		if (pos->sTimestamp > sTarget) {
@@ -605,65 +631,78 @@ unsigned CStatistics::GetHistoryForGui(
 	}
 
 	if (cntFilled) {
-		*graphData = new uint32 [4 * cntFilled];
-		*connData  = new uint32 [2 * cntFilled];
+		*graphData = new uint32[4 * cntFilled];
+		*connData = new uint32[2 * cntFilled];
 		for (unsigned int i = 0; i < cntFilled; i++) {
 			HR *phr = pphr[cntFilled - i - 1];
 			if (phr) {
-				(*graphData)[4 * i    ] = ENDIAN_HTONL((uint32)(phr->kBpsDownCur * 1024.0));
+				(*graphData)[4 * i] = ENDIAN_HTONL((uint32)(phr->kBpsDownCur * 1024.0));
 				(*graphData)[4 * i + 1] = ENDIAN_HTONL((uint32)(phr->kBpsUpCur * 1024.0));
 				(*graphData)[4 * i + 2] = ENDIAN_HTONL((uint32)phr->cntConnections);
 				(*graphData)[4 * i + 3] = ENDIAN_HTONL((uint32)phr->kadNodesCur);
-				(*connData)[2 * i    ]  = ENDIAN_HTONL((uint32)phr->cntUploads);
-				(*connData)[2 * i + 1]  = ENDIAN_HTONL((uint32)phr->cntDownloads);
+				(*connData)[2 * i] = ENDIAN_HTONL((uint32)phr->cntUploads);
+				(*connData)[2 * i + 1] = ENDIAN_HTONL((uint32)phr->cntDownloads);
 			} else {
 				(*graphData)[4 * i] = (*graphData)[4 * i + 1] = 0;
 				(*graphData)[4 * i + 2] = (*graphData)[4 * i + 3] = 0;
-				(*connData)[2 * i]  = (*connData)[2 * i + 1] = 0;
+				(*connData)[2 * i] = (*connData)[2 * i + 1] = 0;
 			}
 		}
-		// Session totals are pulled from the latest sampled point so the
-		// graph's session-average line matches the daemon-side
-		// kBytesReceived / sTimestamp value monolithic amule plots —
-		// instead of forcing amulegui to integrate locally from connect
-		// time (which would diverge whenever the GUI attaches to a
-		// long-running daemon).
-		HR *latest = pphr[cntFilled - 1];
+		// Session totals come from the latest sampled point, so the graph's session-average
+		// line matches the kBytesReceived / sTimestamp value monolithic amule plots, rather
+		// than making amulegui integrate locally from connect time, which diverges whenever
+		// it attaches to a long-running daemon.
+		//
+		// pphr was filled walking rbegin() -> rend(), so [0] is the NEWEST record -- the
+		// reverse of the graphData loop above, which reads it backwards to emit points
+		// oldest-first. Taking [cntFilled - 1] reported the session total as it stood at
+		// the START of the reply, which the client treats as the total at the END and
+		// integrates backwards from, driving it negative at once. That was harmless while
+		// replies carried a point or two; a backfill makes the two ends the width of the
+		// graph. [0] is also always a real record, the NULL sentinel landing at the oldest
+		// end.
+		HR *latest = pphr[0];
 		if (latest) {
-			sessionDlKBytes    = (uint64)latest->kBytesReceived;
-			sessionUlKBytes    = (uint64)latest->kBytesSent;
-			sessionKadTotal    = latest->kadNodesTotal;
+			sessionDlKBytes = (uint64)latest->kBytesReceived;
+			sessionUlKBytes = (uint64)latest->kBytesSent;
+			sessionKadTotal = latest->kadNodesTotal;
 			sessionTimespanSec = latest->sTimestamp;
 		}
 	}
 
-	delete [] pphr;
+	delete[] pphr;
 
 	*sStart = LastTimeStamp;
 
 	return cntFilled;
 }
 
+#endif // !CLIENT_GUI -- ComputeAverages is shared too.
 
-void CStatistics::ComputeAverages(
-	HR		**pphr,		// pointer to (end of) array of assembled history records
-	listRPOS	pos,		// position in history list from which to backtrack
-	unsigned	cntFilled,	// number of points in the sample data
-	double		sStep,		// time difference between two samples
-	const std::vector<float *> &ppf,// an array of pointers to arrays of floats with sample data
-	StatsGraphType	which_graph)	// the graph which will receive the points
+void CStatistics::ComputeAverages(HR **pphr, // pointer to (end of) array of assembled history records
+	listRPOS pos,                        // position in history list from which to backtrack
+	unsigned cntFilled,                  // number of points in the sample data
+	double sStep,                        // time difference between two samples
+	const std::vector<float *> &ppf,     // an array of pointers to arrays of floats with sample data
+	StatsGraphType which_graph)          // the graph which will receive the points
 {
-	double		sTarget, kValueRun;
-	uint64		avgTime = average_minutes * 60;
-	unsigned	nBtPoints = (unsigned)(avgTime / sStep);
+	double sTarget, kValueRun;
+	uint64 avgTime = average_minutes * 60;
+	unsigned nBtPoints = (unsigned)(avgTime / sStep);
 
-	CPreciseRateCounter* runningAvg = NULL;
+	CPreciseRateCounter *runningAvg = NULL;
 	switch (which_graph) {
-		case GRAPH_DOWN:	runningAvg = &m_graphRunningAvgDown;	break;
-		case GRAPH_UP:		runningAvg = &m_graphRunningAvgUp;		break;
-		case GRAPH_KAD:		runningAvg = &m_graphRunningAvgKad;		break;
-		default:
-			wxCHECK_RET(false, "ComputeAverages called with unsupported graph type.");
+	case GRAPH_DOWN:
+		runningAvg = &m_graphRunningAvgDown;
+		break;
+	case GRAPH_UP:
+		runningAvg = &m_graphRunningAvgUp;
+		break;
+	case GRAPH_KAD:
+		runningAvg = &m_graphRunningAvgKad;
+		break;
+	default:
+		wxCHECK_RET(false, "ComputeAverages called with unsupported graph type.");
 	}
 
 	runningAvg->m_timespan = avgTime * 1000;
@@ -679,7 +718,8 @@ void CStatistics::ComputeAverages(
 	}
 
 	while (nBtPoints--) {
-		while (pos != listHR.rend() && pos->sTimestamp > sTarget) ++pos;	// find next history record
+		while (pos != listHR.rend() && pos->sTimestamp > sTarget)
+			++pos; // find next history record
 		if (pos != listHR.rend()) {
 			runningAvg->m_tick_history.push_front((uint64)(pos->sTimestamp * 1000.0));
 
@@ -709,11 +749,11 @@ void CStatistics::ComputeAverages(
 	};
 
 	// now compute averages in returned arrays, starting with the earliest values
-	float *pf1 = ppf[0] + cntFilled - 1;	// holds session avg
-	float *pf2 = ppf[1] + cntFilled - 1;	// holds running avg
-	float *pf3 = ppf[2] + cntFilled - 1;	// holds current rate
+	float *pf1 = ppf[0] + cntFilled - 1; // holds session avg
+	float *pf2 = ppf[1] + cntFilled - 1; // holds running avg
+	float *pf3 = ppf[2] + cntFilled - 1; // holds current rate
 
-	for (int cnt=cntFilled; cnt>0; cnt--, pf1--, pf2--, pf3--) {
+	for (int cnt = cntFilled; cnt > 0; cnt--, pf1--, pf2--, pf3--) {
 		HR *phr = *(--pphr);
 		if (which_graph == GRAPH_DOWN) {
 			kValueRun = phr->kBytesReceived;
@@ -733,12 +773,13 @@ void CStatistics::ComputeAverages(
 	}
 }
 
+#ifndef CLIENT_GUI
 
 GraphUpdateInfo CStatistics::GetPointsForUpdate()
 {
 	GraphUpdateInfo update;
 	listPOS phr = --listHR.end();
-	update.timestamp = (double) phr->sTimestamp;
+	update.timestamp = (double)phr->sTimestamp;
 
 	m_graphRunningAvgDown += (uint32)(phr->kBpsDownCur * 1024.0);
 	m_graphRunningAvgUp += (uint32)(phr->kBpsUpCur * 1024.0);
@@ -768,106 +809,290 @@ GraphUpdateInfo CStatistics::GetPointsForUpdate()
 	return update;
 }
 
-
 /* ------------------------------- TREE ---------------------------- */
 
 void CStatistics::InitStatsTree()
 {
-	s_statTree = new CStatTreeItemBase(wxTRANSLATE("Statistics"));
+	s_statTree = (new CStatTreeItemBase(wxTRANSLATE("Statistics")))->SetKey("statistics");
 
-	CStatTreeItemBase* tmpRoot1;
-	CStatTreeItemBase* tmpRoot2;
+	CStatTreeItemBase *tmpRoot1;
+	CStatTreeItemBase *tmpRoot2;
 
-	s_uptime = static_cast<CStatTreeItemTimer*>(s_statTree->AddChild(new CStatTreeItemTimer(wxTRANSLATE("Uptime: %s"))));
+	s_uptime = static_cast<CStatTreeItemTimer *>(
+		s_statTree->AddChild(new CStatTreeItemTimer(wxTRANSLATE("Uptime: %s"))));
 
-	tmpRoot1 = s_statTree->AddChild(new CStatTreeItemBase(wxTRANSLATE("Transfer"), stSortChildren));
+	tmpRoot1 = s_statTree->AddChild(
+		(new CStatTreeItemBase(wxTRANSLATE("Transfer"), stSortChildren))->SetKey("transfer"));
 
-	tmpRoot2 = tmpRoot1->AddChild(new CStatTreeItemBase(wxTRANSLATE("Uploads")), 2);
-	s_sessionUpload = static_cast<CStatTreeItemUlDlCounter*>(tmpRoot2->AddChild(new CStatTreeItemUlDlCounter(wxTRANSLATE("Uploaded Data (Session (Total)): %s"), theStats::GetTotalSentBytes, stSortChildren | stSortByValue)));
+	tmpRoot2 = tmpRoot1->AddChild((new CStatTreeItemBase(wxTRANSLATE("Uploads")))->SetKey("uploads"), 2);
+	s_sessionUpload = static_cast<CStatTreeItemUlDlCounter *>(tmpRoot2->AddChild(
+		new CStatTreeItemUlDlCounter(wxTRANSLATE("Uploaded Data (Session (Total)): %s"),
+			theStats::GetTotalSentBytes,
+			stSortChildren | stSortByValue)));
 	// Children will be added on-the-fly
-	s_totalUpOverhead = static_cast<CStatTreeItemPacketTotals*>(tmpRoot2->AddChild(new CStatTreeItemPacketTotals(wxTRANSLATE("Total Overhead (Packets): %s"))));
-	s_fileReqUpOverhead = static_cast<CStatTreeItemPackets*>(tmpRoot2->AddChild(new CStatTreeItemPackets(wxTRANSLATE("File Request Overhead (Packets): %s"))));
+	s_totalUpOverhead = static_cast<CStatTreeItemPacketTotals *>(tmpRoot2->AddChild(
+		new CStatTreeItemPacketTotals(wxTRANSLATE("Total Overhead (Packets): %s"))));
+	s_fileReqUpOverhead = static_cast<CStatTreeItemPackets *>(tmpRoot2->AddChild(
+		new CStatTreeItemPackets(wxTRANSLATE("File Request Overhead (Packets): %s"))));
 	s_totalUpOverhead->AddPacketCounter(s_fileReqUpOverhead);
-	s_sourceXchgUpOverhead = static_cast<CStatTreeItemPackets*>(tmpRoot2->AddChild(new CStatTreeItemPackets(wxTRANSLATE("Source Exchange Overhead (Packets): %s"))));
+	s_sourceXchgUpOverhead = static_cast<CStatTreeItemPackets *>(tmpRoot2->AddChild(
+		new CStatTreeItemPackets(wxTRANSLATE("Source Exchange Overhead (Packets): %s"))));
 	s_totalUpOverhead->AddPacketCounter(s_sourceXchgUpOverhead);
-	s_serverUpOverhead = static_cast<CStatTreeItemPackets*>(tmpRoot2->AddChild(new CStatTreeItemPackets(wxTRANSLATE("Server Overhead (Packets): %s"))));
+	s_serverUpOverhead = static_cast<CStatTreeItemPackets *>(
+		tmpRoot2->AddChild(new CStatTreeItemPackets(wxTRANSLATE("Server Overhead (Packets): %s"))));
 	s_totalUpOverhead->AddPacketCounter(s_serverUpOverhead);
-	s_kadUpOverhead = static_cast<CStatTreeItemPackets*>(tmpRoot2->AddChild(new CStatTreeItemPackets(wxTRANSLATE("Kad Overhead (Packets): %s"))));
+	s_kadUpOverhead = static_cast<CStatTreeItemPackets *>(
+		tmpRoot2->AddChild(new CStatTreeItemPackets(wxTRANSLATE("Kad Overhead (Packets): %s"))));
 	s_totalUpOverhead->AddPacketCounter(s_kadUpOverhead);
-	s_cryptUpOverhead = static_cast<CStatTreeItemCounter*>(tmpRoot2->AddChild(new CStatTreeItemCounter(wxTRANSLATE("Crypt overhead (UDP): %s"))));
+	s_cryptUpOverhead = static_cast<CStatTreeItemCounter *>(
+		tmpRoot2->AddChild(new CStatTreeItemCounter(wxTRANSLATE("Crypt overhead (UDP): %s"))));
 	s_cryptUpOverhead->SetDisplayMode(dmBytes);
-	s_activeUploads = static_cast<CStatTreeItemNativeCounter*>(tmpRoot2->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Active Uploads: %s"))));
-	s_waitingUploads = static_cast<CStatTreeItemNativeCounter*>(tmpRoot2->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Waiting Uploads: %s"))));
-	s_totalSuccUploads = static_cast<CStatTreeItemCounter*>(tmpRoot2->AddChild(new CStatTreeItemCounter(wxTRANSLATE("Total successful upload sessions: %s"))));
-	s_totalFailedUploads = static_cast<CStatTreeItemCounter*>(tmpRoot2->AddChild(new CStatTreeItemCounter(wxTRANSLATE("Total failed upload sessions: %s"))));
-	s_totalUploadTime = new CStatTreeItemCounter("");
-	tmpRoot2->AddChild(new CStatTreeItemAverage(wxTRANSLATE("Average upload time: %s"), s_totalUploadTime, s_totalSuccUploads, dmTime));
-
-	tmpRoot2 = tmpRoot1->AddChild(new CStatTreeItemBase(wxTRANSLATE("Downloads")), 1);
-	s_sessionDownload = static_cast<CStatTreeItemUlDlCounter*>(tmpRoot2->AddChild(new CStatTreeItemUlDlCounter(wxTRANSLATE("Downloaded Data (Session (Total)): %s"), theStats::GetTotalReceivedBytes, stSortChildren | stSortByValue)));
-	// Children will be added on-the-fly
-	s_totalDownOverhead = static_cast<CStatTreeItemPacketTotals*>(tmpRoot2->AddChild(new CStatTreeItemPacketTotals(wxTRANSLATE("Total Overhead (Packets): %s"))));
-	s_fileReqDownOverhead = static_cast<CStatTreeItemPackets*>(tmpRoot2->AddChild(new CStatTreeItemPackets(wxTRANSLATE("File Request Overhead (Packets): %s"))));
-	s_totalDownOverhead->AddPacketCounter(s_fileReqDownOverhead);
-	s_sourceXchgDownOverhead = static_cast<CStatTreeItemPackets*>(tmpRoot2->AddChild(new CStatTreeItemPackets(wxTRANSLATE("Source Exchange Overhead (Packets): %s"))));
-	s_totalDownOverhead->AddPacketCounter(s_sourceXchgDownOverhead);
-	s_serverDownOverhead = static_cast<CStatTreeItemPackets*>(tmpRoot2->AddChild(new CStatTreeItemPackets(wxTRANSLATE("Server Overhead (Packets): %s"))));
-	s_totalDownOverhead->AddPacketCounter(s_serverDownOverhead);
-	s_kadDownOverhead = static_cast<CStatTreeItemPackets*>(tmpRoot2->AddChild(new CStatTreeItemPackets(wxTRANSLATE("Kad Overhead (Packets): %s"))));
-	s_totalDownOverhead->AddPacketCounter(s_kadDownOverhead);
-	s_cryptDownOverhead = static_cast<CStatTreeItemCounter*>(tmpRoot2->AddChild(new CStatTreeItemCounter(wxTRANSLATE("Crypt overhead (UDP): %s"))));
-	s_cryptDownOverhead->SetDisplayMode(dmBytes);
-	s_foundSources = static_cast<CStatTreeItemCounter*>(tmpRoot2->AddChild(new CStatTreeItemCounter(wxTRANSLATE("Found Sources: %s"), stSortChildren | stSortByValue)));
-	s_activeDownloads = static_cast<CStatTreeItemNativeCounter*>(tmpRoot2->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Active Downloads (chunks): %s"))));
-
-	tmpRoot1->AddChild(new CStatTreeItemRatio(wxTRANSLATE("Session UL:DL Ratio (Total): %s"), s_sessionUpload, s_sessionDownload, theStats::GetTotalSentBytes, theStats::GetTotalReceivedBytes), 3);
-
-	tmpRoot1 = s_statTree->AddChild(new CStatTreeItemBase(wxTRANSLATE("Connection")));
-	tmpRoot1->AddChild(new CStatTreeItemAverageSpeed(wxTRANSLATE("Average download rate (Session): %s"), s_sessionDownload, s_uptime));
-	tmpRoot1->AddChild(new CStatTreeItemAverageSpeed(wxTRANSLATE("Average upload rate (Session): %s"), s_sessionUpload, s_uptime));
-	s_downloadrate = static_cast<CStatTreeItemRateCounter*>(tmpRoot1->AddChild(new CStatTreeItemRateCounter(wxTRANSLATE("Max download rate (Session): %s"), true, 30000)));
-	s_uploadrate = static_cast<CStatTreeItemRateCounter*>(tmpRoot1->AddChild(new CStatTreeItemRateCounter(wxTRANSLATE("Max upload rate (Session): %s"), true, 30000)));
-	s_reconnects = static_cast<CStatTreeItemReconnects*>(tmpRoot1->AddChild(new CStatTreeItemReconnects(wxTRANSLATE("Reconnects: %i"))));
-	s_sinceFirstTransfer = static_cast<CStatTreeItemTimer*>(tmpRoot1->AddChild(new CStatTreeItemTimer(wxTRANSLATE("Time Since First Transfer: %s"), stHideIfZero)));
-	s_sinceConnected = static_cast<CStatTreeItemTimer*>(tmpRoot1->AddChild(new CStatTreeItemTimer(wxTRANSLATE("Connected To Server Since: %s"))));
-	s_activeConnections = static_cast<CStatTreeItemCounterMax*>(tmpRoot1->AddChild(new CStatTreeItemCounterMax(wxTRANSLATE("Active Connections (estimate): %i"))));
-	s_limitReached = static_cast<CStatTreeItemMaxConnLimitReached*>(tmpRoot1->AddChild(new CStatTreeItemMaxConnLimitReached(wxTRANSLATE("Max Connection Limit Reached: %s"))));
-	s_avgConnections = static_cast<CStatTreeItemSimple*>(tmpRoot1->AddChild(new CStatTreeItemSimple(wxTRANSLATE("Average Connections (estimate): %g"))));
-	s_avgConnections->SetValue(0.0);
-	tmpRoot1->AddChild(new CStatTreeItemPeakConnections(wxTRANSLATE("Peak Connections (estimate): %i")));
-
-	s_clients = static_cast<CStatTreeItemHiddenCounter*>(s_statTree->AddChild(new CStatTreeItemHiddenCounter(wxTRANSLATE("Clients"), stSortChildren | stSortByValue)));
-	s_unknown = static_cast<CStatTreeItemCounter*>(s_clients->AddChild(new CStatTreeItemCounter(wxTRANSLATE("Unknown: %s")), 6));
-	//s_lowID = static_cast<CStatTreeItem*>(s_clients->AddChild(new CStatTreeItem(wxTRANSLATE("LowID: %u (%.2f%% Total %.2f%% Known)")), 5));
-	//s_secIdentOnOff = static_cast<CStatTreeItem*>(s_clients->AddChild(new CStatTreeItem(wxTRANSLATE("SecIdent On/Off: %u (%.2f%%) : %u (%.2f%%)")), 4));
-#ifdef __DEBUG__
-	s_hasSocket = static_cast<CStatTreeItemNativeCounter*>(s_clients->AddChild(new CStatTreeItemNativeCounter("HasSocket: %s"), 3));
+#if defined(ENABLE_NATT_SERVER_COORDINATION) && defined(AMULE_UTP_TRANSPORT)
+	s_lowIdToLowIdUpload = static_cast<CStatTreeItemCounter *>(tmpRoot2->AddChild(
+		new CStatTreeItemCounter(wxTRANSLATE("LowID to LowID Data (Session): %s"))));
+	s_lowIdToLowIdUpload->SetDisplayMode(dmBytes);
 #endif
-	s_filtered = static_cast<CStatTreeItemNativeCounter*>(s_clients->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Filtered: %s")), 2));
-	s_banned = static_cast<CStatTreeItemNativeCounter*>(s_clients->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Banned: %s")), 1));
-	s_clients->AddChild(new CStatTreeItemTotalClients(wxTRANSLATE("Total: %i Known: %i"), s_clients, s_unknown), 0x80000000);
+#ifdef ENABLE_IPV6
+	s_ipv6Upload = static_cast<CStatTreeItemCounter *>(
+		tmpRoot2->AddChild(new CStatTreeItemCounter(wxTRANSLATE("IPv6 Data (Session): %s"))));
+	s_ipv6Upload->SetDisplayMode(dmBytes);
+#endif
+	s_activeUploads = static_cast<CStatTreeItemNativeCounter *>(
+		tmpRoot2->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Active Uploads: %s"))));
+	s_waitingUploads = static_cast<CStatTreeItemNativeCounter *>(
+		tmpRoot2->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Waiting Uploads: %s"))));
+	s_totalSuccUploads = static_cast<CStatTreeItemCounter *>(tmpRoot2->AddChild(
+		new CStatTreeItemCounter(wxTRANSLATE("Total successful upload sessions: %s"))));
+	s_totalFailedUploads = static_cast<CStatTreeItemCounter *>(tmpRoot2->AddChild(
+		new CStatTreeItemCounter(wxTRANSLATE("Total failed upload sessions: %s"))));
+	s_totalUploadTime = new CStatTreeItemCounter("");
+	tmpRoot2->AddChild((new CStatTreeItemAverage(wxTRANSLATE("Average upload time: %s"),
+				    s_totalUploadTime,
+				    s_totalSuccUploads,
+				    dmTime))
+				   ->SetKey("upload_avg_time"));
+
+	tmpRoot2 =
+		tmpRoot1->AddChild((new CStatTreeItemBase(wxTRANSLATE("Downloads")))->SetKey("downloads"), 1);
+	s_sessionDownload = static_cast<CStatTreeItemUlDlCounter *>(tmpRoot2->AddChild(
+		new CStatTreeItemUlDlCounter(wxTRANSLATE("Downloaded Data (Session (Total)): %s"),
+			theStats::GetTotalReceivedBytes,
+			stSortChildren | stSortByValue)));
+	// Children will be added on-the-fly
+	s_totalDownOverhead = static_cast<CStatTreeItemPacketTotals *>(tmpRoot2->AddChild(
+		new CStatTreeItemPacketTotals(wxTRANSLATE("Total Overhead (Packets): %s"))));
+	s_fileReqDownOverhead = static_cast<CStatTreeItemPackets *>(tmpRoot2->AddChild(
+		new CStatTreeItemPackets(wxTRANSLATE("File Request Overhead (Packets): %s"))));
+	s_totalDownOverhead->AddPacketCounter(s_fileReqDownOverhead);
+	s_sourceXchgDownOverhead = static_cast<CStatTreeItemPackets *>(tmpRoot2->AddChild(
+		new CStatTreeItemPackets(wxTRANSLATE("Source Exchange Overhead (Packets): %s"))));
+	s_totalDownOverhead->AddPacketCounter(s_sourceXchgDownOverhead);
+	s_serverDownOverhead = static_cast<CStatTreeItemPackets *>(
+		tmpRoot2->AddChild(new CStatTreeItemPackets(wxTRANSLATE("Server Overhead (Packets): %s"))));
+	s_totalDownOverhead->AddPacketCounter(s_serverDownOverhead);
+	s_kadDownOverhead = static_cast<CStatTreeItemPackets *>(
+		tmpRoot2->AddChild(new CStatTreeItemPackets(wxTRANSLATE("Kad Overhead (Packets): %s"))));
+	s_totalDownOverhead->AddPacketCounter(s_kadDownOverhead);
+	s_cryptDownOverhead = static_cast<CStatTreeItemCounter *>(
+		tmpRoot2->AddChild(new CStatTreeItemCounter(wxTRANSLATE("Crypt overhead (UDP): %s"))));
+	s_cryptDownOverhead->SetDisplayMode(dmBytes);
+#if defined(ENABLE_NATT_SERVER_COORDINATION) && defined(AMULE_UTP_TRANSPORT)
+	s_lowIdToLowIdDownload = static_cast<CStatTreeItemCounter *>(tmpRoot2->AddChild(
+		new CStatTreeItemCounter(wxTRANSLATE("LowID to LowID Data (Session): %s"))));
+	s_lowIdToLowIdDownload->SetDisplayMode(dmBytes);
+#endif
+#ifdef ENABLE_IPV6
+	s_ipv6Download = static_cast<CStatTreeItemCounter *>(
+		tmpRoot2->AddChild(new CStatTreeItemCounter(wxTRANSLATE("IPv6 Data (Session): %s"))));
+	s_ipv6Download->SetDisplayMode(dmBytes);
+#endif
+	s_foundSources = static_cast<CStatTreeItemCounter *>(tmpRoot2->AddChild(
+		new CStatTreeItemCounter(wxTRANSLATE("Found Sources: %s"), stSortChildren | stSortByValue)));
+	s_activeDownloads = static_cast<CStatTreeItemNativeCounter *>(tmpRoot2->AddChild(
+		new CStatTreeItemNativeCounter(wxTRANSLATE("Active Downloads (chunks): %s"))));
+
+	tmpRoot1->AddChild((new CStatTreeItemRatio(wxTRANSLATE("Session UL:DL Ratio (Total): %s"),
+				    s_sessionUpload,
+				    s_sessionDownload,
+				    theStats::GetTotalSentBytes,
+				    theStats::GetTotalReceivedBytes))
+				   ->SetKey("ul_dl_ratio"),
+		3);
+
+	tmpRoot1 = s_statTree->AddChild(
+		(new CStatTreeItemBase(wxTRANSLATE("Connection")))->SetKey("connection"));
+	tmpRoot1->AddChild(
+		(new CStatTreeItemAverageSpeed(
+			 wxTRANSLATE("Average download rate (Session): %s"), s_sessionDownload, s_uptime))
+			->SetKey("avg_download_rate"));
+	tmpRoot1->AddChild(
+		(new CStatTreeItemAverageSpeed(
+			 wxTRANSLATE("Average upload rate (Session): %s"), s_sessionUpload, s_uptime))
+			->SetKey("avg_upload_rate"));
+	s_downloadrate = static_cast<CStatTreeItemRateCounter *>(tmpRoot1->AddChild(
+		new CStatTreeItemRateCounter(wxTRANSLATE("Max download rate (Session): %s"), true, 30000)));
+	s_uploadrate = static_cast<CStatTreeItemRateCounter *>(tmpRoot1->AddChild(
+		new CStatTreeItemRateCounter(wxTRANSLATE("Max upload rate (Session): %s"), true, 30000)));
+	s_reconnects = static_cast<CStatTreeItemReconnects *>(
+		tmpRoot1->AddChild(new CStatTreeItemReconnects(wxTRANSLATE("Reconnects: %i"))));
+	s_sinceFirstTransfer = static_cast<CStatTreeItemTimer *>(tmpRoot1->AddChild(
+		new CStatTreeItemTimer(wxTRANSLATE("Time Since First Transfer: %s"), stHideIfZero)));
+	s_sinceConnected = static_cast<CStatTreeItemTimer *>(
+		tmpRoot1->AddChild(new CStatTreeItemTimer(wxTRANSLATE("Connected To Server Since: %s"))));
+	s_activeConnections = static_cast<CStatTreeItemCounterMax *>(tmpRoot1->AddChild(
+		new CStatTreeItemCounterMax(wxTRANSLATE("Active Connections (estimate): %i"))));
+	s_limitReached = static_cast<CStatTreeItemMaxConnLimitReached *>(tmpRoot1->AddChild(
+		new CStatTreeItemMaxConnLimitReached(wxTRANSLATE("Max Connection Limit Reached: %s"))));
+	s_avgConnections = static_cast<CStatTreeItemSimple *>(tmpRoot1->AddChild(
+		new CStatTreeItemSimple(wxTRANSLATE("Average Connections (estimate): %g"))));
+	s_avgConnections->SetValue(0.0);
+	tmpRoot1->AddChild((new CStatTreeItemPeakConnections(wxTRANSLATE("Peak Connections (estimate): %i")))
+				   ->SetKey("peak_connections"));
+#ifdef AMULE_UTP_TRANSPORT
+	tmpRoot2 = tmpRoot1->AddChild(
+		(new CStatTreeItemBase(wxTRANSLATE("NAT Traversal (Session)")))->SetKey("nat_traversal"));
+#endif
+#if defined(ENABLE_NATT_SERVER_COORDINATION) && defined(AMULE_UTP_TRANSPORT)
+	s_serverHolePunchAttempts = static_cast<CStatTreeItemNativeCounter *>(
+		tmpRoot2->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Server Hole Punches: %s"))));
+	s_serverHolePunchSuccesses = static_cast<CStatTreeItemNativeCounter *>(tmpRoot2->AddChild(
+		new CStatTreeItemNativeCounter(wxTRANSLATE("Successful Server Hole Punches: %s"))));
+	s_lugdunumCallbackAttempts = static_cast<CStatTreeItemNativeCounter *>(
+		tmpRoot2->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Lugdunum Callbacks: %s"))));
+	s_lugdunumCallbackSuccesses = static_cast<CStatTreeItemNativeCounter *>(tmpRoot2->AddChild(
+		new CStatTreeItemNativeCounter(wxTRANSLATE("Successful Lugdunum Callbacks: %s"))));
+#endif
+#ifdef AMULE_UTP_TRANSPORT
+	s_utpStreamMoves = static_cast<CStatTreeItemNativeCounter *>(tmpRoot2->AddChild(
+		new CStatTreeItemNativeCounter(wxTRANSLATE("uTP Streams Moved to a New Port: %s"))));
+#endif
+
+	s_clients = static_cast<CStatTreeItemHiddenCounter *>(s_statTree->AddChild(
+		new CStatTreeItemHiddenCounter(wxTRANSLATE("Clients"), stSortChildren | stSortByValue)));
+	s_unknown = static_cast<CStatTreeItemCounter *>(
+		s_clients->AddChild(new CStatTreeItemCounter(wxTRANSLATE("Unknown: %s")), 6));
+#ifdef __DEBUG__
+	s_hasSocket = static_cast<CStatTreeItemNativeCounter *>(
+		s_clients->AddChild(new CStatTreeItemNativeCounter("HasSocket: %s"), 3));
+#endif
+	s_filtered = static_cast<CStatTreeItemNativeCounter *>(
+		s_clients->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Filtered: %s")), 2));
+	s_banned = static_cast<CStatTreeItemNativeCounter *>(
+		s_clients->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Banned: %s")), 1));
+#ifdef ENABLE_KAD_NODE_PROTECTION
+	// Only when the protection that fills it is compiled in: adding the row unconditionally
+	// would show a figure that is structurally always zero, which reads as "nothing is being
+	// banned" rather than "nothing here can ban".
+	s_kadBanned = static_cast<CStatTreeItemNativeCounter *>(s_clients->AddChild(
+		new CStatTreeItemNativeCounter(wxTRANSLATE("Kad banned addresses: %s")), 1));
+#endif
+	s_clients->AddChild(
+		(new CStatTreeItemTotalClients(wxTRANSLATE("Total: %i Known: %i"), s_clients, s_unknown))
+			->SetKey("clients_total"),
+		0x80000000);
 
 	// TODO: Use counters?
-	tmpRoot1 = s_statTree->AddChild(new CStatTreeItemBase(wxTRANSLATE("Servers")));
-	s_workingServers = static_cast<CStatTreeItemSimple*>(tmpRoot1->AddChild(new CStatTreeItemSimple(wxTRANSLATE("Working Servers: %i"))));
-	s_failedServers = static_cast<CStatTreeItemSimple*>(tmpRoot1->AddChild(new CStatTreeItemSimple(wxTRANSLATE("Failed Servers: %i"))));
-	s_totalServers = static_cast<CStatTreeItemNativeCounter*>(tmpRoot1->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Total: %s"))));
-	s_deletedServers = static_cast<CStatTreeItemNativeCounter*>(tmpRoot1->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Deleted Servers: %s"))));
-	s_filteredServers = static_cast<CStatTreeItemNativeCounter*>(tmpRoot1->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Filtered Servers: %s"))));
-	s_usersOnWorking = static_cast<CStatTreeItemSimple*>(tmpRoot1->AddChild(new CStatTreeItemSimple(wxTRANSLATE("Users on Working Servers: %llu"))));
-	s_filesOnWorking = static_cast<CStatTreeItemSimple*>(tmpRoot1->AddChild(new CStatTreeItemSimple(wxTRANSLATE("Files on Working Servers: %llu"))));
-	s_totalUsers = static_cast<CStatTreeItemSimple*>(tmpRoot1->AddChild(new CStatTreeItemSimple(wxTRANSLATE("Total Users: %llu"))));
-	s_totalFiles = static_cast<CStatTreeItemSimple*>(tmpRoot1->AddChild(new CStatTreeItemSimple(wxTRANSLATE("Total Files: %llu"))));
-	s_serverOccupation = static_cast<CStatTreeItemSimple*>(tmpRoot1->AddChild(new CStatTreeItemSimple(wxTRANSLATE("Server Occupation: %.2f%%"))));
+	tmpRoot1 = s_statTree->AddChild((new CStatTreeItemBase(wxTRANSLATE("Servers")))->SetKey("servers"));
+	s_workingServers = static_cast<CStatTreeItemSimple *>(
+		tmpRoot1->AddChild(new CStatTreeItemSimple(wxTRANSLATE("Working Servers: %i"))));
+	s_failedServers = static_cast<CStatTreeItemSimple *>(
+		tmpRoot1->AddChild(new CStatTreeItemSimple(wxTRANSLATE("Failed Servers: %i"))));
+	s_totalServers = static_cast<CStatTreeItemNativeCounter *>(
+		tmpRoot1->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Total: %s"))));
+	s_deletedServers = static_cast<CStatTreeItemNativeCounter *>(
+		tmpRoot1->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Deleted Servers: %s"))));
+	s_filteredServers = static_cast<CStatTreeItemNativeCounter *>(
+		tmpRoot1->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Filtered Servers: %s"))));
+	s_usersOnWorking = static_cast<CStatTreeItemSimple *>(
+		tmpRoot1->AddChild(new CStatTreeItemSimple(wxTRANSLATE("Users on Working Servers: %llu"))));
+	s_filesOnWorking = static_cast<CStatTreeItemSimple *>(
+		tmpRoot1->AddChild(new CStatTreeItemSimple(wxTRANSLATE("Files on Working Servers: %llu"))));
+	s_totalUsers = static_cast<CStatTreeItemSimple *>(
+		tmpRoot1->AddChild(new CStatTreeItemSimple(wxTRANSLATE("Total Users: %llu"))));
+	s_totalFiles = static_cast<CStatTreeItemSimple *>(
+		tmpRoot1->AddChild(new CStatTreeItemSimple(wxTRANSLATE("Total Files: %llu"))));
+	s_serverOccupation = static_cast<CStatTreeItemSimple *>(
+		tmpRoot1->AddChild(new CStatTreeItemSimple(wxTRANSLATE("Server Occupation: %.2f%%"))));
 	s_serverOccupation->SetValue(0.0);
 
-	tmpRoot1 = s_statTree->AddChild(new CStatTreeItemBase(wxTRANSLATE("Shared Files")));
-	s_numberOfShared = static_cast<CStatTreeItemCounter*>(tmpRoot1->AddChild(new CStatTreeItemCounter(wxTRANSLATE("Number of Shared Files: %s"))));
-	s_sizeOfShare = static_cast<CStatTreeItemCounter*>(tmpRoot1->AddChild(new CStatTreeItemCounter(wxTRANSLATE("Total size of Shared Files: %s"))));
+	tmpRoot1 = s_statTree->AddChild(
+		(new CStatTreeItemBase(wxTRANSLATE("Shared Files")))->SetKey("shared_files"));
+	s_numberOfShared = static_cast<CStatTreeItemCounter *>(
+		tmpRoot1->AddChild(new CStatTreeItemCounter(wxTRANSLATE("Number of Shared Files: %s"))));
+	s_sizeOfShare = static_cast<CStatTreeItemCounter *>(
+		tmpRoot1->AddChild(new CStatTreeItemCounter(wxTRANSLATE("Total size of Shared Files: %s"))));
 	s_sizeOfShare->SetDisplayMode(dmBytes);
-	tmpRoot1->AddChild(new CStatTreeItemAverage(wxTRANSLATE("Average file size: %s"), s_sizeOfShare, s_numberOfShared, dmBytes));
-}
+	tmpRoot1->AddChild(
+		(new CStatTreeItemAverage(
+			 wxTRANSLATE("Average file size: %s"), s_sizeOfShare, s_numberOfShared, dmBytes))
+			->SetKey("shared_avg_size"));
 
+	// Stable machine keys for API consumers (EC_TAG_STAT_NODE_KEY), assigned here so
+	// they stay fixed regardless of label wording or translation.
+	s_uptime->SetKey("uptime");
+	s_sessionUpload->SetKey("upload_data");
+	s_totalUpOverhead->SetKey("upload_total_overhead");
+	s_fileReqUpOverhead->SetKey("upload_filereq_overhead");
+	s_sourceXchgUpOverhead->SetKey("upload_srcexch_overhead");
+	s_serverUpOverhead->SetKey("upload_server_overhead");
+	s_kadUpOverhead->SetKey("upload_kad_overhead");
+	s_cryptUpOverhead->SetKey("upload_crypt_overhead");
+	s_activeUploads->SetKey("active_uploads");
+	s_waitingUploads->SetKey("waiting_uploads");
+	s_totalSuccUploads->SetKey("upload_sessions_success");
+	s_totalFailedUploads->SetKey("upload_sessions_failed");
+	s_sessionDownload->SetKey("download_data");
+	s_totalDownOverhead->SetKey("download_total_overhead");
+	s_fileReqDownOverhead->SetKey("download_filereq_overhead");
+	s_sourceXchgDownOverhead->SetKey("download_srcexch_overhead");
+	s_serverDownOverhead->SetKey("download_server_overhead");
+	s_kadDownOverhead->SetKey("download_kad_overhead");
+	s_cryptDownOverhead->SetKey("download_crypt_overhead");
+	s_foundSources->SetKey("found_sources");
+	s_activeDownloads->SetKey("active_downloads");
+	s_downloadrate->SetKey("max_download_rate");
+	s_uploadrate->SetKey("max_upload_rate");
+	s_reconnects->SetKey("reconnects");
+	s_sinceFirstTransfer->SetKey("since_first_transfer");
+	s_sinceConnected->SetKey("connected_since");
+	s_activeConnections->SetKey("active_connections");
+	s_limitReached->SetKey("max_conn_limit_reached");
+	s_avgConnections->SetKey("avg_connections");
+	s_clients->SetKey("clients");
+	s_unknown->SetKey("clients_unknown");
+	s_filtered->SetKey("clients_filtered");
+	s_banned->SetKey("clients_banned");
+#ifdef ENABLE_KAD_NODE_PROTECTION
+	s_kadBanned->SetKey("clients_kad_banned");
+#endif
+#if defined(ENABLE_NATT_SERVER_COORDINATION) && defined(AMULE_UTP_TRANSPORT)
+	s_lowIdToLowIdUpload->SetKey("upload_lowid_to_lowid_data");
+	s_lowIdToLowIdDownload->SetKey("download_lowid_to_lowid_data");
+	s_serverHolePunchAttempts->SetKey("natt_server_punch_attempts");
+	s_serverHolePunchSuccesses->SetKey("natt_server_punch_successes");
+	s_lugdunumCallbackAttempts->SetKey("natt_lugdunum_callback_attempts");
+	s_lugdunumCallbackSuccesses->SetKey("natt_lugdunum_callback_successes");
+#endif
+#ifdef AMULE_UTP_TRANSPORT
+	s_utpStreamMoves->SetKey("natt_utp_stream_moves");
+#endif
+#ifdef ENABLE_IPV6
+	s_ipv6Upload->SetKey("upload_ipv6_data");
+	s_ipv6Download->SetKey("download_ipv6_data");
+#endif
+	s_workingServers->SetKey("servers_working");
+	s_failedServers->SetKey("servers_failed");
+	s_totalServers->SetKey("servers_total");
+	s_deletedServers->SetKey("servers_deleted");
+	s_filteredServers->SetKey("servers_filtered");
+	s_usersOnWorking->SetKey("servers_users_working");
+	s_filesOnWorking->SetKey("servers_files_working");
+	s_totalUsers->SetKey("servers_total_users");
+	s_totalFiles->SetKey("servers_total_files");
+	s_serverOccupation->SetKey("servers_occupation");
+	s_numberOfShared->SetKey("shared_count");
+	s_sizeOfShare->SetKey("shared_size");
+}
 
 void CStatistics::UpdateStatsTree()
 {
@@ -889,7 +1114,7 @@ void CStatistics::UpdateStatsTree()
 	uint32 servtfile;
 	float servocc;
 	theApp->serverlist->GetStatus(servfail, servuser, servfile, servtuser, servtfile, servocc);
-	s_workingServers->SetValue((uint64)((*s_totalServers)-servfail));
+	s_workingServers->SetValue((uint64)((*s_totalServers) - servfail));
 	s_failedServers->SetValue((uint64)servfail);
 	s_usersOnWorking->SetValue((uint64)servuser);
 	s_filesOnWorking->SetValue((uint64)servfile);
@@ -898,14 +1123,15 @@ void CStatistics::UpdateStatsTree()
 	s_serverOccupation->SetValue(servocc);
 }
 
-
 void CStatistics::AddSourceOrigin(unsigned origin)
 {
-	CStatTreeItemCounter* counter = static_cast<CStatTreeItemCounter*>(s_foundSources->GetChildById(0x0100 + origin));
+	CStatTreeItemCounter *counter =
+		static_cast<CStatTreeItemCounter *>(s_foundSources->GetChildById(0x0100 + origin));
 	if (counter) {
 		++(*counter);
 	} else {
-		counter = new CStatTreeItemCounter(OriginToText(origin) + ": %s", stHideIfZero | stShowPercent);
+		counter =
+			new CStatTreeItemCounter(OriginToText(origin) + ": %s", stHideIfZero | stShowPercent);
 		++(*counter);
 		s_foundSources->AddChild(counter, 0x0100 + origin);
 	}
@@ -913,7 +1139,8 @@ void CStatistics::AddSourceOrigin(unsigned origin)
 
 void CStatistics::RemoveSourceOrigin(unsigned origin)
 {
-	CStatTreeItemCounter* counter = static_cast<CStatTreeItemCounter*>(s_foundSources->GetChildById(0x0100 + origin));
+	CStatTreeItemCounter *counter =
+		static_cast<CStatTreeItemCounter *>(s_foundSources->GetChildById(0x0100 + origin));
 	wxASSERT(counter);
 	--(*counter);
 }
@@ -923,15 +1150,15 @@ static uint32 GetSoftID(uint8 SoftType)
 	// prevent appearing multiple tree entries with the same name
 	// this should be kept in sync with GetSoftName().
 	switch (SoftType) {
-		case SO_OLDEMULE:
-			return 0x0100 + SO_EMULE;
-		case SO_NEW_SHAREAZA:
-		case SO_NEW2_SHAREAZA:
-			return 0x0100 + SO_SHAREAZA;
-		case SO_NEW2_MLDONKEY:
-			return 0x0100 + SO_NEW_MLDONKEY;
-		default:
-			return 0x0100 + SoftType;
+	case SO_OLDEMULE:
+		return 0x0100 + SO_EMULE;
+	case SO_NEW_SHAREAZA:
+	case SO_NEW2_SHAREAZA:
+		return 0x0100 + SO_SHAREAZA;
+	case SO_NEW2_MLDONKEY:
+		return 0x0100 + SO_NEW_MLDONKEY;
+	default:
+		return 0x0100 + SoftType;
 	}
 }
 
@@ -942,9 +1169,9 @@ void CStatistics::AddDownloadFromSoft(uint8 SoftType, uint32 bytes)
 	uint32 id = GetSoftID(SoftType);
 
 	if (s_sessionDownload->HasChildWithId(id)) {
-		(*static_cast<CStatTreeItemCounter*>(s_sessionDownload->GetChildById(id))) += bytes;
+		(*static_cast<CStatTreeItemCounter *>(s_sessionDownload->GetChildById(id))) += bytes;
 	} else {
-		CStatTreeItemCounter* tmp = new CStatTreeItemCounter(GetSoftName(SoftType) + ": %s");
+		CStatTreeItemCounter *tmp = new CStatTreeItemCounter(GetSoftName(SoftType) + ": %s");
 		tmp->SetDisplayMode(dmBytes);
 		(*tmp) += bytes;
 		s_sessionDownload->AddChild(tmp, id);
@@ -956,14 +1183,46 @@ void CStatistics::AddUploadToSoft(uint8 SoftType, uint32 bytes)
 	uint32 id = GetSoftID(SoftType);
 
 	if (s_sessionUpload->HasChildWithId(id)) {
-		(*static_cast<CStatTreeItemCounter*>(s_sessionUpload->GetChildById(id))) += bytes;
+		(*static_cast<CStatTreeItemCounter *>(s_sessionUpload->GetChildById(id))) += bytes;
 	} else {
-		CStatTreeItemCounter* tmp = new CStatTreeItemCounter(GetSoftName(SoftType) + ": %s");
+		CStatTreeItemCounter *tmp = new CStatTreeItemCounter(GetSoftName(SoftType) + ": %s");
 		tmp->SetDisplayMode(dmBytes);
 		(*tmp) += bytes;
 		s_sessionUpload->AddChild(tmp, id);
 	}
 }
+
+#ifdef AMULE_SESSION_TRAFFIC_STATS
+void CStatistics::AddSessionTrafficUpload(
+	[[maybe_unused]] bool lowIdToLowId, [[maybe_unused]] bool ipv6, [[maybe_unused]] uint32 bytes)
+{
+#if defined(ENABLE_NATT_SERVER_COORDINATION) && defined(AMULE_UTP_TRANSPORT)
+	if (lowIdToLowId) {
+		(*s_lowIdToLowIdUpload) += bytes;
+	}
+#endif
+#ifdef ENABLE_IPV6
+	if (ipv6) {
+		(*s_ipv6Upload) += bytes;
+	}
+#endif
+}
+
+void CStatistics::AddSessionTrafficDownload(
+	[[maybe_unused]] bool lowIdToLowId, [[maybe_unused]] bool ipv6, [[maybe_unused]] uint32 bytes)
+{
+#if defined(ENABLE_NATT_SERVER_COORDINATION) && defined(AMULE_UTP_TRANSPORT)
+	if (lowIdToLowId) {
+		(*s_lowIdToLowIdDownload) += bytes;
+	}
+#endif
+#ifdef ENABLE_IPV6
+	if (ipv6) {
+		(*s_ipv6Download) += bytes;
+	}
+#endif
+}
+#endif
 
 inline bool SupportsOSInfo(unsigned clientSoft)
 {
@@ -971,16 +1230,16 @@ inline bool SupportsOSInfo(unsigned clientSoft)
 }
 
 // Do some random black magic to strings to get a relatively unique number for them.
-static uint32 GetIdFromString(const wxString& str)
+static uint32 GetIdFromString(const wxString &str)
 {
 	uint32 id = 0;
 	for (unsigned i = 0; i < str.Length(); ++i) {
-                unsigned old_id = id;
-                id += (uint32)str.GetChar(i);
-                id <<= 2;
-                id ^= old_id;
-                id -= old_id;
-        }
+		unsigned old_id = id;
+		id += (uint32)str.GetChar(i);
+		id <<= 2;
+		id ^= old_id;
+		id -= old_id;
+	}
 	return (((id >> 1) + id) | 0x00000100) & 0x7fffffff;
 }
 
@@ -994,7 +1253,7 @@ void CStatistics::AddKnownClient(CUpDownClient *pClient)
 	CStatTreeItemCounter *client;
 
 	if (s_clients->HasChildWithId(id)) {
-		client = static_cast<CStatTreeItemCounter*>(s_clients->GetChildById(id));
+		client = static_cast<CStatTreeItemCounter *>(s_clients->GetChildById(id));
 		++(*client);
 	} else {
 		uint32 flags = stSortChildren | stShowPercent | stHideIfZero;
@@ -1005,8 +1264,14 @@ void CStatistics::AddKnownClient(CUpDownClient *pClient)
 		++(*client);
 		s_clients->AddChild(client, id);
 		if (SupportsOSInfo(clientSoft)) {
-			client->AddChild(new CStatTreeItemBase(wxTRANSLATE("Version"), stSortChildren | stCapChildren), 2);
-			client->AddChild(new CStatTreeItemBase(wxTRANSLATE("Operating System"), stSortChildren | stSortByValue), 1);
+			client->AddChild((new CStatTreeItemBase(
+						  wxTRANSLATE("Version"), stSortChildren | stCapChildren))
+						 ->SetKey("client_versions"),
+				2);
+			client->AddChild((new CStatTreeItemBase(wxTRANSLATE("Operating System"),
+						  stSortChildren | stSortByValue))
+						 ->SetKey("client_operating_system"),
+				1);
 		}
 	}
 
@@ -1014,49 +1279,66 @@ void CStatistics::AddKnownClient(CUpDownClient *pClient)
 	uint32 clientVersion = pClient->GetVersion();
 
 	if (versionRoot->HasChildWithId(clientVersion)) {
-		CStatTreeItemCounter *version = static_cast<CStatTreeItemCounter*>(versionRoot->GetChildById(clientVersion));
+		CStatTreeItemCounter *version =
+			static_cast<CStatTreeItemCounter *>(versionRoot->GetChildById(clientVersion));
 		++(*version);
 	} else {
-		const wxString& versionStr = pClient->GetVersionString();
-		CStatTreeItemCounter *version = new CStatTreeItemCounter((versionStr.IsEmpty() ? wxString(wxTRANSLATE("Unknown")) : versionStr) + ": %s", stShowPercent | stHideIfZero);
+		const wxString &versionStr = pClient->GetVersionString();
+		CStatTreeItemCounter *version = new CStatTreeItemCounter(
+			(versionStr.IsEmpty() ? wxString(wxTRANSLATE("Unknown")) : versionStr) + ": %s",
+			stShowPercent | stHideIfZero);
+		version->SetKey("client_version");
+		// Raw version string (empty for "Unknown" -> tag omitted), so API
+		// clients read it without parsing the composite label.
+		version->SetRawValue(versionStr);
 		++(*version);
 		versionRoot->AddChild(version, clientVersion, SupportsOSInfo(clientSoft));
 	}
 
 	if (SupportsOSInfo(clientSoft)) {
-		const wxString& OSInfo = pClient->GetClientOSInfo();
+		const wxString &OSInfo = pClient->GetClientOSInfo();
 		uint32 OS_ID = OSInfo.IsEmpty() ? 0 : GetIdFromString(OSInfo);
-		CStatTreeItemBase* OSRoot = client->GetChildById(1);
-		CStatTreeItemCounter* OSNode = static_cast<CStatTreeItemCounter*>(OSRoot->GetChildById(OS_ID));
+		CStatTreeItemBase *OSRoot = client->GetChildById(1);
+		CStatTreeItemCounter *OSNode =
+			static_cast<CStatTreeItemCounter *>(OSRoot->GetChildById(OS_ID));
 		if (OSNode) {
 			++(*OSNode);
 		} else {
-			OSNode = new CStatTreeItemCounter((OS_ID ? OSInfo : wxString(wxTRANSLATE("Not Received"))) + ": %s", stShowPercent | stHideIfZero);
+			// The label is a CFormat string and OSInfo comes from the peer.
+			OSNode = new CStatTreeItemCounter(
+				CFormat::Escape(OS_ID ? OSInfo : wxString(wxTRANSLATE("Not Received"))) +
+					": %s",
+				stShowPercent | stHideIfZero);
+			OSNode->SetKey("client_os");
+			// Raw OS string (empty for "Not Received" -> tag omitted).
+			OSNode->SetRawValue(OSInfo);
 			++(*OSNode);
 			OSRoot->AddChild(OSNode, OS_ID, true);
 		}
 	}
 }
 
-void CStatistics::RemoveKnownClient(uint32 clientSoft, uint32 clientVersion, const wxString& OSInfo)
+void CStatistics::RemoveKnownClient(uint32 clientSoft, uint32 clientVersion, const wxString &OSInfo)
 {
 	--(*s_clients);
 
 	uint32 id = GetSoftID(clientSoft);
 
-	CStatTreeItemCounter *client = static_cast<CStatTreeItemCounter*>(s_clients->GetChildById(id));
+	CStatTreeItemCounter *client = static_cast<CStatTreeItemCounter *>(s_clients->GetChildById(id));
 	wxASSERT(client);
 	--(*client);
 
 	CStatTreeItemBase *versionRoot = SupportsOSInfo(clientSoft) ? client->GetChildById(2) : client;
 
-	CStatTreeItemCounter *version = static_cast<CStatTreeItemCounter*>(versionRoot->GetChildById(clientVersion));
+	CStatTreeItemCounter *version =
+		static_cast<CStatTreeItemCounter *>(versionRoot->GetChildById(clientVersion));
 	wxASSERT(version);
 	--(*version);
 
 	if (SupportsOSInfo(clientSoft)) {
 		uint32 OS_ID = OSInfo.IsEmpty() ? 0 : GetIdFromString(OSInfo);
-		CStatTreeItemCounter* OSNode = static_cast<CStatTreeItemCounter*>(client->GetChildById(1)->GetChildById(OS_ID));
+		CStatTreeItemCounter *OSNode =
+			static_cast<CStatTreeItemCounter *>(client->GetChildById(1)->GetChildById(OS_ID));
 		wxASSERT(OSNode);
 		--(*OSNode);
 	}
@@ -1065,27 +1347,59 @@ void CStatistics::RemoveKnownClient(uint32 clientSoft, uint32 clientVersion, con
 #else /* CLIENT_GUI */
 
 CStatistics::CStatistics(CRemoteConnect &conn)
-	: m_conn(conn)
+: m_conn(conn)
+, m_graphRunningAvgDown(thePrefs::GetStatsAverageMinutes() * 60 * 1000, true)
+, m_graphRunningAvgUp(thePrefs::GetStatsAverageMinutes() * 60 * 1000, true)
+, m_graphRunningAvgKad(thePrefs::GetStatsAverageMinutes() * 60 * 1000, true)
 {
+	s_kadDistribution.Reset();
 	s_start_time = GetTickCount64();
+	average_minutes = thePrefs::GetStatsAverageMinutes();
 
-	// Init Tree
+	// Sentinel HR used by GetHistory when sTarget underflows past the
+	// beginning of listHR; matches the monolithic ctor's hrInit.
+	HR hr = { 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0, 0 };
+	hrInit = hr;
+
 	s_statTree = new CStatTreeItemBase(_("Statistics"), 0);
 
-	// Clear stat data container
 	for (int i = 0; i < sdTotalItems; ++i) {
 		s_statData[i] = 0;
 	}
 }
 
-
 CStatistics::~CStatistics()
 {
+	listHR.clear();
 	delete s_statTree;
 }
 
+void CStatistics::AddHistoryRecord(const HR &hr, double minSpacing)
+{
+	// Keep only what the graphs will actually plot: one record every minSpacing seconds, that
+	// being the seconds-per-point they draw at.
+	//
+	// Two things otherwise fill the ring with points no axis asks for. GetHistoryForGui appends
+	// a record before testing whether the caller already has it, so every poll returns at least
+	// the newest record again; and the daemon's newest record advances one second per poll
+	// whatever spacing was requested, so a graph drawing at 3 s stored three records per point.
+	// Drawing never noticed, but kHistoryCap bounds the ring in RECORDS, so both effects cost
+	// real history: measured against a live daemon the graphs opened with 28 minutes behind
+	// them and decayed toward 15.
+	//
+	// Safe against a daemon restart resetting its uptime clock: Startup() builds a new
+	// CStatistics per connection, so timestamps only move forward within one ring's lifetime.
+	if (!listHR.empty() && hr.sTimestamp < listHR.back().sTimestamp + minSpacing) {
+		return;
+	}
 
-void CStatistics::UpdateStats(const CECPacket* stats)
+	listHR.push_back(hr);
+	while (listHR.size() > kHistoryCap) {
+		listHR.pop_front();
+	}
+}
+
+void CStatistics::UpdateStats(const CECPacket *stats, bool distributionRequested)
 {
 	s_statData[sdUpload] = stats->GetTagByNameSafe(EC_TAG_STATS_UL_SPEED)->GetInt();
 	s_statData[sdUpOverhead] = stats->GetTagByNameSafe(EC_TAG_STATS_UP_OVERHEAD)->GetInt();
@@ -1099,44 +1413,62 @@ void CStatistics::UpdateStats(const CECPacket* stats)
 	s_statData[sdKadFiles] = stats->GetTagByNameSafe(EC_TAG_STATS_KAD_FILES)->GetInt();
 	s_statData[sdKadFirewalledUDP] = stats->GetTagByNameSafe(EC_TAG_STATS_KAD_FIREWALLED_UDP)->GetInt();
 	s_statData[sdKadIndexedSources] = stats->GetTagByNameSafe(EC_TAG_STATS_KAD_INDEXED_SOURCES)->GetInt();
-	s_statData[sdKadIndexedKeywords] = stats->GetTagByNameSafe(EC_TAG_STATS_KAD_INDEXED_KEYWORDS)->GetInt();
+	s_statData[sdKadIndexedKeywords] =
+		stats->GetTagByNameSafe(EC_TAG_STATS_KAD_INDEXED_KEYWORDS)->GetInt();
 	s_statData[sdKadIndexedNotes] = stats->GetTagByNameSafe(EC_TAG_STATS_KAD_INDEXED_NOTES)->GetInt();
 	s_statData[sdKadIndexedLoad] = stats->GetTagByNameSafe(EC_TAG_STATS_KAD_INDEXED_LOAD)->GetInt();
+	// amuled sends the index counters only once its saved Kad index is loaded.
+	s_statData[sdKadIndexReady] = stats->GetTagByName(EC_TAG_STATS_KAD_INDEXED_LOAD) != nullptr;
 	s_statData[sdKadIPAddress] = stats->GetTagByNameSafe(EC_TAG_STATS_KAD_IP_ADDRESS)->GetInt();
 	s_statData[sdKadNodes] = stats->GetTagByNameSafe(EC_TAG_STATS_KAD_NODES)->GetInt();
+	const auto *distributionTag = stats->GetTagByName(EC_TAG_STATS_KAD_DISTRIBUTION);
+	const bool customDistribution = distributionTag && distributionTag->IsCustom();
+	s_kadDistribution.Update(distributionRequested,
+		distributionTag != nullptr,
+		customDistribution ? distributionTag->GetTagData() : nullptr,
+		customDistribution ? distributionTag->GetTagDataLen() : 0);
 	s_statData[sdBuddyStatus] = stats->GetTagByNameSafe(EC_TAG_STATS_BUDDY_STATUS)->GetInt();
 	s_statData[sdBuddyIP] = stats->GetTagByNameSafe(EC_TAG_STATS_BUDDY_IP)->GetInt();
 	s_statData[sdBuddyPort] = stats->GetTagByNameSafe(EC_TAG_STATS_BUDDY_PORT)->GetInt();
 	s_statData[sdKadInLanMode] = stats->GetTagByNameSafe(EC_TAG_STATS_KAD_IN_LAN_MODE)->GetInt();
 	s_statData[sdTotalSentBytes] = stats->GetTagByNameSafe(EC_TAG_STATS_TOTAL_SENT_BYTES)->GetInt();
-	s_statData[sdTotalReceivedBytes] = stats->GetTagByNameSafe(EC_TAG_STATS_TOTAL_RECEIVED_BYTES)->GetInt();
+	s_statData[sdTotalReceivedBytes] =
+		stats->GetTagByNameSafe(EC_TAG_STATS_TOTAL_RECEIVED_BYTES)->GetInt();
 	s_statData[sdSharedFileCount] = stats->GetTagByNameSafe(EC_TAG_STATS_SHARED_FILE_COUNT)->GetInt();
 
-	const CECTag * LoggerTag = stats->GetTagByName(EC_TAG_STATS_LOGGER_MESSAGE);
+	// Absence has to mean "unknown", not zero: a daemon older than these tags sends neither,
+	// and GetTagByNameSafe() would answer 0 for both -- which the Downloads panel would read as
+	// a full disk and paint red.
+	const CECTag *tempFree = stats->GetTagByName(EC_TAG_STATS_TEMP_FREE_SPACE);
+	s_statData[sdTempFreeSpace] = tempFree ? tempFree->GetInt() : (uint64)FREE_SPACE_UNKNOWN;
+	const CECTag *incomingFree = stats->GetTagByName(EC_TAG_STATS_INCOMING_FREE_SPACE);
+	s_statData[sdIncomingFreeSpace] = incomingFree ? incomingFree->GetInt() : (uint64)FREE_SPACE_UNKNOWN;
+
+	const CECTag *LoggerTag = stats->GetTagByName(EC_TAG_STATS_LOGGER_MESSAGE);
 	if (LoggerTag) {
-		for (CECTag::const_iterator it = LoggerTag->begin(); it != LoggerTag->end(); ++it) {
-			theApp->AddRemoteLogLine(it->GetStringData());
+		// Coalesce the whole poll's log lines into a single repaint and one scroll: a
+		// remote-GUI first-sync backlog can be thousands of lines, and per-line rendering
+		// froze the GUI for minutes (issue #445).
+		theApp->BeginRemoteLogBatch();
+		for (const auto &tag : *LoggerTag) {
+			theApp->AddRemoteLogLine(tag.GetStringData());
 		}
+		theApp->EndRemoteLogBatch();
 	}
 }
 
+void CStatistics::UpdateStatsTree() {}
 
-void CStatistics::UpdateStatsTree()
-{}
-
-
-void CStatistics::RebuildStatTreeRemote(const CECTag * tag)
+void CStatistics::RebuildStatTreeRemote(const CECTag *tag)
 {
 	delete s_statTree;
 	s_statTree = new CStatTreeItemBase(tag);
 }
 
-
 uint64 CStatistics::GetUptimeMillis()
 {
 	return GetTickCount64() - s_start_time;
 }
-
 
 uint64 CStatistics::GetUptimeSeconds()
 {
@@ -1146,3 +1478,25 @@ uint64 CStatistics::GetUptimeSeconds()
 #endif /* !CLIENT_GUI */
 
 // File_checked_for_headers
+
+Kademlia::ContactDistributionState CStatistics::GetKadContactDistribution(
+	Kademlia::ContactDistribution &distribution)
+{
+#ifdef CLIENT_GUI
+	return s_kadDistribution.Get(distribution);
+#else
+	distribution = {};
+	if (Kademlia::CKademlia::IsRunning()) {
+		distribution = Kademlia::CKademlia::GetRoutingZone()->GetContactDistribution();
+	}
+	return Kademlia::ContactDistributionState::Available;
+#endif
+}
+
+#ifdef CLIENT_GUI
+Kademlia::ContactDistributionCache CStatistics::s_kadDistribution;
+void CStatistics::ResetKadContactDistribution()
+{
+	s_kadDistribution.Reset();
+}
+#endif

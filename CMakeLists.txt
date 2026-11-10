@@ -1,7 +1,17 @@
-cmake_minimum_required (VERSION 4.0)
-project (amule)
-set (MIN_BOOST_VERSION 1.47)
-set (MIN_CRYPTOPP_VERSION 5.6)
+# 3.12 is tested in CI (the "CMake minimum version" job in ccpp.yml): raising
+# this needs that job updated, and lowering it needs the code to allow it.
+cmake_minimum_required (VERSION 3.12...3.31)
+
+# ClientVersion.h stays the one place to bump; the macOS bundles' Info.plist reads PROJECT_VERSION.
+file (STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/src/include/common/ClientVersion.h" _amule_version_lines
+	REGEX "^#define VERSION_(MJR|MIN|UPDATE) [0-9]+$")
+foreach (_part MJR MIN UPDATE)
+	string (REGEX REPLACE ".*#define VERSION_${_part} ([0-9]+).*" "\\1" _amule_version_${_part} "${_amule_version_lines}")
+endforeach ()
+project (amule VERSION ${_amule_version_MJR}.${_amule_version_MIN}.${_amule_version_UPDATE})
+
+set (MIN_BOOST_VERSION 1.74) # Asio thread_pool::attach()
+set (MIN_CRYPTOPP_VERSION 8.1)
 set (MIN_GDLIB_VERSION 2.0.0)
 set (MIN_WX_VERSION 3.2.0)
 set (PACKAGE "amule")
@@ -14,10 +24,11 @@ set (PACKAGE_VERSION "SVN")
 set (VERSION "GIT")
 set (DEFAULT_BUILD_TYPE "Release")
 set (RECONF_COMMAND ${CMAKE_COMMAND})
+set (CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-if (EXISTS "${CMAKE_SOURCE_DIR}/.git")
-	set (DEFAULT_BUILD_TYPE "Debug")
-endif()
+# Pin the language standard rather than inheriting each compiler's default.
+set (CMAKE_CXX_STANDARD 17)
+set (CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Set the possible values of build type for cmake-gui
 if (CMAKE_CONFIGURATION_TYPES)
@@ -35,6 +46,24 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 	set (CMAKE_BUILD_TYPE "${DEFAULT_BUILD_TYPE}" CACHE
 		STRING "Choose the type of build." FORCE
 	)
+endif()
+
+# ccache auto-detection (AUTO = use if found, ON = require, OFF = skip).
+# Distros that run their own ccache wrapper (FreeBSD ports, Gentoo, etc.)
+# should pass -DENABLE_CCACHE=OFF so we don't double-wrap the compiler.
+set (ENABLE_CCACHE "AUTO" CACHE STRING "Use ccache compiler launcher (AUTO/ON/OFF)")
+set_property (CACHE ENABLE_CCACHE PROPERTY STRINGS "AUTO" "ON" "OFF")
+if (NOT ENABLE_CCACHE STREQUAL "OFF")
+    find_program(CCACHE_PROGRAM ccache)
+    if(CCACHE_PROGRAM)
+        message(STATUS "ccache found: ${CCACHE_PROGRAM}")
+        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    elseif (ENABLE_CCACHE STREQUAL "ON")
+        message(FATAL_ERROR "ccache requested via -DENABLE_CCACHE=ON but not found")
+    else()
+        message(STATUS "ccache not found.")
+    endif()
 endif()
 
 include (cmake/manpage_install.cmake)
@@ -61,6 +90,14 @@ if (ENABLE_NLS)
 	include (cmake/nls.cmake)
 endif()
 
+if (ENABLE_UTP)
+	include (cmake/libutp.cmake)
+endif()
+
+if (ENABLE_QUIC)
+	include (cmake/ngtcp2.cmake)
+endif()
+
 if (NEED_GLIB_CHECK)
 	include (cmake/glib21.cmake)
 endif()
@@ -73,7 +110,41 @@ if (wx_NEEDED)
 	include (cmake/wx.cmake)
 endif()
 
-if (NOT SVNDATE)
+#
+# GITDATE is consumed by config.h.cm (#define GITDATE "...") and
+# version.rc.in (Windows version resource), and ends up in the binary's
+# `--version` output and the amuled startup banner.
+#
+# Two modes:
+#   * Distro packagers building from a tarball (no .git) pass
+#     -DGITDATE="rev. foo" on the cmake command line.  That value lands
+#     in the cache and is respected here unconditionally.
+#   * Source builds derive the value from `git describe` on EVERY
+#     configure so subsequent commits show up in the banner without a
+#     full reconfigure.  The previous code wrapped this in
+#     `if (NOT GITDATE)` and stored the result with `CACHE STRING FORCE`,
+#     which froze the value at the first configure forever — every
+#     incremental rebuild thereafter embedded the stale revision string.
+#
+# CMAKE_CONFIGURE_DEPENDS makes the build system re-run cmake when the
+# git state changes, so `cmake --build` alone is enough to pick up new
+# commits in the banner.
+#
+# We need three files, not just HEAD:
+#   * HEAD — touched on `git checkout <branch>` (symref retarget),
+#     `git checkout --detach`, and explicit `git update-ref HEAD ...`.
+#   * the branch-ref file (refs/heads/<branch>) that HEAD points at —
+#     touched on `git commit`, `git reset --hard`, `git pull --ff-only`,
+#     and any other op that moves the branch tip.  Tracking only HEAD
+#     misses these because HEAD is a symref text file, not the SHA itself.
+#   * packed-refs — touched by `git gc` / `git pack-refs`, which can
+#     consolidate the branch ref file out of existence.  After a pack,
+#     the SHA lives only in packed-refs.
+#
+# Where those three live is a question for git, not an assumption about
+# the directory layout — see the resolution step further down.
+#
+if (NOT DEFINED CACHE{GITDATE})
 	find_package (Git)
 
 	if (GIT_FOUND)
@@ -82,13 +153,342 @@ if (NOT SVNDATE)
 			OUTPUT_VARIABLE GIT_INFO_WC_REVISION
 			OUTPUT_STRIP_TRAILING_WHITESPACE
 			WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-	endif (GIT_FOUND)
-
-	set (SVNDATE "rev. ${GIT_INFO_WC_REVISION}" CACHE STRING "Revision to be written to version string" FORCE)
-	message (STATUS "git revision ${SVNDATE} found")
+		if (GIT_INFO_RESULT EQUAL 0 AND GIT_INFO_WC_REVISION)
+			set (GITDATE "rev. ${GIT_INFO_WC_REVISION}")
+			message (STATUS "git revision ${GITDATE} found")
+		endif()
+		# When HEAD sits exactly on a tag, override the GIT placeholder
+		# set above with the tag name so artifact filenames, the About
+		# dialog, the tray menu label, and the Windows version resource
+		# all reflect the release. Tagless builds keep "GIT" — the
+		# existing dev marker. The AMULE_TAGGED_RELEASE flag is also
+		# forwarded to config.h so ClientVersion.h can suppress the
+		# __GIT__ marker on releases.
+		execute_process (
+			COMMAND ${GIT_EXECUTABLE} describe --tags --exact-match HEAD
+			OUTPUT_VARIABLE GIT_TAG
+			OUTPUT_STRIP_TRAILING_WHITESPACE
+			RESULT_VARIABLE GIT_TAG_RESULT
+			ERROR_QUIET
+			WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+		if (GIT_TAG_RESULT EQUAL 0 AND GIT_TAG)
+			set (VERSION "${GIT_TAG}")
+			set (PACKAGE_VERSION "${GIT_TAG}")
+			set (PACKAGE_STRING "aMule ${GIT_TAG}")
+			set (AMULE_TAGGED_RELEASE 1)
+			# Suppress the "(Snapshot: ...)" trailer that
+			# MuleVersion.h's `#ifdef GITDATE` gate appends to
+			# GetMuleVersion(). On a tagged build the GITDATE the
+			# earlier git-describe block produced ("rev. <tag>")
+			# would render as "Initialising aMule <tag> ...
+			# (Snapshot: rev. <tag>)" — both redundant and
+			# inaccurate, since a tagged release isn't a snapshot.
+			# Pairs with the `#define` → `#cmakedefine` change in
+			# config.h.cm so an unset GITDATE yields `#undef
+			# GITDATE` instead of `#define GITDATE ""`, which
+			# otherwise leaves the empty parens in place.
+			unset (GITDATE)
+			message (STATUS "building tagged release: ${PACKAGE_STRING}")
+		endif()
+	else()
+		# No `.git` directory.  If we're sitting in an extracted git
+		# archive — e.g. GitHub's "Download ZIP" button on a tag or
+		# commit, or a tarball someone produced via `git archive` —
+		# `.git_archival.txt` will exist with its `$Format:...$`
+		# placeholders substituted to the actual SHA / tag / describe
+		# output.  Parse it as a fallback so the resulting binary
+		# self-identifies the same way a `.git`-present clone of the
+		# same commit would.  See `.gitattributes` for the
+		# `export-subst` binding that triggers the substitution.
+		set (_archival_file "${CMAKE_SOURCE_DIR}/.git_archival.txt")
+		if (EXISTS "${_archival_file}")
+			file (READ "${_archival_file}" _archival_content)
+			# Skip un-substituted templates: a working-tree copy
+			# of the file (someone tar'd up `src/` without running
+			# `git archive`) still contains literal `$Format:`
+			# markers.  These are the signal that `git archive`
+			# never touched the file — fall through to defaults.
+			if (NOT _archival_content MATCHES "\\\$Format:")
+				string (REGEX MATCH "describe-name:[ \t]*([^\r\n]+)" _ "${_archival_content}")
+				set (_describe "${CMAKE_MATCH_1}")
+				string (STRIP "${_describe}" _describe)
+				if (_describe)
+					# `git describe --tags` output:
+					#   - exact-tag: just the tag name ("3.0.0", "v3.0.0")
+					#   - off-tag:   "<tag>-<N>-g<sha>" ("2.3.3-296-ge3f87f77f")
+					# Detect the off-tag form by the `-N-g<hex>`
+					# trailer; otherwise treat as a tagged release.
+					if (_describe MATCHES "-[0-9]+-g[0-9a-f]+$")
+						set (GITDATE "rev. ${_describe}")
+						message (STATUS "git archival metadata: ${GITDATE} found")
+					else()
+						set (VERSION "${_describe}")
+						set (PACKAGE_VERSION "${_describe}")
+						set (PACKAGE_STRING "aMule ${_describe}")
+						set (AMULE_TAGGED_RELEASE 1)
+						message (STATUS "git archival metadata: tagged release ${PACKAGE_STRING}")
+					endif()
+				endif()
+			endif()
+		endif()
+	endif()
+	# Depend on .git_archival.txt so that if it's swapped in
+	# (e.g. someone re-extracts an archive, or hand-edits the file),
+	# cmake re-runs and re-parses on the next build.
+	if (EXISTS "${CMAKE_SOURCE_DIR}/.git_archival.txt")
+		set_property (DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+			"${CMAKE_SOURCE_DIR}/.git_archival.txt")
+	endif()
+	#
+	# `${CMAKE_SOURCE_DIR}/.git` is a directory only in a plain clone.  In
+	# a linked worktree (`git worktree add`) — and in a submodule — it is
+	# a *file* holding a `gitdir:` pointer, so every path built by
+	# appending to it resolves to nothing.  The EXISTS guards below then
+	# quietly skip every dependency and the auto-refresh this whole block
+	# exists for stops happening: the revision string stays frozen at
+	# whatever the first configure saw, with no diagnostic.  Ask git for
+	# the real locations instead of assuming the layout:
+	#
+	#   * --git-dir         the per-worktree directory.  Owns HEAD.
+	#   * --git-common-dir  the shared directory.  Owns refs/heads/* and
+	#                       packed-refs, which linked worktrees do not
+	#                       get private copies of.
+	#
+	# The two are the same path in a plain clone and diverge in a
+	# worktree, which is exactly why both are needed — tracking only one
+	# would miss either the branch retarget or the branch tip moving.
+	# Resolution is scoped to the `.git`-at-source-root case on purpose:
+	# rev-parse walks up to any enclosing repository, so running it
+	# unconditionally would make a tarball unpacked inside some unrelated
+	# checkout describe that checkout instead of falling through to the
+	# .git_archival.txt path above.
+	#
+	if (GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+		execute_process (
+			COMMAND ${GIT_EXECUTABLE} rev-parse --git-dir
+			OUTPUT_VARIABLE _amule_git_dir
+			OUTPUT_STRIP_TRAILING_WHITESPACE
+			ERROR_QUIET
+			RESULT_VARIABLE _amule_git_dir_result
+			WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+		if (NOT _amule_git_dir_result EQUAL 0)
+			set (_amule_git_dir "")
+		endif()
+		execute_process (
+			COMMAND ${GIT_EXECUTABLE} rev-parse --git-common-dir
+			OUTPUT_VARIABLE _amule_git_common_dir
+			OUTPUT_STRIP_TRAILING_WHITESPACE
+			ERROR_QUIET
+			RESULT_VARIABLE _amule_git_common_dir_result
+			WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+		if (NOT _amule_git_common_dir_result EQUAL 0)
+			set (_amule_git_common_dir "")
+		endif()
+		# Both are printed relative to the working directory in a plain
+		# clone (literally ".git") and absolute in a worktree, so
+		# normalise before building paths from them.
+		if (_amule_git_dir)
+			get_filename_component (_amule_git_dir "${_amule_git_dir}"
+				ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+		endif()
+		# --git-common-dir arrived in git 2.5; on anything older the
+		# option is parsed as a revision and fails.  Fall back to the
+		# per-worktree directory, which is the correct answer for every
+		# layout that old a git can produce.
+		if (_amule_git_common_dir AND NOT _amule_git_common_dir STREQUAL "--git-common-dir")
+			get_filename_component (_amule_git_common_dir "${_amule_git_common_dir}"
+				ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+		else()
+			set (_amule_git_common_dir "${_amule_git_dir}")
+		endif()
+	endif()
+	if (_amule_git_dir AND EXISTS "${_amule_git_dir}/HEAD")
+		set_property (DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+			"${_amule_git_dir}/HEAD")
+		# Resolve HEAD's symref target so we can also depend on the
+		# branch ref file directly.  This catches commits/resets that
+		# move the branch tip without retargeting HEAD.  A detached HEAD
+		# holds the SHA inline instead, and so is already covered by the
+		# dependency on HEAD itself.
+		file (READ "${_amule_git_dir}/HEAD" _amule_head_contents LIMIT 200)
+		string (STRIP "${_amule_head_contents}" _amule_head_contents)
+		if (_amule_head_contents MATCHES "^ref: (.+)$")
+			set (_amule_head_ref "${CMAKE_MATCH_1}")
+			if (EXISTS "${_amule_git_common_dir}/${_amule_head_ref}")
+				set_property (DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+					"${_amule_git_common_dir}/${_amule_head_ref}")
+			endif()
+		endif()
+	endif()
+	# Also depend on packed-refs in case the branch ref is packed
+	# (loose ref file may not exist after `git gc`).
+	if (_amule_git_common_dir AND EXISTS "${_amule_git_common_dir}/packed-refs")
+		set_property (DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+			"${_amule_git_common_dir}/packed-refs")
+	endif()
 endif()
 
-include (cmake/bfd.cmake)
+if (ENABLE_BFD)
+	include (cmake/bfd.cmake)
+else()
+	set (HAVE_BFD FALSE)
+	message (STATUS "ENABLE_BFD=NO; skipping libbfd detection. Backtraces fall back to addr2line + backtrace_symbols().")
+endif()
+
+# DownloadBandwidthThrottler holds the shared byte budget as
+# std::atomic<int64_t>. On 64-bit targets the compiler emits native
+# 8-byte CAS / load / store and no library is needed. On 32-bit targets
+# (PPC32, ARMv5/v6, MIPS32, some old x86 toolchains) the atomic ops
+# expand to __atomic_{load,store,compare_exchange,fetch_add}_8 calls
+# that live in libatomic; the link fails with
+# "Undefined symbols: ___atomic_compare_exchange_8" without -latomic.
+#
+# We don't probe with check_cxx_source_compiles -- a tiny probe lets
+# the compiler inline the lock-free expansion end-to-end and reports
+# "native works" even on targets where the real codebase's cross-TU
+# atomic references actually do need the library (see #643). Just
+# require libatomic unconditionally on 32-bit builds.
+set (LIBATOMIC "")
+if (CMAKE_SIZEOF_VOID_P EQUAL 4)
+	# Probe with a compiler-driven LINK test, not find_library. With GCC,
+	# libatomic ships inside the compiler's own runtime dir (e.g.
+	# .../lib/gcc14/) which is not on find_library's filesystem search
+	# path, so find_library false-fails even though `-latomic` links fine
+	# -- the GCC driver resolves its internal libatomic (MacPorts, #453).
+	# check_library_exists links a probe with `-latomic` through the
+	# compiler driver, so it succeeds wherever the flag actually links:
+	# GCC's internal copy, or a system libatomic (Clang / distro -dev
+	# packages, versioned or not). This replaces the earlier find_library
+	# lookup that only searched standard library paths.
+	include (CheckLibraryExists)
+	check_library_exists (atomic __atomic_load_8 "" HAVE_LIBATOMIC)
+	if (HAVE_LIBATOMIC)
+		set (LIBATOMIC atomic)
+		message (STATUS "32-bit target: linking libatomic for std::atomic<int64_t>")
+	else()
+		message (FATAL_ERROR
+			"32-bit target detected (sizeof(void*) == 4). aMule's "
+			"download bandwidth throttler holds the byte budget as "
+			"std::atomic<int64_t>; 32-bit CPUs lack a native 8-byte "
+			"atomic and the operations expand to library calls "
+			"(__atomic_*_8) that live in libatomic. libatomic was "
+			"not found on this system. Install it and re-run cmake:\n"
+			"  Debian/Ubuntu/Mint: libatomic1-dev\n"
+			"  Fedora/RHEL/Rocky/Arch: libatomic\n"
+			"  macOS/MacPorts: bundled with gcc; install gcc14+")
+	endif()
+endif()
+
+# glib-2.0 headers — needed for the Wayland wl_app_id / X11 WM_CLASS
+# binding via g_set_prgname() (called from amule.cpp on the monolithic
+# / daemon side, and from amule-remote-gui.cpp on the amulegui side
+# once the remote-GUI fix lands as a separate PR). amulecmd and
+# amuleweb don't need glib. Gated on wxGTK being the wx toolkit AND
+# the host not being macOS — the `#include <glib.h>` / call sit behind
+# `#if defined(__WXGTK__) && !defined(__APPLE__)` in those files;
+# macOS doesn't run Wayland and macOS apps identify via Info.plist, so
+# the call is a no-op there even when wxGTK happens to be the toolkit
+# (MacPorts wxgtk, see #641) and there's no reason to drag glib2 in.
+list (FIND wxWidgets_DEFINITIONS "__WXGTK__" _amule_wxgtk_idx)
+if (_amule_wxgtk_idx GREATER -1 AND NOT APPLE)
+	find_package (PkgConfig QUIET)
+	if (PkgConfig_FOUND)
+		# gio-2.0 (ships with glib) provides GDBus, used to ask
+		# xdg-desktop-portal for background permission and autostart under
+		# Flatpak (see AutostartManager.cpp).
+		pkg_check_modules (GLIB QUIET glib-2.0 gio-2.0)
+	endif()
+
+	if ((BUILD_MONOLITHIC OR BUILD_DAEMON OR BUILD_REMOTEGUI) AND NOT GLIB_FOUND)
+		message (FATAL_ERROR
+			"glib-2.0 development headers not found, but they are "
+			"required to build amule (monolithic), amuled, or "
+			"amulegui against wxGTK — these targets call "
+			"g_set_prgname() to bind the Wayland wl_app_id / X11 "
+			"WM_CLASS to the .desktop filename, which needs "
+			"<glib.h>. Install one of:\n"
+			"  - libglib2.0-dev   (Debian / Ubuntu / Mint)\n"
+			"  - glib2-devel      (Fedora / RHEL / Rocky)\n"
+			"  - dev-libs/glib    (Gentoo)\n"
+			"  - glib             (Arch / Manjaro)\n"
+			"  - glib2            (MacPorts)\n"
+			"  - glib             (Homebrew)\n"
+			"…then re-run cmake AFTER deleting the build directory "
+			"(`rm -rf build`); pkg_check_modules only runs at "
+			"configure time, so installing the package on top of a "
+			"cached configure won't help. pkg-config itself is also "
+			"required — install `pkg-config` if cmake didn't find it.")
+	endif()
+endif()
+# AppIndicator3 can only be used with wxGTK3. Check wx's toolkit without
+# requiring GTK development headers for the wxTaskBarIcon fallback.
+set (AMULE_WXGTK3 OFF)
+if (_amule_wxgtk_idx GREATER -1 AND (BUILD_MONOLITHIC OR BUILD_REMOTEGUI))
+	include (CheckCXXSourceCompiles)
+	include (CMakePushCheckState)
+	cmake_push_check_state (RESET)
+	set (CMAKE_REQUIRED_LIBRARIES wxWidgets::CORE)
+	unset (AMULE_WXGTK3 CACHE)
+	unset (AMULE_WXGTK3)
+	check_cxx_source_compiles ("#include <wx/defs.h>
+#ifndef __WXGTK3__
+#error Not GTK3
+#endif
+int main() { return 0; }" AMULE_WXGTK3)
+	cmake_pop_check_state ()
+endif ()
+unset (_amule_wxgtk_idx)
+
+# Optional StatusNotifierItem (SNI) backend for the system-tray icon.
+# wxGTK's wxTaskBarIcon talks the legacy GtkStatusIcon API, which
+# GNOME Shell removed in 3.26 and modern wlroots compositors never
+# implemented. Apps that need a visible tray icon on Ubuntu (with the
+# AppIndicators extension), KDE Plasma, and Sway speak the SNI D-Bus
+# protocol directly via libayatana-appindicator3. When the dev
+# headers are present we build a SNI backend into MuleTrayIcon; on
+# platforms where the library is missing (Windows, macOS, builds
+# without the dep) we fall back to wxTaskBarIcon.
+#
+# Both GUI binaries compile MuleTrayIcon (it is in GUI_SOURCES), so the
+# probe covers either of them being built — gating it on the monolithic
+# build alone left a remote-GUI-only build with the invisible legacy
+# backend and no way to know.
+# AppIndicator3 requires GTK3 widgets. Mixing it with wxGTK2 loads two
+# incompatible GTK major versions; wxQt also cannot pass its window to GTK.
+set (WITH_LIBAYATANA_APPINDICATOR OFF)
+if ((BUILD_MONOLITHIC OR BUILD_REMOTEGUI) AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND AMULE_WXGTK3)
+	find_package (PkgConfig QUIET)
+	if (PkgConfig_FOUND)
+		# `0.1` is the API version (never bumped, every release uses it),
+		# not a library version pin. Try the Ayatana fork first since
+		# that's the maintained one; fall back to Canonical's legacy
+		# `appindicator3-0.1` for distros that haven't migrated yet.
+		# The two are API-compatible at the headers/symbols level.
+		# Which fork answered is recorded here rather than read back from
+		# pkg_check_modules: only the Ayatana one carries the `activate`
+		# signal and a title the host shows on hover, so the summary has
+		# to be able to say which of the two a build actually got.
+		pkg_check_modules (AYATANA_APPINDICATOR QUIET ayatana-appindicator3-0.1)
+		if (AYATANA_APPINDICATOR_FOUND)
+			set (APPINDICATOR_MODULE "ayatana-appindicator3-0.1")
+		else()
+			pkg_check_modules (AYATANA_APPINDICATOR QUIET appindicator3-0.1)
+			if (AYATANA_APPINDICATOR_FOUND)
+				set (APPINDICATOR_MODULE "appindicator3-0.1")
+				set (APPINDICATOR_IS_LEGACY ON)
+			endif()
+		endif()
+		if (AYATANA_APPINDICATOR_FOUND)
+			message (STATUS "AppIndicator3 found: ${APPINDICATOR_MODULE} ${AYATANA_APPINDICATOR_VERSION} — tray icon uses SNI backend")
+			if (APPINDICATOR_IS_LEGACY)
+				message (WARNING "Building against Canonical's ${APPINDICATOR_MODULE}. The tray icon works, but left-click show/hide and the hover title need the Ayatana fork: install ayatana-appindicator3-0.1 instead.")
+			endif()
+			set (WITH_LIBAYATANA_APPINDICATOR ON)
+		else()
+			message (STATUS "AppIndicator3 not found (looked for ayatana-appindicator3-0.1 and appindicator3-0.1) — tray icon falls back to legacy GtkStatusIcon, invisible on modern GNOME/wlroots")
+		endif()
+	endif()
+endif()
 
 configure_file (
 	config.h.cm
@@ -99,7 +499,36 @@ if (BUILD_MONOLITHIC)
 	install (FILES org.amule.aMule.desktop
 		DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
 	)
+	install (FILES org.amule.aMule.png
+		DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps"
+	)
+	install (FILES src/icons/amule.png
+		RENAME org.amule.aMule.png
+		DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps"
+	)
+	# The source the raster sizes above are rendered from. Themes and
+	# launchers that can scale prefer this one, and it is what the app
+	# stores ask for; the raster sizes stay for the ones that cannot.
+	install (FILES src/icons/amule.svg
+		RENAME org.amule.aMule.svg
+		DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps"
+	)
 endif()
+
+if ((BUILD_MONOLITHIC OR BUILD_REMOTEGUI) AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	# Centre the 20-pixel artwork on the 22-pixel canvas without duplicating it.
+	# SNI hosts do not draw the speed bar that uses the original right margin.
+	foreach (state IN ITEMS high low disconnected)
+		set (tray_source "${CMAKE_CURRENT_SOURCE_DIR}/src/icons/tray_${state}.svg")
+		set_property (DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${tray_source}")
+		file (READ "${tray_source}" tray_svg)
+		string (REPLACE "<svg" "<svg viewBox=\"-1 0 22 22\"" tray_svg "${tray_svg}")
+		file (WRITE "${CMAKE_CURRENT_BINARY_DIR}/sni/tray_${state}.svg" "${tray_svg}")
+		install (FILES "${CMAKE_CURRENT_BINARY_DIR}/sni/tray_${state}.svg"
+			RENAME "org.amule.aMule-tray-${state}.svg"
+			DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps")
+	endforeach ()
+endif ()
 
 if (BUILD_REMOTEGUI)
 	install (FILES org.amule.aMule.gui.desktop
@@ -107,12 +536,55 @@ if (BUILD_REMOTEGUI)
 	)
 endif()
 
+if (BUILD_MONOLITHIC OR BUILD_REMOTEGUI)
+	# Teaches the desktop what a .emulecollection is, so the MimeType= line
+	# in the .desktop files above can match it. Without this the file is
+	# sniffed as text/plain (text form) or application/octet-stream (binary
+	# form) and aMule never shows up in "Open With".
+	#
+	# No update-mime-database hook here: refreshing the system cache is the
+	# packager's job for a system install. The AppImage path has no packager
+	# and so does it itself, in AppImageIntegration::RefreshSystemCaches.
+	#
+	# The filename is app-id-prefixed because Flathub's linter requires
+	# exported files to be; flatpak exports share/mime/packages
+	# automatically, so the manifests need no change.
+	install (FILES org.amule.aMule.xml
+		DESTINATION "${CMAKE_INSTALL_DATADIR}/mime/packages"
+	)
+
+	# Icon for the file type itself. The name is mandated by the icon
+	# naming spec - the MIME type with '/' replaced by '-' - and without
+	# it file managers fall back to the generic "unknown file" glyph even
+	# though the type is recognised. Reuses the application icon; aMule
+	# has no separate document artwork.
+	install (FILES org.amule.aMule.png
+		RENAME application-x-emule-collection.png
+		DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/mimetypes"
+	)
+	install (FILES src/icons/amule.png
+		RENAME application-x-emule-collection.png
+		DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/mimetypes"
+	)
+	install (FILES src/icons/amule.svg
+		RENAME application-x-emule-collection.svg
+		DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/mimetypes"
+	)
+endif()
+
+install (FILES LICENSE.md
+	DESTINATION "${CMAKE_INSTALL_DOCDIR}"
+)
+
 if (ENABLE_NLS)
 	include (FindGettext)
 	add_subdirectory (po)
 endif()
 
 add_subdirectory (docs)
+if(BUILD_TESTING)
+    enable_testing()
+endif()
 add_subdirectory (src)
 
 if (BUILD_TESTING)
@@ -134,11 +606,16 @@ message (STATUS "
 	Should aMule daemon version be built?				${BUILD_DAEMON}
 	Should aMule remote gui be built?				${BUILD_REMOTEGUI}
 
+	Build the bundled media metadata helper?			${ENABLE_MEDIA_PROBE}
+
 	**** aMule TextClient ****
 	Should aMule Command Line Client be built?			${BUILD_AMULECMD}
 
 	**** aMule WebServer ****
 	Should aMule WebServer be built?				${BUILD_WEBSERVER}
+
+	**** aMule REST API ****
+	Should aMule REST API be built?					${BUILD_AMULEAPI}
 
 	**** aMule ED2K Links Handler ****
 	Should aMule ED2K Links Handler be built?			${BUILD_ED2K}
@@ -166,4 +643,14 @@ endif()
 
 if (NEED_ZLIB)
 	message ("			zlib				${ZLIB_VERSION_STRING}")
+endif()
+
+if ((BUILD_MONOLITHIC OR BUILD_REMOTEGUI) AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	if (APPINDICATOR_IS_LEGACY)
+		message ("			tray-icon backend		StatusNotifierItem (${APPINDICATOR_MODULE} ${AYATANA_APPINDICATOR_VERSION}) — legacy fork: no left-click show/hide, no hover title")
+	elseif (WITH_LIBAYATANA_APPINDICATOR)
+		message ("			tray-icon backend		StatusNotifierItem (${APPINDICATOR_MODULE} ${AYATANA_APPINDICATOR_VERSION})")
+	else()
+		message ("			tray-icon backend		legacy GtkStatusIcon (invisible on modern GNOME/wlroots — install libayatana-appindicator3-dev for SNI)")
+	endif()
 endif()

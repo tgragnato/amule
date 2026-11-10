@@ -23,42 +23,40 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
-#include "CommentDialog.h"	// Interface declarations
+#include "CommentDialog.h" // Interface declarations
 #include "GuiEvents.h"
-#include "KnownFile.h"		// Needed for CKnownFile
-#include "muuli_wdr.h"		// Needed for commentDlg
+#include "KnownFile.h"      // Needed for CKnownFile
+#include "SharedFileList.h" // Needed for CSharedFileList
+#include "amule.h"          // Needed for theApp
+#include "muuli_wdr.h"      // Needed for commentDlg
 
 #include <set>
 
 // CommentDialog dialog
 
-namespace {
-// Registry of open CCommentDialog instances. Iterated by
-// CCommentDialog::DropReferencesTo when a CKnownFile is destroyed, so
-// any dialog whose m_file matches can be dismissed before its modal
-// loop tries to deref the freed pointer (issue #755 / #748 family).
-//
-// All access is on the GUI main thread (modal dialogs only exist on
-// that thread), so no synchronisation is needed.
-std::set<CCommentDialog*>& OpenInstances()
+namespace
 {
-	static std::set<CCommentDialog*> instances;
+// Registry of open CCommentDialog instances. CCommentDialog::DropReferencesTo walks it when a
+// CKnownFile is destroyed, so any dialog whose m_file matches can be dismissed before its modal
+// loop derefs the freed pointer (issue #755 / #748 family). All access is on the GUI main thread,
+// modal dialogs only existing there, so no synchronisation is needed.
+std::set<CCommentDialog *> &OpenInstances()
+{
+	static std::set<CCommentDialog *> instances;
 	return instances;
 }
 } // namespace
 
-//IMPLEMENT_DYNAMIC(CCommentDialog, CDialog)
-CCommentDialog::CCommentDialog(wxWindow* parent,CKnownFile* file)
-: wxDialog(parent,-1,_("File Comments"),
-wxDefaultPosition,wxDefaultSize,wxDEFAULT_DIALOG_STYLE|wxSYSTEM_MENU)
+// IMPLEMENT_DYNAMIC(CCommentDialog, CDialog)
+CCommentDialog::CCommentDialog(wxWindow *parent, CKnownFile *file)
+: wxDialog(parent, -1, _("File Comments"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE)
 {
 	m_file = file;
-	wxSizer* content=commentDlg(this,TRUE);
+	wxSizer *content = commentDlg(this, TRUE);
 	content->SetSizeHints(this);
-	content->Show(this,TRUE);
+	content->Show(this, TRUE);
 	Center();
-	ratebox = CastChild( IDC_RATELIST, wxChoice );
+	ratebox = CastChild(IDC_RATELIST, wxChoice);
 	OnInitDialog();
 	OpenInstances().insert(this);
 }
@@ -68,10 +66,26 @@ CCommentDialog::~CCommentDialog()
 	OpenInstances().erase(this);
 }
 
-void CCommentDialog::DropReferencesTo(const CKnownFile* file)
+wxString CCommentDialog::MenuLabel(const CKnownFile &file)
 {
-	// Pointer-value comparison only — `file` may already be freed.
-	for (CCommentDialog* d : OpenInstances()) {
+	return file.GetFileComment().IsEmpty() && !file.GetFileRating() ? _("Add Comment/Rating")
+									: _("Edit Comment/Rating");
+}
+
+bool CCommentDialog::CanEdit(const CKnownFile &file)
+{
+#ifdef CLIENT_GUI
+	// amulegui keeps this map in step with the daemon's shared list.
+	return theApp->sharedfiles->count(file.ECID()) != 0;
+#else
+	return theApp->sharedfiles->GetFileByID(file.GetFileHash()) != nullptr;
+#endif
+}
+
+void CCommentDialog::DropReferencesTo(const CKnownFile *file)
+{
+	// Pointer-value comparison only -- `file` may already be freed.
+	for (CCommentDialog *d : OpenInstances()) {
 		if (d->m_file == file) {
 			d->m_file = NULL;
 			// Self-dismiss: the dialog is showing data that no
@@ -81,26 +95,26 @@ void CCommentDialog::DropReferencesTo(const CKnownFile* file)
 	}
 }
 
-wxBEGIN_EVENT_TABLE(CCommentDialog,wxDialog)
+wxBEGIN_EVENT_TABLE(CCommentDialog, wxDialog)
 	EVT_TEXT_ENTER(IDC_CMT_TEXT, CCommentDialog::OnBnClickedApply)
 	EVT_BUTTON(IDCOK, CCommentDialog::OnBnClickedApply)
 	EVT_BUTTON(IDC_FC_CLEAR, CCommentDialog::OnBnClickedClear)
 	EVT_BUTTON(IDCCANCEL, CCommentDialog::OnBnClickedCancel)
 wxEND_EVENT_TABLE()
 
-void CCommentDialog::OnBnClickedApply(wxCommandEvent& WXUNUSED(evt))
+void CCommentDialog::OnBnClickedApply(wxCommandEvent &WXUNUSED(evt))
 {
-	wxString comment = CastChild( IDC_CMT_TEXT, wxTextCtrl )->GetValue();
+	wxString comment = CastChild(IDC_CMT_TEXT, wxTextCtrl)->GetValue();
 	CoreNotify_KnownFile_Comment_Set(m_file, comment, (int8)ratebox->GetSelection());
 	EndModal(0);
 }
 
-void CCommentDialog::OnBnClickedClear(wxCommandEvent& WXUNUSED(evt))
+void CCommentDialog::OnBnClickedClear(wxCommandEvent &WXUNUSED(evt))
 {
 	CastChild(IDC_CMT_TEXT, wxTextCtrl)->SetValue("");
 }
 
-void CCommentDialog::OnBnClickedCancel(wxCommandEvent& WXUNUSED(evt))
+void CCommentDialog::OnBnClickedCancel(wxCommandEvent &WXUNUSED(evt))
 {
 	EndModal(0);
 }

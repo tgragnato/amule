@@ -23,88 +23,103 @@
 // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301, USA
 //
 
-
-#include <ec/cpp/ECTag.h>		// Needed for CECTag
-#include <ec/cpp/ECSpecialTags.h>	// Needed for special EC tag creator classes
-
+#include <ec/cpp/ECTag.h>         // Needed for CECTag
+#include <ec/cpp/ECSpecialTags.h> // Needed for special EC tag creator classes
+#include <tags/FileTags.h>        // Needed for FT_MEDIA_* metadata tag names
 
 // Since there are only constructors defined here,
 // removing everything from non-local builds.
 
 #include "amule.h"
-#include "Server.h"		// Needed for CServer
-#include "PartFile.h"		// Needed for CPartFile
-#include "ServerConnect.h"	// Needed for CServerConnect
-#include "updownclient.h"	// Needed for CUpDownClient
-#include "UploadQueue.h"	// Needed for CUploadQueue
+#include "Server.h"        // Needed for CServer
+#include "PartFile.h"      // Needed for CPartFile
+#include "ServerConnect.h" // Needed for CServerConnect
+#include "updownclient.h"  // Needed for CUpDownClient
+#include "UploadQueue.h"   // Needed for CUploadQueue
 #include "SharedFileList.h"
 #include "SearchList.h"
 #include "Friend.h"
 
 #include "kademlia/kademlia/Kademlia.h"
 
-
 // used for webserver, amulecmd
-CEC_Server_Tag::CEC_Server_Tag(const CServer *server, EC_DETAIL_LEVEL detail_level) :
-	CECTag(EC_TAG_SERVER, EC_IPv4_t(server->GetIP(), server->GetPort()))
+CEC_Server_Tag::CEC_Server_Tag(const CServer *server, EC_DETAIL_LEVEL detail_level)
+: CECTag(EC_TAG_SERVER, EC_IPv4_t(server->GetIP(), server->GetPort()))
 {
 	wxString tmpStr;
 	uint32 tmpInt;
 	uint8 tmpShort;
 
 	switch (detail_level) {
-		case EC_DETAIL_INC_UPDATE:
-			// should not get here
-			wxFAIL;
-			break;
-		case EC_DETAIL_UPDATE:
-			if ((tmpInt = server->GetPing()) != 0) {
-				AddTag(CECTag(EC_TAG_SERVER_PING, tmpInt));
-			}
-			if ((tmpShort = (uint8)server->GetFailedCount()) != 0) {
-				AddTag(CECTag(EC_TAG_SERVER_FAILED, tmpShort));
-			}
-			break;
-		case EC_DETAIL_WEB:
-		case EC_DETAIL_FULL:
-			if ((tmpInt = server->GetPing()) != 0) {
-				AddTag(CECTag(EC_TAG_SERVER_PING, tmpInt));
-			}
-			if ((tmpShort = (uint8)server->GetPreferences()) != SRV_PR_NORMAL) {
-				AddTag(CECTag(EC_TAG_SERVER_PRIO, tmpShort));
-			}
-			if ((tmpShort = (uint8)server->GetFailedCount()) != 0) {
-				AddTag(CECTag(EC_TAG_SERVER_FAILED, tmpShort));
-			}
-			if ((tmpShort = (server->IsStaticMember() ? 1 : 0)) != 0) {
-				AddTag(CECTag(EC_TAG_SERVER_STATIC, tmpShort));
-			}
-			if (!(tmpStr = server->GetVersion()).IsEmpty()) {
-				AddTag(CECTag(EC_TAG_SERVER_VERSION, tmpStr));
-			}
-			if (!(tmpStr = server->GetDescription()).IsEmpty()) {
-				AddTag(CECTag(EC_TAG_SERVER_DESC, tmpStr));
-			}
-			if ((tmpInt = server->GetUsers()) != 0) {
-				AddTag(CECTag(EC_TAG_SERVER_USERS, tmpInt));
-			}
-			if ((tmpInt = server->GetMaxUsers()) != 0) {
-				AddTag(CECTag(EC_TAG_SERVER_USERS_MAX, tmpInt));
-			}
-			if ((tmpInt = server->GetFiles()) != 0) {
-				AddTag(CECTag(EC_TAG_SERVER_FILES, tmpInt));
-			}
-		/* fall through */
-		case EC_DETAIL_CMD:
-			if (!(tmpStr = server->GetListName()).IsEmpty()) {
-				AddTag(CECTag(EC_TAG_SERVER_NAME, tmpStr));
-			}
+	case EC_DETAIL_INC_UPDATE:
+		// should not get here
+		wxFAIL;
+		break;
+	case EC_DETAIL_UPDATE:
+		if ((tmpInt = server->GetPing()) != 0) {
+			AddTag(CECTag(EC_TAG_SERVER_PING, tmpInt));
+		}
+		if ((tmpShort = (uint8)server->GetFailedCount()) != 0) {
+			AddTag(CECTag(EC_TAG_SERVER_FAILED, tmpShort));
+		}
+		break;
+	case EC_DETAIL_WEB:
+	case EC_DETAIL_FULL:
+		if ((tmpInt = server->GetPing()) != 0) {
+			AddTag(CECTag(EC_TAG_SERVER_PING, tmpInt));
+		}
+		if ((tmpShort = (uint8)server->GetPreferences()) != SRV_PR_NORMAL) {
+			AddTag(CECTag(EC_TAG_SERVER_PRIO, tmpShort));
+		}
+		if ((tmpShort = (uint8)server->GetFailedCount()) != 0) {
+			AddTag(CECTag(EC_TAG_SERVER_FAILED, tmpShort));
+		}
+		if ((tmpShort = (server->IsStaticMember() ? 1 : 0)) != 0) {
+			AddTag(CECTag(EC_TAG_SERVER_STATIC, tmpShort));
+		}
+		if (!(tmpStr = server->GetVersion()).IsEmpty()) {
+			AddTag(CECTag(EC_TAG_SERVER_VERSION, tmpStr));
+		}
+		if (!(tmpStr = server->GetDescription()).IsEmpty()) {
+			AddTag(CECTag(EC_TAG_SERVER_DESC, tmpStr));
+		}
+		if ((tmpInt = server->GetUsers()) != 0) {
+			AddTag(CECTag(EC_TAG_SERVER_USERS, tmpInt));
+		}
+		if ((tmpInt = server->GetMaxUsers()) != 0) {
+			AddTag(CECTag(EC_TAG_SERVER_USERS_MAX, tmpInt));
+		}
+		if ((tmpInt = server->GetFiles()) != 0) {
+			AddTag(CECTag(EC_TAG_SERVER_FILES, tmpInt));
+		}
+		// Per-user publishing limits (issue #840). Sent from both server-tag builders --
+		// this one carries the initial list, the valuemap one below carries updates --
+		// since a tag in only one leaves the remote GUI's column permanently blank.
+		if ((tmpInt = server->GetSoftFiles()) != 0) {
+			AddTag(CECTag(EC_TAG_SERVER_FILES_SOFT, tmpInt));
+		}
+		if ((tmpInt = server->GetHardFiles()) != 0) {
+			AddTag(CECTag(EC_TAG_SERVER_FILES_HARD, tmpInt));
+		}
+		// Wire capability flags: diagnostics, hidden by default in release builds,
+		// but the remote GUI offers the same columns as the monolithic app.
+		if ((tmpInt = server->GetTCPFlags()) != 0) {
+			AddTag(CECTag(EC_TAG_SERVER_TCP_FLAGS, tmpInt));
+		}
+		if ((tmpInt = server->GetUDPFlags()) != 0) {
+			AddTag(CECTag(EC_TAG_SERVER_UDP_FLAGS, tmpInt));
+		}
+	/* fall through */
+	case EC_DETAIL_CMD:
+		if (!(tmpStr = server->GetListName()).IsEmpty()) {
+			AddTag(CECTag(EC_TAG_SERVER_NAME, tmpStr));
+		}
 	}
 }
 
 // used for amulegui (EC_DETAIL_INC_UPDATE)
-CEC_Server_Tag::CEC_Server_Tag(const CServer *server, CValueMap *valuemap) :
-	CECTag(EC_TAG_SERVER, server->ECID())
+CEC_Server_Tag::CEC_Server_Tag(const CServer *server, CValueMap *valuemap)
+: CECTag(EC_TAG_SERVER, server->ECID())
 {
 	AddTag(EC_TAG_SERVER_NAME, server->GetListName(), valuemap);
 	AddTag(EC_TAG_SERVER_DESC, server->GetDescription(), valuemap);
@@ -118,32 +133,44 @@ CEC_Server_Tag::CEC_Server_Tag(const CServer *server, CValueMap *valuemap) :
 	AddTag(EC_TAG_SERVER_USERS, server->GetUsers(), valuemap);
 	AddTag(EC_TAG_SERVER_USERS_MAX, server->GetMaxUsers(), valuemap);
 	AddTag(EC_TAG_SERVER_FILES, server->GetFiles(), valuemap);
+	// Per-user publishing limits the server advertises (issue #840). Zero here
+	// means it has not told us yet, and the GUI renders that as blank.
+	AddTag(EC_TAG_SERVER_FILES_SOFT, server->GetSoftFiles(), valuemap);
+	AddTag(EC_TAG_SERVER_FILES_HARD, server->GetHardFiles(), valuemap);
+	AddTag(EC_TAG_SERVER_TCP_FLAGS, server->GetTCPFlags(), valuemap);
+	AddTag(EC_TAG_SERVER_UDP_FLAGS, server->GetUDPFlags(), valuemap);
 }
 
-
-CEC_ConnState_Tag::CEC_ConnState_Tag(EC_DETAIL_LEVEL detail_level) : CECTag(EC_TAG_CONNSTATE,
-	(uint8)(
-			(theApp->IsConnectedED2K() ? 0x01 : 0x00)
-			|
-			(theApp->serverconnect->IsConnecting() ? 0x02 : 0x00)
-			|
-			(theApp->IsConnectedKad() ? 0x04 : 0x00)
-			|
-			(Kademlia::CKademlia::IsFirewalled() ? 0x08 : 0x00)
-			|
-			(Kademlia::CKademlia::IsRunning() ? 0x10 : 0x00)
-		))
+CEC_ConnState_Tag::CEC_ConnState_Tag(EC_DETAIL_LEVEL detail_level)
+: CECTag(EC_TAG_CONNSTATE,
+	  (uint8)((theApp->IsConnectedED2K() ? 0x01 : 0x00) |
+		  (theApp->serverconnect->IsConnecting() ? 0x02 : 0x00) |
+		  (theApp->IsConnectedKad() ? 0x04 : 0x00) |
+		  (Kademlia::CKademlia::IsFirewalled() ? 0x08 : 0x00) |
+		  (Kademlia::CKademlia::IsRunning() ? 0x10 : 0x00)))
 {
+	AddTag(CECTag(EC_TAG_NETWORKS_ENABLED,
+		(uint8)((thePrefs::GetNetworkED2K() ? 0x01 : 0x00) |
+			(thePrefs::GetNetworkKademlia() ? 0x02 : 0x00))));
 	if (theApp->IsConnectedED2K()) {
-		if ( theApp->serverconnect->GetCurrentServer() ) {
+		if (theApp->serverconnect->GetCurrentServer()) {
 			if (detail_level == EC_DETAIL_INC_UPDATE) {
 				// Send no full server tag, just the ECID of the connected server
-				AddTag(CECTag(EC_TAG_SERVER, theApp->serverconnect->GetCurrentServer()->ECID()));
+				AddTag(CECTag(
+					EC_TAG_SERVER, theApp->serverconnect->GetCurrentServer()->ECID()));
 			} else {
-				AddTag(CEC_Server_Tag(theApp->serverconnect->GetCurrentServer(), detail_level));
+				AddTag(CEC_Server_Tag(
+					theApp->serverconnect->GetCurrentServer(), detail_level));
 			}
 		}
 		AddTag(CECTag(EC_TAG_ED2K_ID, theApp->GetED2KID()));
+		// GetTicks() truncated to uint32 -- fine until 2106, and matching the uint32 id
+		// space of EC_TAG_ED2K_ID next to it. Sent only while connected, so no consumer has
+		// to tell "never connected" from "connected at the epoch".
+		if (theApp->GetED2KConnectedSince().IsValid()) {
+			AddTag(CECTag(EC_TAG_ED2K_CONNECTED_SINCE,
+				(uint32)theApp->GetED2KConnectedSince().GetTicks()));
+		}
 	} else if (theApp->serverconnect->IsConnecting()) {
 		AddTag(CECTag(EC_TAG_ED2K_ID, 0xffffffff));
 	}
@@ -153,11 +180,13 @@ CEC_ConnState_Tag::CEC_ConnState_Tag(EC_DETAIL_LEVEL detail_level) : CECTag(EC_T
 	if (Kademlia::CKademlia::IsRunning()) {
 		AddTag(CECTag(EC_TAG_KAD_ID, Kademlia::CKademlia::GetKadID()));
 	}
+	if (theApp->IsConnectedKad() && theApp->GetKadConnectedSince().IsValid()) {
+		AddTag(CECTag(EC_TAG_KAD_CONNECTED_SINCE, (uint32)theApp->GetKadConnectedSince().GetTicks()));
+	}
 }
 
 CEC_PartFile_Tag::CEC_PartFile_Tag(const CPartFile *file, EC_DETAIL_LEVEL detail_level, CValueMap *valuemap)
-:
-CEC_SharedFile_Tag(file, detail_level, valuemap, EC_TAG_PARTFILE)
+: CEC_SharedFile_Tag(file, detail_level, valuemap, EC_TAG_PARTFILE)
 {
 	AddTag(EC_TAG_PARTFILE_STATUS, file->GetStatus(), valuemap);
 	AddTag(EC_TAG_PARTFILE_STOPPED, file->IsStopped(), valuemap);
@@ -167,15 +196,20 @@ CEC_SharedFile_Tag(file, detail_level, valuemap, EC_TAG_PARTFILE)
 	AddTag(EC_TAG_PARTFILE_SOURCE_COUNT_XFER, file->GetTransferingSrcCount(), valuemap);
 	AddTag(EC_TAG_PARTFILE_SOURCE_COUNT_A4AF, file->GetSrcA4AFCount(), valuemap);
 
-	if ( (file->GetTransferingSrcCount() > 0) || (detail_level != EC_DETAIL_UPDATE) || valuemap) {
+	if ((file->GetTransferingSrcCount() > 0) || (detail_level != EC_DETAIL_UPDATE) || valuemap) {
 
 		AddTag(EC_TAG_PARTFILE_SIZE_XFER, file->GetTransferred(), valuemap);
 		AddTag(EC_TAG_PARTFILE_SIZE_DONE, file->GetCompletedSize(), valuemap);
-		AddTag(EC_TAG_PARTFILE_SPEED, (uint64_t)(file->GetKBpsDown()*1024), valuemap);
+		AddTag(EC_TAG_PARTFILE_SPEED, (uint64_t)file->GetDisplayDownloadRate(), valuemap);
+		AddDiffTag(this,
+			EC_TAG_PARTFILE_SPEED_SMOOTHED,
+			static_cast<double>(file->GetKBpsDown()),
+			valuemap);
 	}
 
-	AddTag(EC_TAG_PARTFILE_PRIO, (file->IsAutoDownPriority() ?
-		file->GetDownPriority() + 10 : file->GetDownPriority()), valuemap);
+	AddTag(EC_TAG_PARTFILE_PRIO,
+		(file->IsAutoDownPriority() ? file->GetDownPriority() + 10 : file->GetDownPriority()),
+		valuemap);
 
 	AddTag(EC_TAG_PARTFILE_CAT, file->GetCategory(), valuemap);
 	AddTag(EC_TAG_PARTFILE_LAST_SEEN_COMP, file->lastseencomplete, valuemap);
@@ -189,19 +223,8 @@ CEC_SharedFile_Tag(file, detail_level, valuemap, EC_TAG_PARTFILE)
 	AddTag(EC_TAG_PARTFILE_SAVED_ICH, file->TotalPacketsSavedDueToICH(), valuemap);
 	AddTag(EC_TAG_PARTFILE_A4AFAUTO, file->IsA4AFAuto(), valuemap);
 
-	// Tag for comments
-	CECEmptyTag sc(EC_TAG_PARTFILE_COMMENTS);
-
-	FileRatingList list;
-	file->GetRatingAndComments(list);
-	for (FileRatingList::const_iterator it = list.begin(); it != list.end(); ++it) {
-		// Tag children are evaluated by index, not by name
-		sc.AddTag(CECTag(EC_TAG_PARTFILE_COMMENTS, it->UserName));
-		sc.AddTag(CECTag(EC_TAG_PARTFILE_COMMENTS, it->FileName));
-		sc.AddTag(CECTag(EC_TAG_PARTFILE_COMMENTS, (uint64) it->Rating));
-		sc.AddTag(CECTag(EC_TAG_PARTFILE_COMMENTS, it->Comment));
-	}
-	AddTag(sc, valuemap);
+	// Community ratings/comments + the Kad-notes running flag are serialized by
+	// the CEC_SharedFile_Tag base constructor (shared with plain shared files).
 
 	if (detail_level == EC_DETAIL_UPDATE) {
 		return;
@@ -211,15 +234,66 @@ CEC_SharedFile_Tag(file, detail_level, valuemap, EC_TAG_PARTFILE)
 
 	// A4AF sources
 	CECEmptyTag a4afTag(EC_TAG_PARTFILE_A4AF_SOURCES);
-	const CKnownFile::SourceSet& a4afSources = file->GetA4AFList();
+	const CKnownFile::SourceSet &a4afSources = file->GetA4AFList();
 	for (CKnownFile::SourceSet::const_iterator it = a4afSources.begin(); it != a4afSources.end(); ++it) {
 		a4afTag.AddTag(CECTag(EC_TAG_ECID, it->ECID()));
 	}
 	AddTag(a4afTag, valuemap);
 }
 
-CEC_SharedFile_Tag::CEC_SharedFile_Tag(const CKnownFile *file, EC_DETAIL_LEVEL detail_level,
-									   CValueMap *valuemap, ec_tagname_t name)
+namespace
+{
+
+// Emit the FT_MEDIA_* tags a file actually carries, one by one.
+//
+// NOT gated on GetMetaDataVer(): that predicate answers "has this file been probed", and using it
+// to mean "all six fields are present" sends MEDIA_LENGTH=0 and MEDIA_BITRATE=0 for a file that
+// probed to a codec and no duration -- a raw elementary stream, a truncated capture -- which
+// renders as Length 0:00 / Bitrate 0 kbps where the honest answer is N/A. A displayed zero is a
+// claim; absence is not.
+//
+// Shared by the shared-file and search-result tag builders, which had diverged.
+void AddMediaTagsPresent(CECTag &target, const CAbstractFile *file, CValueMap *valuemap)
+{
+	// Present -> send the value. Absent but sent before -> send an explicit zero or empty so
+	// the remote drops it. Absent and never sent -> send nothing, so a field that never had a
+	// value is reported as absent rather than as a zero.
+	//
+	// The middle case is not optional: a tag that is not offered reads as UNCHANGED to a
+	// CValueMap peer, and both receivers are add-only, so omitting a CLEARED field leaves the
+	// stale value in place -- including one inherited from a search result, which is what the
+	// completion re-probe exists to correct.
+	const auto emitInt = [&](ec_tagname_t ecId, uint32 value) {
+		if (value) {
+			target.AddTag(CECTag(ecId, value), valuemap);
+		} else if (valuemap && valuemap->HasTag(ecId)) {
+			target.AddTag(CECTag(ecId, static_cast<uint32>(0)), valuemap);
+		}
+	};
+	emitInt(EC_TAG_KNOWNFILE_MEDIA_LENGTH, file->GetIntTagValue(FT_MEDIA_LENGTH));
+	emitInt(EC_TAG_KNOWNFILE_MEDIA_BITRATE, file->GetIntTagValue(FT_MEDIA_BITRATE));
+	static const struct
+	{
+		uint8 ftId;
+		ec_tagname_t ecId;
+	} kStrTags[] = { { FT_MEDIA_CODEC, EC_TAG_KNOWNFILE_MEDIA_CODEC },
+		{ FT_MEDIA_ARTIST, EC_TAG_KNOWNFILE_MEDIA_ARTIST },
+		{ FT_MEDIA_ALBUM, EC_TAG_KNOWNFILE_MEDIA_ALBUM },
+		{ FT_MEDIA_TITLE, EC_TAG_KNOWNFILE_MEDIA_TITLE } };
+	for (const auto &entry : kStrTags) {
+		const wxString &value = file->GetStrTagValue(entry.ftId);
+		if (!value.IsEmpty()) {
+			target.AddTag(CECTag(entry.ecId, value), valuemap);
+		} else if (valuemap && valuemap->HasTag(entry.ecId)) {
+			target.AddTag(CECTag(entry.ecId, wxString()), valuemap);
+		}
+	}
+}
+
+} // namespace
+
+CEC_SharedFile_Tag::CEC_SharedFile_Tag(
+	const CKnownFile *file, EC_DETAIL_LEVEL detail_level, CValueMap *valuemap, ec_tagname_t name)
 : CECTag(name, file->ECID())
 {
 	AddTag(EC_TAG_KNOWNFILE_REQ_COUNT, file->statistic.GetRequests(), valuemap);
@@ -233,137 +307,268 @@ CEC_SharedFile_Tag::CEC_SharedFile_Tag(const CKnownFile *file, EC_DETAIL_LEVEL d
 	AddTag(EC_TAG_KNOWNFILE_AICH_MASTERHASH, file->GetAICHMasterHash(), valuemap);
 
 	AddTag(EC_TAG_KNOWNFILE_PRIO,
-		(uint8)(file->IsAutoUpPriority() ? file->GetUpPriority() + 10 : file->GetUpPriority()), valuemap);
+		(uint8)(file->IsAutoUpPriority() ? file->GetUpPriority() + 10 : file->GetUpPriority()),
+		valuemap);
 
 	AddTag(EC_TAG_KNOWNFILE_COMPLETE_SOURCES_LOW, file->m_nCompleteSourcesCountLo, valuemap);
 	AddTag(EC_TAG_KNOWNFILE_COMPLETE_SOURCES_HIGH, file->m_nCompleteSourcesCountHi, valuemap);
 	AddTag(EC_TAG_KNOWNFILE_COMPLETE_SOURCES, file->m_nCompleteSourcesCount, valuemap);
 
+	if (name == EC_TAG_KNOWNFILE) {
+		AddTag(EC_TAG_KNOWNFILE_HASHED_PART_COUNT, file->GetHashingProgress(), valuemap);
+	}
 	AddTag(EC_TAG_KNOWNFILE_ON_QUEUE, file->GetQueuedCount(), valuemap);
 
-	if (detail_level == EC_DETAIL_UPDATE) {
-			return;
+	// Live upload activity (issue #466), emitted before the UPDATE early-return so they refresh
+	// every tick like the download-side counts. Computed from m_ClientUploadList (core-only);
+	// amulegui receives them over EC.
+#ifndef CLIENT_GUI
+	AddTag(EC_TAG_KNOWNFILE_UPLOAD_SPEED, file->GetUploadDatarate(), valuemap);
+	AddTag(EC_TAG_KNOWNFILE_UPLOADING_COUNT, file->GetTransferringClientCount(), valuemap);
+#endif
+	AddTag(EC_TAG_KNOWNFILE_LAST_UPLOAD, (uint32)file->GetLastUpload(), valuemap);
+
+	// Last Verify Local Data result, in the FT_VERIFY_* encoding. Before the UPDATE early-return:
+	// a check can finish at any time. Omitted for files never verified, most of the library,
+	// unless this client was sent a result before: it then needs the reset to date 0.
+	const CVerifyLocalDataResult &verify = file->GetVerifyResult();
+	if (verify.date || (valuemap && valuemap->HasSentInt(EC_TAG_KNOWNFILE_VERIFY_DATE))) {
+		AddTag(EC_TAG_KNOWNFILE_VERIFY_DATE, verify.date, valuemap);
+		AddTag(EC_TAG_KNOWNFILE_VERIFY_CORRUPT_MD4, verify.EncodedMD4(), valuemap);
+		AddTag(EC_TAG_KNOWNFILE_VERIFY_CORRUPT_AICH, verify.EncodedAICH(), valuemap);
 	}
 
-	AddTag(EC_TAG_PARTFILE_NAME,file->GetFileName().GetPrintable(), valuemap);
+	// Community ratings/comments, comment filter applied, plus the on-demand Kad-notes running
+	// flag, shared by downloads and shared files. Emitted before the UPDATE early-return so the
+	// flag's start -> finish and notes streaming in are visible on every poll; the valuemap
+	// suppresses unchanged values, so idle files cost nothing after the first send.
+	CECEmptyTag sc(EC_TAG_PARTFILE_COMMENTS);
+	FileRatingList list;
+	file->GetShownRatingAndComments(list);
+	for (FileRatingList::const_iterator it = list.begin(); it != list.end(); ++it) {
+		// Tag children are evaluated by index, not by name.
+		sc.AddTag(CECTag(EC_TAG_PARTFILE_COMMENTS, it->UserName));
+		sc.AddTag(CECTag(EC_TAG_PARTFILE_COMMENTS, it->FileName));
+		sc.AddTag(CECTag(EC_TAG_PARTFILE_COMMENTS, (uint64)it->Rating));
+		sc.AddTag(CECTag(EC_TAG_PARTFILE_COMMENTS, it->Comment));
+	}
+	AddTag(sc, valuemap);
+	AddTag(EC_TAG_PARTFILE_KAD_COMMENT_SEARCHING, file->IsKadCommentSearchRunning(), valuemap);
+
+	if (detail_level == EC_DETAIL_UPDATE) {
+		return;
+	}
+
+	AddTag(EC_TAG_PARTFILE_NAME, file->GetFileName().GetPrintable(), valuemap);
 	AddTag(EC_TAG_PARTFILE_HASH, file->GetFileHash(), valuemap);
 	// Partfile branch used to go through CFormat + CPath::RemoveExt every
 	// call; the basename is now cached on CPartFile (lifetime-stable).
 	AddTag(EC_TAG_KNOWNFILE_FILENAME,
-		file->IsPartFile()	? static_cast<const CPartFile*>(file)->GetCachedPartMetBasename()
-							: file->GetFilePath().GetPrintable(),
+		file->IsPartFile() ? static_cast<const CPartFile *>(file)->GetCachedPartMetBasename()
+				   : file->GetFilePath().GetPrintable(),
 		valuemap);
+	// The on-disk directory, always -- the Temp dir for a partfile, the destination dir once
+	// completed. Unlike _FILENAME, which doubles as the ".part" basename, this never changes
+	// meaning across the completed transition, so the REST API can expose an unambiguous `path`
+	// (issue #417).
+	AddTag(EC_TAG_KNOWNFILE_PATH, file->GetFilePath().GetPrintable(), valuemap);
+
+	// When the file was completed / first shared (issue #466). Static once
+	// set, so it rides in the full-detail section rather than every tick.
+	AddTag(EC_TAG_KNOWNFILE_SHARED_SINCE, (uint32)file->GetDateShared(), valuemap);
 
 	AddTag(EC_TAG_PARTFILE_SIZE_FULL, file->GetFileSize(), valuemap);
 
-	// Cached path: ed2k:// link construction is the single hottest item on
-	// the EC dispatch chain for big shared-file libraries (#713 profile).
-	// The cache holds the rare-changing base form; the dynamic source
-	// suffix is appended live.
+	// Cached: ed2k:// link construction is the single hottest item on the EC dispatch chain for
+	// big shared-file libraries (#713). The cache holds the rare-changing base form; the
+	// dynamic source suffix is appended live.
 	AddTag(EC_TAG_PARTFILE_ED2K_LINK,
-			file->GetED2kLinkForEC(theApp->IsConnectedED2K() && !theApp->serverconnect->IsLowID()), valuemap);
+		file->GetED2kLinkForEC(theApp->IsConnectedED2K() && !theApp->serverconnect->IsLowID()),
+		valuemap);
 
 	AddTag(EC_TAG_KNOWNFILE_COMMENT, file->GetFileComment(), valuemap);
 	AddTag(EC_TAG_KNOWNFILE_RATING, file->GetFileRating(), valuemap);
+
+	// Audio/video media metadata (issue #418), emitted per FIELD -- see AddMediaTagsPresent for
+	// why the aggregate GetMetaDataVer() gate was wrong. From this shared base ctor, so /shared
+	// and /downloads both carry it.
+	AddMediaTagsPresent(*this, file, valuemap);
 }
 
-CEC_UpDownClient_Tag::CEC_UpDownClient_Tag(const CUpDownClient* client, EC_DETAIL_LEVEL detail_level, CValueMap *valuemap) :
-	CECTag(EC_TAG_CLIENT, client->ECID())
+CEC_UpDownClient_Tag::CEC_UpDownClient_Tag(
+	const CUpDownClient *client, EC_DETAIL_LEVEL detail_level, CValueMap *valuemap)
+: CECTag(EC_TAG_CLIENT, client->ECID())
 {
 	// General
-	AddTag(CECTag(EC_TAG_CLIENT_NAME, client->GetUserName()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_HASH, client->GetUserHash()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_USER_ID, client->GetUserIDHybrid()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_SCORE, client->GetScore()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_SOFTWARE, client->GetClientSoft()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_SOFT_VER_STR, client->GetSoftVerStr()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_USER_IP, client->GetIP()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_USER_PORT, client->GetUserPort()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_FROM, (uint64)client->GetSourceFrom()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_SERVER_IP, client->GetServerIP()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_SERVER_PORT, client->GetServerPort()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_SERVER_NAME, client->GetServerName()), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_NAME, client->GetUserName(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_HASH, client->GetUserHash(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_USER_ID, client->GetUserIDHybrid(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_SCORE, client->GetScore(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_SOFTWARE, client->GetClientSoft(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_SOFT_VER_STR, client->GetSoftVerStr(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_MOD_VERSION, client->GetClientModString(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_USER_IP, client->GetIP(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_USER_PORT, client->GetUserPort(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_FROM, (uint64)client->GetSourceFrom(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_SERVER_IP, client->GetServerIP(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_SERVER_PORT, client->GetServerPort(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_SERVER_NAME, client->GetServerName(), valuemap);
 
-	// Transfers to Client
-	AddTag(CECTag(EC_TAG_CLIENT_UP_SPEED, client->GetUploadDatarate()), valuemap);
+	// Transfers to Client. Display speed uses the same one-second window as total speed.
+	AddDiffTag(this, EC_TAG_CLIENT_UP_SPEED, client->GetDisplayUploadDatarate(), valuemap);
 	if (client->GetDownloadState() == DS_DOWNLOADING || valuemap) {
-		AddTag(CECTag(EC_TAG_CLIENT_DOWN_SPEED, (double)(client->GetKBpsDown())), valuemap);
+		AddDiffTag(this, EC_TAG_CLIENT_DOWN_SPEED, (double)(client->GetDisplayKBpsDown()), valuemap);
 	}
-	AddTag(CECTag(EC_TAG_CLIENT_UPLOAD_SESSION, client->GetSessionUp()), valuemap);
-	AddTag(CECTag(EC_TAG_PARTFILE_SIZE_XFER, client->GetTransferredDown()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_UPLOAD_TOTAL, client->GetUploadedTotal()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_DOWNLOAD_TOTAL, client->GetDownloadedTotal()), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_UPLOAD_SESSION, client->GetSessionUp(), valuemap);
+	AddDiffTag(this, EC_TAG_PARTFILE_SIZE_XFER, client->GetTransferredDown(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_UPLOAD_TOTAL, client->GetUploadedTotal(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_DOWNLOAD_TOTAL, client->GetDownloadedTotal(), valuemap);
 
-	AddTag(CECTag(EC_TAG_CLIENT_UPLOAD_STATE, client->GetUploadState()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_DOWNLOAD_STATE, client->GetDownloadState()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_IDENT_STATE, (uint64) client->GetCurrentIdentState()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_EXT_PROTOCOL, client->ExtProtocolAvailable()), valuemap);
-	// These are not needed atm. Keep them for now, maybe columns get reintroduced in client view.
-	//AddTag(CECTag(EC_TAG_CLIENT_WAIT_TIME, client->GetWaitTime()), valuemap);
-	//AddTag(CECTag(EC_TAG_CLIENT_XFER_TIME, client->GetUpStartTimeDelay()), valuemap);
-	//AddTag(CECTag(EC_TAG_CLIENT_QUEUE_TIME, (uint64)(::GetTickCount() - client->GetWaitStartTime())), valuemap);
-	//AddTag(CECTag(EC_TAG_CLIENT_LAST_TIME, (uint64)(::GetTickCount() - client->GetLastUpRequest())), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_WAITING_POSITION, client->GetUploadQueueWaitingPosition()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_REMOTE_QUEUE_RANK, client->IsRemoteQueueFull() ? (uint16)0xffff : client->GetRemoteQueueRank()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_OLD_REMOTE_QUEUE_RANK, client->GetOldRemoteQueueRank()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_OBFUSCATION_STATUS, client->GetObfuscationStatus()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_KAD_PORT, client->GetKadPort()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_FRIEND_SLOT, client->GetFriendSlot()), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_UPLOAD_STATE, client->GetUploadState(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_DOWNLOAD_STATE, client->GetDownloadState(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_IDENT_STATE, (uint64)client->GetCurrentIdentState(), valuemap);
+	// Whether a socket to this peer is actually up, as opposed to a client object merely
+	// existing for it. A consumer inferring "online" from the ECID alone called a peer online
+	// from the moment we started TRYING to reach it.
+	AddDiffTag(this, EC_TAG_CLIENT_CONNECTED, client->IsConnected(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_EXT_PROTOCOL, client->ExtProtocolAvailable(), valuemap);
+	// Not needed at the moment; kept in case the columns return to the client view.
+	// EC_TAG_CLIENT_WAIT_TIME, _XFER_TIME, _QUEUE_TIME and _LAST_TIME.
+	AddDiffTag(this, EC_TAG_CLIENT_WAITING_POSITION, client->GetUploadQueueWaitingPosition(), valuemap);
+	AddDiffTag(this,
+		EC_TAG_CLIENT_REMOTE_QUEUE_RANK,
+		client->IsRemoteQueueFull() ? (uint16)0xffff : client->GetRemoteQueueRank(),
+		valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_OLD_REMOTE_QUEUE_RANK, client->GetOldRemoteQueueRank(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_OBFUSCATION_STATUS, client->GetObfuscationStatus(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_KAD_PORT, client->GetKadPort(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_FRIEND_SLOT, client->GetFriendSlot(), valuemap);
+	// Already masked to the five defined bits by CPeerCapabilities, so the
+	// remote GUI never has to know which bits are reserved.
+	AddDiffTag(this, EC_TAG_CLIENT_MOD_CAPABILITIES, client->GetModCapabilities().KnownBits(), valuemap);
 
 	if (detail_level == EC_DETAIL_UPDATE) {
 		return;
 	}
-	const CKnownFile* file = client->GetUploadFile();
+	const CKnownFile *file = client->GetUploadFile();
 	if (file) {
-		AddTag(CECTag(EC_TAG_PARTFILE_NAME, file->GetFileName().GetPrintable()), valuemap);
+		AddDiffTag(this, EC_TAG_PARTFILE_NAME, file->GetFileName().GetPrintable(), valuemap);
 		AddTag(CECTag(EC_TAG_CLIENT_UPLOAD_FILE, file->ECID()), valuemap);
 	} else {
 		AddTag(CECIntTag(EC_TAG_CLIENT_UPLOAD_FILE, 0), valuemap);
 	}
-	const CPartFile* pfile = client->GetRequestFile();
-	AddTag(CECTag(EC_TAG_CLIENT_REQUEST_FILE, pfile ? pfile->ECID() : 0), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_REMOTE_FILENAME, client->GetClientFilename()), valuemap);
+	const CPartFile *pfile = client->GetRequestFile();
+	AddDiffTag(this, EC_TAG_CLIENT_REQUEST_FILE, pfile ? pfile->ECID() : 0, valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_REMOTE_FILENAME, client->GetClientFilename(), valuemap);
 
 	if (detail_level != EC_DETAIL_INC_UPDATE) {
 		return;
 	}
-	AddTag(CECTag(EC_TAG_CLIENT_DISABLE_VIEW_SHARED, client->HasDisabledSharedFiles()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_VERSION, client->GetVersion()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_MOD_VERSION, client->GetClientModString()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_OS_INFO, client->GetClientOSInfo()), valuemap);
-	AddTag(CECTag(EC_TAG_CLIENT_AVAILABLE_PARTS, client->GetAvailablePartCount()), valuemap);
+	// Friend status + DL/UP modifier (issue #423). IsFriend() is the friends-list membership,
+	// distinct from the FRIEND_SLOT reserved upload slot above; GetCreditRatio() is the GUI
+	// "DL/UP modifier" -- the ungated value, the same one the credit store sends for a peer
+	// that is not connected, so a row reads the same online and offline.
+	AddDiffTag(this, EC_TAG_CLIENT_IS_FRIEND, client->IsFriend(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_SCORE_RATIO, (double)client->GetCreditRatio(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_DISABLE_VIEW_SHARED, client->HasDisabledSharedFiles(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_VERSION, client->GetVersion(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_OS_INFO, client->GetClientOSInfo(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_AVAILABLE_PARTS, client->GetAvailablePartCount(), valuemap);
 	if (pfile) {
-		const BitVector & partStatus = client->GetPartStatus();
+		const BitVector &partStatus = client->GetPartStatus();
 		if (partStatus.size() == pfile->GetPartCount()) {
 			if (partStatus.AllTrue()) {
 				// send just an empty tag for a full source
 				AddTag(CECEmptyTag(EC_TAG_CLIENT_PART_STATUS), valuemap);
 			} else {
-				AddTag(CECTag(EC_TAG_CLIENT_PART_STATUS, partStatus.SizeBuffer(), partStatus.GetBuffer()), valuemap);
+				AddTag(CECTag(EC_TAG_CLIENT_PART_STATUS,
+					       partStatus.SizeBuffer(),
+					       partStatus.GetBuffer()),
+					valuemap);
 			}
 		}
-		AddTag(CECTag(EC_TAG_CLIENT_NEXT_REQUESTED_PART, client->GetNextRequestedPart()), valuemap);
-		AddTag(CECTag(EC_TAG_CLIENT_LAST_DOWNLOADING_PART, client->GetLastDownloadingPart()), valuemap);
+		AddDiffTag(this, EC_TAG_CLIENT_NEXT_REQUESTED_PART, client->GetNextRequestedPart(), valuemap);
+		AddTag(CECTag(EC_TAG_CLIENT_LAST_DOWNLOADING_PART, client->GetLastDownloadingPart()),
+			valuemap);
 	}
 	if (file) {
-		const BitVector & upPartStatus = client->GetUpPartStatus();
+		const BitVector &upPartStatus = client->GetUpPartStatus();
 		if (upPartStatus.size() == file->GetPartCount()) {
-			AddTag(CECTag(EC_TAG_CLIENT_UPLOAD_PART_STATUS, upPartStatus.SizeBuffer(), upPartStatus.GetBuffer()), valuemap);
+			AddTag(CECTag(EC_TAG_CLIENT_UPLOAD_PART_STATUS,
+				       upPartStatus.SizeBuffer(),
+				       upPartStatus.GetBuffer()),
+				valuemap);
 		}
 	}
 }
 
-//
 // Search reply
-//
-CEC_SearchFile_Tag::CEC_SearchFile_Tag(const CSearchFile *file, EC_DETAIL_LEVEL detail_level, CValueMap *valuemap) : CECTag(EC_TAG_SEARCHFILE, file->ECID())
+CEC_SearchFile_Tag::CEC_SearchFile_Tag(
+	const CSearchFile *file, EC_DETAIL_LEVEL detail_level, CValueMap *valuemap, uint32 searchID)
+: CECTag(EC_TAG_SEARCHFILE, file->ECID())
 {
+	// Multi-search union poll (amulegui): the owning search's ID, so the client routes this
+	// result to the right tab. Emitted unconditionally (no valuemap, before the UPDATE early-
+	// return) so a result object recreated on any poll can always be attributed. 0 means
+	// omitted.
+	if (searchID) {
+		AddTag(CECTag(EC_TAG_SEARCH_ID, searchID));
+	}
 	AddTag(CECTag(EC_TAG_PARTFILE_SOURCE_COUNT, file->GetSourceCount()), valuemap);
 	AddTag(CECTag(EC_TAG_PARTFILE_SOURCE_COUNT_XFER, file->GetCompleteSourceCount()), valuemap);
+	if (const auto counts = file->GetNetworkSourceCounts()) {
+		// Each half is incremental; clients retain the last-known other half.
+		AddTag(CECTag(EC_TAG_SEARCHFILE_ED2K_SOURCES, counts->Ed2k()), valuemap);
+		AddTag(CECTag(EC_TAG_SEARCHFILE_KAD_SOURCES, counts->Kad()), valuemap);
+	}
 	AddTag(CECTag(EC_TAG_PARTFILE_STATUS, (uint32)file->GetDownloadStatus()), valuemap);
 
+	// On-demand Kad community ratings/comments for this result, reusing the partfile tags.
+	// Emitted before the UPDATE early-return so the flag's start -> finish and the notes
+	// streaming in are visible on every poll.
+	//
+	// Deliberately WITHOUT the valuemap: unlike a download, a search result has no EC change-
+	// generation, and Get_EC_Response_Search_Results never resets the per-connection valuemap
+	// when amulegui recreates the result object. Diffing would send the comments container once
+	// per ECID for the connection's lifetime, so a result created before the notes arrived --
+	// the common case -- would be deduped out and the dialog would stay empty. The block is
+	// gated on the built list, so idle results cost nothing.
+	FileRatingList list;
+	file->GetShownRatingAndComments(list);
+	// Always emitted, and through the valuemap -- the same shape the download side uses for
+	// this tag.
+	//
+	// It used to be emitted only while the lookup was running or had notes, so "finished, found
+	// nothing" was signalled by the tag going away. That cannot survive the incremental union:
+	// a result whose only change is a tag no longer being built produces a childless tag, which
+	// the union drops as unchanged, so the transition was invisible to every incremental
+	// client. Through the valuemap the 1 -> 0 transition is itself a child tag, and a steady
+	// state still costs nothing.
+	AddTag(EC_TAG_PARTFILE_KAD_COMMENT_SEARCHING,
+		(uint64)(file->IsKadCommentSearchRunning() ? 1 : 0),
+		valuemap);
+	// The container itself stays gated on there being notes, and stays off the valuemap: an
+	// empty one must never be sent, because a client reads its absence as "no notes" rather
+	// than as "unchanged".
+	//
+	// One consequence, since it looks like a bug from the other end: a result that HAS notes is
+	// never elided by the multi-search union, because off-valuemap this child is re-emitted on
+	// every poll. That is the correct trade -- the alternative silently drops notes -- and few
+	// results carry any.
+	if (!list.empty()) {
+		CECEmptyTag sc(EC_TAG_PARTFILE_COMMENTS);
+		for (FileRatingList::const_iterator it = list.begin(); it != list.end(); ++it) {
+			// Tag children are evaluated by index, not by name.
+			sc.AddTag(CECTag(EC_TAG_PARTFILE_COMMENTS, it->UserName));
+			sc.AddTag(CECTag(EC_TAG_PARTFILE_COMMENTS, it->FileName));
+			sc.AddTag(CECTag(EC_TAG_PARTFILE_COMMENTS, (uint64)it->Rating));
+			sc.AddTag(CECTag(EC_TAG_PARTFILE_COMMENTS, it->Comment));
+		}
+		AddTag(sc);
+	}
+
 	if (detail_level == EC_DETAIL_UPDATE) {
-			return;
+		return;
 	}
 
 	AddTag(CECTag(EC_TAG_PARTFILE_NAME, file->GetFileName().GetPrintable()), valuemap);
@@ -372,22 +577,45 @@ CEC_SearchFile_Tag::CEC_SearchFile_Tag(const CSearchFile *file, EC_DETAIL_LEVEL 
 	if (file->GetParent()) {
 		AddTag(EC_TAG_SEARCH_PARENT, file->GetParent()->ECID(), valuemap);
 	}
+	// Browse ("View Files") source info: the peer this listing came from and the shared folder
+	// the file lives in. Set only on results filed from a peer's shared-file list, so ordinary
+	// server/Kad hits emit nothing here.
+	if (file->GetClientID()) {
+		AddTag(CECTag(EC_TAG_SEARCHFILE_CLIENT_ID, file->GetClientID()), valuemap);
+		AddTag(CECTag(EC_TAG_SEARCHFILE_CLIENT_PORT, file->GetClientPort()), valuemap);
+	}
+	if (!file->GetDirectory().IsEmpty()) {
+		AddTag(CECTag(EC_TAG_SEARCHFILE_DIRECTORY, file->GetDirectory()), valuemap);
+	}
 	if (file->HasRating()) {
 		AddTag(CECTag(EC_TAG_KNOWNFILE_RATING, (uint8)file->UserRating()), valuemap);
 	}
+	// Media metadata (issue #430). A hit carries FT_MEDIA_* tags only when the file is known or
+	// probed locally, so each EC_TAG_KNOWNFILE_MEDIA_* is emitted only when its value is
+	// present and results without media cost nothing.
+	AddMediaTagsPresent(*this, file, valuemap);
 }
 
-//
 // Friend
-//
-CEC_Friend_Tag::CEC_Friend_Tag(const CFriend* Friend, CValueMap* valuemap) : CECTag(EC_TAG_FRIEND, Friend->ECID())
+CEC_Friend_Tag::CEC_Friend_Tag(const CFriend *Friend, CValueMap *valuemap)
+: CECTag(EC_TAG_FRIEND, Friend->ECID())
 {
-	AddTag(EC_TAG_FRIEND_NAME,	Friend->GetName(), valuemap);
-	AddTag(EC_TAG_FRIEND_HASH,	Friend->GetUserHash(), valuemap);
-	AddTag(EC_TAG_FRIEND_IP,	Friend->GetIP(), valuemap);
-	AddTag(EC_TAG_FRIEND_PORT,	Friend->GetPort(), valuemap);
-	const CClientRef& linkedClient = Friend->GetLinkedClient();
+	AddTag(EC_TAG_FRIEND_NAME, Friend->GetName(), valuemap);
+	AddTag(EC_TAG_FRIEND_HASH, Friend->GetUserHash(), valuemap);
+	AddTag(EC_TAG_FRIEND_IP, Friend->GetIP(), valuemap);
+	AddTag(EC_TAG_FRIEND_PORT, Friend->GetPort(), valuemap);
+	const CClientRef &linkedClient = Friend->GetLinkedClient();
 	AddTag(EC_TAG_FRIEND_CLIENT, linkedClient.IsLinked() ? linkedClient.ECID() : 0, valuemap);
+	// Echoed from the linked client so a consumer does not have to join against the client list
+	// -- and could not join reliably anyway, since a friend's client need not be in the list
+	// the consumer holds.
+	AddTag(EC_TAG_CLIENT_CONNECTED,
+		linkedClient.IsLinked() && linkedClient.GetClient()->IsConnected(),
+		valuemap);
+	// The slot is settable over EC but was never reported back, so every EC client read it as
+	// false and amulegui's "Establish Friend Slot" check mark could not follow the state it had
+	// just set. Same tag id in both directions.
+	AddTag(EC_TAG_FRIEND_FRIENDSLOT, Friend->HasFriendSlot(), valuemap);
 }
 
 // File_checked_for_headers

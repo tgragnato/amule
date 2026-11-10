@@ -26,9 +26,9 @@
 #ifndef CHATWND_H
 #define CHATWND_H
 
-#include <wx/panel.h>		// Needed for wxPanel
-#include <wx/notebook.h>		// Needed for wxNotebookEvent
-#include "Types.h"
+#include <wx/panel.h>    // Needed for wxPanel
+#include <wx/notebook.h> // Needed for wxNotebookEvent
+#include "ChatSessionStore.h"
 
 class CFriend;
 class CChatSelector;
@@ -38,61 +38,104 @@ class CMD4Hash;
 class CChatWnd : public wxPanel
 {
 public:
-	CChatWnd(wxWindow* pParent = NULL);
+	CChatWnd(wxWindow *pParent = NULL);
 	~CChatWnd() {};
 
-	void StartSession(CFriend* friend_client, bool setfocus = true);
+	/**
+	 * Open (or raise) the chat tab for a friend. False when there is no address to key the tab
+	 * on, so the caller can say why nothing happened.
+	 */
+	bool StartSession(CFriend *friend_client, bool setfocus = true);
 
-	void	UpdateFriend(CFriend* toupdate);
-	void	RemoveFriend(CFriend* todel);
+	void UpdateFriend(CFriend *toupdate);
+	void RemoveFriend(CFriend *todel);
 
-	void	ProcessMessage(uint64 sender, const wxString& message);
-	void	ConnectionResult(bool success, const wxString& message, uint64 id);
+	void RekeySession(const CChatTarget &old_id, const CChatTarget &new_id);
+	void ProcessMessage(const CChatTarget &sender, const wxString &message);
+	void ConnectionResult(bool success, const wxString &message, const CChatTarget &id);
 
-	void	SendMessage(const wxString& message, const wxString& client_name = "", uint64 to_id = 0);
+	void SendMessage(const wxString &message,
+		const wxString &client_name = "",
+		const CChatTarget &to_id = {},
+		uint32 challengeId = 0);
 
-	bool	IsIdValid(uint64 id);
-	void	ShowCaptchaResult(uint64 id, bool ok);
-	void	EndSession(uint64 id);
+	bool IsIdValid(const CChatTarget &id);
+	void ShowCaptchaResult(const CChatTarget &id, bool ok);
+	void EndSession(const CChatTarget &id);
+
+	// --- Driven by the core's chat session store, over EC --- Open (or reuse) a tab for a
+	// session the core reports, without stealing the selection: a session can appear on its
+	// own, started by another client, while the user is doing something else.
+	void StartSessionByID(const CChatTarget &gui_id, const wxString &name);
+
+	// Render one message the core already holds. `blink` is false while replaying history on
+	// connect -- a reconnect must not light the Messages button up for messages already read --
+	// and true for anything arriving afterwards.
+	void AppendStoredMessage(const CChatTarget &gui_id,
+		const wxString &name,
+		const wxString &text,
+		bool outgoing,
+		bool blink);
+
+	// The core no longer has this session (closed by another client, or evicted). Closes the
+	// tab WITHOUT sending a close back: distinct from EndSession, which is the user's own
+	// close.
+	void EndSessionFromCore(const CChatTarget &gui_id);
 
 protected:
 	/**
-	 * Event-handler for displaying the chat-popup menu.
+	 * The user closed a chat tab: tell the core to drop the session.
+	 *
+	 * Closing is global, exactly as for a search tab -- the core state goes away for every
+	 * client, which is why this is the only place that originates a close. `m_inChatClosing`
+	 * guards the re-entry: dropping the session fires MuleNotify::Chat_SessionRemoved, which
+	 * routes straight back into this tab's close path.
 	 */
-	void	OnNMRclickChatTab(wxMouseEvent& evt);
+	void OnChatClosing(wxBookCtrlEvent &evt);
+
+	//! True while OnChatClosing is tearing a tab down; see EndSessionFromCore.
+	bool m_inChatClosing = false;
+
+public:
+
+protected:
 	/**
-	 * Event-handler of the Close item on the popup-menu.
+	 * Event handler: show the chat popup menu.
 	 */
-	void	OnPopupClose(wxCommandEvent& evt);
+	void OnNMRclickChatTab(wxMouseEvent &evt);
+	/**
+	 * Event handler: the Close item on the popup menu.
+	 */
+	void OnPopupClose(wxCommandEvent &evt);
 
 	/**
-	 * Event-handler of the CloseAll item on the popup-menu.
+	 * Event handler: the CloseAll item on the popup menu.
 	 */
-	void	OnPopupCloseAll(wxCommandEvent& evt);
+	void OnPopupCloseAll(wxCommandEvent &evt);
 
 	/**
-	 * Event-handler of the CloseOthers item on the popup-menu.
+	 * Event handler: the CloseOthers item on the popup menu.
 	 */
-	void	OnPopupCloseOthers(wxCommandEvent& evt);
+	void OnPopupCloseOthers(wxCommandEvent &evt);
 
 	/**
-	 * Event-handler of the AddFriend item on the popup-menu.
+	 * Event handler: the AddFriend item on the popup menu.
 	 */
-	void	OnAddFriend(wxCommandEvent& evt);
+	void OnAddFriend(wxCommandEvent &evt);
 
-	void	OnBnClickedCsend(wxCommandEvent& evt);
-	void	OnBnClickedCclose(wxCommandEvent& evt);
-	void	OnAllPagesClosed(wxNotebookEvent& evt);
-	void	CheckNewButtonsState();
+	void OnBnClickedCsend(wxCommandEvent &evt);
+	void OnBnClickedCclose(wxCommandEvent &evt);
+	void OnAllPagesClosed(wxNotebookEvent &evt);
+	void CheckNewButtonsState();
 
 	wxDECLARE_EVENT_TABLE();
 
 	//! Variable used to ensure that the popup menu doesn't get displayed twice.
-	wxMenu* m_menu;
+	wxMenu *m_menu;
 	//! Pointer to the control serving as the friend list
-	CFriendListCtrl* friendlistctrl;
+	CFriendListCtrl *friendlistctrl;
 	//! Pointer to the chat tabs.
-	CChatSelector*	chatselector;
+	CChatSelector *chatselector;
 };
 
 #endif

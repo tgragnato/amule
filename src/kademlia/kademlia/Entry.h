@@ -36,10 +36,12 @@ Any mod that changes anything within the Kademlia side will not be allowed to ad
 there client on the eMule forum..
 */
 
-#ifndef __KAD_ENTRY_H__
-#define __KAD_ENTRY_H__
+#ifndef ENTRY_H
+#define ENTRY_H
 
-
+#include <atomic>
+#include "AICHHashList.h"
+#include <memory>
 #include "../utils/UInt128.h"
 #include "../../Tag.h"
 #include <time.h>
@@ -50,13 +52,15 @@ struct SSearchTerm;
 class CFileDataIO;
 
 ////////////////////////////////////////
-namespace Kademlia {
+namespace Kademlia
+{
 ////////////////////////////////////////
 
 class CEntry
 {
 protected:
-	struct sFileNameEntry {
+	struct sFileNameEntry
+	{
 		wxString m_filename;
 		uint32_t m_popularityIndex;
 	};
@@ -70,22 +74,27 @@ public:
 		m_uSize = 0;
 		m_tLifeTime = time(NULL);
 		m_bSource = false;
+		m_extraTagBytes = 0;
 	}
 
-	virtual		~CEntry();
-	virtual CEntry*	Copy() const;
-	virtual bool	IsKeyEntry() const noexcept	{ return false; }
+	virtual ~CEntry();
+	virtual CEntry *Copy() const;
+	virtual bool IsKeyEntry() const noexcept { return false; }
 
-	bool	 GetIntTagValue(const wxString& tagname, uint64_t& value, bool includeVirtualTags = true) const;
-	wxString GetStrTagValue(const wxString& tagname) const;
+	bool GetIntTagValue(const wxString &tagname, uint64_t &value, bool includeVirtualTags = true) const;
+	wxString GetStrTagValue(const wxString &tagname) const;
 
-	void	 AddTag(CTag *tag)			{ m_taglist.push_back(tag); }
-	uint32_t GetTagCount() const			{ return m_taglist.size() + ((m_uSize != 0) ? 1 : 0) + (GetCommonFileName().IsEmpty() ? 0 : 1); }
-	void	 WriteTagList(CFileDataIO* data)	{ WriteTagListInc(data, 0); }
+	// dbgSourceIP is the peer the tag came from, or 0 when we generated it ourselves.
+	void AddTag(CTag *tag, uint32_t dbgSourceIP);
+	uint32_t GetTagCount() const
+	{
+		return m_taglist.size() + ((m_uSize != 0) ? 1 : 0) + (GetCommonFileName().IsEmpty() ? 0 : 1);
+	}
+	void WriteTagList(CFileDataIO *data) { WriteTagListInc(data, 0); }
 
-	wxString GetCommonFileNameLowerCase() const	{ return GetCommonFileName().MakeLower(); }
+	wxString GetCommonFileNameLowerCase() const { return GetCommonFileName().MakeLower(); }
 	wxString GetCommonFileName() const;
-	void	 SetFileName(const wxString& name);
+	void SetFileName(const wxString &name);
 
 	uint32_t m_uIP;
 	uint16_t m_uTCPport;
@@ -95,53 +104,86 @@ public:
 	uint64_t m_uSize;
 	time_t m_tLifeTime;
 	bool m_bSource;
+	//! Wire size of the tags kept for other clients without being understood here.
+	uint32_t m_extraTagBytes;
 
 protected:
-	void	WriteTagListInc(CFileDataIO *data, uint32_t increaseTagNumber = 0);
-	typedef std::list<sFileNameEntry>	FileNameList;
-	FileNameList	m_filenames;
-	TagPtrList	m_taglist;
+	void WriteTagListInc(CFileDataIO *data, uint32_t increaseTagNumber = 0);
+	typedef std::list<sFileNameEntry> FileNameList;
+	FileNameList m_filenames;
+	TagPtrList m_taglist;
 };
 
 class CKeyEntry : public CEntry
 {
-      protected:
-	struct sPublishingIP {
+	friend class CIndexed;
+
+protected:
+	struct sPublishingIP
+	{
 		uint32_t m_ip;
-		time_t	 m_lastPublish;
+		time_t m_lastPublish;
+		// Index into m_aichHashes of the AICH root hash this publisher reported, or
+		// CKadAICHHashList::INVALID_INDEX when it reported none (a pre-0x09 publisher
+		// always reports none).
+		uint16_t m_aichHashIdx;
 	};
 
-      public:
-	CKeyEntry();
+public:
+	using PublishTracking = std::map<uint32_t, uint32_t>;
+	explicit CKeyEntry(std::shared_ptr<PublishTracking> tracking = {});
 	virtual ~CKeyEntry();
 
-	virtual CEntry*	Copy() const			{ return CEntry::Copy(); }
-	virtual bool	IsKeyEntry() const noexcept	{ return true; }
+	virtual CEntry *Copy() const { return CEntry::Copy(); }
+	virtual bool IsKeyEntry() const noexcept { return true; }
 
-	bool	SearchTermsMatch(const SSearchTerm *searchTerm) const;
-	void	MergeIPsAndFilenames(CKeyEntry* fromEntry);
-	void	CleanUpTrackedPublishers();
-	double	GetTrustValue();
-	void	WritePublishTrackingDataToFile(CFileDataIO *data);
-	void	ReadPublishTrackingDataFromFile(CFileDataIO *data);
-	void	DirtyDeletePublishData();
-	void	WriteTagListWithPublishInfo(CFileDataIO *data);
-	static void	ResetGlobalTrackingMap()	{ s_globalPublishIPs.clear(); }
+	// The matching work one keyword search request may do, in units of about 0.1 ns (see
+	// Entry.cpp): roughly 0.1 s on a current desktop. The widest search the eMule
+	// and aMule search boxes allow uses a quarter of it on a key that holds 50,000 entries.
+	static const uint64_t SEARCH_BUDGET = 1000000000;
 
-      protected:
-	void	ReCalculateTrustValue();
-	static void	AdjustGlobalPublishTracking(uint32_t ip, bool increase, const wxString& dbgReason);
+	// Takes the cost of the nodes visited, words looked up and tags scanned from budget. A tree
+	// that runs out of budget does not match, and the caller stops when it reaches 0.
+	bool SearchTermsMatch(const SSearchTerm *searchTerm, uint64_t &budget) const;
+	void MergeIPsAndFilenames(CKeyEntry *fromEntry);
+	void CleanUpTrackedPublishers();
+	double GetTrustValue();
+	// Use the same format snapshot as the keyword-index header for every entry.
+	void WritePublishTrackingDataToFile(CFileDataIO *data, bool includesAICH);
+	// `includesAICH` reflects the on-disk keyword-index version: files written before the AICH-
+	// carrying version 4 have no hash block and no per-publisher hash index.
+	void ReadPublishTrackingDataFromFile(
+		CFileDataIO *data, bool includesAICH, const std::atomic<bool> *cancel = nullptr);
 
-	typedef std::list<sPublishingIP>	PublishingIPList;
-	typedef std::map<uint32_t, uint32_t>	GlobalPublishIPMap;
+	// Records the AICH root hash a publisher sent in TAG_KADAICHHASHPUB. Only meaningful on a
+	// freshly parsed entry, before MergeIPsAndFilenames() folds it into the stored entry: that
+	// is where the hash gets attached to this publisher and the popularity counts of the merged
+	// list are maintained.
+	void SetPublishedAICHHash(const CKadAICHHash &hash);
+	uint16_t GetAICHHashCount() const { return m_aichHashes.GetSlotCount(); }
+	void DirtyDeletePublishData();
+	void WriteTagListWithPublishInfo(CFileDataIO *data);
+
+protected:
+	struct MatchState;
+	bool MatchTerm(const SSearchTerm *searchTerm, MatchState &state) const;
+	void ReCalculateTrustValue();
+	void AdjustGlobalPublishTracking(uint32_t ip, bool increase, const wxString &dbgReason);
+
+	typedef std::list<sPublishingIP> PublishingIPList;
+	typedef std::map<uint32_t, uint32_t> GlobalPublishIPMap;
 
 	uint64_t m_lastTrustValueCalc;
-	double	 m_trustValue;
-	PublishingIPList *		m_publishingIPs;
-	static GlobalPublishIPMap	s_globalPublishIPs;	// tracks count of publishings for each 255.255.255.0/24 subnet
+	double m_trustValue;
+	// The AICH root hashes reported for this entry, with one popularity
+	// count per hash.  Empty for entries that only pre-0x09 peers published.
+	CKadAICHHashList m_aichHashes;
+	PublishingIPList *m_publishingIPs;
+	std::shared_ptr<PublishTracking>
+		m_publishTracking; // tracks count of publishings for each 255.255.255.0/24 subnet
 };
 
-}
+} // namespace Kademlia
 
-#endif // __KAD_ENTRY_H__
+#endif // ENTRY_H
 // File_checked_for_headers
