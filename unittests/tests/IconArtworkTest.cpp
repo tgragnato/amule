@@ -243,7 +243,7 @@ int main(int argc, char **argv)
 	Phase("image handlers and art provider");
 	wxInitAllImageHandlers();
 	wxArtProvider::Push(new CamuleArtProvider);
-	int count = 0, flags = 0, menus = 0;
+	int count = 0, menus = 0;
 	const auto entries = amule_get_all_icons(&count);
 	const char *output = std::getenv("AMULE_ICON_TEST_OUTPUT");
 	if (output)
@@ -343,31 +343,6 @@ int main(int argc, char **argv)
 		require(masks[0] != masks[1] && masks[1] != masks[2] && masks[0] != masks[2],
 			"template states have identical shapes");
 
-		Phase("legacy flag padding");
-		for (const char *code : { "an", "unknown" }) {
-			for (int scale : { 1, 2, 3 }) {
-				const auto entry = amule_find_icon((std::string("flag_") + code).c_str());
-				require(entry != nullptr, "legacy flag missing");
-				const auto data = scale == 3   ? entry->png3x_data
-						  : scale == 2 ? entry->png2x_data
-							       : entry->png_data;
-				const auto length = scale == 3   ? entry->png3x_len
-						    : scale == 2 ? entry->png2x_len
-								 : entry->png_len;
-				wxMemoryInputStream stream(data, length);
-				wxImage image(stream, wxBITMAP_TYPE_PNG);
-				require(image.IsOk() && image.GetSize() == wxSize(16 * scale, 12 * scale),
-					"legacy flag wrong dimensions");
-				require(image.HasAlpha(), "legacy flag padding lacks transparency");
-				// The 1x original is padded; filtering of enlarged raster-only
-				// artwork can blend the boundary, so require its last row only.
-				for (int x = 0; x < 16 * scale; ++x) {
-					require(image.GetAlpha(x, 12 * scale - 1) == 0,
-						"legacy bottom row not transparent");
-				}
-			}
-		}
-
 		Phase("icon inventory");
 		for (int i = 0; i < count; ++i) {
 			const auto &entry = entries[i];
@@ -405,11 +380,10 @@ int main(int argc, char **argv)
 						"PNG export failed");
 			}
 		}
-		require(flags == 253, "embedded flag inventory incomplete");
 		Phase("PNG density selection");
 		// Check source selection independently at each density. Compare after
 		// native bitmap conversion to allow platform alpha premultiplication.
-		const auto raster = amule_find_icon("flag_us");
+		const auto raster = amule_find_icon("client_lphant");
 		require(raster && raster->png2x_data && raster->png3x_data && !raster->svg_data,
 			"PNG density table incomplete");
 		for (double scale : { 1.0, 1.5, 2.0, 3.0, 4.0 }) {
@@ -425,7 +399,7 @@ int main(int argc, char **argv)
 			if (!source.HasAlpha()) {
 				source.InitAlpha();
 			}
-			const wxSize pixels(wxRound(16 * scale), wxRound(12 * scale));
+			const wxSize pixels(wxRound(16 * scale), wxRound(16 * scale));
 			const auto scaled = source.GetSize() == pixels
 						    ? source
 						    : source.Scale(pixels.x, pixels.y, wxIMAGE_QUALITY_HIGH);
@@ -525,7 +499,7 @@ int main(int argc, char **argv)
 	wxEntryCleanup();
 	Phase("done");
 	if (!status)
-		std::cout << "PASS: " << flags << " flags and " << menus
+		std::cout << "PASS: " << menus
 			  << " menu icons at 1x/1.5x/2x/3x/4x; three tray states at 16-100px; fallback, "
 			     "client icon densities, bitmap cache, DPI transition, menu "
 			     "semantics and live theme "

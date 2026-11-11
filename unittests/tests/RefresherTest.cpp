@@ -2436,16 +2436,6 @@ TEST(Refresher, PreferencesExtendedCategoriesDecode)
 	kad.AddTag(CECTag(EC_TAG_KADEMLIA_UPDATE_URL, wxString::FromUTF8("http://nodes")));
 	resp.AddTag(kad);
 
-	CECEmptyTag ip2c(EC_TAG_PREFS_IP2COUNTRY);
-	ip2c.AddTag(CECTag(EC_TAG_IP2COUNTRY_SUPPORTED, true));  // value-encoded bool
-	ip2c.AddTag(CECTag(EC_TAG_IP2COUNTRY_ENABLED, true));    // value-encoded bool
-	ip2c.AddTag(CECTag(EC_TAG_IP2COUNTRY_SOURCE, (uint8)1)); // MaxMind
-	ip2c.AddTag(CECTag(EC_TAG_IP2COUNTRY_CUSTOM_URL, wxString::FromUTF8("http://geo")));
-	ip2c.AddTag(CECTag(EC_TAG_IP2COUNTRY_MAXMIND_LICENSE, wxString::FromUTF8("LICKEY")));
-	ip2c.AddTag(CECTag(EC_TAG_IP2COUNTRY_DB_LOADED, true)); // value-encoded bool
-	ip2c.AddTag(CECTag(EC_TAG_IP2COUNTRY_LOADED_SOURCE, wxString::FromUTF8("maxmind")));
-	resp.AddTag(ip2c);
-
 	PreferencesSnapshot p;
 	std::vector<CategorySnapshot> cats;
 	ParsePreferencesFromPacket(&resp, p, cats);
@@ -2492,15 +2482,6 @@ TEST(Refresher, PreferencesExtendedCategoriesDecode)
 	ASSERT_EQUALS(static_cast<std::uint32_t>(30), p.advanced.kad_source_reask_minutes);
 	ASSERT_EQUALS(std::string("http://nodes"), p.kad.update_url);
 
-	ASSERT_TRUE(p.geoip.supported);
-	ASSERT_TRUE(p.geoip.enabled);
-	ASSERT_EQUALS(std::string("maxmind"), p.geoip.source); // uint8 1 -> "maxmind"
-	ASSERT_EQUALS(std::string("http://geo"), p.geoip.custom_update_url);
-	ASSERT_EQUALS(std::string("LICKEY"), p.geoip.maxmind_license);
-	ASSERT_TRUE(!p.geoip.auto_update_enabled); // absent -> false
-	ASSERT_TRUE(p.geoip.db_loaded);
-	ASSERT_EQUALS(std::string("maxmind"), p.geoip.loaded_source);
-	ASSERT_TRUE(!p.geoip.download_in_progress); // absent -> false
 }
 
 // #655: enum strings and the nested remote_controls shape. The EC layer is unchanged by the field-
@@ -2771,9 +2752,8 @@ TEST(Refresher, PrefsSchemaIsWellFormed)
 			++emitted;
 	}
 
-	// The documented payload is 143 fields. A row added or dropped without
-	// updating docs/api/REFERENCE.md should trip this.
-	ASSERT_EQUALS(static_cast<std::size_t>(143), emitted);
+	ASSERT_EQUALS(static_cast<std::size_t>(132), emitted);
+	ASSERT_TRUE(seen.count("geoip.supported") == 0);
 }
 
 // The schema's irregularities are enumerated rather than merely counted: each is deliberate and
@@ -2804,8 +2784,7 @@ TEST(Refresher, PrefsSchemaIrregularitiesStayContained)
 		if (f.access == PrefAccess::AdminRead) {
 			++admin_read;
 			const std::string id = std::string(f.category) + "." + f.key;
-			ASSERT_TRUE(id == "connection.proxy_user" || id == "geoip.custom_update_url" ||
-				    id == "geoip.maxmind_license" || id == "servers.update_url" ||
+			ASSERT_TRUE(id == "connection.proxy_user" || id == "servers.update_url" ||
 				    id == "servers.update_urls" || id == "security.ipfilter_update_url" ||
 				    id == "kad.update_url");
 		}
@@ -2813,7 +2792,7 @@ TEST(Refresher, PrefsSchemaIrregularitiesStayContained)
 	ASSERT_EQUALS(static_cast<std::size_t>(2), inverted);
 	ASSERT_EQUALS(static_cast<std::size_t>(1), foreign_group);
 	ASSERT_EQUALS(static_cast<std::size_t>(1), bespoke);
-	ASSERT_EQUALS(static_cast<std::size_t>(7), admin_read);
+	ASSERT_EQUALS(static_cast<std::size_t>(5), admin_read);
 
 	// One category is gated on a tag proving the daemon has it. That tag must be one of the
 	// category's own value-encoded rows: a presence-encoded one is absent whenever it is false,

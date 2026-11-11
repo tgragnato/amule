@@ -44,6 +44,11 @@ namespace
 wxString NormalizedProgramPath(const wxString &path, Platform platform)
 {
 	wxString normalized = path;
+	if (platform == Platform::Windows) {
+		while (normalized.EndsWith(".") || normalized.EndsWith(" ")) {
+			normalized.RemoveLast();
+		}
+	}
 	return normalized;
 }
 
