@@ -567,6 +567,7 @@ bool CamuleAppCommon::InitCommon(int argc, wxChar **argv)
 		printf("%s\n",
 			(const char *)unicode2char(
 				wxString(CFormat("%s (OS: %s)") % FullMuleVersion % OSType)));
+		SetConfigureResult(true);
 		return false;
 	}
 
