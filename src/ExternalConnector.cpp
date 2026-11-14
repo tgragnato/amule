@@ -209,14 +209,14 @@ const CmdList_t *CCommandTree::GetSubCommandsFor(const wxString &command, bool m
 	return NULL;
 }
 
-// Forward-declare the completion function to make sure it's declaration
-// matches the library requirements.
-rl_compentry_func_t command_completion;
+// Readline's entry generator returns one match at a time; the attempted-completion
+// callback wraps it in the match array expected by both GNU Readline and libedit.
+rl_compentry_func_t command_completion_entry;
 
 // File-scope pointer to the application's command set.
 static CCommandTree *theCommands;
 
-char *command_completion(const char *text, int state)
+char *command_completion_entry(const char *text, int state)
 {
 	static const CmdList_t *curCommands;
 	static CmdPosConst_t nextCommand;
@@ -243,6 +243,13 @@ char *command_completion(const char *text, int state)
 	}
 
 	return NULL;
+}
+
+char **command_completion(const char *text, int start, int end)
+{
+	(void)start;
+	(void)end;
+	return rl_completion_matches(text, command_completion_entry);
 }
 
 #endif /* HAVE_LIBREADLINE */
@@ -771,18 +778,14 @@ bool CaMuleExternalConnector::OnInit()
 
 #ifdef HAVE_LIBREADLINE
 	// Allow conditional parsing of the ~/.inputrc file. OnInitCmdLine() is called from
-	// wxApp::OnInit() above, so m_appname is already set. macOS libedit's rl_readline_name is
-	// char* and rl_completion_entry_function is Function*, where GNU readline on Linux has the
-	// const types.
+	// wxApp::OnInit() above, so m_appname is already set.
 #ifdef __WXMAC__
 	rl_readline_name = const_cast<char *>(m_appname);
-	theCommands = &m_commands;
-	rl_completion_entry_function = (Function *)&command_completion;
 #else
 	rl_readline_name = m_appname;
-	theCommands = &m_commands;
-	rl_completion_entry_function = &command_completion;
 #endif
+	theCommands = &m_commands;
+	rl_attempted_completion_function = &command_completion;
 #endif
 
 	return retval;
