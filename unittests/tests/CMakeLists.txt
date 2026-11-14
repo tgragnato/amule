@@ -1598,6 +1598,26 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	target_compile_definitions (FileAreaTest PRIVATE AMULE_TEST_WRAP_MSYNC=1)
 endif ()
 
+# kadkeywords.dat, on a CMemFile.
+add_executable (KadKeywordPublishTimesTest
+	KadKeywordPublishTimesTest.cpp
+	${CMAKE_SOURCE_DIR}/src/KadKeywordPublishTimes.cpp
+	${CMAKE_SOURCE_DIR}/src/SafeFile.cpp
+	${CMAKE_SOURCE_DIR}/src/CFile.cpp
+	${CMAKE_SOURCE_DIR}/src/MemFile.cpp
+	${CMAKE_SOURCE_DIR}/src/kademlia/utils/UInt128.cpp
+	${CMAKE_SOURCE_DIR}/src/Tag.cpp
+	${CMAKE_SOURCE_DIR}/src/LoggerConsole.cpp
+	${CMAKE_SOURCE_DIR}/src/libs/common/Path.cpp
+)
+add_test (NAME KadKeywordPublishTimesTest COMMAND KadKeywordPublishTimesTest)
+target_include_directories (KadKeywordPublishTimesTest PRIVATE
+	${CMAKE_BINARY_DIR}
+	${CMAKE_SOURCE_DIR}/src
+	${CMAKE_SOURCE_DIR}/src/include
+)
+target_link_libraries (KadKeywordPublishTimesTest muleunit mulecommon)
+
 add_executable (PartFileBufferingTest PartFileBufferingTest.cpp)
 add_test (NAME PartFileBufferingTest COMMAND PartFileBufferingTest)
 target_include_directories (PartFileBufferingTest PRIVATE ${CMAKE_SOURCE_DIR}/src)

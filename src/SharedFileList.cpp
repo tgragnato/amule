@@ -67,6 +67,7 @@
 #include "updownclient.h"                        // Needed for CUpDownClient (buddy route)
 #include "KadCallbackPolicy.h"                   // Needed for DirectCallbackAvailable
 #include "kademlia/kademlia/UDPFirewallTester.h" // Needed for CUDPFirewallTester
+#include "KadKeywordPublishTimes.h"              // Needed for KadKeywordPublishTimes::Times
 #ifdef ENABLE_IPV6
 #include "AdvertisedIPv6.h" // Needed for AdvertisedIPv6ForPeers
 #endif
@@ -208,6 +209,9 @@ public:
 	CPublishKeyword *GetNextKeyword();
 	void ResetNextKeyword();
 
+	void LoadPublishTimes(const CPath &path);
+	void SavePublishTimes(const CPath &path) const;
+
 	uint32 GetNextPublishTime() const { return m_tNextPublishKeywordTime; }
 	void SetNextPublishTime(uint32 tNextPublishKeywordTime)
 	{
@@ -230,6 +234,9 @@ protected:
 	std::map<wxString, CKeyWordList::iterator> m_keywordIndex;
 
 	CPublishKeyword *FindKeyword(const wxString &rstrKeyword, CKeyWordList::iterator *ppos = NULL);
+
+	// Saved times not yet taken by a keyword, keyed by keyword hash.
+	KadKeywordPublishTimes::Times m_savedTimes;
 };
 
 CPublishKeywordList::CPublishKeywordList()
@@ -276,6 +283,11 @@ void CPublishKeywordList::AddKeyword(const wxString &keyword, CKnownFile *file)
 	CPublishKeyword *pubKw = FindKeyword(keyword);
 	if (pubKw == NULL) {
 		pubKw = new CPublishKeyword(keyword);
+		const auto saved = m_savedTimes.find(pubKw->GetKadID());
+		if (saved != m_savedTimes.end()) {
+			pubKw->SetNextPublishTime(saved->second);
+			m_savedTimes.erase(saved);
+		}
 		m_lstKeywords.push_back(pubKw);
 		CKeyWordList::iterator it = m_lstKeywords.end();
 		--it;
@@ -329,6 +341,58 @@ void CPublishKeywordList::RemoveAllKeywords()
 	SetNextPublishTime(0);
 }
 
+namespace
+{
+CPath KeywordPublishTimesPath()
+{
+	return CPath(thePrefs::GetConfigDir() + KadKeywordPublishTimes::FileName);
+}
+} // namespace
+
+void CPublishKeywordList::LoadPublishTimes(const CPath &path)
+{
+	CFile file;
+	if (!path.FileExists() || !file.Open(path)) {
+		return;
+	}
+	if (!KadKeywordPublishTimes::Read(file, time(nullptr), m_savedTimes)) {
+		AddDebugLogLineN(logKnownFiles,
+			CFormat("%s is damaged or newer; keeping what was read") %
+				KadKeywordPublishTimes::FileName);
+	}
+}
+
+void CPublishKeywordList::SavePublishTimes(const CPath &path) const
+{
+	const uint32 now = time(nullptr);
+	KadKeywordPublishTimes::Times times;
+	// Keep saved times whose files are not shared now; they may come back.
+	for (const auto &saved : m_savedTimes) {
+		if (saved.second > now) {
+			times.insert(saved);
+		}
+	}
+	for (const CPublishKeyword *keyword : m_lstKeywords) {
+		if (keyword->GetNextPublishTime() > now) {
+			times[keyword->GetKadID()] = keyword->GetNextPublishTime();
+		}
+	}
+	CFile file(path, CFile::write_safe);
+	if (!file.IsOpened()) {
+		return;
+	}
+	try {
+		KadKeywordPublishTimes::Write(file, times);
+		if (!file.Close()) {
+			throw CIOFailureException(
+				wxString("Cannot commit ") + KadKeywordPublishTimes::FileName);
+		}
+	} catch (const CIOFailureException &e) {
+		AddLogLineC(CFormat(_("Error while saving %s file: %s")) % KadKeywordPublishTimes::FileName %
+			    e.what());
+	}
+}
+
 void CPublishKeywordList::RemoveAllKeywordReferences()
 {
 	CKeyWordList::iterator it = m_lstKeywords.begin();
@@ -364,6 +428,7 @@ CSharedFileList::CSharedFileList(CKnownFileList *in_filelist)
 	m_lastPublishED2KFlag = true;
 	/* Kad Stuff */
 	m_keywords = new CPublishKeywordList;
+	m_keywords->LoadPublishTimes(KeywordPublishTimesPath());
 	m_lastPublishKadSrc = 0;
 	m_lastPublishKadNotes = 0;
 	m_currFileKey = 0;
@@ -1901,6 +1966,12 @@ CSharedFileList::SPublishingState CSharedFileList::GetPublishingState() const
 		}
 	}
 	return state;
+}
+
+void CSharedFileList::SaveKeywordPublishTimes()
+{
+	wxMutexLocker lock(list_mut);
+	m_keywords->SavePublishTimes(KeywordPublishTimesPath());
 }
 
 void CSharedFileList::Publish()

@@ -199,6 +199,8 @@ public:
 
 	/* Kad Stuff */
 	void Publish();
+	//! Writes kadkeywords.dat, so a restart does not republish every keyword at once.
+	void SaveKeywordPublishTimes();
 	//! The publish gate, PublishSrc() and StorePacket() all decide from these facts.
 	static SKadPublishFacts CurrentKadPublishFacts();
 	//! How a source published now reaches us; only a buddy publish names a buddy.

@@ -486,7 +486,10 @@ void CSearchManager::UpdateStats() noexcept
 			break;
 		}
 		case CSearch::STOREKEYWORD: {
-			m_totalStoreKey++;
+			// As for STOREFILE, a stopping lookup only waits for late replies.
+			if (!it->second->Stopping()) {
+				m_totalStoreKey++;
+			}
 			break;
 		}
 		case CSearch::FINDSOURCE: {

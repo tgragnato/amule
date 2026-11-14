@@ -426,6 +426,9 @@ int CamuleApp::OnExit()
 
 	ReportShutdownStatus(_("Saving downloads and shared files..."));
 
+	if (sharedfiles) {
+		sharedfiles->SaveKeywordPublishTimes();
+	}
 	// Destroying CDownloadQueue calls destructor for CPartFile
 	// calling CSharedFileList::SafeAddKFile occasionally.
 	delete sharedfiles;
@@ -2558,6 +2561,7 @@ void CamuleApp::OnCoreTimer(CTimerEvent &WXUNUSED(evt))
 	if (msCur - msPrevKnownMet >= 30 * 60 * 1000 /*There must be a prefs option for this*/) {
 		// Save Shared Files data
 		knownfiles->Save();
+		sharedfiles->SaveKeywordPublishTimes();
 		msPrevKnownMet = msCur;
 	}
 
@@ -2567,6 +2571,8 @@ void CamuleApp::OnCoreTimer(CTimerEvent &WXUNUSED(evt))
 	// known.met is not rewritten twice in quick succession.
 	if (m_knownMetDirtiedMs && msCur - m_knownMetDirtiedMs >= 30000) {
 		knownfiles->Save();
+		// This resets the periodic timer too, which would otherwise hold back this save.
+		sharedfiles->SaveKeywordPublishTimes();
 		m_knownMetDirtiedMs = 0;
 		msPrevKnownMet = msCur;
 	}

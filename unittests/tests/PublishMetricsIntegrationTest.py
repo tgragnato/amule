@@ -18,8 +18,10 @@ from KadLanModeIntegrationTest import (KADEMLIA2_HELLO_REQ, KADEMLIA2_HELLO_RES,
 from KadSourceTagsECTest import (KADEMLIA2_PUBLISH_SOURCE_REQ, KADEMLIA2_PUBLISH_RES,
                                 running_kad_daemon, unpack_kad_packet)
 
+KADEMLIA2_PUBLISH_KEY_REQ = 0x43
 
-# One more file than KADEMLIATOTALSTORESRC, so the last lookup waits for a slot.
+# More files, and so keywords, than KADEMLIATOTALSTORESRC and KADEMLIATOTALSTOREKEY, so the
+# last lookups wait for a slot.
 FILES = 4
 
 
@@ -56,6 +58,7 @@ def run(binary):
             source_packets = 0
             lookup_packets = 0
             targets = set()
+            keywords = {} # Keyword target: when its first publish arrived.
             # The first self-lookup starts after 180 seconds, then enables publishing
             # after its ordinary 45-second lifetime. Do not accelerate production timers.
             deadline = time.monotonic() + 360
@@ -81,6 +84,9 @@ def run(binary):
                         reply = bytes([0xE4, KADEMLIA2_PUBLISH_RES]) + target + bytes(1)
                         peer.sendto(reply, address)
                         peer.sendto(reply, address) # Duplicate acknowledgements count once.
+                    elif data[:2] == bytes([0xE4, KADEMLIA2_PUBLISH_KEY_REQ]):
+                        keywords.setdefault(data[2:18], time.monotonic())
+                        peer.sendto(bytes([0xE4, KADEMLIA2_PUBLISH_RES]) + data[2:18] + bytes(1), address)
                 lines = (root / 'logfile').read_text(errors='replace').splitlines()
                 summaries = [fields(line) for line in lines if 'Kad source publish totals:' in line]
                 if summaries and summaries[-1]['finished'] == FILES:
@@ -103,11 +109,26 @@ def run(binary):
                               if 'Kad source publish attempt:' in line and 'started=1' in line]
                     gap = (starts[-1] - starts[0]).total_seconds()
                     assert gap < 13, f'the last lookup waited {gap:.0f} s for a slot'
+                    # One keyword per file name. With 2 keyword slots the last publish comes
+                    # about 11 s after the first, or about 25 s while a lingering lookup
+                    # holds its slot.
+                    assert len(keywords) == FILES, len(keywords)
+                    gap = max(keywords.values()) - min(keywords.values())
+                    assert gap < 18, f'the last keyword lookup waited {gap:.0f} s for a slot'
                     break
             else:
                 raise AssertionError('No expected Kad2 publication result:\n' + '\n'.join(lines[-100:]))
             assert ec.call(C['EC_OP_KAD_STOP'])[0] == C['EC_OP_NOOP']
-    print('PASS: Kad2 queued publication, duplicate acknowledgements and totals')
+        # Shutdown saved when each keyword is due again: a version byte, a count, then
+        # 16-byte keyword hashes as sent, each with a uint32 time about 24 h ahead.
+        saved = (root / 'kadkeywords.dat').read_bytes()
+        assert len(saved) == 5 + 20 * FILES and saved[0] == 1, saved[:5]
+        assert struct.unpack_from('<I', saved, 1)[0] == FILES, saved[:5]
+        due = {saved[5 + 20 * n:21 + 20 * n]: struct.unpack_from('<I', saved, 21 + 20 * n)[0]
+               for n in range(FILES)}
+        assert due.keys() == keywords.keys(), (sorted(due), sorted(keywords))
+        assert all(abs(t - time.time() - 24 * 3600) < 600 for t in due.values()), due
+    print('PASS: Kad2 queued publication, duplicate acknowledgements, totals and saved keyword times')
 
 
 if __name__ == '__main__':
