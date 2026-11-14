@@ -1838,19 +1838,13 @@ CHttpServer::Response CApiDispatcher::HandleVersion(const CHttpServer::Request &
 	w.Key("daemon_version");
 	w.ValueString(m_app.GetDaemonVersion());
 
-	// Relayed from the connected daemon, never checked by amuleapi itself, and
-	// English/C-locale per the API contract. When the daemon cannot check (built
-	// without ENABLE_VERSION_CHECK, the pref off, or a pre-3.1 daemon emitting none of
-	// these tags) check_enabled is false and a client shows nothing.
 	if (auth.ok) {
-		const auto prefs = m_state.Preferences();
 		const auto status = m_state.Status();
-		const bool check_enabled = prefs.version_check_available && prefs.version_check_enabled;
 		const bool checked = status.version_check_done;
 		w.Key("update");
 		w.BeginObject();
 		w.Key("check_enabled");
-		w.ValueBool(check_enabled);
+		w.ValueBool(false);
 		w.Key("checked");
 		w.ValueBool(checked);
 		// null rather than "" before a check completes (R10).
@@ -4709,49 +4703,12 @@ CHttpServer::Response CApiDispatcher::HandleVersionCheck(const CHttpServer::Requ
 	if (auto rej = RequireAdmin(a))
 		return *rej;
 
-	// Before the first EC snapshot there are no preferences to read and
-	// version_check_available defaults to false, so without a snapshot the capability
-	// check below would answer 409 "disabled on the connected daemon" during the
-	// startup window every client hits. 503 ec_unavailable is the retryable answer.
 	if (auto r = RequireSnapshot(m_state))
 		return *r;
 
-	// The daemon owns the check; amuleapi only triggers it. Rejecting early avoids
-	// an EC op that will fail and never exposes the daemon's localized reason.
-	const auto prefs = m_state.Preferences();
-	if (!(prefs.version_check_available && prefs.version_check_enabled)) {
-		return ErrorResponse(409,
-			"version_check_unavailable",
-			"version check is disabled or unavailable on the connected daemon");
-	}
-
-	auto ec_req = std::make_unique<CECPacket>(EC_OP_VERSION_CHECK);
-	const CECPacket *ec_resp = m_app.SendRecvSerialized(ec_req.get());
-	if (!ec_resp) {
-		return ErrorResponse(503, "ec_unavailable", "EC roundtrip failed for version check");
-	}
-	// The daemon replies EC_OP_NOOP (accepted) or EC_OP_FAILED (throttled).
-	const bool failed = ec_resp->GetOpCode() == EC_OP_FAILED;
-	delete ec_resp;
-	if (failed) {
-		// The only expected failure past the gate above is the daemon's throttle,
-		// reported with an English code.
-		//
-		// Its own code, not the auth limiter's `rate_limited`: both answer 429, and a
-		// client that cannot tell them apart treats a throttled update check as a lost
-		// session. The Web UI did exactly that and logged the user out.
-		return ErrorResponse(429,
-			"version_check_throttled",
-			"version check was throttled by the daemon; try again shortly");
-	}
-
-	// The check runs asynchronously; the result appears on a subsequent
-	// GET /version.
-	CHttpServer::Response r;
-	// 202 with no body: "started" is what the status code says.
-	r.status = 202;
-	r.content_type.clear();
-	return r;
+	return ErrorResponse(409,
+		"version_check_unavailable",
+		"version check is unavailable in this build");
 }
 
 CHttpServer::Response CApiDispatcher::HandleDownloadAdd(const CHttpServer::Request &req)

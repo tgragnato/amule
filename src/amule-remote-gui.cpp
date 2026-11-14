@@ -2981,6 +2981,7 @@ void CKnownFilesRem::ProcessUpdate(const CECTag *reply, CECPacket *, int)
 	const bool partial_update = m_conn->ServerSupportsPartialUpdate();
 
 	std::set<uint32> core_files;
+	std::set<uint32> removed_files;
 	for (CECPacket::const_iterator it = reply->begin(); it != reply->end(); ++it) {
 		const CECTag *curTag = &*it;
 		ec_tagname_t tagname = curTag->GetTagName();

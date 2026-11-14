@@ -67,13 +67,10 @@ else
 	AUTH=(-H "Authorization: Bearer $ADMIN_TOKEN")
 fi
 
-#     Whether the daemon has actually completed a check depends on its build
-#     (ENABLE_VERSION_CHECK) and network access, so assert the shape (keys +
-#     types) rather than concrete values.
 _curl "${AUTH[@]}" "$API/version"
 _assert_status 200 "GET /api/v1/version (authenticated) returns 200"
 _assert_json_eq '.update | type' object '/api/v1/version has an update object when authenticated'
-_assert_json_eq '.update.check_enabled | type' boolean 'update.check_enabled is boolean'
+_assert_json_eq '.update.check_enabled' false 'update.check_enabled is false'
 _assert_json_eq '.update.checked | type' boolean 'update.checked is boolean'
 # latest_version is null until a check completes (R10), so it is string-or-null
 # rather than always-string -- the same shape as its two siblings.
@@ -124,28 +121,15 @@ _assert_json_eq '.error.code' not_found \
 _curl -I "$API/version"
 _assert_status 200 "HEAD /api/v1/version returns 200"
 
-# 6. POST /api/v1/version/check is admin-only: unauthenticated → 401. (The
-#    admin-authenticated happy path — 202 started / 429 throttled — is
-#    exercised where an admin token is available.)
+# 6. POST /api/v1/version/check remains admin-only: unauthenticated → 401.
 _curl -X POST "$API/version/check"
 _assert_status 401 "POST /api/v1/version/check without auth yields 401"
 
-# 6b. The throttled check answers its own code, not the auth limiter's.
-#     Both are 429, and a client that cannot tell them apart has to read a
-#     throttled update check as a lost session -- which is exactly what the Web
-#     UI did, logging the user out on "Check now".
-#
-#     Two POSTs back to back: the daemon's cooldown is 60 s and its startup
-#     check already consumed one attempt, so whichever way the first lands, the
-#     second is inside the window. Deterministic regardless of daemon uptime.
+# 6b. Version checking is not available in this fork.
 _curl "${AUTH[@]}" -X POST "$API/version/check"
-_curl "${AUTH[@]}" -X POST "$API/version/check"
-_assert_status 429 "second POST /version/check inside the cooldown yields 429"
-# Asserted as the exact code rather than "not rate_limited": the negative form
-# also passes on an `unauthorized` body, so it would go green on a broken
-# request instead of catching it.
-_assert_json_eq '.error.code' version_check_throttled \
-	'throttled /version/check carries error.code=version_check_throttled'
+_assert_status 409 "POST /version/check yields 409"
+_assert_json_eq '.error.code' version_check_unavailable \
+	'/version/check carries error.code=version_check_unavailable'
 
 # 7. GET /api/v1/version/check → 405 (POST only).
 _curl "$API/version/check"

@@ -607,22 +607,6 @@ PrefsUnifiedDlg::PrefsUnifiedDlg(wxWindow *parent)
 
 	// Select the first item
 	m_PrefsIcons->SelectRow(0);
-
-#ifdef CLIENT_GUI
-	// amulegui: drop the IP2Country page from the menu when the connected core has no
-	// GeoIP support -- a 3.1+ core built without ENABLE_IP2COUNTRY, or a pre-3.1 core that
-	// does not know the capability at all. Mirrors how monolithic amule omits the page at
-	// compile time. The page widget stays built but becomes unreachable.
-	if (!thePrefs::IsGeoIPSupported() && m_IndexIP2CountryTab >= 0) {
-		const int row =
-			PrefsPageRows::Find(ShownPages(), static_cast<unsigned>(m_IndexIP2CountryTab));
-		if (row >= 0) {
-			m_PrefsIcons->DeleteItem(row);
-		}
-		m_IndexIP2CountryTab = -1;
-	}
-#endif
-
 	// Don't show server prefs if ED2K is disabled
 	m_ServerTabVisible = true;
 	EnableServerTab(thePrefs::GetNetworkED2K());

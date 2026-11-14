@@ -47,11 +47,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gettext libboost-dev libcrypto++-dev libglib2.0-dev libwxgtk3.2-dev
+          sudo apt-get install -y gettext libboost-dev libcrypto++-dev libglib2.0-dev libreadline-dev libwxgtk3.2-dev
 
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
-        run: brew install gettext boost cryptopp glib wxwidgets
+        run: brew install gettext boost cryptopp glib readline wxwidgets
 
       - name: Set reusable strings
         id: strings
@@ -64,11 +64,18 @@ jobs:
           cmake -B ${{ steps.strings.outputs.build-output-dir }}
           -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
           -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
+          -DBUILD_DAEMON=ON
+          -DBUILD_REMOTEGUI=ON
+          -DBUILD_AMULECMD=ON
+          -DBUILD_AMULEAPI=ON
           -DBUILD_TESTING=ON
           -S ${{ github.workspace }}
 
       - name: Build
         run: cmake --build ${{ steps.strings.outputs.build-output-dir }}
+
+      - name: Test daemon startup
+        run: ${{ steps.strings.outputs.build-output-dir }}/src/amuled --version
 
       - name: Test
         run: ctest --test-dir ${{ steps.strings.outputs.build-output-dir }} --output-on-failure

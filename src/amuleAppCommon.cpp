@@ -547,10 +547,6 @@ bool CamuleAppCommon::InitCommon(int argc, wxChar **argv)
 	// Keep stdin open to run valgrind --gen_suppressions
 	cmdline.AddSwitch("i", "enable-stdin", "Do not disable stdin.");
 
-	cmdline.AddSwitch(wxT("d"), wxT("disable-fatal"), wxT("Do not handle fatal exception."));
-	// Keep stdin open to run valgrind --gen_suppressions
-	cmdline.AddSwitch(wxT("i"), wxT("enable-stdin"), wxT("Do not disable stdin."));
-
 	cmdline.AddOption("t", "category", "Set category for passed ED2K links.", wxCMD_LINE_VAL_NUMBER);
 	cmdline.AddParam(
 		"ED2K link", wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL | wxCMD_LINE_PARAM_MULTIPLE);

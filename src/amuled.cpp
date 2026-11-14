@@ -77,6 +77,7 @@
 #include <wx/ffile.h>
 #endif
 
+BEGIN_EVENT_TABLE(CamuleDaemonApp, wxAppConsole)
 	// Socket timer (TCP)
 	EVT_MULE_TIMER(ID_SERVER_RETRY_TIMER_EVENT, CamuleDaemonApp::OnTCPTimer)
 

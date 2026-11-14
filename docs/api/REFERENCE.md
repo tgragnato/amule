@@ -17,7 +17,7 @@ The API is versioned in the path. **`/api/v1/` is frozen**: anything that could 
 **System**
 - [`GET /api/v1/health`](#get-apiv1health) — liveness probe; readiness flags in the body
 - [`GET /api/v1/version`](#get-apiv1version) — version negotiation; identity fields are public, the `update` block needs a token
-- [`POST /api/v1/version/check`](#post-apiv1versioncheck) — trigger a daemon-side version check
+- [`POST /api/v1/version/check`](#post-apiv1versioncheck) — unavailable in this fork
 - [`GET /api/v1/status`](#get-apiv1status) — connection state, network state, headline counters
 
 **Authentication**
@@ -578,11 +578,11 @@ curl -s http://$HOST/api/v1/version
   "amuleapi_version": "GIT rev. 3.0.1-773-g500293ba3",
   "daemon_version": "GIT rev. 3.0.1-773-g500293ba3",
   "update": {
-    "check_enabled": true,
-    "checked": true,
-    "latest_version": "3.0.1",
-    "available": false,
-    "last_checked_at": 1783675590
+    "check_enabled": false,
+    "checked": false,
+    "latest_version": null,
+    "available": null,
+    "last_checked_at": null
   }
 }
 ```
@@ -599,32 +599,30 @@ The `update` object:
 
 | Field | Meaning |
 | --- | --- |
-| `checked` | `true` once the daemon has completed at least one check this session (so `latest_version` is known). The daemon checks at startup; use `POST /api/v1/version/check` to trigger a fresh one. |
+| `check_enabled` | Always `false`: this fork does not check for new versions. |
+| `checked` | Whether the connected daemon reported a completed check. The fork's daemon does not perform one. |
 | `latest_version` | Latest release string (e.g. `"3.0.1"`); `null` when not yet checked or unavailable. |
 | `available` | `true` when a newer release exists, `false` when up to date, `null` when unknown (not yet checked or disabled). |
-| `last_checked_at` | Unix time (seconds) the last check completed; `null` when never checked. Useful because checks are startup-only unless re-triggered. |
+| `last_checked_at` | Unix time (seconds) the last reported check completed; `null` when never checked. |
 
 #### `POST /api/v1/version/check`
 
 **Auth:** `ADMIN`
 
-Triggers an on-demand version check **on the daemon** (amuleapi does not fetch GitHub itself). Fire-and-forget: the request returns as soon as the daemon accepts it, and the result appears on a subsequent `GET /api/v1/version` once the async check completes. Throttled by the daemon to respect GitHub's rate limit.
+Version checking has been removed from this fork. This endpoint remains unavailable.
 
 ```sh
 curl -s -X POST -H "Authorization: Bearer $TOKEN" http://$HOST/api/v1/version/check
 ```
 
-**Response:** `202 Accepted`, with no body. The check runs asynchronously; the outcome arrives on the `logs` channel and in [`GET /api/v1/version`](#get-apiv1version).
-
 **Errors:**
 
 | Status | `error.code` | When |
 | --- | --- | --- |
-| `409` | `version_check_unavailable` | The daemon can't check (`update.check_enabled` is `false`). |
-| `429` | `version_check_throttled` | A check ran too recently; retry shortly. Distinct from the auth limiter's `rate_limited`, which also answers `429` but ends the session. |
-| `503` | `ec_unavailable` | The EC round-trip to amuled failed, or the first snapshot has not landed yet. |
+| `409` | `version_check_unavailable` | Version checking is not available in this fork. |
+| `503` | `ec_unavailable` | The first EC snapshot has not arrived yet. |
 
-The snapshot gate matters at startup: `version_check_available` defaults to false, so before the first EC tick this route answers `503` (a condition a client can retry) rather than `409 version_check_unavailable`, which would blame the daemon's configuration for amuleapi not having read it yet.
+Before the first EC snapshot this route answers `503 ec_unavailable`; once a snapshot is available, it answers `409 version_check_unavailable`.
 
 #### `GET /api/v1/status`
 
@@ -2404,7 +2402,7 @@ Returns every preference category amuled carries over EC. The `general` and `con
     "nickname": "MyNode",
     "user_hash": "abcd...",
     "daemon_host_name": "host.example.com",
-    "version_check_enabled": true
+    "version_check_enabled": false
   },
   "connection": {
     "max_upload_kibibytes_per_second": 50,
@@ -3573,7 +3571,6 @@ Every error code emitted by `/api/v1/*`, sorted by what triggered it. Two codes 
 | `payload_too_large` | 413 | Request body exceeds the 1 MiB limit. The connection closes after the response. |
 | `range_not_satisfiable` | 416 | A `Range` on [`GET /shared/{hash}/content`](#get-apiv1sharedhashcontent) starts at or past EOF. `Content-Range: bytes */<size>` accompanies the response. |
 | `rate_limited` | 429 | The per-IP auth-failure bucket is full, so the address is locked out of every authenticated route. `Retry-After: <seconds>` accompanies it. A client should treat this as the session ending. |
-| `version_check_throttled` | 429 | [`POST /version/check`](#post-apiv1versioncheck) arrived inside the daemon's 60 s cooldown. Affects that route only, so a client must not read it as a lost session. |
 | `headers_too_large` | 431 | Request headers exceed the 16 KiB limit. The connection closes after the response. |
 | `internal_error` | 500 | A server-side failure: a handler failed internally (hash decode, serialization) or threw and was caught by the HTTP layer. The body is generic; details land in the daemon's stderr. |
 | `amuled_response_invalid` | 502 | amuled returned an EC payload this endpoint could not decode. |
