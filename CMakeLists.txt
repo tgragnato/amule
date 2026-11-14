@@ -496,9 +496,6 @@ configure_file (
 )
 
 if (BUILD_MONOLITHIC)
-	install (FILES org.amule.aMule.desktop
-		DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
-	)
 	install (FILES org.amule.aMule.png
 		DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps"
 	)
@@ -530,29 +527,7 @@ if ((BUILD_MONOLITHIC OR BUILD_REMOTEGUI) AND CMAKE_SYSTEM_NAME STREQUAL "Linux"
 	endforeach ()
 endif ()
 
-if (BUILD_REMOTEGUI)
-	install (FILES org.amule.aMule.gui.desktop
-		DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
-	)
-endif()
-
 if (BUILD_MONOLITHIC OR BUILD_REMOTEGUI)
-	# Teaches the desktop what a .emulecollection is, so the MimeType= line
-	# in the .desktop files above can match it. Without this the file is
-	# sniffed as text/plain (text form) or application/octet-stream (binary
-	# form) and aMule never shows up in "Open With".
-	#
-	# No update-mime-database hook here: refreshing the system cache is the
-	# packager's job for a system install. The AppImage path has no packager
-	# and so does it itself, in AppImageIntegration::RefreshSystemCaches.
-	#
-	# The filename is app-id-prefixed because Flathub's linter requires
-	# exported files to be; flatpak exports share/mime/packages
-	# automatically, so the manifests need no change.
-	install (FILES org.amule.aMule.xml
-		DESTINATION "${CMAKE_INSTALL_DATADIR}/mime/packages"
-	)
-
 	# Icon for the file type itself. The name is mandated by the icon
 	# naming spec - the MIME type with '/' replaced by '-' - and without
 	# it file managers fall back to the generic "unknown file" glyph even
@@ -571,10 +546,6 @@ if (BUILD_MONOLITHIC OR BUILD_REMOTEGUI)
 		DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/mimetypes"
 	)
 endif()
-
-install (FILES LICENSE.md
-	DESTINATION "${CMAKE_INSTALL_DOCDIR}"
-)
 
 if (ENABLE_NLS)
 	include (FindGettext)
