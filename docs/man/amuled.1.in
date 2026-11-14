@@ -58,16 +58,16 @@ Resets config to default values.
 .TP
 .B_untranslated [ \-\-configure\-autostart\fR=\fI<on|off>\fR \fB]\fR
 Enable or disable starting amuled on user login, then exit.
-The OS\-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG \fI.desktop\fR autostart entry.
+The OS\-specific store is selected automatically: macOS LaunchAgent or XDG \fI.desktop\fR autostart entry.
 .TP
 .B_untranslated [ \-\-configure\-protocols\fR=\fI<value>\fR \fB]\fR
 Enable or disable aMule as the current user's default handler for ed2k:// and magnet: links, then exit.
 \fI<value>\fR is \fBon\fR or \fBoff\fR for both kinds of link, or \fBed2k:on\fR, \fBed2k:off\fR, \fBmagnet:on\fR or \fBmagnet:off\fR for one of them.
-The OS\-specific store is selected automatically: Windows registry, macOS LaunchServices, Linux XDG \fImimeapps.list\fR.
+The OS\-specific store is selected automatically: macOS LaunchServices or XDG \fImimeapps.list\fR.
 .TP
 .B_untranslated [ \-\-configure\-file\-assoc\fR=\fI<on|off>\fR \fB]\fR
 Enable or disable aMule as the current user's handler for \fI.emulecollection\fR files, then exit.
-The OS\-specific store is selected automatically: Windows registry, macOS LaunchServices, Linux XDG \fImimeapps.list\fR.
+The OS\-specific store is selected automatically: macOS LaunchServices or XDG \fImimeapps.list\fR.
 .TP
 .B_untranslated [ \-d\fR, \fB\-\-disable\-fatal ]\fR
 Don't catch fatal exceptions and don't block exit on assertions.
@@ -113,8 +113,7 @@ The folders a remote EC or amuleapi client may point the incoming, temporary, sh
 .SH MEDIA METADATA
 \fBamuled\fR runs its bundled \fBamule\-media\-probe\fR helper on each received file to extract the length, bitrate and codec tags it then publishes to the network. The helper must sit next to the \fBamuled\fR executable. This is on by default (\fBEnabled=1\fR under \fB[MediaMetadata]\fR in \fIamule.conf\fR); set \fBEnabled=0\fR there and restart to turn it off.
 .SH REPORTING BUGS
-Please report bugs either on our forum (\fIhttps://github.com/amule-org/amule/discussions\fR), or in our bugtracker (\fIhttps://github.com/amule-org/amule/issues\fR).
-Please do not report bugs in e-mail, neither to our mailing list nor directly to any team member.
+Report bugs in this fork at \fIhttps://github.com/tgragnato/amule/issues\fR.
 .SH COPYRIGHT
 aMule and all of its related utilities are distributed under the GNU General Public License.
 .SH SEE ALSO

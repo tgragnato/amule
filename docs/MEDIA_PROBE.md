@@ -1,8 +1,7 @@
 # Bundled media metadata extraction
 
 The core launches `amule-media-probe`. It looks next to its own executable first
-(the Windows, macOS, AppImage and static bundles, and the build tree, where the
-macOS `aMule.app` gets a copy after each link), then at the installed
+(including the build tree, where the macOS `aMule.app` gets a copy after each link), then at the installed
 `libexec/amule/amule-media-probe`, relative to its own folder. It never searches
 `PATH`: the helper is internal, so installs keep it out of `bin`. The helper
 reads container headers with its own parsers and links no media library. It
@@ -13,8 +12,7 @@ enable/refresh controls remain.
 
 The parent enforces a wall-clock deadline, cancellation and a 64 KiB output
 limit while the child runs. It rejects malformed framing and numeric values
-outside the helper protocol. Windows uses a restricted primary token, nested Job objects and an explicit
-inherited handle list. POSIX builds limit CPU, descriptors (256), core dumps and file size (256 KiB:
+outside the helper protocol. POSIX builds limit CPU, descriptors (256), core dumps and file size (256 KiB:
 stdout is a file the core reads, so 0 would block the reply); Linux also caps the
 helper address space at 1 GiB. Bundle library search paths are preserved during
 trusted runtime initialization. Before reading media, the helper installs the
@@ -63,7 +61,7 @@ therefore best effort and subject to the following conditions.
    libFuzzer harness. Security fixes are not optional.
 5. **Isolation.** The helper runs in a separate process under the limits
    described above and the read budget described under [Parsers](#parsers).
-6. **Operating system restrictions.** On Linux, macOS and Windows the helper
+6. **Operating system restrictions.** On Linux and macOS the helper
    must be confined by the operating system to reading the file it receives,
    with no network access, no writes and no new processes. This is a
    requirement of the feature. The implementations, verification and remaining
@@ -79,7 +77,7 @@ the two inherited output handles. They do not grant permission to open output
 paths. No media paths or directory trees are added to a sandbox allow list. The parser
 also receives a minimal runtime environment, without unrelated parent variables
 that might contain credentials. Runtime library paths are preserved for bundle
-and build-tree compatibility, including Windows `SystemRoot` and `PATH`. These
+and build-tree compatibility. These
 paths do not grant file access after confinement.
 
 If OS confinement fails, the helper refuses to parse and returns exit 13, without a
@@ -119,33 +117,8 @@ vulnerabilities or a system already compromised outside aMule.
   systems. macOS does not have the Linux address-space guarantee here: parser
   allocation/read limits and the parent deadline remain in effect, but this
   implementation does not claim a hard macOS RSS cap.
-- **Windows:** a trusted outer helper starts the parser suspended with a
-  restricted primary token (NULL restricting SID, other groups/user deny-only,
-  privileges removed). Trusted loader/runtime startup uses low integrity and
-  a restricted impersonation token retaining only the caller's existing access.
-  Startup uses a separate, noninteractive window station and low-integrity
-  desktop; the restricted token receives no access to the interactive desktop.
-  Both stages start detached, using inherited standard handles without creating
-  a console whose initialization would require additional permissions.
-  The parser's output handles are pipes. The trusted launcher relays at most
-  64 KiB of metadata and 8 KiB of diagnostics. It kills a parser that exceeds
-  either bound; the parser cannot resize or preallocate the core's temporary
-  output files, even between parent polling checks.
-  Before parsing, the helper lowers its primary integrity to untrusted and drops
-  the startup token. A failure at either step returns no metadata.
-  Reverting again cannot restore privileges because its primary token is already
-  restricted. Only the three standard handles are inherited. A nested Job
-  requires a single parser process, caps memory at 1 GiB, restricts UI access and
-  kills the parser when its launcher exits. The core's outer Job owns both the
-  launcher and parser. Any token, Job, inheritance or startup failure returns no
-  metadata. **Filesystem limit:** restricted-token access checks depend on
-  securable resources with valid ACLs; FAT/exFAT or null-DACL resources do not
-  provide the same guarantee as normally secured NTFS. This is not a claim of
-  confinement against misconfigured/nonsecurable resources. The core supplies
-  the read-only input handle. The launcher validates that it is a regular file
-  and gives the parser a duplicate with read access only, including when an
-  outside caller supplies a writable handle. Pipes and directories are refused.
-
+- **BSD:** no confinement backend is implemented. The helper refuses to parse,
+  so media metadata extraction is unavailable.
 Failure logs include the exit status or signal and a reason (setup, input I/O,
 unsupported/malformed data, exhausted read budget, timeout, cancellation, output
 limit or invalid framing). stderr is separate from the metadata protocol. The
@@ -160,17 +133,9 @@ rather than repeating a broken launch for every hostile input.
 native runners. `MediaProbeHelper` and `MediaProbeHostile` verify useful extraction
 and malformed-input handling under the production restrictions. Core
 `MediaProbeEnvTest` verifies crash, timeout, setup-error, partial-reply and output
-failure containment, with no failed result published. The dedicated **Media
-probe restrictions** workflow runs the standalone checks on Linux x86-64/arm64,
-macOS Intel and Windows ARM64, with static musl on x86-64, ARM64 and native
-i386. Build CI covers Linux x86-64, macOS ARM64 and Windows x64. The manual
-**Media probe Linux CPU validation** workflow cross-builds static helpers and
-boots full Debian kernels for armel, armhf, ppc64el, riscv64 and s390x. Guest
-provisioning uses user emulation; restriction tests run only inside the full VM,
-without host shares or network access. These jobs explicitly report optional
-FFmpeg fixtures as skipped. A scheduled or queued job is not verification;
-consult its completed results for the exact revision. Packaged-runtime checks
-remain necessary because installed loaders, outer sandboxes and signing differ.
+failure containment, with no failed result published. Native platform tests and
+installed-runtime checks remain necessary because loaders, outer sandboxes and
+signing differ.
 
 ## Supported formats
 
@@ -223,9 +188,8 @@ duration stays empty.
 ## Build and tests
 
 The helper needs only the C++ standard library. CMake builds and installs it
-with either core target, to `${CMAKE_INSTALL_LIBEXECDIR}/amule` (`bin` on
-Windows); `-DENABLE_MEDIA_PROBE=OFF` omits it. Every bundle builds it from the
-aMule sources, so no third-party sources, pins or licence notices ship with it.
+with either core target, to `${CMAKE_INSTALL_LIBEXECDIR}/amule`;
+`-DENABLE_MEDIA_PROBE=OFF` omits it. It is built from the aMule sources.
 
 ```sh
 cmake -S . -B build -DBUILD_TESTING=ON
@@ -253,22 +217,14 @@ cmake --build /tmp/fuzz --target amule-media-probe-fuzz
 
 ### Pre-release fuzzing and saved corpus
 
-Run **Media probe pre-release fuzzing** manually before a release and after
-parser changes. Its default is 600 seconds with Clang, libFuzzer, ASan and UBSan.
-
-Two workers run in parallel with per-input timeout, memory and length bounds;
-worker failures fail the job. The workflow always attempts to retain logs,
-source/toolchain/corpus provenance, updated inputs and crash reproducers.
-Sanitizer fuzzing intentionally calls the in-memory parser harness without the
+Run the libFuzzer harness before a release and after parser changes.
+Sanitizer fuzzing calls the in-memory parser harness without the
 production sandbox: it does not verify helper startup or OS containment.
 
-Each run generates synthetic seeds from the helper and hostile-input fixtures.
-Fuzzing starts from fresh seeds each time. After minimization, the evolving
-corpus is archived with the run artifacts. Downloaded archives contain regular
-SHA-256-named files; imports reject links, traversal, checksum errors and
-excessive sizes/counts.
-Logs, updated archives and crash reproducers are also retained as artifacts for
-90 days. Preserve confirmed crash inputs as small, focused regression fixtures;
+Generate synthetic seeds from the helper and hostile-input fixtures. Corpus
+archives contain regular SHA-256-named files; imports reject links, traversal,
+checksum errors and excessive sizes/counts.
+Preserve confirmed crash inputs as small, focused regression fixtures;
 do not commit the evolving corpus to Git.
 
 To recreate initial seeds from generated fixtures (ffmpeg extends the seeds when
@@ -286,24 +242,8 @@ python3 src/mediaprobe/corpus.py unpack /tmp/probe-corpus.tar.gz /tmp/probe-rest
 
 A high line-coverage percentage is not proof of safety. Keep the larger-file,
 long-loop and truncation regression tests; the 256 KiB fuzz input bound cannot
-exercise every production file size or offset. Each workflow artifact records
-the tested source, toolchain and seed checksum.
+exercise every production file size or offset. Record the tested source,
+toolchain and seed checksum.
 
 Durations can differ from FFmpeg's by a fraction of a second where containers
 count encoder padding differently.
-
-## Packaged runtime validation
-
-`packaging/media/test-runtime.py` checks the packaged helper version,
-inherited-file input, duration/bitrate/codec, Unicode tags, exact protocol
-framing and rejection of empty/malformed media. It then launches the
-packaged daemon with isolated configuration and verifies persisted metadata and
-failure marker 2. AppImage tests enter through the extracted AppRun; Flatpak
-tests execute inside the installed sandbox. Windows tests use a relocated
-extraction of the final zip, and macOS tests use the mounted dmg.
-
-The Packaging workflow runs these checks against the bundle produced by each
-build job. Flatpak clones the exact local HEAD commit rather than upstream
-master. Final PR validation uses one full workflow dispatch with no `only`
-filter, so every build and runtime check covers the same commit. For the
-Universal2 dmg, both slices are exercised on macOS (Intel via Rosetta).

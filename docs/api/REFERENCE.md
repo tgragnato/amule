@@ -102,7 +102,6 @@ The API is versioned in the path. **`/api/v1/` is frozen**: anything that could 
 **IP filter**
 - [`POST /api/v1/ipfilter/reload`](#post-apiv1ipfilterreload) — re-read the on-disk IP filter files
 - [`POST /api/v1/ipfilter/update`](#post-apiv1ipfilterupdate) — download a fresh `ipfilter.dat` from a URL
-- [`POST /api/v1/geoip/update`](#post-apiv1geoipupdate) — download a fresh GeoIP database
 
 **Logs**
 - [`GET /api/v1/logs/amule`](#get-apiv1logsamule) — amule log buffer
@@ -185,7 +184,7 @@ A role is implicitly assigned at login based on which password matched; the veri
 
 Guest access is on exactly when a guest password is configured — there is no separate switch. Clearing the guest password is how guest access is turned off.
 
-**What `guest` is, and is not.** It is a read-only role for someone you already trust on the network, not a sandbox for a hostile party. A guest reads the whole read surface, and that surface includes things an operator may not think of as public: the daemon's incoming, temp and shared **filesystem paths**; the node's `user_hash`; and the raw daemon **log**, which carries peer addresses and file names as they are logged. None of that is a defect - a read-only API that hid the paths it is reading from would be hard to use - but it means guest credentials should be handed out on the same basis as read access to the machine, and a guest password is not a way to expose amuleapi to the open internet safely. If a caller should not see those, do not give them a credential at all. Credentials for other services are the exception: [`GET /preferences`](#get-apiv1preferences) does not return `connection.proxy_user`, `geoip.maxmind_license` or `geoip.custom_update_url` to a guest.
+**What `guest` is, and is not.** It is a read-only role for someone you already trust on the network, not a sandbox for a hostile party. A guest reads the whole read surface, and that surface includes things an operator may not think of as public: the daemon's incoming, temp and shared **filesystem paths**; the node's `user_hash`; and the raw daemon **log**, which carries peer addresses and file names as they are logged. None of that is a defect - a read-only API that hid the paths it is reading from would be hard to use - but it means guest credentials should be handed out on the same basis as read access to the machine, and a guest password is not a way to expose amuleapi to the open internet safely. If a caller should not see those, do not give them a credential at all. Credentials for other services are the exception: [`GET /preferences`](#get-apiv1preferences) does not return `connection.proxy_user` to a guest.
 
 ### Where the passwords live
 
@@ -1326,7 +1325,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
       "name": "AnonymousPeer",
       "user_hash": "1f2e3a...",
       "ip": "203.0.113.42",
-      "country_code": "de",
+      "country_code": null,
       "port": 4662,
       "software": "emule",
       "software_version": "0.50a",
@@ -1402,7 +1401,7 @@ Every one of them falls back to `"unknown"` for a code the daemon does not map, 
 
 It says what the *peer* supports, never what this daemon does: aMule implements none of these extensions yet and advertises none of them back, so the field is recognition only. The bit meanings are wire format shared with eMuleAI and are defined in `src/PeerCapabilities.h`.
 
-`country_code` is the client's ISO 3166-1 alpha-2 country code (lowercase, e.g. `"de"`), resolved server-side from the client IP by the daemon's GeoIP database. It is `null` when GeoIP is disabled or unsupported by the build, or when the IP does not resolve — render the flag and localized country name client-side from the code. The flag image is served by [`GET /flags/{code}.png`](#get-flagscodepng); the localized name has no endpoint because the browser already has it (`Intl.DisplayNames` with `{ type: "region" }`).
+`country_code` is `null` when the connected daemon does not report a country. This fork does not resolve IP addresses to countries. The API still accepts country codes supplied by a connected daemon and serves flag images at [`GET /flags/{code}.png`](#get-flagscodepng).
 
 **Errors:** `400 bad_request` (unknown filter token), `503 ec_unavailable`.
 
@@ -1427,7 +1426,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "name": "AnonymousPeer",
   "user_hash": "1f2e3a...",
   "ip": "203.0.113.42",
-  "country_code": "de",
+  "country_code": null,
   "port": 4662,
   "software": "emule",
   "software_version": "0.50a",
@@ -1553,7 +1552,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
       "ip": "192.0.2.10",
       "port": 4665,
       "kad_port": 4675,
-      "country_code": "de",
+      "country_code": null,
       "software": "amule",
       "software_version": "v2.3.1",
       "client_mod_name": null,
@@ -1577,7 +1576,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `user_hash` | 32-char lowercase MD4. The identity; join with `/clients`. |
 | `name` | Client-chosen name. `null` when never recorded. |
 | `ip`, `port`, `kad_port` | Last address the client was seen at. `null` together. |
-| `country_code` | ISO 3166-1 alpha-2, lowercase, resolved by the daemon's GeoIP. `null` when GeoIP is off or the address does not resolve. Artwork: [`GET /flags/{code}.png`](#get-flagscodepng). |
+| `country_code` | Country code reported by the daemon, or `null` when absent. This fork does not resolve IP addresses to countries. Artwork: [`GET /flags/{code}.png`](#get-flagscodepng). |
 | `software`, `software_version` | Same tokens and bare version `GET /clients` uses. `null` together. |
 | `client_mod_name` | Self-declared mod identity, as on `GET /clients`; `null` if not recorded. Older history records gain it when the peer is encountered again. |
 | `source_origin` | How the client was first found — `local_server`, `remote_server`, `kad`, `source_exchange`, … |
@@ -1909,16 +1908,13 @@ Idempotent: adding a path that is already configured updates its `recursive` fla
 
 Remove a single root. The path is a query parameter rather than a path segment because it is an absolute filesystem path.
 
-Pass the **exact** `path` string returned by `GET /share_directories`, percent-encoded — the match is byte-for-byte, so a differing separator or drive-letter case will not match. This is what makes Windows roots work: percent-encoding carries the backslashes, the `C:` colon, and any spaces through unchanged.
+Pass the **exact** `path` string returned by `GET /share_directories`, percent-encoded — the match is byte-for-byte, so a differing path will not match. Percent-encoding preserves characters such as spaces.
 
 ```sh
 # POSIX root: /home/user/new
 curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
   "http://$HOST/api/v1/share_directories?path=%2Fhome%2Fuser%2Fnew"
 
-# Windows root: C:\Users\bob\My Shares
-curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
-  "http://$HOST/api/v1/share_directories?path=C%3A%5CUsers%5Cbob%5CMy%20Shares"
 ```
 
 Removing a path that is not configured is a `404` rather than a silent success, so a typo — or a path that does not byte-match what `GET` returned — is visible. Same `{results: [...]}` envelope as `PUT`.
@@ -2031,7 +2027,7 @@ Send a bare priority level to pin it (the file's `priority_auto` becomes `false`
       "software_version": "17.15",
       "address": "203.0.113.5:4242",
       "ip":      "203.0.113.5",
-      "country_code": "de",
+      "country_code": null,
       "port": 4242,
       "user_count": 312000,
       "max_user_count": 500000,
@@ -2070,7 +2066,7 @@ Send a bare priority level to pin it (the file's `priority_auto` becomes `false`
 
 `software_version` is the server software version string the server reported, or `null` when it has reported none - the same spelling `/clients` and `/known_clients` use for an unknown version. `name` and `description` are *not* nulled: an empty description is a real value a server can advertise, and a server with no name is rendered by its address.
 
-`country_code` is the ISO 3166-1 alpha-2 code (lowercase, e.g. `"de"`) of the server host, resolved server-side from the server IP by the daemon's GeoIP database — same semantics as the client `country_code` on `/clients`, `null` when unresolved, and the same artwork route, [`GET /flags/{code}.png`](#get-flagscodepng).
+`country_code` is the country code reported by the daemon, or `null` when absent. This fork does not resolve server IP addresses to countries. The artwork route remains [`GET /flags/{code}.png`](#get-flagscodepng).
 
 `file_count` is how many files the server indexes. `soft_file_limit` and `hard_file_limit` are something else entirely: the per-user publishing limits the server advertises. Below the soft limit a client may publish every file it shares, between soft and hard only its rarest, above the hard limit nothing. Both arrive only once the server has answered a UDP status request, so **`0` means "not reported yet", not "the limit is zero"** — render it blank rather than as a number, the way the desktop's Soft Files / Hard Files columns do. `user_count`, `max_user_count` and `file_count` share that sentinel.
 
@@ -2433,9 +2429,9 @@ Returns every preference category amuled carries over EC. The `general` and `con
     "proxy_port": 1080,
     "proxy_auth_enabled": false,
     "proxy_user": "",
-    "upnp_supported": true,
+    "upnp_supported": false,
     "upnp_enabled": false,
-    "upnp_control_point_port": 50000
+    "upnp_control_point_port": 0
   },
   "directories": {
     "incoming_path":   "/home/me/.aMule/Incoming",
@@ -2511,12 +2507,7 @@ Returns every preference category amuled carries over EC. The `general` and `con
     "kad_max_served_buddies_supported": true, "kad_max_served_buddies": 8
   },
   "kad": { "update_url": "http://upd.emule-security.org/nodes.dat", "protocol10_supported": true, "protocol10_enabled": true, "strict_aich_publishers": false },
-  "geoip": {
-    "supported": true, "enabled": true, "source": "dbip",
-    "custom_update_url": "", "maxmind_license": "", "auto_update_enabled": true,
-    "loaded_source": "dbip", "db_path": "/home/me/.aMule/GeoIP/dbip.mmdb",
-    "db_loaded": true, "download_in_progress": false, "last_update_status": "ok"
-  }
+  "geoip": {}
 }
 ```
 
@@ -2528,11 +2519,11 @@ downloads are skipped; uploads continue while a check runs.
 
 Booleans are plain JSON `true`/`false` regardless of how amuled encodes them on the wire. **Passwords are never returned** (see PATCH). `general.user_hash` is the node's own identity hash, not a password.
 
-**Admin-only fields.** `connection.proxy_user`, `geoip.maxmind_license`, `geoip.custom_update_url`, `servers.update_url`, `servers.update_urls`, `security.ipfilter_update_url` and `kad.update_url` are returned to admin sessions only, because these values may contain credentials or access tokens. Guest responses omit these keys. Admins read and set them as usual. Download URLs in daemon logs and `geoip.last_update_status` show only the scheme, host and port.
+**Admin-only fields.** `connection.proxy_user`, `servers.update_url`, `servers.update_urls`, `security.ipfilter_update_url` and `kad.update_url` are returned to admin sessions only, because these values may contain credentials or access tokens. Guest responses omit these keys. Admins read and set them as usual.
 
 `connection.extended_udp_port_enabled` is positive-sense: `true` means the extended UDP port (Kad / global search) is on. `security.shared_files_visibility` is a 3-state enum string, not a bool: `"everybody"` / `"friends"` / `"nobody"`.
 
-`geoip` is the GeoIP (IP-to-country) config category. `supported` is a capability flag: `false` when the connected daemon is built without GeoIP — the config fields are then present but inert. `source` is one of `"dbip"` / `"maxmind"` / `"custom"` (the next-download database selector). `maxmind_license` is returned plainly to admins (it is a config string the daemon already round-trips, not a masked password) and omitted for guests, like `custom_update_url`. `loaded_source`, `db_path`, `db_loaded`, `download_in_progress`, and `last_update_status` are **read-only** live status (the currently loaded DB and any in-flight refresh); they are ignored if sent on PATCH.
+`geoip` is currently an empty object: this fork has removed IP-to-country lookup and its preferences. An existing `/geoip/update` route remains in the API implementation, but it does not provide a working database update in this fork.
 
 `files.media_metadata_enabled` controls media-metadata extraction using the bundled media metadata helper. The helper advertises length, bitrate, codec, artist, album and title. `files.media_metadata_available` is **read-only**: `true` when the daemon found its helper and confinement has not failed in this session. It is `false` when the helper is missing or OS confinement could not be established; a confinement failure disables extraction until restart and leaves the saved enable preference unchanged. A daemon that predates the field does not report it, and it reads `false` there. `files.ffprobe_path` remains a reserved compatibility field in `/api/v1`: GET always returns `""`, and a PATCH that would change it is rejected with `400 read_only_field`, as for the other daemon-local fields below. Extraction requires `amule-media-probe` beside the daemon executable. `connection.bind_address` (empty = bind to any local IP), `connection.bind_interface` (a daemon-side interface name such as `eth0` / `en0` / `tun0`; empty = any), and `online_signature.directory` are likewise daemon-side paths/addresses. These, together with `files.on_finished_start_next_alphabetically`, `security.reject_spoofed_source_ips`, `security.system_ipfilter_enabled`, and `online_signature.update_frequency_seconds`, are ordinary daemon settings; a `bind_address` change takes effect on the next amuled restart.
 
@@ -2540,7 +2531,7 @@ Booleans are plain JSON `true`/`false` regardless of how amuled encodes them on 
 
 `directories.follow_symlinks` is **daemon-local**: whether the daemon follows symbolic links while scanning shared folders governs what the shared-files scan traverses on the daemon's own disk, so it is configured only on the daemon (`FollowSymlinksInShares` in `amule.conf`) and is read-only over the API. It is emitted on `GET`; a `PATCH` that would **change** it is rejected with **400 `read_only_field`**, while echoing the current value back is accepted as a no-op.
 
-`files.mmap_supported` is **read-only** — the daemon advertises whether it was built with memory-mapped file I/O (`false` on a core without mmap support, e.g. Windows or a build with `-DENABLE_MMAP=OFF`); it is ignored if sent on PATCH. `files.mmap_enabled` is the runtime toggle for memory-mapped block I/O — download writes to part files, upload reads of both shared (completed) and partial files, and hashing (lower per-process memory use, at some write-path cost; best for upload-heavy or memory-constrained hosts). It is **capability-gated**: a PATCH that sets `files.mmap_enabled` is rejected with **409 `option_not_supported`** when `files.mmap_supported` is `false`, so the option is only writable against a daemon that can actually use it. Safe to toggle with active transfers.
+`files.mmap_supported` is **read-only** — the daemon advertises whether it was built with memory-mapped file I/O (`false` on a core without mmap support, e.g. a build with `-DENABLE_MMAP=OFF`); it is ignored if sent on PATCH. `files.mmap_enabled` is the runtime toggle for memory-mapped block I/O — download writes to part files, upload reads of both shared (completed) and partial files, and hashing (lower per-process memory use, at some write-path cost; best for upload-heavy or memory-constrained hosts). It is **capability-gated**: a PATCH that sets `files.mmap_enabled` is rejected with **409 `option_not_supported`** when `files.mmap_supported` is `false`, so the option is only writable against a daemon that can actually use it. Safe to toggle with active transfers.
 
 `kad.protocol10_supported` is **read-only**: `true` when the daemon reports its Kad repair-hash options, `kad.protocol10_enabled` and `kad.strict_aich_publishers`. A daemon older than 3.2 neither reports nor applies them, so there it is `false`, the two options read `false`, and a `PATCH` that sets either answers `409 option_not_supported` rather than being silently dropped.
 
@@ -2552,7 +2543,7 @@ Booleans are plain JSON `true`/`false` regardless of how amuled encodes them on 
 
 `advanced.debug_categories` is **read-only** and lists every category name the daemon can log to. `amuled` has no window, so it does not list `GUI`. `advanced.debug_categories_enabled` is the enabled subset, in the same order. Categories produce output only while `advanced.verbose_logging` is `true`. `advanced.verbose_logging_logfile_only` keeps debug messages in the daemon's logfile and out of [`GET /logs/amule`](#get-apiv1logsamule). All of these apply immediately, with no daemon restart, and the daemon saves them. Debug logs can contain peer IP addresses, user hashes and file names, and guests can read `GET /logs/amule`, so turn on `verbose_logging_logfile_only` when guests should not see them. It applies to new lines only: lines already in the log stay readable until [`DELETE /logs/amule`](#delete-apiv1logsamule) clears them. That also empties `amuled`'s logfile, logfile-only lines included, so copy the file first if you need them.
 
-`connection.upnp_enabled` toggles UPnP router forwarding of the daemon's P2P ports — the ports themselves are `connection.tcp_port` (ed2k TCP) and `connection.udp_port` (ed2k/Kad UDP). `connection.upnp_control_point_port` is a separate optional knob: the fixed local port the UPnP control point (libupnp) binds to for the router's callbacks, `0` meaning auto-assign — **not** a forwarded port. `connection.upnp_supported` is **read-only** — the daemon advertises whether it was built with UPnP (`false` on a core built `-DENABLE_UPNP=OFF`, where `upnp_enabled` has no effect); it is ignored if sent on PATCH. (EC-port UPnP is reported read-only, as `remote_controls.external_connections.upnp_enabled`.)
+The API still exposes `connection.upnp_supported`, `connection.upnp_enabled`, `connection.upnp_control_point_port`, and `remote_controls.external_connections.upnp_enabled`, but this fork does not support UPnP. These fields do not enable router port forwarding; configure forwarding on the router instead.
 
 The `connection.proxy_*` fields configure the proxy the **daemon** routes its P2P and HTTP traffic through. `proxy_type` is one of `"socks5"` / `"socks4"` / `"http"` / `"socks4a"` — any other value is a `400`. It is the empty string when the daemon has no proxy type configured at all (the core's `PROXY_NONE`), a state that cannot be set back through this API; use `proxy_enabled: false` to turn the proxy off. `proxy_auth_enabled` toggles username/password authentication. `proxy_password` is **write-only** — accepted on PATCH but never returned on GET; PATCH the other proxy fields without it to leave the stored password unchanged.
 
@@ -2568,8 +2559,8 @@ The `connection.proxy_*` fields configure the proxy the **daemon** routes its P2
 
 | Kind | What `PATCH` does | Examples |
 | --- | --- | --- |
-| Settable | applied | most of the 147 -- `files.mmap_enabled`, `connection.max_connection_count`, … |
-| Read-only status | ignored, request still succeeds | `files.mmap_supported`, `files.media_metadata_available`, `kad.protocol10_supported`, `advanced.debug_categories_supported`, `advanced.kad_max_served_buddies_supported`, `advanced.debug_categories`, `connection.upnp_supported`, the six `geoip.*`, the seven `remote_controls.external_connections.*` |
+| Settable | applied | most of the 136 -- `files.mmap_enabled`, `connection.max_connection_count`, … |
+| Read-only status | ignored, request still succeeds | `files.mmap_supported`, `files.media_metadata_available`, `kad.protocol10_supported`, `advanced.debug_categories_supported`, `advanced.kad_max_served_buddies_supported`, `advanced.debug_categories`, `connection.upnp_supported`, the seven `remote_controls.external_connections.*` |
 | Write-only | applied, never echoed on `GET` | `connection.proxy_password` |
 | Compatibility | ignored, request still succeeds, even when it names nothing else | the eight `remote_controls.webserver.*` |
 | Refused | `400 bad_request` | `remote_controls.amuleapi.password`, `.guest_password`, `.guest_enabled` |
@@ -2588,19 +2579,13 @@ Body shape mirrors the GET; every sub-object and every field is optional, and fi
 
 `remote_controls` nests its fields as `remote_controls.webserver`, `remote_controls.amuleapi` and `remote_controls.external_connections` rather than prefixing every field. It reports amuleapi's `enabled` / `port` / `bind_address`, but **not** whether its admin or guest password is set. Those live in `amuleapi-passwords`, which amuleapi owns and which may sit on a different host from amuled — so the daemon's view of that file can be the wrong one. Ask the API that actually reads it: [`GET /auth/passwords`](#get-apiv1authpasswords), which is admin-only, whereas this endpoint is readable by any authenticated role.
 
-`remote_controls.external_connections` is the EC listener amuleapi itself reaches the core through, and it is **read-only**. `enabled` is whether external connections are accepted, `bind_address` and `bind_interface` are the address and network interface it listens on (empty for any), `port` is its TCP port, `upnp_enabled` is whether UPnP forwards that port (no effect when `connection.upnp_supported` is `false`), and `encryption_required` is always true: EC encryption is mandatory. `password_set` says whether an EC password is configured; the password itself is never returned. These are the saved settings, which the core applies on its next start, so after a change they can differ from the listener serving this connection. Against an amuled that predates them, all seven are `null`.
+`remote_controls.external_connections` is the EC listener amuleapi itself reaches the core through, and it is **read-only**. `enabled` is whether external connections are accepted, `bind_address` and `bind_interface` are the address and network interface it listens on (empty for any), and `port` is its TCP port. `upnp_enabled` does not enable forwarding in this fork. `encryption_required` is always true: EC encryption is mandatory. `password_set` says whether an EC password is configured; the password itself is never returned. These are the saved settings, which the core applies on its next start, so after a change they can differ from the listener serving this connection. Against an amuled that predates them, all seven are `null`.
 
 `remote_controls.webserver` is kept for compatibility, because `/api/v1/` is frozen. It has no function. Its keys always read as the fixed values in the example above: `enabled` and `guest_enabled` are `false`, `port` is `4711`, `gzip_enabled` is `true`, `refresh_seconds` is `120` and `template_name` is `""`. Writes to its keys, including `password` and `guest_password`, are ignored. It will be removed in `/api/v2/`.
 
 amuleapi's own `admin` and `guest` passwords are **not** settable here; `remote_controls.amuleapi.password`, `.guest_password` and `.guest_enabled` are rejected with `400 bad_request`. Use [`PATCH /auth/passwords`](#patch-apiv1authpasswords), which writes the credential file this daemon actually reads, requires the current password, and is rate-limited. A field here would instead travel over EC to whichever aMule this amuleapi is attached to and land in that host's config directory.
 
-`geoip.auto_update_enabled` controls conditional update checks at startup and weekly while the core remains running; `geoip.enabled` must also be enabled. Manual updates bypass this schedule.
-
 `advanced.debug_categories_enabled` replaces the whole set: send every category to keep enabled, or `[]` to disable them all. A name that is not in `advanced.debug_categories` is a `400`, and the request changes nothing. Names are case-sensitive.
-
-**`geoip`** accepts `enabled`, `source` (`"dbip"` / `"maxmind"` / `"custom"` — any other value is a `400`), `custom_update_url`, `maxmind_license`, and `auto_update_enabled`. `supported` and the read-only status fields (`loaded_source`, `db_path`, `db_loaded`, `download_in_progress`, `last_update_status`) are ignored if sent.
-
-Downloading a database **now** is [`POST /geoip/update`](#post-apiv1geoipupdate), not a field here: it is an action, not a setting. Sending `geoip.update_now` in this body is a `400` naming that endpoint.
 
 > **Note:** these are the daemon's live settings — the same ones the desktop GUI edits. Some are self-affecting: changing `remote_controls.amuleapi.port` / `.bind_address`, or `directories.incoming_path` / `temp_path`, alters the daemon you are talking to. When `connection.bind_address` and `connection.bind_interface` are unchanged, changes to `connection.tcp_port` and `connection.udp_port` are applied immediately: amuled rebinds the affected P2P listening sockets, while existing peer TCP connections remain open. Changing a bind address/interface still follows its existing restart path. If a required socket cannot be rebound, the request returns `400 amuled_rejected` and the old TCP/UDP port preferences are restored. A PATCH is not otherwise atomic: any other fields in that same request remain applied.
 
@@ -2833,7 +2818,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   "http://$HOST/api/v1/ipfilter/reload"
 ```
 
-**Response:** `202 Accepted` with **no body** (not an empty object): amuled returns no status string for this opcode, and the route sends nothing rather than inventing one. A client that parses the body unconditionally has to tolerate a zero-length one -- the same shape [`POST /api/v1/geoip/update`](#post-apiv1geoipupdate) and the other fire-and-forget actions answer with.
+**Response:** `202 Accepted` with **no body** (not an empty object): amuled returns no status string for this opcode, and the route sends nothing rather than inventing one. A client that parses the body unconditionally has to tolerate a zero-length one, as with other fire-and-forget actions.
 
 **Errors:** `400 amuled_rejected`, `503 ec_unavailable`.
 
@@ -2863,31 +2848,6 @@ An explicit URL is **persisted** into the `security.ipfilter_update_url` prefere
 **Response:** `202 Accepted`, no body. Where the request named a URL it already knows which one ran; where it omitted one, `security.ipfilter_update_url` on [`GET /preferences`](#get-apiv1preferences) is the answer, and the paragraph above is why reading it there is the honest version -- the snapshot this handler resolves from is the same one that endpoint serves.
 
 **Errors:** `400 bad_request` (non-string / empty / non-`http(s)` `url`, or no URL available at all), `400 amuled_rejected`, `503 ec_unavailable`.
-
----
-
-### GeoIP
-
-#### `POST /api/v1/geoip/update`
-
-**Auth:** `ADMIN`
-
-Downloads a fresh GeoIP database now — the desktop client's "Update database now" button. No body.
-
-Unlike the three sibling fetch endpoints this one takes **no URL**: which database to download is `geoip.source` (`"dbip"` / `"maxmind"` / `"custom"`) and, for `"custom"`, `geoip.custom_update_url`. Both stay ordinary preferences, so set them with [`PATCH /preferences`](#patch-apiv1preferences) first and then call this. Nothing about the request is persisted.
-
-```sh
-curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  "http://$HOST/api/v1/geoip/update"
-```
-
-**Response:** `202 Accepted` with **no body**. The download runs in the daemon after the reply: watch `geoip.download_in_progress` on [`GET /preferences`](#get-apiv1preferences) while it runs, and `geoip.last_update_status` for the outcome.
-
-`geoip.last_update_status` is a **human-readable message, localised to the daemon's language** (`"Successfully updated dbip"`, `"Failed to download dbip from …"`) — not a status enum. Do not parse it; use `db_loaded` and `loaded_source` for the machine-readable answer to "is a database in use, and which one".
-
-A daemon built without GeoIP (`geoip.supported` is `false`) answers `400 amuled_rejected`.
-
-**Errors:** `400 amuled_rejected` (no GeoIP support, or the daemon refused the trigger), `503 ec_unavailable`.
 
 ---
 
@@ -3434,9 +3394,9 @@ Responses carry an `ETag` and honour `If-None-Match` with `304 Not Modified` lik
 
 The response is never `Content-Encoding: gzip` — a PNG is already entropy-coded, so the server skips compression for it.
 
-**Errors:** `404 not_found` for anything that is neither two lowercase letters nor `unknown` (uppercase, wrong length, digits, another extension), and for a well-formed code the bundled set has no artwork for — a newer GeoIP database can legitimately return a code absent from the artwork. Render the code as text, or fall back to `unknown.png`, in that case. `400 bad_request` for paths carrying traversal tokens, per [Path validation](#path-validation).
+**Errors:** `404 not_found` for anything that is neither two lowercase letters nor `unknown` (uppercase, wrong length, digits, another extension), and for a well-formed code the bundled set has no artwork for. Render the code as text, or fall back to `unknown.png`, in that case. `400 bad_request` for paths carrying traversal tokens, per [Path validation](#path-validation).
 
-Clients whose country could not be resolved — GeoIP disabled, unsupported by the build, or a private/unmatched address — come back with `country_code: null`. There is no per-country image to request in that case; draw nothing, or `unknown.png` for parity with the desktop list.
+Clients whose daemon does not report a country come back with `country_code: null`. There is no per-country image to request in that case; draw nothing, or `unknown.png` for parity with the desktop list.
 
 ---
 
@@ -3712,6 +3672,6 @@ Download status labels are `downloading`, `waiting`, `hashing`, `erroneous`, `in
 
 Before the first successful refresh, the output holds only `amule_build_info` and `amule_ec_connected 0`. After a failed refresh it also keeps the last snapshot timestamp, but leaves out all daemon measurements. A statistics, file-update or preferences request answered with `EC_OP_FAILED` counts as a failed refresh, even if the EC connection stays open. These responses are still HTTP 200: Prometheus `up` shows the health of the scrape, while `amule_ec_connected` and `time() - amule_snapshot_timestamp_seconds` show the health and age of the refresh. A refresh that hangs keeps the last published state, so monitor the age as well as the connection. When the EC connection drops, amuleapi exits as before, and the scrape itself fails.
 
-`amule_cpu_seconds_total` and `amule_resident_memory_bytes` come from the process that amuleapi connects to, so they work when amuleapi runs on another host. With the monolithic `amule` they include the GUI. They exclude the `amule-media-probe` helper, which is a separate process. Use `rate(amule_cpu_seconds_total[5m])` for CPU use, where 1 means one full core. Resident memory is a sample, so it misses a spike between two refreshes. It includes file-backed pages and is measured differently per operating system (Linux and macOS resident size, Windows working set), so compare trends on one platform, not values across platforms.
+`amule_cpu_seconds_total` and `amule_resident_memory_bytes` come from the process that amuleapi connects to, so they work when amuleapi runs on another host. With the monolithic `amule` they include the GUI. They exclude the `amule-media-probe` helper, which is a separate process. Use `rate(amule_cpu_seconds_total[5m])` for CPU use, where 1 means one full core. Resident memory is a sample, so it misses a spike between two refreshes. It includes file-backed pages and is measured differently per operating system, so compare trends on one platform, not values across platforms.
 
 Per-file labels, OpenMetrics negotiation and OTLP push are not in scope. See the [quickstart](../QUICKSTART-AMULEAPI.md#prometheus-metrics) for Prometheus and OpenTelemetry Collector configuration, and for a [Grafana dashboard](grafana-dashboard.json) built on these metrics.

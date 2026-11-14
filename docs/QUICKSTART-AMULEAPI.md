@@ -106,9 +106,8 @@ amuleapi keeps its files beside amuled's, in the same folder:
 
 | Platform | Folder                                 |
 | -------- | -------------------------------------- |
-| Linux    | `~/.aMule/`                            |
+| Linux / BSD | `~/.aMule/`                         |
 | macOS    | `~/Library/Application Support/aMule/` |
-| Windows  | `%APPDATA%\aMule\`                     |
 
 Use `--config-dir` to point somewhere else.
 

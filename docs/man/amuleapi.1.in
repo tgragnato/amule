@@ -57,9 +57,9 @@ HTTP listen port (default: 4713, overrides amuleapi.conf
 .TP
 \fB[ \-\-config\-dir\fR=\fI<path>\fR \fB]\fR
 Path to the amuleapi config dir. Defaults to the same per\-platform
-aMule data directory that \fBamuled\fR uses (~/.aMule/ on Linux,
-~/Library/Application Support/aMule/ on macOS, %APPDATA%\\aMule\\ on
-Windows). Creates the dir with mode 0700 if absent.
+aMule data directory that \fBamuled\fR uses (~/.aMule/ on Linux and BSD,
+~/Library/Application Support/aMule/ on macOS). Creates the dir with mode
+0700 if absent.
 .TP
 .B_untranslated [ \-\-force\-zlib ]\fR
 Always compress the link to \fBamuled\fR(1). By default amuleapi skips
@@ -159,9 +159,7 @@ its own. Started by hand, amuleapi finds no token and uses
 through \fBps\fR(1) for the lifetime of the process, and can persist
 in shell history, service unit files and wrapper scripts.
 .SH REPORTING BUGS
-Please report bugs either on our forum
-(\fIhttps://github.com/amule-org/amule/discussions\fR), or in our
-bugtracker (\fIhttps://github.com/amule-org/amule/issues\fR).
+Report bugs in this fork at \fIhttps://github.com/tgragnato/amule/issues\fR.
 .SH COPYRIGHT
 aMule and all of its related utilities are distributed under the GNU
 General Public License.

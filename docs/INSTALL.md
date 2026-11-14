@@ -83,8 +83,7 @@ is useful during development — no `sudo` required and easy to clean up:
 cmake --install build --prefix=$HOME/.local
 ```
 
-Platform-specific notes (Homebrew paths on macOS, MSYS2 packages on
-Windows, etc.) live in
+Platform-specific CI setup, including Homebrew paths on macOS, lives in
 [`.github/workflows/ccpp.yml`](../.github/workflows/ccpp.yml), which is
 the authoritative reference used by CI.
 
@@ -141,7 +140,7 @@ Common `-D` options (`YES` / `NO` unless noted otherwise):
 | `ENABLE_BFD`             | YES     | resolve backtrace symbols in-process with libbfd. With `NO`, crash backtraces use `backtrace_symbols()` and an external `addr2line` |
 | `TRANSLATED_MANPAGES`    | YES     | render and install translated manpages with `po4a` at build time. Needs `ENABLE_NLS`; skipped with a notice when `po4a` is not found |
 | `ENABLE_CCACHE`          | AUTO    | use ccache as compiler launcher when found (`AUTO`/`ON`/`OFF`); set `OFF` for distro builds that manage ccache themselves, `ON` to hard-fail if ccache is missing |
-| `ENABLE_MEDIA_PROBE`     | ON      | build the `amule-media-probe` helper (own container parsers, no dependencies), installed to `libexec/amule` (`bin` on Windows); `OFF` omits media extraction |
+| `ENABLE_MEDIA_PROBE`     | ON      | build the `amule-media-probe` helper (own container parsers, no dependencies), installed to `libexec/amule`; `OFF` omits media extraction |
 | `USE_SYSTEM_PICOJSON`    | OFF     | use a system-installed `picojson.h` instead of the bundled copy           |
 | `DOWNLOAD_AND_BUILD_DEPS` | OFF    | download and build missing dependencies. Needs Git and CMake 3.14       |
 
@@ -190,5 +189,4 @@ This rewrites `docs/man/po/manpages.pot` and merges it into every
 ## Links
 
 * Detailed build and usage information: <https://amule-org.github.io/docs>
-* Forum for questions, bug reports, etc: <https://github.com/amule-org/amule/discussions>
-* Upstream issue tracker: <https://github.com/amule-org/amule/issues>
+* Fork issue tracker: <https://github.com/tgragnato/amule/issues>

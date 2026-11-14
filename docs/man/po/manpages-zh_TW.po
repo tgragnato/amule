@@ -10,7 +10,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: aMule Manual zh_TW\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-14 10:33+0100\n"
+"POT-Creation-Date: 2026-11-14 17:20+0100\n"
 "PO-Revision-Date: 2026-10-07 16:31+0000\n"
 "Last-Translator: Wayne Su <mstarmstar@gmail.com>\n"
 "Language-Team: \n"
@@ -31,9 +31,6 @@ msgstr "AMULE"
 
 #. type: TH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "@MAN_DATE@"
 msgstr "@MAN_DATE@"
@@ -52,9 +49,6 @@ msgstr "aMule"
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "NAME"
 msgstr "名稱"
@@ -66,9 +60,6 @@ msgstr "amule - 跨平台的 eMule P2P 客戶端程式"
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "SYNOPSIS"
 msgstr "簡介"
@@ -86,23 +77,18 @@ msgstr "[B<-t> I<E<lt>號碼E<gt>>] [I<eD2k 連結>]"
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "DESCRIPTION"
 msgstr "說明"
 
 #. type: TP
 #: amule.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
 msgid "B<[ -c> I<E<lt>pathE<gt>>, B<--config-dir>=I<E<lt>pathE<gt>> B<]>"
 msgstr "B<[ -c> I<E<lt>路徑E<gt>>, B<--config-dir>=I<E<lt>路徑E<gt>> B<]>"
 
 #. type: Plain text
 #: amule.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 msgid "Read config from I<E<lt>pathE<gt>> instead of home"
 msgstr "從 I<E<lt>pathE<gt>> 讀取設定檔，而不是個人目錄"
 
@@ -141,17 +127,17 @@ msgstr "將設定重設為預設值。"
 
 #. type: Plain text
 #: amule.1.in
-msgid "Enable or disable starting aMule on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+msgid "Enable or disable starting aMule on user login, then exit.  The OS-specific store is selected automatically: macOS LaunchAgent or XDG I<.desktop> autostart entry."
 msgstr ""
 
 #. type: Plain text
 #: amule.1.in amuled.1.in amulegui.1.in
-msgid "Enable or disable aMule as the current user's default handler for ed2k:// and magnet: links, then exit.  I<E<lt>valueE<gt>> is B<on> or B<off> for both kinds of link, or B<ed2k:on>, B<ed2k:off>, B<magnet:on> or B<magnet:off> for one of them.  The OS-specific store is selected automatically: Windows registry, macOS LaunchServices, Linux XDG I<mimeapps.list>."
+msgid "Enable or disable aMule as the current user's default handler for ed2k:// and magnet: links, then exit.  I<E<lt>valueE<gt>> is B<on> or B<off> for both kinds of link, or B<ed2k:on>, B<ed2k:off>, B<magnet:on> or B<magnet:off> for one of them.  The OS-specific store is selected automatically: macOS LaunchServices or XDG I<mimeapps.list>."
 msgstr ""
 
 #. type: Plain text
 #: amule.1.in amuled.1.in amulegui.1.in
-msgid "Enable or disable aMule as the current user's handler for I<.emulecollection> files, then exit.  The OS-specific store is selected automatically: Windows registry, macOS LaunchServices, Linux XDG I<mimeapps.list>."
+msgid "Enable or disable aMule as the current user's handler for I<.emulecollection> files, then exit.  The OS-specific store is selected automatically: macOS LaunchServices or XDG I<mimeapps.list>."
 msgstr ""
 
 #. type: Plain text
@@ -182,8 +168,6 @@ msgstr "顯示目前的版本號碼。"
 
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 msgid "Prints a short usage description."
 msgstr "顯示簡短的使用說明。"
 
@@ -248,7 +232,6 @@ msgstr "對於有 I<E<lt>路徑E<gt>> 的選項，如果 I<路徑> 裏面沒有�
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
 msgid "FILES"
 msgstr "檔案"
@@ -260,61 +243,40 @@ msgstr "~/.aMule/*"
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "REPORTING BUGS"
 msgstr "回報問題"
 
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "Please report bugs either on our forum (I<https://github.com/amule-org/amule/discussions>), or in our bugtracker (I<https://github.com/amule-org/amule/issues>).  Please do not report bugs in e-mail, neither to our mailing list nor directly to any team member."
-msgstr "請到我們的論壇 (I<https://github.com/amule-org/amule/discussions>) 或錯誤追蹤網站 (I<https://github.com/amule-org/amule/issues>) 回報發現的問題。請不要用 e-mail 或在我們的群組信件中回報，也不要直接通知某個團隊成員。"
+msgid "Report bugs in this fork at I<https://github.com/tgragnato/amule/issues>."
+msgstr ""
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "COPYRIGHT"
 msgstr "版權"
 
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 msgid "aMule and all of its related utilities are distributed under the GNU General Public License."
 msgstr "aMule 與附加的工具程式都遵守 GNU 的 GPL 協定。"
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "SEE ALSO"
 msgstr "參考"
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "AUTHOR"
 msgstr "作者"
 
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 msgid "This manpage was written by Vollstrecker E<lt>amule@vollstreckernet.deE<gt>"
 msgstr "說明文件撰寫者： Vollstrecker E<lt>amule@vollstreckernet.deE<gt>"
 
@@ -331,9 +293,7 @@ msgid "aMuleCmd v@PACKAGE_VERSION@"
 msgstr "aMuleCmd v@PACKAGE_VERSION@"
 
 #. type: TH
-#: amulecmd.1.in ed2k.1.in ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
+#: amulecmd.1.in ed2k.1.in
 #, no-wrap
 msgid "aMule utilities"
 msgstr "aMule 的工具程式"
@@ -934,7 +894,7 @@ msgid "amuled - the all-platform eMule p2p client - daemonized version"
 msgstr "amuled - 跨平台的 eMule P2P 客戶端程式 背景常駐程式版"
 
 #. type: Plain text
-#: amuled.1.in ../../src/utils/cas/docs/cas.1.in
+#: amuled.1.in
 msgid "[B<-c> I<E<lt>pathE<gt>>]"
 msgstr "[B<-c> I<E<lt>路徑E<gt>>]"
 
@@ -966,7 +926,7 @@ msgstr "設定 EC (外部連線)。"
 
 #. type: Plain text
 #: amuled.1.in
-msgid "Enable or disable starting amuled on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+msgid "Enable or disable starting amuled on user login, then exit.  The OS-specific store is selected automatically: macOS LaunchAgent or XDG I<.desktop> autostart entry."
 msgstr ""
 
 #. type: TP
@@ -1037,7 +997,7 @@ msgstr "跳過連線對話。"
 
 #. type: Plain text
 #: amulegui.1.in
-msgid "Enable or disable starting amulegui on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+msgid "Enable or disable starting amulegui on user login, then exit.  The OS-specific store is selected automatically: macOS LaunchAgent or XDG I<.desktop> autostart entry."
 msgstr ""
 
 #. type: Plain text
@@ -1176,154 +1136,88 @@ msgstr "B<指定參數時的順序很重要。>你可以指定兩個以上的連
 msgid "~/.aMule/ED2KLinks"
 msgstr "~/.aMule/ED2KLinks"
 
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
+#~ msgid "Please report bugs either on our forum (I<https://github.com/amule-org/amule/discussions>), or in our bugtracker (I<https://github.com/amule-org/amule/issues>).  Please do not report bugs in e-mail, neither to our mailing list nor directly to any team member."
+#~ msgstr "請到我們的論壇 (I<https://github.com/amule-org/amule/discussions>) 或錯誤追蹤網站 (I<https://github.com/amule-org/amule/issues>) 回報發現的問題。請不要用 e-mail 或在我們的群組信件中回報，也不要直接通知某個團隊成員。"
+
 #, no-wrap
-msgid "ALC"
-msgstr "ALC"
+#~ msgid "ALC"
+#~ msgstr "ALC"
 
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
 #, no-wrap
-msgid "aLinkCreator"
-msgstr "aLinkCreator"
+#~ msgid "aLinkCreator"
+#~ msgstr "aLinkCreator"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-msgid "aLinkCreator - the aMule eD2k link creator"
-msgstr "aLinkCreator - aMule 的 eD2k 連結建立程式"
+#~ msgid "aLinkCreator - the aMule eD2k link creator"
+#~ msgstr "aLinkCreator - aMule 的 eD2k 連結建立程式"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-msgid "B<alc> is a graphical utility to create an eD2k link to any file on your computer."
-msgstr "B<alc> 是可以用來建立你電腦上任何檔案的 eD2k 連結的圖形介面工具程式。"
+#~ msgid "B<alc> is a graphical utility to create an eD2k link to any file on your computer."
+#~ msgstr "B<alc> 是可以用來建立你電腦上任何檔案的 eD2k 連結的圖形介面工具程式。"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "This app doesn't take any arguments."
-msgstr "這個應用程式不接受任何引數。"
+#~ msgid "This app doesn't take any arguments."
+#~ msgstr "這個應用程式不接受任何引數。"
 
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
 #, no-wrap
-msgid "ALCC"
-msgstr "ALCC"
+#~ msgid "ALCC"
+#~ msgstr "ALCC"
 
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
 #, no-wrap
-msgid "aMule eD2k links calculator"
-msgstr "aMule 的 eD2k 連結計算程式"
+#~ msgid "aMule eD2k links calculator"
+#~ msgstr "aMule 的 eD2k 連結計算程式"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "alcc - text based eD2k links calculator for aMule"
-msgstr "alcc - aMule 的文字介面 eD2k 連結計算程式"
+#~ msgid "alcc - text based eD2k links calculator for aMule"
+#~ msgstr "alcc - aMule 的文字介面 eD2k 連結計算程式"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "I<E<lt>inputfiles_listE<gt>>"
-msgstr "I<E<lt>i輸入檔案清單E<gt>>"
+#~ msgid "I<E<lt>inputfiles_listE<gt>>"
+#~ msgstr "I<E<lt>i輸入檔案清單E<gt>>"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "Compute the eD2k links of all the input files given in the I<E<lt>inputfiles_listE<gt>> (There can be one or more files)."
-msgstr "計算 I<E<lt>輸入檔案清單E<gt>> 裏所有檔案的 eD2k 連結。(可接受一個或多個檔案)"
+#~ msgid "Compute the eD2k links of all the input files given in the I<E<lt>inputfiles_listE<gt>> (There can be one or more files)."
+#~ msgstr "計算 I<E<lt>輸入檔案清單E<gt>> 裏所有檔案的 eD2k 連結。(可接受一個或多個檔案)"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "Compute and add part hashes to the computed eD2k links."
-msgstr "計算並將暫存檔 hash 值新增到已計算好的 eD2k 連結裏。"
+#~ msgid "Compute and add part hashes to the computed eD2k links."
+#~ msgstr "計算並將暫存檔 hash 值新增到已計算好的 eD2k 連結裏。"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "Be verbose - show also calculation steps."
-msgstr "詳細模式 - 也顯示計算的過程。"
+#~ msgid "Be verbose - show also calculation steps."
+#~ msgstr "詳細模式 - 也顯示計算的過程。"
 
-#. type: TH
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
-msgid "CAS"
-msgstr "CAS"
+#~ msgid "CAS"
+#~ msgstr "CAS"
 
-#. type: TH
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
-msgid "cas v0.8"
-msgstr "cas v0.8"
+#~ msgid "cas v0.8"
+#~ msgstr "cas v0.8"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "cas - c aMule statistics"
-msgstr "cas - 以 C 語言撰寫的 aMule 統計資訊程式"
+#~ msgid "cas - c aMule statistics"
+#~ msgstr "cas - 以 C 語言撰寫的 aMule 統計資訊程式"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "B<cas> is a program for displaying the contents of your aMule online signature file to console (in a human readable form). For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
-msgstr "B<cas> 是可以在終端機界面以人類可閱讀的形式顯示你的 aMule 線上簽名識別檔的程式。要使用這個功能，你必須在偏好設定裏啟用「線上簽名識別」。"
+#~ msgid "B<cas> is a program for displaying the contents of your aMule online signature file to console (in a human readable form). For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
+#~ msgstr "B<cas> 是可以在終端機界面以人類可閱讀的形式顯示你的 aMule 線上簽名識別檔的程式。要使用這個功能，你必須在偏好設定裏啟用「線上簽名識別」。"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "Writes the online signature picture.  The long form B<--picture> accepts an optional I<=E<lt>PATHE<gt>> to specify the output location; the short forms B<-o> / B<-P> do not (B<-P> requires an immediately following I<E<lt>PATHE<gt>> argument, and B<-o> is a no-argument switch).  Requires GD support compiled in (I<__GD__>); this option is silently ignored otherwise."
-msgstr ""
+#~ msgid "Without any options, it prints online signature data to stdout."
+#~ msgstr "如果沒有選項，會在標準輸出顯示線上簽名識別。"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "HTML page with stats and picture.  The long form B<--html> accepts an optional I<=E<lt>PATHE<gt>> to specify the output location; the short forms B<-p> / B<-H> do not (B<-H> requires an immediately following I<E<lt>PATHE<gt>> argument, and B<-p> is a no-argument switch)."
-msgstr ""
+#~ msgid "B<cas> was written by Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
+#~ msgstr "B<cas> 的作者：Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "Without any options, it prints online signature data to stdout."
-msgstr "如果沒有選項，會在標準輸出顯示線上簽名識別。"
+#~ msgid "~/.aMule/casrc"
+#~ msgstr "~/.aMule/casrc"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "B<cas> was written by Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
-msgstr "B<cas> 的作者：Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
-
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "~/.aMule/casrc"
-msgstr "~/.aMule/casrc"
-
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "aMule-online-sign.png (or .jpg, when B<-o> / B<--picture> is used and GD is available)"
-msgstr ""
-
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "aMule-online-sign.html (when B<-p> / B<--html> is used)"
-msgstr ""
-
-#. type: TH
-#: ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
-msgid "WXCAS"
-msgstr "WXCAS"
+#~ msgid "WXCAS"
+#~ msgstr "WXCAS"
 
-#. type: TH
-#: ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
-msgid "wxCas"
-msgstr "wxCas"
+#~ msgid "wxCas"
+#~ msgstr "wxCas"
 
-#. type: Plain text
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "wxcas - wx c aMule statistics"
-msgstr "wxcas - 以 C 語言、wxWidgets 撰寫的 aMule 統計資訊程式"
+#~ msgid "wxcas - wx c aMule statistics"
+#~ msgstr "wxcas - 以 C 語言、wxWidgets 撰寫的 aMule 統計資訊程式"
 
-#. type: Plain text
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "B<wxcas> is a program for displaying the contents of your online signature file in a nice wx Window on your Desktop.  For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
-msgstr "B<wxcas> 是可以在桌面以更佳的 wx 視窗顯示你的 aMule 線上簽名識別檔的程式。要使用這個功能，你必須在偏好設定裏啟用「線上簽名識別」。"
+#~ msgid "B<wxcas> is a program for displaying the contents of your online signature file in a nice wx Window on your Desktop.  For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
+#~ msgstr "B<wxcas> 是可以在桌面以更佳的 wx 視窗顯示你的 aMule 線上簽名識別檔的程式。要使用這個功能，你必須在偏好設定裏啟用「線上簽名識別」。"
 
-#. type: Plain text
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "Based on Pedro de Oliveira's B<cas>(1).  B<wxcas> was written by ThePolish E<lt>thepolish@vipmail.ruE<gt>"
-msgstr "改寫自 Pedro de Oliveira 的 B<cas>(1)， B<wxcas>的作者：ThePolish E<lt>thepolish@vipmail.ruE<gt>"
+#~ msgid "Based on Pedro de Oliveira's B<cas>(1).  B<wxcas> was written by ThePolish E<lt>thepolish@vipmail.ruE<gt>"
+#~ msgstr "改寫自 Pedro de Oliveira 的 B<cas>(1)， B<wxcas>的作者：ThePolish E<lt>thepolish@vipmail.ruE<gt>"
 
 #~ msgid "[B<-w> I<E<lt>pathE<gt>>]"
 #~ msgstr "[B<-w> I<E<lt>路徑E<gt>>]"

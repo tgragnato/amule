@@ -1,14 +1,12 @@
 # Third-party components
 
-aMule binary distributions (AppImage, Flatpak, Linux static tarball, macOS
-bundle, Windows installer and zip) include code, artwork and data from third
-parties under their own licenses. Permissive
+aMule includes code and artwork from third parties under their own licenses. Permissive
 components (MIT, BSD) require copyright-notice reproduction. LGPL components
 require shipping the licence text and publishing the exact sources of the
 bundled versions, whether the build links them statically or dynamically.
 This file reproduces the copyright notice and license terms for each, as
 required by their respective binary-distribution clauses. aMule's
-own code is under GPLv2-or-later — see [LICENSE.md](../LICENSE.md).
+own code is under GPLv2-or-later — see [COPYING](../COPYING).
 
 ## picojson
 
@@ -373,23 +371,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 
-## Libgcrypt `bithelp.h`
-
-Bit-rotation helpers from Libgcrypt, at
-[`src/utils/aLinkCreator/src/bithelp.h`](../src/utils/aLinkCreator/src/bithelp.h),
-built into `alc` and `alcc`. License: LGPL-2.1-or-later. Section 3 of the LGPL
-allows applying the GPL to it instead, so it is distributed in those binaries
-under aMule's GPL-2.0-or-later.
-
-> Copyright (c) 1999-2011 Free Software Foundation, Inc.
->
-> This file is part of Libgcrypt.
->
-> Libgcrypt is free software; you can redistribute it and/or modify
-> it under the terms of the GNU Lesser general Public License as
-> published by the Free Software Foundation; either version 2.1 of
-> the License, or (at your option) any later version.
-
 ## macOS backtrace code - Edd Dawson
 
 The macOS branch of
@@ -441,37 +422,6 @@ contribution was recorded.
 | `Mac_Gray.zip`, `priscilla.zip` | 2008 | Toolbar skins by greek. No license was recorded. |
 | `papirus.zip` | 2019 | Added by jEsuSdA, named after the Papirus icon theme (GPL-3.0). No license was recorded. |
 
-## IP-to-country data - DB-IP and MaxMind GeoLite2
-
-aMule does not ship a country database. When country flags are enabled, it
-downloads one at runtime from the source chosen in the preferences:
-
-- **DB-IP** (default): DB-IP's free IP to Country Lite database, licensed
-  CC BY 4.0. Attribution: "IP-to-Country data by DB-IP.com"
-  (<https://db-ip.com>).
-- **MaxMind GeoLite2**: needs a license key and is under the GeoLite2 End User
-  License Agreement. Attribution: "This product includes GeoLite2 data created
-  by MaxMind, available from <https://www.maxmind.com>."
-
-The desktop preferences show the attribution for the loaded database, and the
-Web UI About page credits DB-IP.
-
-## Libraries bundled in the binary packages
-
-Each binary package also carries the license files of the libraries it bundles
-or links statically:
-
-| Package | Location |
-|---------|----------|
-| AppImage | `usr/share/licenses/<package>/`: the Debian copyright file of each bundled library, plus wxWidgets, libupnp and libayatana-appindicator, which are built from source |
-| Flatpak | `/app/share/licenses/<module>/` for each module the manifest builds |
-| macOS | `aMule.app/Contents/Resources/licenses/<formula>/` and the same in `aMuleGUI.app`, from the Homebrew kegs |
-| Windows installer and zip | `licenses/<package>/`, from the MSYS2 packages, plus libupnp |
-| Linux static tarball | `licenses/`: Crypto++, wxWidgets and libupnp, plus `alpine-packages.tsv` with the version, SPDX license and upstream of each Alpine package linked in |
-
-Alpine packages ship no license texts, so the static tarball lists those
-libraries rather than carrying their texts.
-
-Linux builds that find GNU libbfd (the AppImage and the static tarball) use it
+Linux builds that find GNU libbfd use it
 for crash backtraces. libbfd is GPL-3.0-or-later, and aMule's "or later"
 clause lets those binaries be distributed under GPL-3.0.

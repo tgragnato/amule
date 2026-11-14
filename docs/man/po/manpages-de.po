@@ -4,7 +4,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: manpages-de\n"
-"POT-Creation-Date: 2026-11-14 10:33+0100\n"
+"POT-Creation-Date: 2026-11-14 17:20+0100\n"
 "PO-Revision-Date: 2026-10-07 16:31+0000\n"
 "Last-Translator: Balla Marcell <marcell.balla@gmx.at>\n"
 "Language-Team: German <kde-i18n-de@kde.org>\n"
@@ -24,9 +24,6 @@ msgstr "AMULE"
 
 #. type: TH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "@MAN_DATE@"
 msgstr "@MAN_DATE@"
@@ -48,9 +45,6 @@ msgstr "aMule"
 # type: SH
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "NAME"
 msgstr "NAME"
@@ -64,9 +58,6 @@ msgstr "amule - der alle-Plattformen eMule p2p Client"
 # type: SH
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "SYNOPSIS"
 msgstr "SYNTAX"
@@ -86,9 +77,6 @@ msgstr "[B<-t> I<E<lt>NumE<gt>>] [I<eD2k-Verweis>]"
 # type: SH
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "DESCRIPTION"
 msgstr "BESCHREIBUNG"
@@ -96,7 +84,6 @@ msgstr "BESCHREIBUNG"
 # type: Plain text
 #. type: TP
 #: amule.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
 msgid "B<[ -c> I<E<lt>pathE<gt>>, B<--config-dir>=I<E<lt>pathE<gt>> B<]>"
 msgstr "B<[ -c> I<E<lt>PfadE<gt>>, B<--config-dir>=I<E<lt>PfadE<gt>> B<]>"
@@ -104,7 +91,6 @@ msgstr "B<[ -c> I<E<lt>PfadE<gt>>, B<--config-dir>=I<E<lt>PfadE<gt>> B<]>"
 # type: Plain text
 #. type: Plain text
 #: amule.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 msgid "Read config from I<E<lt>pathE<gt>> instead of home"
 msgstr "Liest die Konfiguration E<lt>PfadE<gt> anstelle des Home."
 
@@ -148,18 +134,21 @@ msgstr "Setzt die Konfiguration auf die Standardwerte zurück."
 
 #. type: Plain text
 #: amule.1.in
-msgid "Enable or disable starting aMule on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+#, fuzzy
+#| msgid "Enable or disable starting aMule on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+msgid "Enable or disable starting aMule on user login, then exit.  The OS-specific store is selected automatically: macOS LaunchAgent or XDG I<.desktop> autostart entry."
 msgstr "Aktiviert bzw. deaktiviert den automatischen Start von aMule beim Benutzerlogin, beendet danach.  Der betriebssystemspezifische Speicherort wird automatisch ausgewählt: Windows Registrierung run Schlüssel, macOS LaunchAgent, Linux XDG I<.desktop> Autostart Eintrag."
 
 #. type: Plain text
 #: amule.1.in amuled.1.in amulegui.1.in
-msgid "Enable or disable aMule as the current user's default handler for ed2k:// and magnet: links, then exit.  I<E<lt>valueE<gt>> is B<on> or B<off> for both kinds of link, or B<ed2k:on>, B<ed2k:off>, B<magnet:on> or B<magnet:off> for one of them.  The OS-specific store is selected automatically: Windows registry, macOS LaunchServices, Linux XDG I<mimeapps.list>."
-msgstr ""
+#, fuzzy
+msgid "Enable or disable aMule as the current user's default handler for ed2k:// and magnet: links, then exit.  I<E<lt>valueE<gt>> is B<on> or B<off> for both kinds of link, or B<ed2k:on>, B<ed2k:off>, B<magnet:on> or B<magnet:off> for one of them.  The OS-specific store is selected automatically: macOS LaunchServices or XDG I<mimeapps.list>."
+msgstr "Aktiviert bzw. deaktiviert den automatischen Start von aMule beim Benutzerlogin, beendet danach.  Der betriebssystemspezifische Speicherort wird automatisch ausgewählt: Windows Registrierung run Schlüssel, macOS LaunchAgent, Linux XDG I<.desktop> Autostart Eintrag."
 
 #. type: Plain text
 #: amule.1.in amuled.1.in amulegui.1.in
 #, fuzzy
-msgid "Enable or disable aMule as the current user's handler for I<.emulecollection> files, then exit.  The OS-specific store is selected automatically: Windows registry, macOS LaunchServices, Linux XDG I<mimeapps.list>."
+msgid "Enable or disable aMule as the current user's handler for I<.emulecollection> files, then exit.  The OS-specific store is selected automatically: macOS LaunchServices or XDG I<mimeapps.list>."
 msgstr "Aktiviert bzw. deaktiviert den automatischen Start von aMule beim Benutzerlogin, beendet danach.  Der betriebssystemspezifische Speicherort wird automatisch ausgewählt: Windows Registrierung run Schlüssel, macOS LaunchAgent, Linux XDG I<.desktop> Autostart Eintrag."
 
 # AI-GENERATED — please review.
@@ -195,8 +184,6 @@ msgstr "Zeigt die derzeitige Versionsnummer an."
 # type: Plain text
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 msgid "Prints a short usage description."
 msgstr "Gibt eine kurze Nutzungsbeschreibung aus."
 
@@ -270,7 +257,6 @@ msgstr "Für alle Optionen die ein I<E<lt>PfadE<gt>> Argument erwarten, wenn der
 # type: SH
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
 msgid "FILES"
 msgstr "DATEIEN"
@@ -284,28 +270,18 @@ msgstr "~/.aMule/*"
 # type: SH
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "REPORTING BUGS"
 msgstr "FEHLER MELDEN"
 
-# type: Plain text
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "Please report bugs either on our forum (I<https://github.com/amule-org/amule/discussions>), or in our bugtracker (I<https://github.com/amule-org/amule/issues>).  Please do not report bugs in e-mail, neither to our mailing list nor directly to any team member."
-msgstr "Bitte meldet Fehler entweder in unserem Forum (I<https://github.com/amule-org/amule/discussions>), oder in unseren Bugtracker (I<https://github.com/amule-org/amule/issues>). Bitte meldet uns weder Fehler per E-Mail, noch auf unsere Mailingliste oder direkt an unsere Teammitglieder."
+msgid "Report bugs in this fork at I<https://github.com/tgragnato/amule/issues>."
+msgstr ""
 
 # type: SH
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "COPYRIGHT"
 msgstr "COPYRIGHT"
@@ -313,18 +289,12 @@ msgstr "COPYRIGHT"
 # type: Plain text
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 msgid "aMule and all of its related utilities are distributed under the GNU General Public License."
 msgstr "aMule und alle seine zugehörigen Anwendungen werden unter der GNU General Public License verteilt."
 
 # type: SH
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "SEE ALSO"
 msgstr "SIEHE AUCH"
@@ -332,18 +302,12 @@ msgstr "SIEHE AUCH"
 # type: SH
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "AUTHOR"
 msgstr "VERFASSER"
 
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 msgid "This manpage was written by Vollstrecker E<lt>amule@vollstreckernet.deE<gt>"
 msgstr "Diese manpage wurde geschrieben von Vollstrecker E<lt>amule@vollstreckernet.deE<gt>"
 
@@ -363,9 +327,7 @@ msgstr "aMuleCmd v@PACKAGE_VERSION@"
 
 # type: TH
 #. type: TH
-#: amulecmd.1.in ed2k.1.in ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
+#: amulecmd.1.in ed2k.1.in
 #, no-wrap
 msgid "aMule utilities"
 msgstr "aMule Hilfsprogramme"
@@ -1052,7 +1014,7 @@ msgstr "amuled - Der alle-Plattformen eMule p2p Client - dämonisierte Version"
 
 # type: TP
 #. type: Plain text
-#: amuled.1.in ../../src/utils/cas/docs/cas.1.in
+#: amuled.1.in
 msgid "[B<-c> I<E<lt>pathE<gt>>]"
 msgstr "[B<-c> I<E<lt>PfadE<gt>>]"
 
@@ -1088,7 +1050,9 @@ msgstr "Konfiguration für EC (Externe Verbindungen)."
 
 #. type: Plain text
 #: amuled.1.in
-msgid "Enable or disable starting amuled on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+#, fuzzy
+#| msgid "Enable or disable starting amuled on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+msgid "Enable or disable starting amuled on user login, then exit.  The OS-specific store is selected automatically: macOS LaunchAgent or XDG I<.desktop> autostart entry."
 msgstr "Aktiviert bzw. deaktiviert den automatischen Start von amuled beim Benutzerlogin, beendet danach.  Der betriebssystemspezifische Speicherort wird automatisch ausgewählt: Windows Registrierung run Schlüssel, macOS LaunchAgent, Linux XDG I<.desktop> Autostart Eintrag."
 
 # type: TP
@@ -1164,7 +1128,9 @@ msgstr "Überspringe den Verbindungsdialog."
 
 #. type: Plain text
 #: amulegui.1.in
-msgid "Enable or disable starting amulegui on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+#, fuzzy
+#| msgid "Enable or disable starting amulegui on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+msgid "Enable or disable starting amulegui on user login, then exit.  The OS-specific store is selected automatically: macOS LaunchAgent or XDG I<.desktop> autostart entry."
 msgstr "Aktiviert bzw. deaktiviert den automatischen Start von amulegui beim Benutzerlogin, beendet danach.  Der betriebssystemspezifische Speicherort wird automatisch ausgewählt: Windows Registrierung run Schlüssel, macOS LaunchAgent, Linux XDG I<.desktop> Autostart Eintrag."
 
 # type: Plain text
@@ -1314,170 +1280,117 @@ msgstr "B<Die Reihenfolge in der du die Parameter angibst, ist entscheidend.> Du
 msgid "~/.aMule/ED2KLinks"
 msgstr "~/.aMule/ED2KLinks"
 
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#, no-wrap
-msgid "ALC"
-msgstr "ALC"
+# type: Plain text
+#~ msgid "Please report bugs either on our forum (I<https://github.com/amule-org/amule/discussions>), or in our bugtracker (I<https://github.com/amule-org/amule/issues>).  Please do not report bugs in e-mail, neither to our mailing list nor directly to any team member."
+#~ msgstr "Bitte meldet Fehler entweder in unserem Forum (I<https://github.com/amule-org/amule/discussions>), oder in unseren Bugtracker (I<https://github.com/amule-org/amule/issues>). Bitte meldet uns weder Fehler per E-Mail, noch auf unsere Mailingliste oder direkt an unsere Teammitglieder."
 
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
 #, no-wrap
-msgid "aLinkCreator"
-msgstr "aLinkCreator"
+#~ msgid "ALC"
+#~ msgstr "ALC"
+
+#, no-wrap
+#~ msgid "aLinkCreator"
+#~ msgstr "aLinkCreator"
 
 # type: Plain text
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-msgid "aLinkCreator - the aMule eD2k link creator"
-msgstr "ed2k - aMule eD2k Verweis parser"
+#~ msgid "aLinkCreator - the aMule eD2k link creator"
+#~ msgstr "ed2k - aMule eD2k Verweis parser"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-msgid "B<alc> is a graphical utility to create an eD2k link to any file on your computer."
-msgstr "B<alc> ist ein graphisches Werkzeug zum erstellen von eD2k Links für Dateien auf deinem Computer."
+#~ msgid "B<alc> is a graphical utility to create an eD2k link to any file on your computer."
+#~ msgstr "B<alc> ist ein graphisches Werkzeug zum erstellen von eD2k Links für Dateien auf deinem Computer."
 
 # type: Plain text
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "This app doesn't take any arguments."
-msgstr "Dieses Programm hat keine Parameter."
+#~ msgid "This app doesn't take any arguments."
+#~ msgstr "Dieses Programm hat keine Parameter."
 
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
 #, no-wrap
-msgid "ALCC"
-msgstr "ALCC"
+#~ msgid "ALCC"
+#~ msgstr "ALCC"
 
 # type: TH
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
 #, no-wrap
-msgid "aMule eD2k links calculator"
-msgstr "aMule eD2k Verweis Ersteller"
+#~ msgid "aMule eD2k links calculator"
+#~ msgstr "aMule eD2k Verweis Ersteller"
 
 # type: TH
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "alcc - text based eD2k links calculator for aMule"
-msgstr "alcc - textbasierter eD2k Verweis Ersteller für aMule"
+#~ msgid "alcc - text based eD2k links calculator for aMule"
+#~ msgstr "alcc - textbasierter eD2k Verweis Ersteller für aMule"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "I<E<lt>inputfiles_listE<gt>>"
-msgstr "I<E<lt>eingabedatei_listeE<gt>>"
+#~ msgid "I<E<lt>inputfiles_listE<gt>>"
+#~ msgstr "I<E<lt>eingabedatei_listeE<gt>>"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "Compute the eD2k links of all the input files given in the I<E<lt>inputfiles_listE<gt>> (There can be one or more files)."
-msgstr "Berechne die eD2k Verweise aller Eingabedateien aus I<E<lt>dateilisteE<gt>> (eine oder mehrere Dateien)."
+#~ msgid "Compute the eD2k links of all the input files given in the I<E<lt>inputfiles_listE<gt>> (There can be one or more files)."
+#~ msgstr "Berechne die eD2k Verweise aller Eingabedateien aus I<E<lt>dateilisteE<gt>> (eine oder mehrere Dateien)."
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "Compute and add part hashes to the computed eD2k links."
-msgstr "Berechne Teilprüfsummen und füge sie dem berechneten eD2k Verweis hinzu."
+#~ msgid "Compute and add part hashes to the computed eD2k links."
+#~ msgstr "Berechne Teilprüfsummen und füge sie dem berechneten eD2k Verweis hinzu."
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "Be verbose - show also calculation steps."
-msgstr "Sei gesprächig - Zeige auch die Rechenschritte an."
+#~ msgid "Be verbose - show also calculation steps."
+#~ msgstr "Sei gesprächig - Zeige auch die Rechenschritte an."
 
 # type: TH
-#. type: TH
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
-msgid "CAS"
-msgstr "CAS"
+#~ msgid "CAS"
+#~ msgstr "CAS"
 
 # type: TH
-#. type: TH
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
-msgid "cas v0.8"
-msgstr "cas v0.8"
+#~ msgid "cas v0.8"
+#~ msgstr "cas v0.8"
 
 # type: Plain text
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "cas - c aMule statistics"
-msgstr "cas - c aMule statistics"
+#~ msgid "cas - c aMule statistics"
+#~ msgstr "cas - c aMule statistics"
 
 # type: Plain text
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "B<cas> is a program for displaying the contents of your aMule online signature file to console (in a human readable form). For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
-msgstr "B<cas> ist ein Program zum Anzeigen des Inhaltes deiner aMule Online Signaturdatei in der Konsole (in von Menschen lesbarem Format). Damit dies funktioniert, musst du die \"Online-Signatur\" Option in den aMule Einstellungen aktivieren."
+#~ msgid "B<cas> is a program for displaying the contents of your aMule online signature file to console (in a human readable form). For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
+#~ msgstr "B<cas> ist ein Program zum Anzeigen des Inhaltes deiner aMule Online Signaturdatei in der Konsole (in von Menschen lesbarem Format). Damit dies funktioniert, musst du die \"Online-Signatur\" Option in den aMule Einstellungen aktivieren."
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "Writes the online signature picture.  The long form B<--picture> accepts an optional I<=E<lt>PATHE<gt>> to specify the output location; the short forms B<-o> / B<-P> do not (B<-P> requires an immediately following I<E<lt>PATHE<gt>> argument, and B<-o> is a no-argument switch).  Requires GD support compiled in (I<__GD__>); this option is silently ignored otherwise."
-msgstr "Schreibt das online Signatur Bild.  Die lange Form B<--picture> akzeptiert ein optionales I<=E<lt>PATHE<gt>> um den Ausgabeort zu bestimmen; die Kurzform B<-o> / B<-P> tut es nicht (B<-P> benötigt ein unmittelbar folgendes I<E<lt>PATHE<gt>> Argument, und B<-o> ist eine Option ohne Parameter).  Dafür muss Unterstützung für GD einkompiliert sein (I<__GD__>); ansonsten wird diese Option ohne Nachricht ignoriert."
+#~ msgid "Writes the online signature picture.  The long form B<--picture> accepts an optional I<=E<lt>PATHE<gt>> to specify the output location; the short forms B<-o> / B<-P> do not (B<-P> requires an immediately following I<E<lt>PATHE<gt>> argument, and B<-o> is a no-argument switch).  Requires GD support compiled in (I<__GD__>); this option is silently ignored otherwise."
+#~ msgstr "Schreibt das online Signatur Bild.  Die lange Form B<--picture> akzeptiert ein optionales I<=E<lt>PATHE<gt>> um den Ausgabeort zu bestimmen; die Kurzform B<-o> / B<-P> tut es nicht (B<-P> benötigt ein unmittelbar folgendes I<E<lt>PATHE<gt>> Argument, und B<-o> ist eine Option ohne Parameter).  Dafür muss Unterstützung für GD einkompiliert sein (I<__GD__>); ansonsten wird diese Option ohne Nachricht ignoriert."
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "HTML page with stats and picture.  The long form B<--html> accepts an optional I<=E<lt>PATHE<gt>> to specify the output location; the short forms B<-p> / B<-H> do not (B<-H> requires an immediately following I<E<lt>PATHE<gt>> argument, and B<-p> is a no-argument switch)."
-msgstr "HTML Seite with Status und Bild.  Die Langform B<--html> akzeptiert ein optionales I<=E<lt>PATHE<gt>> um den Ausgabeort zu bestimmen; die Kurzform B<-p> / B<-H> tut es nicht (B<-H> benötigt ein unmittelbar folgendes I<E<lt>PATHE<gt>> Argument, und B<-p> ist eine Option ohne Parameter)."
+#~ msgid "HTML page with stats and picture.  The long form B<--html> accepts an optional I<=E<lt>PATHE<gt>> to specify the output location; the short forms B<-p> / B<-H> do not (B<-H> requires an immediately following I<E<lt>PATHE<gt>> argument, and B<-p> is a no-argument switch)."
+#~ msgstr "HTML Seite with Status und Bild.  Die Langform B<--html> akzeptiert ein optionales I<=E<lt>PATHE<gt>> um den Ausgabeort zu bestimmen; die Kurzform B<-p> / B<-H> tut es nicht (B<-H> benötigt ein unmittelbar folgendes I<E<lt>PATHE<gt>> Argument, und B<-p> ist eine Option ohne Parameter)."
 
 # type: Plain text
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "Without any options, it prints online signature data to stdout."
-msgstr "Ohne Optionen schreibt es die Online Signatur auf die Standardausgabe."
+#~ msgid "Without any options, it prints online signature data to stdout."
+#~ msgstr "Ohne Optionen schreibt es die Online Signatur auf die Standardausgabe."
 
 # type: Plain text
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "B<cas> was written by Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
-msgstr "B<cas> wurde geschrieben von Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
+#~ msgid "B<cas> was written by Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
+#~ msgstr "B<cas> wurde geschrieben von Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
 
 # type: Plain text
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "~/.aMule/casrc"
-msgstr "~/.aMule/casrc"
+#~ msgid "~/.aMule/casrc"
+#~ msgstr "~/.aMule/casrc"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "aMule-online-sign.png (or .jpg, when B<-o> / B<--picture> is used and GD is available)"
-msgstr "aMule-online-sign.png (oder .jpg, wenn B<-o> / B<--picture> verwendet wird und GD verfügbar ist)"
+#~ msgid "aMule-online-sign.png (or .jpg, when B<-o> / B<--picture> is used and GD is available)"
+#~ msgstr "aMule-online-sign.png (oder .jpg, wenn B<-o> / B<--picture> verwendet wird und GD verfügbar ist)"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "aMule-online-sign.html (when B<-p> / B<--html> is used)"
-msgstr "aMule-online-sign.html (wenn B<-p> / B<--html> verwendet wird)"
+#~ msgid "aMule-online-sign.html (when B<-p> / B<--html> is used)"
+#~ msgstr "aMule-online-sign.html (wenn B<-p> / B<--html> verwendet wird)"
 
 # type: TH
-#. type: TH
-#: ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
-msgid "WXCAS"
-msgstr "WXCAS"
+#~ msgid "WXCAS"
+#~ msgstr "WXCAS"
 
 # type: TH
-#. type: TH
-#: ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
-msgid "wxCas"
-msgstr "wxCas"
+#~ msgid "wxCas"
+#~ msgstr "wxCas"
 
 # type: Plain text
-#. type: Plain text
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "wxcas - wx c aMule statistics"
-msgstr "wxcas - wx c aMule statistics"
+#~ msgid "wxcas - wx c aMule statistics"
+#~ msgstr "wxcas - wx c aMule statistics"
 
 # type: Plain text
-#. type: Plain text
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "B<wxcas> is a program for displaying the contents of your online signature file in a nice wx Window on your Desktop.  For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
-msgstr "B<wxcas> ist ein Programm zum Anzeigen des Inhaltes deiner Online Signaturdatei in einem hübschen wx Fenster auf deinem Desktop.  Damit dies funktioniert, musst du die \"Online-Signatur\" Option in den aMule Einstellungen aktivieren."
+#~ msgid "B<wxcas> is a program for displaying the contents of your online signature file in a nice wx Window on your Desktop.  For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
+#~ msgstr "B<wxcas> ist ein Programm zum Anzeigen des Inhaltes deiner Online Signaturdatei in einem hübschen wx Fenster auf deinem Desktop.  Damit dies funktioniert, musst du die \"Online-Signatur\" Option in den aMule Einstellungen aktivieren."
 
 # type: Plain text
-#. type: Plain text
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "Based on Pedro de Oliveira's B<cas>(1).  B<wxcas> was written by ThePolish E<lt>thepolish@vipmail.ruE<gt>"
-msgstr "Basierend auf Pedro de Oliveira's B<cas>(1).  B<wxcas> wurde geschrieben von ThePolish E<lt>thepolish@vipmail.ruE<gt>"
+#~ msgid "Based on Pedro de Oliveira's B<cas>(1).  B<wxcas> was written by ThePolish E<lt>thepolish@vipmail.ruE<gt>"
+#~ msgstr "Basierend auf Pedro de Oliveira's B<cas>(1).  B<wxcas> wurde geschrieben von ThePolish E<lt>thepolish@vipmail.ruE<gt>"
 
 # type: TP
 #~ msgid "[B<-w> I<E<lt>pathE<gt>>]"

@@ -5,7 +5,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-11-14 10:33+0100\n"
+"POT-Creation-Date: 2026-11-14 17:20+0100\n"
 "PO-Revision-Date: 2026-10-07 16:31+0000\n"
 "Last-Translator: Sebastiano Pistore <SebastianoPistore.info@protonmail.ch>\n"
 "Language-Team: Romanian <kde-i18n-doc@kde.org>\n"
@@ -24,9 +24,6 @@ msgstr "AMULE"
 
 #. type: TH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "@MAN_DATE@"
 msgstr "@MAN_DATE@"
@@ -45,9 +42,6 @@ msgstr "aMule"
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "NAME"
 msgstr "NUME"
@@ -59,9 +53,6 @@ msgstr "amule - client eMule p2p pentru toate platformele"
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "SYNOPSIS"
 msgstr "REZUMAT"
@@ -79,23 +70,18 @@ msgstr "[B<-t> I<E<lt>numE<gt>>] [I<eD2k-link>]"
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "DESCRIPTION"
 msgstr "DESCRIERE"
 
 #. type: TP
 #: amule.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
 msgid "B<[ -c> I<E<lt>pathE<gt>>, B<--config-dir>=I<E<lt>pathE<gt>> B<]>"
 msgstr "B<[ -c> I<E<lt>pathE<gt>>, B<--config-dir>=I<E<lt>pathE<gt>> B<]>"
 
 #. type: Plain text
 #: amule.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 msgid "Read config from I<E<lt>pathE<gt>> instead of home"
 msgstr "Citește configurarea din I<E<lt>pathE<gt>> în schimb de acasă"
 
@@ -134,17 +120,17 @@ msgstr "Resetare configurări la valorile implicite."
 
 #. type: Plain text
 #: amule.1.in
-msgid "Enable or disable starting aMule on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+msgid "Enable or disable starting aMule on user login, then exit.  The OS-specific store is selected automatically: macOS LaunchAgent or XDG I<.desktop> autostart entry."
 msgstr ""
 
 #. type: Plain text
 #: amule.1.in amuled.1.in amulegui.1.in
-msgid "Enable or disable aMule as the current user's default handler for ed2k:// and magnet: links, then exit.  I<E<lt>valueE<gt>> is B<on> or B<off> for both kinds of link, or B<ed2k:on>, B<ed2k:off>, B<magnet:on> or B<magnet:off> for one of them.  The OS-specific store is selected automatically: Windows registry, macOS LaunchServices, Linux XDG I<mimeapps.list>."
+msgid "Enable or disable aMule as the current user's default handler for ed2k:// and magnet: links, then exit.  I<E<lt>valueE<gt>> is B<on> or B<off> for both kinds of link, or B<ed2k:on>, B<ed2k:off>, B<magnet:on> or B<magnet:off> for one of them.  The OS-specific store is selected automatically: macOS LaunchServices or XDG I<mimeapps.list>."
 msgstr ""
 
 #. type: Plain text
 #: amule.1.in amuled.1.in amulegui.1.in
-msgid "Enable or disable aMule as the current user's handler for I<.emulecollection> files, then exit.  The OS-specific store is selected automatically: Windows registry, macOS LaunchServices, Linux XDG I<mimeapps.list>."
+msgid "Enable or disable aMule as the current user's handler for I<.emulecollection> files, then exit.  The OS-specific store is selected automatically: macOS LaunchServices or XDG I<mimeapps.list>."
 msgstr ""
 
 #. type: Plain text
@@ -175,8 +161,6 @@ msgstr "Afișează numărul versiunii curente."
 
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 msgid "Prints a short usage description."
 msgstr "Tipărește o scurtă descriere de utilizare."
 
@@ -241,7 +225,6 @@ msgstr "Pentru toate opțiunile care iau o I<E<lt>pathE<gt>> valoare, dacă I<pa
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
 msgid "FILES"
 msgstr "FIȘIERE"
@@ -253,61 +236,40 @@ msgstr "~/.aMule/*"
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "REPORTING BUGS"
 msgstr "RAPORTAREA ERORILOR"
 
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "Please report bugs either on our forum (I<https://github.com/amule-org/amule/discussions>), or in our bugtracker (I<https://github.com/amule-org/amule/issues>).  Please do not report bugs in e-mail, neither to our mailing list nor directly to any team member."
-msgstr "Vă rugăm să raportați erorile fie pe forumul  nostru(I<https://github.com/amule-org/amule/discussions>), sau în bugtracker-ul nostru (I<https://github.com/amule-org/amule/issues>). Nu raportați erorile pe email, nici la lista noastră de adrese nici direct la nici un membru al echipei."
+msgid "Report bugs in this fork at I<https://github.com/tgragnato/amule/issues>."
+msgstr ""
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "COPYRIGHT"
 msgstr "DREPT DE AUTOR"
 
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 msgid "aMule and all of its related utilities are distributed under the GNU General Public License."
 msgstr "aMule și toate utilitarele conexe sunt distribuite sub GNU General Public License."
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "SEE ALSO"
 msgstr "VEDEȚI ȘI"
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "AUTHOR"
 msgstr "AUTOR"
 
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 msgid "This manpage was written by Vollstrecker E<lt>amule@vollstreckernet.deE<gt>"
 msgstr "Această pagină manual a fost scrisă de Vollstrecker E<lt>amule@vollstreckernet.deE<gt>"
 
@@ -324,9 +286,7 @@ msgid "aMuleCmd v@PACKAGE_VERSION@"
 msgstr "aMuleCmd v@PACKAGE_VERSION@"
 
 #. type: TH
-#: amulecmd.1.in ed2k.1.in ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
+#: amulecmd.1.in ed2k.1.in
 #, no-wrap
 msgid "aMule utilities"
 msgstr "utilitare aMule"
@@ -928,7 +888,7 @@ msgid "amuled - the all-platform eMule p2p client - daemonized version"
 msgstr "amuled - clientul eMule p2p pentru toate platformele - versiunea demonizată"
 
 #. type: Plain text
-#: amuled.1.in ../../src/utils/cas/docs/cas.1.in
+#: amuled.1.in
 msgid "[B<-c> I<E<lt>pathE<gt>>]"
 msgstr "[B<-c> I<E<lt>pathE<gt>>]"
 
@@ -960,7 +920,7 @@ msgstr "Configurează EC (conexiuni externe)."
 
 #. type: Plain text
 #: amuled.1.in
-msgid "Enable or disable starting amuled on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+msgid "Enable or disable starting amuled on user login, then exit.  The OS-specific store is selected automatically: macOS LaunchAgent or XDG I<.desktop> autostart entry."
 msgstr ""
 
 #. type: TP
@@ -1031,7 +991,7 @@ msgstr "Omite dialogul de conectare."
 
 #. type: Plain text
 #: amulegui.1.in
-msgid "Enable or disable starting amulegui on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+msgid "Enable or disable starting amulegui on user login, then exit.  The OS-specific store is selected automatically: macOS LaunchAgent or XDG I<.desktop> autostart entry."
 msgstr ""
 
 #. type: Plain text
@@ -1170,154 +1130,88 @@ msgstr "B< Ordinea în care dați parametrii este importantă.> Puteți da mai m
 msgid "~/.aMule/ED2KLinks"
 msgstr "~/.aMule/ED2KLinks"
 
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
+#~ msgid "Please report bugs either on our forum (I<https://github.com/amule-org/amule/discussions>), or in our bugtracker (I<https://github.com/amule-org/amule/issues>).  Please do not report bugs in e-mail, neither to our mailing list nor directly to any team member."
+#~ msgstr "Vă rugăm să raportați erorile fie pe forumul  nostru(I<https://github.com/amule-org/amule/discussions>), sau în bugtracker-ul nostru (I<https://github.com/amule-org/amule/issues>). Nu raportați erorile pe email, nici la lista noastră de adrese nici direct la nici un membru al echipei."
+
 #, no-wrap
-msgid "ALC"
-msgstr "ALC"
+#~ msgid "ALC"
+#~ msgstr "ALC"
 
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
 #, no-wrap
-msgid "aLinkCreator"
-msgstr "aLinkCreator"
+#~ msgid "aLinkCreator"
+#~ msgstr "aLinkCreator"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-msgid "aLinkCreator - the aMule eD2k link creator"
-msgstr "aLinkCreator - creatorul aMule eD2k de legături"
+#~ msgid "aLinkCreator - the aMule eD2k link creator"
+#~ msgstr "aLinkCreator - creatorul aMule eD2k de legături"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-msgid "B<alc> is a graphical utility to create an eD2k link to any file on your computer."
-msgstr "B<alc> este un utilitar grafic care crează o legătură eD2k la orice fișier de pe computerul dumneavoastră."
+#~ msgid "B<alc> is a graphical utility to create an eD2k link to any file on your computer."
+#~ msgstr "B<alc> este un utilitar grafic care crează o legătură eD2k la orice fișier de pe computerul dumneavoastră."
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "This app doesn't take any arguments."
-msgstr "Această aplicație nu ia nici un argument."
+#~ msgid "This app doesn't take any arguments."
+#~ msgstr "Această aplicație nu ia nici un argument."
 
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
 #, no-wrap
-msgid "ALCC"
-msgstr "ALCC"
+#~ msgid "ALCC"
+#~ msgstr "ALCC"
 
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
 #, no-wrap
-msgid "aMule eD2k links calculator"
-msgstr "Calculator de legături aMule eD2k"
+#~ msgid "aMule eD2k links calculator"
+#~ msgstr "Calculator de legături aMule eD2k"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "alcc - text based eD2k links calculator for aMule"
-msgstr "alcc - calculator link-uri eD2k bazat pe text pentru aMule"
+#~ msgid "alcc - text based eD2k links calculator for aMule"
+#~ msgstr "alcc - calculator link-uri eD2k bazat pe text pentru aMule"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "I<E<lt>inputfiles_listE<gt>>"
-msgstr "I<E<lt>inputfiles_listE<gt>>"
+#~ msgid "I<E<lt>inputfiles_listE<gt>>"
+#~ msgstr "I<E<lt>inputfiles_listE<gt>>"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "Compute the eD2k links of all the input files given in the I<E<lt>inputfiles_listE<gt>> (There can be one or more files)."
-msgstr "Calculează link_urile eD2k pentru toate fișierele de intrare date în I<E<lt>inputfiles_listE<gt>> (Poate fi unul sau mai multe fișiere)."
+#~ msgid "Compute the eD2k links of all the input files given in the I<E<lt>inputfiles_listE<gt>> (There can be one or more files)."
+#~ msgstr "Calculează link_urile eD2k pentru toate fișierele de intrare date în I<E<lt>inputfiles_listE<gt>> (Poate fi unul sau mai multe fișiere)."
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "Compute and add part hashes to the computed eD2k links."
-msgstr "Calculează și adaugă indexurile părților la legătura eD2k calculată."
+#~ msgid "Compute and add part hashes to the computed eD2k links."
+#~ msgstr "Calculează și adaugă indexurile părților la legătura eD2k calculată."
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "Be verbose - show also calculation steps."
-msgstr "Fi detaliat - arată, de asemenea, pașii de calcul."
+#~ msgid "Be verbose - show also calculation steps."
+#~ msgstr "Fi detaliat - arată, de asemenea, pașii de calcul."
 
-#. type: TH
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
-msgid "CAS"
-msgstr "CAS"
+#~ msgid "CAS"
+#~ msgstr "CAS"
 
-#. type: TH
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
-msgid "cas v0.8"
-msgstr "cas v0.8"
+#~ msgid "cas v0.8"
+#~ msgstr "cas v0.8"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "cas - c aMule statistics"
-msgstr "cas - c aMule statistici"
+#~ msgid "cas - c aMule statistics"
+#~ msgstr "cas - c aMule statistici"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "B<cas> is a program for displaying the contents of your aMule online signature file to console (in a human readable form). For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
-msgstr "B<cas> este un program pentru afișarea conținutului fișierului semnătură online al aMule în terminal (într-o formă de citire umană). Pentru ca aceasta să lucreze, trebuie să activați opțiunea \"Semnătură online\" în preferințele aMule."
+#~ msgid "B<cas> is a program for displaying the contents of your aMule online signature file to console (in a human readable form). For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
+#~ msgstr "B<cas> este un program pentru afișarea conținutului fișierului semnătură online al aMule în terminal (într-o formă de citire umană). Pentru ca aceasta să lucreze, trebuie să activați opțiunea \"Semnătură online\" în preferințele aMule."
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "Writes the online signature picture.  The long form B<--picture> accepts an optional I<=E<lt>PATHE<gt>> to specify the output location; the short forms B<-o> / B<-P> do not (B<-P> requires an immediately following I<E<lt>PATHE<gt>> argument, and B<-o> is a no-argument switch).  Requires GD support compiled in (I<__GD__>); this option is silently ignored otherwise."
-msgstr ""
+#~ msgid "Without any options, it prints online signature data to stdout."
+#~ msgstr "Fără nici o opțiune, va tipării data semnăturii online la stdout."
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "HTML page with stats and picture.  The long form B<--html> accepts an optional I<=E<lt>PATHE<gt>> to specify the output location; the short forms B<-p> / B<-H> do not (B<-H> requires an immediately following I<E<lt>PATHE<gt>> argument, and B<-p> is a no-argument switch)."
-msgstr ""
+#~ msgid "B<cas> was written by Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
+#~ msgstr "B<cas> a fost scris de  Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "Without any options, it prints online signature data to stdout."
-msgstr "Fără nici o opțiune, va tipării data semnăturii online la stdout."
+#~ msgid "~/.aMule/casrc"
+#~ msgstr "~/.aMule/casrc"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "B<cas> was written by Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
-msgstr "B<cas> a fost scris de  Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
-
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "~/.aMule/casrc"
-msgstr "~/.aMule/casrc"
-
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "aMule-online-sign.png (or .jpg, when B<-o> / B<--picture> is used and GD is available)"
-msgstr ""
-
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "aMule-online-sign.html (when B<-p> / B<--html> is used)"
-msgstr ""
-
-#. type: TH
-#: ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
-msgid "WXCAS"
-msgstr "WXCAS"
+#~ msgid "WXCAS"
+#~ msgstr "WXCAS"
 
-#. type: TH
-#: ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
-msgid "wxCas"
-msgstr "wxCas"
+#~ msgid "wxCas"
+#~ msgstr "wxCas"
 
-#. type: Plain text
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "wxcas - wx c aMule statistics"
-msgstr "wxcas - wx c aMule statistici"
+#~ msgid "wxcas - wx c aMule statistics"
+#~ msgstr "wxcas - wx c aMule statistici"
 
-#. type: Plain text
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "B<wxcas> is a program for displaying the contents of your online signature file in a nice wx Window on your Desktop.  For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
-msgstr "B<wxcas> este un program pentru afișarea conținutul fișierului de semnătură online într-o fereastră drăguță wx pe Desktop. Pentru ca aceasta să funcționeze, trebuie să activați opțiunea \"Semnătură online\" în preferințele aMule."
+#~ msgid "B<wxcas> is a program for displaying the contents of your online signature file in a nice wx Window on your Desktop.  For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
+#~ msgstr "B<wxcas> este un program pentru afișarea conținutul fișierului de semnătură online într-o fereastră drăguță wx pe Desktop. Pentru ca aceasta să funcționeze, trebuie să activați opțiunea \"Semnătură online\" în preferințele aMule."
 
-#. type: Plain text
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "Based on Pedro de Oliveira's B<cas>(1).  B<wxcas> was written by ThePolish E<lt>thepolish@vipmail.ruE<gt>"
-msgstr "Bazat pe B<cas>(1) a lui Pedro de Oliveira. B<wxcas> a fost scris de ThePolish E<lt>thepolish@vipmail.ruE<gt>"
+#~ msgid "Based on Pedro de Oliveira's B<cas>(1).  B<wxcas> was written by ThePolish E<lt>thepolish@vipmail.ruE<gt>"
+#~ msgstr "Bazat pe B<cas>(1) a lui Pedro de Oliveira. B<wxcas> a fost scris de ThePolish E<lt>thepolish@vipmail.ruE<gt>"
 
 #~ msgid "[B<-w> I<E<lt>pathE<gt>>]"
 #~ msgstr "[B<-w> I<E<lt>pathE<gt>>]"

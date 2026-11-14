@@ -183,7 +183,7 @@ the offer is refused rather than answered with a weaker derivation.
 | `2` | ChaCha20-Poly1305 (optional) | when both sides have ChaCha20 and at least one lacks hardware support for AES |
 
 Note that Crypto++ (as of 8.9.0) only detects hardware AES on x86 and on Linux
-ARM. On macOS and Windows ARM builds the check comes up empty even where the
+ARM. On macOS ARM builds the check comes up empty even where the
 CPU has the instructions, so those peers offer ChaCha20 first and the channel
 settles on it. That is the right outcome while it lasts: the same flag decides
 whether Crypto++ itself uses the AES instructions, so a peer that preferred AES

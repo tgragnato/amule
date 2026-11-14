@@ -3,8 +3,8 @@
 This document covers the end-user side of aMule: how to launch each
 tool, what to configure on first run, and where the safety footguns
 are. For an overview of the project see the
-[top-level README](../README.md). For installing the pre-built
-binaries see [INSTALL_BINARIES.md](INSTALL_BINARIES.md); for building
+[top-level README](../README.md). For installing with Homebrew see
+[INSTALL_BINARIES.md](INSTALL_BINARIES.md); for building
 from source see [INSTALL.md](INSTALL.md).
 
 
@@ -124,8 +124,7 @@ aMule needs **TCP 4662** and **UDP 4665** + **UDP 4672** reachable from
 the internet to be a full peer on the network. If they're not, you'll
 get a *LowID*, which makes you reachable from far fewer sources.
 
-* **Behind a router**: forward the three ports to the machine running
-  aMule (or use UPnP — `Preferences → Connection → UPnP enabled`).
+* **Behind a router**: forward the three ports to the machine running aMule.
 * **Behind a firewall**: allow inbound on those ports.
 
 The [network connectivity guide][network] has detailed walkthroughs for
@@ -303,56 +302,6 @@ sh -c 'mv -- "$1" "/archive/$2-$3"' _ %FILE %HASH %NAME
 Here `_` supplies the shell's `$0`, and `%FILE`, `%HASH`, and `%NAME` become `$1`,
 `$2`, and `$3`. Always quote positional arguments in the script.
 
-On Windows, native programs receive literal arguments using Windows C runtime
-escaping. Characters such as `%`, `!`, and quotes remain data for these programs;
-filenames such as `100% Hits.mp3` and `Help!.avi` work for event commands and previews.
-
-For `cmd.exe` and `.bat`/`.cmd` targets, aMule rejects substituted values containing
-`"`, `%`, `!`, CR, or LF. Those characters can change quoting, expand environment
-variables, or introduce another command. Other punctuation, including `&`, `|`,
-`<`, `>`, and `^`, stays inside quoted data arguments. The filter also checks
-literal prefixes and suffixes surrounding placeholders.
-
-aMule explicitly invokes the OS command processor for batch files and adds an
-outer quote pair with `/d /s` so `cmd` removes only that pair, preserving each
-argument's quotes. Backslashes are kept literal for batch files and builtins;
-native children retain CRT quoting.
-
-Use a fixed command token with separate values, for example `cmd /d /c echo %SENDER`.
-External targets after `cmd /c` or `/k` must include `.exe`, `.com`, `.bat`, or
-`.cmd`; extensionless names are refused when inserting data because `PATHEXT`
-can select a batch file with different argument quoting. Quote fixed paths
-containing spaces, for example:
-
-```bat
-cmd /d /c "C:\Program Files\hooks\on-chat.cmd" %SENDER
-```
-
-Do not put a placeholder inside a combined command string such as
-`cmd /c "echo %SENDER"`; it is code, and aMule refuses it. Compound command
-strings, user-specified `/s`, dispatch builtins (`call`, `start`, `for`, `if`),
-and nested interpreters with event data are unsupported; put that logic in a
-fixed batch file instead.
-PowerShell and the other prohibited launchers still refuse substituted values.
-Existing Windows short-path aliases are expanded before interpreter checks.
-
-Batch authors must quote positional values when using them, just as POSIX scripts
-quote `"$1"`. For example, a template `C:\scripts\on-complete.cmd %FILE %HASH %SIZE`
-passes three arguments to a batch file that can use:
-
-```bat
-@echo off
-native-tool.exe "%~1" "%~2" "%~3"
-```
-
-Do not re-evaluate event values using `call`, another `cmd /c`, or an interpreter.
-[`cmd.exe`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmd)
-expands `%VAR%` and delayed `!VAR!` references, which is why those values are refused.
-
-Fixed event templates with no substituted values run unchanged on Windows,
-including redirection and compound commands. Media previews always insert a
-filename and therefore use the argument validation and quoting described above.
-
 Validation refusals log that the command was not run and give the reason;
 a missing executable or another spawn failure retains the launch-failure message.
 
@@ -399,20 +348,15 @@ event; daemon free-space checks are not visible to the GUI.
 * **Generic icon in the launcher** — the GTK icon-theme cache hasn't
   refreshed since install. See the [icon-cache section in
   INSTALL.md](INSTALL.md#linux-only-icon-cache-step).
-* **AppImage doesn't appear in the application menu** — on first
-  launch the AppImage will prompt to integrate itself; if you declined
-  ("Don't ask again"), the documentation describes the manual install of
-  the `.desktop` file.
 * **Tray icon invisible on GNOME** — you need an SNI host. On vanilla
   GNOME install
   [`gnome-shell-extension-appindicator`](https://extensions.gnome.org/extension/615/appindicator-support/);
   Ubuntu enables this by default.
 
-For anything else, the documentation and forum are the best places to look:
+For anything else, consult the documentation or report an issue for this fork:
 
-* Documentation: <https://amule-org.github.io/docs>
-* Forum: <https://github.com/amule-org/amule/discussions>
-* GitHub Issues: <https://github.com/amule-org/amule/issues>
+* Fork documentation: [README.md](../README.md) and the guides in this directory.
+* GitHub Issues: <https://github.com/tgragnato/amule/issues>
 
 
 ## Safety / legal

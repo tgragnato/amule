@@ -6,7 +6,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: manpages-ru\n"
-"POT-Creation-Date: 2026-11-14 10:33+0100\n"
+"POT-Creation-Date: 2026-11-14 17:20+0100\n"
 "PO-Revision-Date: 2026-11-10 13:48+0000\n"
 "Last-Translator: Andrei Stepanov <adem@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/amule/application-man-pages/ru/>\n"
@@ -26,9 +26,6 @@ msgstr "AMULE"
 
 #. type: TH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "@MAN_DATE@"
 msgstr "@MAN_DATE@"
@@ -47,9 +44,6 @@ msgstr "aMule"
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "NAME"
 msgstr "ИМЯ"
@@ -61,9 +55,6 @@ msgstr "amule — многоплатформенный P2P-клиент eMule"
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "SYNOPSIS"
 msgstr "ОБЗОР"
@@ -80,23 +71,18 @@ msgstr "[B<-t> I<E<lt>номерE<gt>>] [I<eD2k-ссылка>|I<файл-кол�
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "DESCRIPTION"
 msgstr "ОПИСАНИЕ"
 
 #. type: TP
 #: amule.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
 msgid "B<[ -c> I<E<lt>pathE<gt>>, B<--config-dir>=I<E<lt>pathE<gt>> B<]>"
 msgstr "B<[ -c> I<E<lt>путьE<gt>>, B<--config-dir>=I<E<lt>путьE<gt>> B<]>"
 
 #. type: Plain text
 #: amule.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 msgid "Read config from I<E<lt>pathE<gt>> instead of home"
 msgstr "Прочитать конфигурацию из места, указанного в I<E<lt>путиE<gt>>, вместо домашнего каталога"
 
@@ -134,17 +120,23 @@ msgstr "Сбрасывает конфигурацию в изначальную.
 
 #. type: Plain text
 #: amule.1.in
-msgid "Enable or disable starting aMule on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+#, fuzzy
+#| msgid "Enable or disable starting aMule on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+msgid "Enable or disable starting aMule on user login, then exit.  The OS-specific store is selected automatically: macOS LaunchAgent or XDG I<.desktop> autostart entry."
 msgstr "Включить или отключить запуск aMule при входе пользователя в систему, затем завершить работу. Хранилище, зависящее от ОС, выбирается автоматически: ключ реестра Windows Run, macOS LaunchAgent, запись автозапуска XDG I<.desktop> в Linux."
 
 #. type: Plain text
 #: amule.1.in amuled.1.in amulegui.1.in
-msgid "Enable or disable aMule as the current user's default handler for ed2k:// and magnet: links, then exit.  I<E<lt>valueE<gt>> is B<on> or B<off> for both kinds of link, or B<ed2k:on>, B<ed2k:off>, B<magnet:on> or B<magnet:off> for one of them.  The OS-specific store is selected automatically: Windows registry, macOS LaunchServices, Linux XDG I<mimeapps.list>."
+#, fuzzy
+#| msgid "Enable or disable aMule as the current user's default handler for ed2k:// and magnet: links, then exit.  I<E<lt>valueE<gt>> is B<on> or B<off> for both kinds of link, or B<ed2k:on>, B<ed2k:off>, B<magnet:on> or B<magnet:off> for one of them.  The OS-specific store is selected automatically: Windows registry, macOS LaunchServices, Linux XDG I<mimeapps.list>."
+msgid "Enable or disable aMule as the current user's default handler for ed2k:// and magnet: links, then exit.  I<E<lt>valueE<gt>> is B<on> or B<off> for both kinds of link, or B<ed2k:on>, B<ed2k:off>, B<magnet:on> or B<magnet:off> for one of them.  The OS-specific store is selected automatically: macOS LaunchServices or XDG I<mimeapps.list>."
 msgstr "Включает или отключает aMule как обработчик ссылок ed2k:// и magnet: по умолчанию для текущего пользователя, затем завершает работу. I<E<lt>valueE<gt>> — это B<on> или B<off> для обоих типов ссылок, либо B<ed2k:on>, B<ed2k:off>, B<magnet:on> или B<magnet:off> для одного из них. Хранилище выбирается автоматически в зависимости от ОС: реестр Windows, macOS LaunchServices, Linux XDG I<mimeapps.list>."
 
 #. type: Plain text
 #: amule.1.in amuled.1.in amulegui.1.in
-msgid "Enable or disable aMule as the current user's handler for I<.emulecollection> files, then exit.  The OS-specific store is selected automatically: Windows registry, macOS LaunchServices, Linux XDG I<mimeapps.list>."
+#, fuzzy
+#| msgid "Enable or disable aMule as the current user's handler for I<.emulecollection> files, then exit.  The OS-specific store is selected automatically: Windows registry, macOS LaunchServices, Linux XDG I<mimeapps.list>."
+msgid "Enable or disable aMule as the current user's handler for I<.emulecollection> files, then exit.  The OS-specific store is selected automatically: macOS LaunchServices or XDG I<mimeapps.list>."
 msgstr "Включает или отключает aMule как обработчик файлов I<.emulecollection> для текущего пользователя, затем завершает работу. Хранилище выбирается автоматически в зависимости от ОС: реестр Windows, macOS LaunchServices, Linux XDG I<mimeapps.list>."
 
 #. type: Plain text
@@ -175,8 +167,6 @@ msgstr "Выводит информацию о версии."
 
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 msgid "Prints a short usage description."
 msgstr "Выводит короткую помощь по использованию."
 
@@ -240,7 +230,6 @@ msgstr "Для всех опций, в которых указывается I<E
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
 msgid "FILES"
 msgstr "ФАЙЛЫ"
@@ -252,61 +241,40 @@ msgstr "~/.aMule/*"
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "REPORTING BUGS"
 msgstr "СООБЩЕНИЕ ОБ ОШИБКАХ"
 
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "Please report bugs either on our forum (I<https://github.com/amule-org/amule/discussions>), or in our bugtracker (I<https://github.com/amule-org/amule/issues>).  Please do not report bugs in e-mail, neither to our mailing list nor directly to any team member."
-msgstr "Пожалуйста, сообщайте об ошибках либо на нашем форуме (I<https://github.com/amule-org/amule/discussions>), либо в багтрекере (I<https://github.com/amule-org/amule/issues>). Пожалуйста, не сообщайте об ошбках по электронной почте, по нашим спискам рассылки, или напрямую участникам."
+msgid "Report bugs in this fork at I<https://github.com/tgragnato/amule/issues>."
+msgstr ""
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "COPYRIGHT"
 msgstr "АВТОРСКИЕ ПРАВА"
 
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 msgid "aMule and all of its related utilities are distributed under the GNU General Public License."
 msgstr "aMule и все прилагающиеся инструменты распространяются под Стандартной общественной лицензией GNU (GNU GPL)."
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "SEE ALSO"
 msgstr "СМ. ТАКЖЕ"
 
 #. type: SH
 #: amule.1.in amulecmd.1.in amuled.1.in amulegui.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
 msgid "AUTHOR"
 msgstr "АВТОРЫ"
 
 #. type: Plain text
 #: amule.1.in amulecmd.1.in amuled.1.in ed2k.1.in
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
 msgid "This manpage was written by Vollstrecker E<lt>amule@vollstreckernet.deE<gt>"
 msgstr "Автор страницы помощи: Vollstrecker E<lt>amule@vollstreckernet.deE<gt>, перевод: Radist Morse E<lt>radist.morse@gmail.comE<gt>"
 
@@ -323,9 +291,7 @@ msgid "aMuleCmd v@PACKAGE_VERSION@"
 msgstr "aMuleCmd v@PACKAGE_VERSION@"
 
 #. type: TH
-#: amulecmd.1.in ed2k.1.in ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-#: ../../src/utils/cas/docs/cas.1.in ../../src/utils/wxCas/docs/wxcas.1.in
+#: amulecmd.1.in ed2k.1.in
 #, no-wrap
 msgid "aMule utilities"
 msgstr "утилиты aMule"
@@ -922,7 +888,7 @@ msgid "amuled - the all-platform eMule p2p client - daemonized version"
 msgstr "amuled — многоплатформенный P2P-клиент eMule — демонизированная версия"
 
 #. type: Plain text
-#: amuled.1.in ../../src/utils/cas/docs/cas.1.in
+#: amuled.1.in
 msgid "[B<-c> I<E<lt>pathE<gt>>]"
 msgstr "[B<-c> I<E<lt>путьE<gt>>]"
 
@@ -954,7 +920,9 @@ msgstr "Сконфигурировать EC (внешние соединения
 
 #. type: Plain text
 #: amuled.1.in
-msgid "Enable or disable starting amuled on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+#, fuzzy
+#| msgid "Enable or disable starting amuled on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+msgid "Enable or disable starting amuled on user login, then exit.  The OS-specific store is selected automatically: macOS LaunchAgent or XDG I<.desktop> autostart entry."
 msgstr "Включить или отключить запуск amuled при входе пользователя в систему, затем завершить работу. Хранилище, зависящее от ОС, выбирается автоматически: ключ реестра Windows Run, macOS LaunchAgent, запись автозапуска XDG I<.desktop> в Linux."
 
 #. type: TP
@@ -1025,7 +993,9 @@ msgstr "Пропустить диалог соединения."
 
 #. type: Plain text
 #: amulegui.1.in
-msgid "Enable or disable starting amulegui on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+#, fuzzy
+#| msgid "Enable or disable starting amulegui on user login, then exit.  The OS-specific store is selected automatically: Windows registry Run key, macOS LaunchAgent, Linux XDG I<.desktop> autostart entry."
+msgid "Enable or disable starting amulegui on user login, then exit.  The OS-specific store is selected automatically: macOS LaunchAgent or XDG I<.desktop> autostart entry."
 msgstr "Включить или отключить запуск amulegui при входе пользователя в систему, затем завершить работу. Хранилище, зависящее от ОС, выбирается автоматически: ключ реестра Windows Run, macOS LaunchAgent, запись автозапуска XDG I<.desktop> в Linux."
 
 #. type: Plain text
@@ -1160,154 +1130,100 @@ msgstr "B<Порядок параметров важен.> Вы можете у�
 msgid "~/.aMule/ED2KLinks"
 msgstr "~/.aMule/ED2KLinks"
 
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
+#~ msgid "Please report bugs either on our forum (I<https://github.com/amule-org/amule/discussions>), or in our bugtracker (I<https://github.com/amule-org/amule/issues>).  Please do not report bugs in e-mail, neither to our mailing list nor directly to any team member."
+#~ msgstr "Пожалуйста, сообщайте об ошибках либо на нашем форуме (I<https://github.com/amule-org/amule/discussions>), либо в багтрекере (I<https://github.com/amule-org/amule/issues>). Пожалуйста, не сообщайте об ошбках по электронной почте, по нашим спискам рассылки, или напрямую участникам."
+
 #, no-wrap
-msgid "ALC"
-msgstr "ALC"
+#~ msgid "ALC"
+#~ msgstr "ALC"
 
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
 #, no-wrap
-msgid "aLinkCreator"
-msgstr "aLinkCreator"
+#~ msgid "aLinkCreator"
+#~ msgstr "aLinkCreator"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-msgid "aLinkCreator - the aMule eD2k link creator"
-msgstr "aLinkCreator - создатель eD2k-ссылок aMule"
+#~ msgid "aLinkCreator - the aMule eD2k link creator"
+#~ msgstr "aLinkCreator - создатель eD2k-ссылок aMule"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-msgid "B<alc> is a graphical utility to create an eD2k link to any file on your computer."
-msgstr "B<alc> - графическая утилита, которая создает eD2k-ссылку для любого файла на вашем компьютере."
+#~ msgid "B<alc> is a graphical utility to create an eD2k link to any file on your computer."
+#~ msgstr "B<alc> - графическая утилита, которая создает eD2k-ссылку для любого файла на вашем компьютере."
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alc.1.in
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "This app doesn't take any arguments."
-msgstr "Утилита не принимает параметров."
+#~ msgid "This app doesn't take any arguments."
+#~ msgstr "Утилита не принимает параметров."
 
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
 #, no-wrap
-msgid "ALCC"
-msgstr "ALCC"
+#~ msgid "ALCC"
+#~ msgstr "ALCC"
 
-#. type: TH
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
 #, no-wrap
-msgid "aMule eD2k links calculator"
-msgstr "aMule калькулятор eD2k-ссылок"
+#~ msgid "aMule eD2k links calculator"
+#~ msgstr "aMule калькулятор eD2k-ссылок"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "alcc - text based eD2k links calculator for aMule"
-msgstr "alcc - текстовый калькулятор eD2k-ссылок для aMule"
+#~ msgid "alcc - text based eD2k links calculator for aMule"
+#~ msgstr "alcc - текстовый калькулятор eD2k-ссылок для aMule"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "I<E<lt>inputfiles_listE<gt>>"
-msgstr "I<E<lt>список_файловE<gt>>"
+#~ msgid "I<E<lt>inputfiles_listE<gt>>"
+#~ msgstr "I<E<lt>список_файловE<gt>>"
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "Compute the eD2k links of all the input files given in the I<E<lt>inputfiles_listE<gt>> (There can be one or more files)."
-msgstr "Вычисляет eD2k-ссылки для всех файлов указанных в I<E<lt>списке_файловE<gt>> (Может быть один или более файлов)."
+#~ msgid "Compute the eD2k links of all the input files given in the I<E<lt>inputfiles_listE<gt>> (There can be one or more files)."
+#~ msgstr "Вычисляет eD2k-ссылки для всех файлов указанных в I<E<lt>списке_файловE<gt>> (Может быть один или более файлов)."
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "Compute and add part hashes to the computed eD2k links."
-msgstr "Вычисляет и добавляет частичные хэши к вычисленным eD2k-ссылкам."
+#~ msgid "Compute and add part hashes to the computed eD2k links."
+#~ msgstr "Вычисляет и добавляет частичные хэши к вычисленным eD2k-ссылкам."
 
-#. type: Plain text
-#: ../../src/utils/aLinkCreator/docs/alcc.1.in
-msgid "Be verbose - show also calculation steps."
-msgstr "Показать подробности - показывает также шаги вычислений."
+#~ msgid "Be verbose - show also calculation steps."
+#~ msgstr "Показать подробности - показывает также шаги вычислений."
 
-#. type: TH
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
-msgid "CAS"
-msgstr "CAS"
+#~ msgid "CAS"
+#~ msgstr "CAS"
 
-#. type: TH
-#: ../../src/utils/cas/docs/cas.1.in
 #, no-wrap
-msgid "cas v0.8"
-msgstr "cas v0.8"
+#~ msgid "cas v0.8"
+#~ msgstr "cas v0.8"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "cas - c aMule statistics"
-msgstr "cas - c-статистика aMule"
+#~ msgid "cas - c aMule statistics"
+#~ msgstr "cas - c-статистика aMule"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "B<cas> is a program for displaying the contents of your aMule online signature file to console (in a human readable form). For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
-msgstr "B<cas> - программа для отображения содержимого файла вашей онлайн-подписи aMule на консоль (в читаемой форме). Чтобы это работало, вы должны включить опцию \"Онлайн подпись\" в настройках aMule."
+#~ msgid "B<cas> is a program for displaying the contents of your aMule online signature file to console (in a human readable form). For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
+#~ msgstr "B<cas> - программа для отображения содержимого файла вашей онлайн-подписи aMule на консоль (в читаемой форме). Чтобы это работало, вы должны включить опцию \"Онлайн подпись\" в настройках aMule."
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "Writes the online signature picture.  The long form B<--picture> accepts an optional I<=E<lt>PATHE<gt>> to specify the output location; the short forms B<-o> / B<-P> do not (B<-P> requires an immediately following I<E<lt>PATHE<gt>> argument, and B<-o> is a no-argument switch).  Requires GD support compiled in (I<__GD__>); this option is silently ignored otherwise."
-msgstr "Записывает изображение онлайн-подписи. Длинная форма B<--picture> принимает необязательный I<=E<lt>ПУТЬE<gt>> для указания места вывода; короткие формы B<-o> / B<-P> не принимают (B<-P> требует следующий за ним аргумент I<E<lt>ПУТЬE<gt>>, а B<-o> является ключом без аргументов). Требует поддержки GD, скомпилированной в (I<__GD__>); в противном случае этот параметр молча игнорируется."
+#~ msgid "Writes the online signature picture.  The long form B<--picture> accepts an optional I<=E<lt>PATHE<gt>> to specify the output location; the short forms B<-o> / B<-P> do not (B<-P> requires an immediately following I<E<lt>PATHE<gt>> argument, and B<-o> is a no-argument switch).  Requires GD support compiled in (I<__GD__>); this option is silently ignored otherwise."
+#~ msgstr "Записывает изображение онлайн-подписи. Длинная форма B<--picture> принимает необязательный I<=E<lt>ПУТЬE<gt>> для указания места вывода; короткие формы B<-o> / B<-P> не принимают (B<-P> требует следующий за ним аргумент I<E<lt>ПУТЬE<gt>>, а B<-o> является ключом без аргументов). Требует поддержки GD, скомпилированной в (I<__GD__>); в противном случае этот параметр молча игнорируется."
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "HTML page with stats and picture.  The long form B<--html> accepts an optional I<=E<lt>PATHE<gt>> to specify the output location; the short forms B<-p> / B<-H> do not (B<-H> requires an immediately following I<E<lt>PATHE<gt>> argument, and B<-p> is a no-argument switch)."
-msgstr "HTML-страница со статистикой и изображением. Длинная форма B<--html> принимает необязательный I<=E<lt>ПУТЬE<gt>> для указания места вывода; короткие формы B<-p> / B<-H> не принимают (B<-H> требует следующий за ним аргумент I<E<lt>ПУТЬE<gt>>, а B<-p> является ключом без аргументов)."
+#~ msgid "HTML page with stats and picture.  The long form B<--html> accepts an optional I<=E<lt>PATHE<gt>> to specify the output location; the short forms B<-p> / B<-H> do not (B<-H> requires an immediately following I<E<lt>PATHE<gt>> argument, and B<-p> is a no-argument switch)."
+#~ msgstr "HTML-страница со статистикой и изображением. Длинная форма B<--html> принимает необязательный I<=E<lt>ПУТЬE<gt>> для указания места вывода; короткие формы B<-p> / B<-H> не принимают (B<-H> требует следующий за ним аргумент I<E<lt>ПУТЬE<gt>>, а B<-p> является ключом без аргументов)."
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "Without any options, it prints online signature data to stdout."
-msgstr "Без опций программа выведет данные о подписи в стандартный вывод."
+#~ msgid "Without any options, it prints online signature data to stdout."
+#~ msgstr "Без опций программа выведет данные о подписи в стандартный вывод."
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "B<cas> was written by Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
-msgstr "B<cas> был написан Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
+#~ msgid "B<cas> was written by Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
+#~ msgstr "B<cas> был написан Pedro de Oliveira E<lt>falso@rdk.homeip.netE<gt>"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "~/.aMule/casrc"
-msgstr "~/.aMule/casrc"
+#~ msgid "~/.aMule/casrc"
+#~ msgstr "~/.aMule/casrc"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "aMule-online-sign.png (or .jpg, when B<-o> / B<--picture> is used and GD is available)"
-msgstr "aMule-online-sign.png (или .jpg, если используется B<-o> / B<--picture> и доступна GD)"
+#~ msgid "aMule-online-sign.png (or .jpg, when B<-o> / B<--picture> is used and GD is available)"
+#~ msgstr "aMule-online-sign.png (или .jpg, если используется B<-o> / B<--picture> и доступна GD)"
 
-#. type: Plain text
-#: ../../src/utils/cas/docs/cas.1.in
-msgid "aMule-online-sign.html (when B<-p> / B<--html> is used)"
-msgstr "aMule-online-sign.html (если используется B<-p> / B<--html>)"
+#~ msgid "aMule-online-sign.html (when B<-p> / B<--html> is used)"
+#~ msgstr "aMule-online-sign.html (если используется B<-p> / B<--html>)"
 
-#. type: TH
-#: ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
-msgid "WXCAS"
-msgstr "WXCAS"
+#~ msgid "WXCAS"
+#~ msgstr "WXCAS"
 
-#. type: TH
-#: ../../src/utils/wxCas/docs/wxcas.1.in
 #, no-wrap
-msgid "wxCas"
-msgstr "wxCas"
+#~ msgid "wxCas"
+#~ msgstr "wxCas"
 
-#. type: Plain text
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "wxcas - wx c aMule statistics"
-msgstr "wxcas - wx c-статистика aMule"
+#~ msgid "wxcas - wx c aMule statistics"
+#~ msgstr "wxcas - wx c-статистика aMule"
 
-#. type: Plain text
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "B<wxcas> is a program for displaying the contents of your online signature file in a nice wx Window on your Desktop.  For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
-msgstr "B<wxcas> - программа для отображения содержимого файла вашей онлайн-подписи aMule в приятном wx Window окне на вашем рабочем столе. Чтобы это работало, вы должны включить опцию \"Онлайн подпись\" в настройках aMule."
+#~ msgid "B<wxcas> is a program for displaying the contents of your online signature file in a nice wx Window on your Desktop.  For this to work, you must enable the \"Online Signature\" option in aMule's preferences."
+#~ msgstr "B<wxcas> - программа для отображения содержимого файла вашей онлайн-подписи aMule в приятном wx Window окне на вашем рабочем столе. Чтобы это работало, вы должны включить опцию \"Онлайн подпись\" в настройках aMule."
 
-#. type: Plain text
-#: ../../src/utils/wxCas/docs/wxcas.1.in
-msgid "Based on Pedro de Oliveira's B<cas>(1).  B<wxcas> was written by ThePolish E<lt>thepolish@vipmail.ruE<gt>"
-msgstr "Основана на программе B<cas>(1) написанной Pedro de Oliveira. B<wxcas> была написана ThePolish E<lt>thepolish@vipmail.ruE<gt>"
+#~ msgid "Based on Pedro de Oliveira's B<cas>(1).  B<wxcas> was written by ThePolish E<lt>thepolish@vipmail.ruE<gt>"
+#~ msgstr "Основана на программе B<cas>(1) написанной Pedro de Oliveira. B<wxcas> была написана ThePolish E<lt>thepolish@vipmail.ruE<gt>"
 
 #~ msgid "[B<-w> I<E<lt>pathE<gt>>]"
 #~ msgstr "[B<-w> I<E<lt>путьE<gt>>]"
