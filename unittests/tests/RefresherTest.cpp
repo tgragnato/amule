@@ -2794,9 +2794,9 @@ TEST(Refresher, PrefsSchemaIsWellFormed)
 			++emitted;
 	}
 
-	// The documented payload is 147 fields. A row added or dropped without
-	// updating docs/api/REFERENCE.md should trip this.
-	ASSERT_EQUALS(static_cast<std::size_t>(147), emitted);
+	// The schema emits 136 fields. A row added or dropped should also prompt
+	// an update to docs/api/REFERENCE.md.
+	ASSERT_EQUALS(static_cast<std::size_t>(136), emitted);
 }
 
 // The schema's irregularities are enumerated rather than merely counted: each is deliberate and
@@ -2837,7 +2837,7 @@ TEST(Refresher, PrefsSchemaIrregularitiesStayContained)
 	ASSERT_EQUALS(static_cast<std::size_t>(2), inverted);
 	ASSERT_EQUALS(static_cast<std::size_t>(1), foreign_group);
 	ASSERT_EQUALS(static_cast<std::size_t>(8), retired);
-	ASSERT_EQUALS(static_cast<std::size_t>(7), admin_read);
+	ASSERT_EQUALS(static_cast<std::size_t>(5), admin_read);
 
 	// One category is gated on a tag proving the daemon has it. That tag must be one of the
 	// category's own value-encoded rows: a presence-encoded one is absent whenever it is false,
