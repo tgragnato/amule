@@ -600,7 +600,6 @@ The `update` object:
 
 | Field | Meaning |
 | --- | --- |
-| `check_enabled` | `true` only when the daemon can check **and** is configured to: built with `ENABLE_VERSION_CHECK` **and** its `NewVersionCheck` preference on. `false` for OS-package builds, the preference off, or a pre-3.1 daemon. When `false`, a client should show nothing. |
 | `checked` | `true` once the daemon has completed at least one check this session (so `latest_version` is known). The daemon checks at startup; use `POST /api/v1/version/check` to trigger a fresh one. |
 | `latest_version` | Latest release string (e.g. `"3.0.1"`); `null` when not yet checked or unavailable. |
 | `available` | `true` when a newer release exists, `false` when up to date, `null` when unknown (not yet checked or disabled). |

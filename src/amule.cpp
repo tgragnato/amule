@@ -1165,17 +1165,6 @@ bool CamuleApp::OnInit()
 		downloadqueue->LoadSourceSeeds();
 	}
 
-	// Fire the deferred startup HTTP downloads now that the heavy local
-	// I/O is done -- see the comment in OnInit() further up.
-#ifdef ENABLE_VERSION_CHECK
-	// Both the daemon and the monolithic app run the core version check: it updates the
-	// internal state relayed over EC and, on the monolithic, drives the GUI popup. amulegui
-	// is not a CamuleApp and runs its own CVersionCheck. The About dialog's "Check for
-	// updates" button stays on CVersionCheck.
-	if (thePrefs::GetCheckNewVersion()) {
-		StartVersionCheck();
-	}
-#endif // ENABLE_VERSION_CHECK
 	if (thePrefs::GetNetworkED2K() && thePrefs::AutoServerlist()) {
 		// With an empty list, the manual completion path connects once the update ends.
 		serverlist->UpdateServerMetFromURL(wxEmptyString, false, serverlist->GetServerCount() != 0);
@@ -2399,21 +2388,6 @@ void CamuleApp::OnCoreTimer(CTimerEvent &WXUNUSED(evt))
 			serverconnect->CheckForTimeout();
 		}
 		listensocket->UpdateConnectionsStatus();
-
-#ifdef ENABLE_VERSION_CHECK
-		// Periodic re-check: once per day, so a long-running amuled or monolithic amule
-		// keeps its version state fresh instead of only checking at startup. Fires
-		// immediately the first time the preference is enabled at runtime.
-		// StartVersionCheck() self-stamps and skips the fetch within its own cooldown, so
-		// re-entry here is harmless.
-		if (thePrefs::GetCheckNewVersion()) {
-			const time_t nowSec = time(nullptr);
-			if (m_versionCheckLastAttempt == 0 ||
-				nowSec - m_versionCheckLastAttempt >= 24 * 60 * 60) {
-				StartVersionCheck();
-			}
-		}
-#endif // ENABLE_VERSION_CHECK
 	}
 
 	if (msCur - msPrev5 > 5000) { // every 5 seconds
@@ -3187,11 +3161,6 @@ void CamuleApp::OnFinishedHTTPDownload(CMuleInternalEvent &event)
 	case HTTP_ServerMetAuto:
 		serverlist->AutoDownloadFinished(event.GetExtraInt64());
 		break;
-#ifdef ENABLE_VERSION_CHECK
-	case HTTP_VersionCheck:
-		CheckNewVersion(event.GetExtraInt64());
-		break;
-#endif
 	case HTTP_NodesDat:
 		if (event.GetExtraInt64() == HTTP_Success) {
 
@@ -3220,111 +3189,6 @@ void CamuleApp::OnFinishedHTTPDownload(CMuleInternalEvent &event)
 		break;
 	}
 }
-
-#ifdef ENABLE_VERSION_CHECK
-bool CamuleApp::StartVersionCheck()
-{
-	// Throttle against GitHub's unauthenticated rate limit (60 req/hr): skip triggers
-	// arriving within the cooldown of the last attempt. The startup call is the first
-	// attempt (m_versionCheckLastAttempt == 0) so it always runs.
-	const time_t kMinInterval = 60; // seconds
-	const time_t now = time(nullptr);
-	if (m_versionCheckLastAttempt != 0 && now - m_versionCheckLastAttempt < kMinInterval) {
-		return false;
-	}
-	m_versionCheckLastAttempt = now;
-
-	// The GitHub Releases "latest" endpoint returns JSON describing the most recent
-	// non-prerelease, non-draft Release. CheckNewVersion() parses the tag_name on
-	// completion. Fire-and-forget through the download thread so no dialog pops up. Reused
-	// by OnInit and the EC_OP_VERSION_CHECK trigger.
-	CHTTPDownloadThread *version_check =
-		new CHTTPDownloadThread("https://api.github.com/repos/amule-org/amule/releases/latest",
-			thePrefs::GetConfigDir() + "last_version_check",
-			thePrefs::GetConfigDir() + "last_version",
-			HTTP_VersionCheck,
-			false,
-			false);
-	version_check->Create();
-	version_check->Run();
-	return true;
-}
-
-void CamuleApp::CheckNewVersion(uint32 result)
-{
-	if (result == HTTP_Success) {
-		wxString filename = thePrefs::GetConfigDir() + wxT("last_version_check");
-		wxTextFile file;
-
-		if (!file.Open(filename)) {
-			AddLogLineC(_("Failed to open the downloaded version check file"));
-			return;
-		} else if (!file.GetLineCount()) {
-			AddLogLineC(_("Corrupted version check file"));
-		} else {
-			// The downloaded file is the GitHub Releases /latest JSON response. Concatenate
-			// all lines so the regex below matches across the pretty-printed payload.
-			wxString jsonContent;
-			for (size_t i = 0; i < file.GetLineCount(); ++i) {
-				jsonContent += file.GetLine(i);
-			}
-
-			// Shared parse + compare (OtherFunctions.cpp: CompareLatestReleaseVersion) -- the
-			// same logic the GUI check (CVersionCheck) and amuleapi use. Folds the former
-			// regex/strip/tokenize block into one call; the ParseError branch covers every
-			// "corrupt input" case the inline code returned on (bad regex, empty tag,
-			// non-numeric component).
-			const CVersionCompareResult vc = CompareLatestReleaseVersion(jsonContent);
-			if (vc.state == CVersionCompareResult::ParseError) {
-				AddLogLineC(_("Corrupted version check file"));
-				file.Close();
-				wxRemoveFile(filename);
-				return;
-			}
-
-			// Persist the outcome so it can be relayed over EC to amuleapi (the /version
-			// "update" object) and read by the UIs. Set on any successful parse (up-to-date or
-			// outdated).
-			m_versionCheckLatest = vc.latest;
-			m_versionCheckOutdated = (vc.state == CVersionCompareResult::Outdated);
-			m_versionCheckDone = true;
-			m_versionCheckTimestamp = time(nullptr);
-
-			// Drive the monolithic GUI's "new version" popup from the shared engine (no-op on
-			// the daemon; amulegui runs its own check). This is why the monolithic no longer
-			// needs a separate CVersionCheck.
-			Notify_VersionCheckResult(m_versionCheckLatest, m_versionCheckOutdated);
-
-			AddDebugLogLineN(logGeneral,
-				wxString("Running: ") + VERSION + ", Version check: " + vc.latest);
-
-			if (vc.state == CVersionCompareResult::Outdated) {
-				AddLogLineC(_("You are using an outdated version of aMule!"));
-				// cppcheck-suppress zerodiv
-				AddLogLineN(CFormat(_("Your aMule version is %i.%i.%i and the latest version "
-						      "is %li.%li.%li")) %
-					    VERSION_MJR % VERSION_MIN % VERSION_UPDATE % vc.major % vc.minor %
-					    vc.update);
-				AddLogLineN(_("The latest version can always be found at "
-					      "https://github.com/amule-org/amule/releases/latest"));
-#ifdef AMULE_DAEMON
-				AddLogLineCS(CFormat(_("WARNING: Your aMuled version is outdated: %i.%i.%i < "
-						       "%li.%li.%li")) %
-					     VERSION_MJR % VERSION_MIN % VERSION_UPDATE % vc.major %
-					     vc.minor % vc.update);
-#endif
-			} else {
-				AddLogLineN(_("Your copy of aMule is up to date."));
-			}
-		}
-
-		file.Close();
-		wxRemoveFile(filename);
-	} else {
-		AddLogLineC(_("Failed to download the version check file"));
-	}
-}
-#endif // ENABLE_VERSION_CHECK
 
 bool CamuleApp::IsConnected() const
 {

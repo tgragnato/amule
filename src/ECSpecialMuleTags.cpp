@@ -26,7 +26,7 @@
 #include <ec/cpp/ECTag.h>         // Needed for CECTag
 #include <ec/cpp/ECSpecialTags.h> // Needed for special EC tag creator classes
 
-#include "config.h" // Needed for ENABLE_VERSION_CHECK
+#include "config.h"
 #include "Logger.h" // for AddLogLineC on the refusal paths
 #include "Preferences.h"
 #include "amule.h"
@@ -225,11 +225,7 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(
 		// old daemon predating the tag (absent). Distinct from the CHECK_NEW_VERSION
 		// PREFERENCE above: update checking is active only when available AND the pref is
 		// set.
-#ifdef ENABLE_VERSION_CHECK
-		const bool versionCheckAvailable = true;
-#else
 		const bool versionCheckAvailable = false;
-#endif
 		user_prefs.AddTag(CECTag(EC_TAG_GENERAL_VERSION_CHECK_AVAILABLE, versionCheckAvailable));
 		const bool upnpAvailable = false;
 		user_prefs.AddTag(CECTag(EC_TAG_GENERAL_UPNP_AVAILABLE, upnpAvailable));

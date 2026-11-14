@@ -1523,18 +1523,6 @@ void CPreferences::BuildItemList(const wxString &appdir)
 	NewCfgItem(IDC_EXCLUDE_SHARE_REGEX,
 		(new Cfg_Bool("/eMule/ExcludeSharePatternsUseRegex", s_ExcludeSharePatternsUseRegex, false)));
 
-#if defined(ENABLE_VERSION_CHECK) || defined(CLIENT_GUI)
-	/**
-	 * Version check. Registered when the feature is compiled in (-DENABLE_VERSION_CHECK,
-	 * ON by default; OFF for OS-package builds where the distro's package manager owns
-	 * updates), OR in the remote GUI (CLIENT_GUI) regardless of its own build -- there
-	 * the checkbox edits the *connected daemon's* preference, so it must stay wired even
-	 * when amulegui itself was built without the feature. PrefsUnifiedDlg hides the
-	 * checkbox when the daemon cannot check. Defaults to on; the user can turn it off.
-	 */
-	NewCfgItem(IDC_NEWVERSION, (new Cfg_Bool("/eMule/NewVersionCheck", s_NewVersionCheck, true)));
-#endif // ENABLE_VERSION_CHECK || CLIENT_GUI
-
 	/**
 	 * Media metadata extraction (issue #140). On by default (issue #1080).
 	 *

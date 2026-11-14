@@ -452,26 +452,12 @@ PrefsUnifiedDlg::PrefsUnifiedDlg(wxWindow *parent)
 			FindWindow(IDC_PREVENT_SLEEP)->Hide();
 #endif
 
-// Adjust visibility before measuring the page contents.
-#if defined(CLIENT_GUI)
-			// Remote GUI: this checkbox toggles the *daemon's* version-check preference, so
-			// its visibility follows the connected daemon's capability, NOT amulegui's own
-			// build. The capability arrives via the EC tag on prefs-apply: a 3.1+ daemon
-			// built without ENABLE_VERSION_CHECK reports false (hide); a pre-3.1 daemon omits
-			// the tag and is treated as capable (show), since it still supports the
-			// preference.
-			if (!thePrefs::GetVersionCheckAvailable()) {
-				if (wxWindow *vc = FindWindow(IDC_NEWVERSION)) {
-					vc->Hide();
-				}
-			}
-#elif !defined(ENABLE_VERSION_CHECK)
 			// Monolithic built without the in-app check (OS-package build):
 			// hide the now-dead "Check for new version at startup" checkbox.
 			if (wxWindow *vc = FindWindow(IDC_NEWVERSION)) {
 				vc->Hide();
 			}
-#endif
+
 			CastChild(IDC_PREVIEW_NOTE, wxStaticText)
 				->SetLabel(_("The following variables will be substituted:\n    %PARTFILE - "
 					     "full path to the file\n    %PARTNAME - file name only"));

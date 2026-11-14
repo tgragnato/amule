@@ -1004,10 +1004,6 @@ struct PreferencesSnapshot
 	std::string user_hash;
 	std::string daemon_host_name;
 	bool version_check_enabled = false;
-	// Capability: the connected daemon is built with ENABLE_VERSION_CHECK (emits
-	// EC_TAG_GENERAL_VERSION_CHECK_AVAILABLE). False for OS-package or pre-3.1 daemons;
-	// combined with version_check_enabled by /version's "update".
-	bool version_check_available = false;
 
 	// [Connection]
 	std::uint32_t max_upload_kibibytes_per_second = 0;

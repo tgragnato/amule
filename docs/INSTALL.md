@@ -152,7 +152,6 @@ Common `-D` options (`YES` / `NO` unless noted otherwise):
 | `TRANSLATED_MANPAGES`    | YES     | render and install translated manpages with `po4a` at build time. Needs `ENABLE_NLS`; skipped with a notice when `po4a` is not found |
 | `ENABLE_CCACHE`          | AUTO    | use ccache as compiler launcher when found (`AUTO`/`ON`/`OFF`); set `OFF` for distro builds that manage ccache themselves, `ON` to hard-fail if ccache is missing |
 | `ENABLE_MEDIA_PROBE`     | ON      | build the `amule-media-probe` helper (own container parsers, no dependencies), installed to `libexec/amule` (`bin` on Windows); `OFF` omits media extraction |
-| `ENABLE_VERSION_CHECK`   | ON      | compile in the in-app new-version check (startup notification, the "Check for new version at startup" preference, and the About dialog's "Check for updates" button). Packagers shipping aMule via an OS package manager want `OFF`, so nothing contacts GitHub and the distro's package manager owns updates |
 | `USE_SYSTEM_PICOJSON`    | OFF     | use a system-installed `picojson.h` instead of the bundled copy           |
 | `DOWNLOAD_AND_BUILD_DEPS` | OFF    | download and build missing dependencies. Needs Git and CMake 3.14       |
 

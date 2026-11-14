@@ -10,12 +10,6 @@
 /* Define this to the include prefix of crypto++ */
 #cmakedefine CRYPTOPP_INCLUDE_PREFIX ${CRYPTOPP_INCLUDE_PREFIX}
 
-/* Master switch for the in-app new-version check (startup notification, the
-   "check at startup" preference, and the About "Check for updates" button).
-   When undefined the whole feature is compiled out. Controlled at configure
-   time by -DENABLE_VERSION_CHECK (ON by default; OFF for OS-package builds). */
-#cmakedefine ENABLE_VERSION_CHECK
-
 /* Define to 1  if translation of program messages to the user's
    native language is requested. */
 #cmakedefine ENABLE_NLS 1

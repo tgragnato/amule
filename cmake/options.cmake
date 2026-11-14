@@ -262,15 +262,6 @@ option (ENABLE_IPV6 "enable experimental native IPv6 TCP admission (IPv6 identit
 # setting. Needs ENABLE_UTP.
 option (ENABLE_NATT_SERVER_COORDINATION "enable experimental server-coordinated NAT traversal (needs ENABLE_UTP)" OFF)
 
-# Master switch for the in-app "check for a new aMule version" feature: the
-# startup notification, the "Check for new version at startup" preference, and
-# the About dialog's "Check for updates" button. When OFF the whole feature
-# (including the CVersionCheck HTTP code) is compiled out, so nothing contacts
-# GitHub and no download links are shown. Packagers shipping aMule via an OS
-# package manager want OFF, so the distro's package manager owns updates.
-# Standalone / portable / AppImage builds and Windows/macOS want ON.
-option (ENABLE_VERSION_CHECK "compile in the in-app new-version check (startup notification + About 'Check for updates'); OFF for OS-package builds" ON)
-
 # Master switch for the local Kad node-protection heuristics: the adaptive
 # request-timeout estimate (CFastKad) and the Kad identity protections
 # (CSafeKad).

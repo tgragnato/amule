@@ -104,7 +104,6 @@ if (BUILD_MONOLITHIC OR BUILD_REMOTEGUI)
 		AppImageIntegration.cpp
 		amuleDlg.cpp
 		AboutDialog.cpp
-		VersionCheck.cpp
 		BrowseListModel.cpp
 		CatDialog.cpp
 		ChatSelector.cpp

@@ -1454,20 +1454,6 @@ static CECPacket *Get_EC_Response_StatRequest(const CECPacket *request, CLoggerA
 		response->AddTag(CECTag(EC_TAG_STATS_TEMP_FREE_SPACE, (uint64)theStats::GetTempFreeSpace()));
 		response->AddTag(
 			CECTag(EC_TAG_STATS_INCOMING_FREE_SPACE, (uint64)theStats::GetIncomingFreeSpace()));
-#ifdef ENABLE_VERSION_CHECK
-		// Version-check result, relayed for amuleapi's /version "update" object. Present
-		// only once a check has completed. OUTDATED is an empty marker tag, present only
-		// when a newer release exists.
-		if (theApp->IsVersionCheckDone()) {
-			response->AddTag(
-				CECTag(EC_TAG_GENERAL_VERSION_CHECK_LATEST, theApp->GetVersionCheckLatest()));
-			response->AddTag(CECTag(EC_TAG_GENERAL_VERSION_CHECK_TIMESTAMP,
-				(uint64)theApp->GetVersionCheckTimestamp()));
-			if (theApp->IsVersionCheckOutdated()) {
-				response->AddTag(CECEmptyTag(EC_TAG_GENERAL_VERSION_CHECK_OUTDATED));
-			}
-		}
-#endif
 	/* fall through */
 	case EC_DETAIL_WEB:
 	case EC_DETAIL_CMD:
@@ -3749,19 +3735,9 @@ CECPacket *CECServerSocket::ProcessRequest2(const CECPacket *request)
 		// Fire-and-forget: StartVersionCheck() kicks off the async fetch and the result is
 		// relayed later via the stats response. EC_OP_NOOP = accepted; EC_OP_FAILED =
 		// throttled or compiled out.
-#ifdef ENABLE_VERSION_CHECK
-		if (theApp->StartVersionCheck()) {
-			response = new CECPacket(EC_OP_NOOP);
-		} else {
-			response = new CECPacket(EC_OP_FAILED);
-			response->AddTag(CECTag(
-				EC_TAG_STRING, wxTRANSLATE("Version check throttled; try again shortly.")));
-		}
-#else
 		response = new CECPacket(EC_OP_FAILED);
 		response->AddTag(
 			CECTag(EC_TAG_STRING, wxTRANSLATE("Version check is not available on this daemon.")));
-#endif
 		break;
 	case EC_OP_GET_CONNSTATE:
 		response = new CECPacket(EC_OP_MISC_DATA);

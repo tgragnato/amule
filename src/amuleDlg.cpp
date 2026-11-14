@@ -271,10 +271,6 @@ CamuleDlg::CamuleDlg(wxWindow *pParent, const wxString &title, wxPoint where, wx
 	AddLogLineN(wxString(" - ") +
 		    wxString(CFormat(_("This is aMule %s based on eMule.")) % GetMuleVersion()));
 	AddLogLineN(wxString("   ") + wxString(CFormat(_("Running on %s")) % wxGetOsDescription()));
-#ifdef ENABLE_VERSION_CHECK
-	AddLogLineN(" - " + wxString(_("Visit https://github.com/amule-org/amule/releases/latest to check if "
-				       "a new version is available.")));
-#endif
 	AddLogLineN("");
 
 	m_GeoIPavailable = false;
@@ -343,13 +339,6 @@ CamuleDlg::CamuleDlg(wxWindow *pParent, const wxString &title, wxPoint where, wx
 	// raise it over the splash that was explaining the wait. amulegui has no such wait.
 #ifdef CLIENT_GUI
 	ShowStartupWindow();
-#endif
-
-#if defined(ENABLE_VERSION_CHECK) && defined(CLIENT_GUI)
-	// amulegui only: defer the "is a newer aMule available?" check until the event loop is
-	// running, past the heavy startup I/O. The monolithic app drives this from the shared core
-	// engine instead, so there is a single fetch that also feeds the EC version state.
-	CallAfter(&CamuleDlg::StartupVersionCheck);
 #endif
 
 	// If we are set up to run without a visible window (hide-to-tray on close, or start
@@ -941,9 +930,6 @@ void CamuleDlg::OnImportButton(wxCommandEvent &WXUNUSED(ev))
 #endif
 }
 
-// Always compiled (independent of ENABLE_VERSION_CHECK) so the shared MuleNotify handler
-// in GuiEvents.cpp links in an OS-package build with the check compiled out; it is simply
-// never invoked there.
 void CamuleDlg::ShowVersionAvailable(const wxString &latest)
 {
 	if (!m_is_safe_state || latest.IsEmpty() || m_versionPopupShown) {
@@ -1030,37 +1016,9 @@ void CamuleDlg::ShowVersionAvailable(const wxString &latest)
 	}
 }
 
-#if defined(ENABLE_VERSION_CHECK) && defined(CLIENT_GUI)
-void CamuleDlg::StartupVersionCheck()
-{
-	if (!thePrefs::GetCheckNewVersion()) {
-		return;
-	}
-	if (!m_startupVersionCheck) {
-		m_startupVersionCheck = new CVersionCheck();
-		Bind(wxEVT_VERSION_CHECK_DONE, &CamuleDlg::OnStartupVersionCheckDone, this);
-	}
-	m_lastGuiVersionCheck = time(nullptr);
-	m_startupVersionCheck->Start(this, wxID_ANY);
-}
-
-void CamuleDlg::OnStartupVersionCheckDone(wxCommandEvent &evt)
-{
-	if (evt.GetInt() != CVersionCheck::Outdated || !m_startupVersionCheck) {
-		return;
-	}
-	ShowVersionAvailable(m_startupVersionCheck->LatestVersion());
-}
-#endif // ENABLE_VERSION_CHECK && CLIENT_GUI
-
 CamuleDlg::~CamuleDlg()
 {
 	theApp->amuledlg = NULL;
-
-#if defined(ENABLE_VERSION_CHECK) && defined(CLIENT_GUI)
-	delete m_startupVersionCheck;
-	m_startupVersionCheck = NULL;
-#endif
 
 	AddLogLineN(_("aMule dialog destroyed"));
 }
@@ -1890,18 +1848,6 @@ void CamuleDlg::OnGUITimer(wxTimerEvent &WXUNUSED(evt))
 			m_transferwnd->UpdateCatTabTitles();
 		}
 		m_kademliawnd->UpdateNodeCount(CStatistics::GetKadNodes());
-
-#if defined(ENABLE_VERSION_CHECK) && defined(CLIENT_GUI)
-		// amulegui periodic re-check (daily). amulegui is not a CamuleApp, so it has no core
-		// engine and re-runs its own CVersionCheck. Fires immediately the first time the
-		// preference is enabled at runtime. StartupVersionCheck() is a no-op while a check is
-		// already in flight.
-		if (thePrefs::GetCheckNewVersion() &&
-			(m_lastGuiVersionCheck == 0 ||
-				time(nullptr) - m_lastGuiVersionCheck >= 24 * 60 * 60)) {
-			StartupVersionCheck();
-		}
-#endif
 	}
 
 	if (msCur - msPrev1 > 1000) { // every second

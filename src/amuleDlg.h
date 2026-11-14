@@ -28,7 +28,7 @@
 
 #include "WindowGeometry.h"
 
-#include "config.h" // for ENABLE_VERSION_CHECK (gates the startup version-check members)
+#include "config.h"
 
 #include <wx/archive.h>
 #include <wx/bmpbndl.h>
@@ -342,16 +342,6 @@ private:
 	// The "new version available" popup is shown at most once per session;
 	// the daily periodic re-check must not re-pop within the same run.
 	bool m_versionPopupShown = false;
-
-#if defined(ENABLE_VERSION_CHECK) && defined(CLIENT_GUI)
-	// amulegui-only: it is not a CamuleApp and has no core version-check engine, so the remote
-	// GUI runs its own CVersionCheck. The monolithic app drives the popup from the shared core
-	// engine instead. Owned, created lazily by StartupVersionCheck() when the preference is on.
-	CVersionCheck *m_startupVersionCheck = nullptr;
-	time_t m_lastGuiVersionCheck = 0;
-	void StartupVersionCheck();
-	void OnStartupVersionCheckDone(wxCommandEvent &evt);
-#endif // ENABLE_VERSION_CHECK && CLIENT_GUI
 
 public:
 	// Show the "a new version is available" popup: at most once per session, and never for a

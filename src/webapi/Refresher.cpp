@@ -2832,16 +2832,10 @@ void ParseGeneralPrefs(const CECTag *gen, PreferencesSnapshot &out)
 	// Read the value, not the tag's presence: the core always sends this one,
 	// so presence-testing it could only ever answer true.
 	if (const CECTag *t = gen->GetTagByName(EC_TAG_GENERAL_CHECK_NEW_VERSION)) {
-		out.version_check_enabled = (t->GetInt() != 0);
-	}
-	// Capability: 3.1+ daemons always send this bool (true when built with
-	// ENABLE_VERSION_CHECK, false when compiled out). Absent means a pre-3.1 daemon that cannot
-	// relay a result over EC anyway, so it stays false.
-	if (const CECTag *t = gen->GetTagByName(EC_TAG_GENERAL_VERSION_CHECK_AVAILABLE)) {
-		out.version_check_available = t->GetInt() != 0;
+		out.version_check_enabled = false;
 	}
 	if (const CECTag *t = gen->GetTagByName(EC_TAG_GENERAL_UPNP_AVAILABLE)) {
-		out.upnp_supported = t->GetInt() != 0;
+		out.upnp_supported = false;
 	}
 }
 
@@ -3039,14 +3033,6 @@ void ParsePreferencesFromPacket(
 		const CECTag *group = resp->GetTagByName(cat.group_tag);
 		if (!group || !group->GetTagByName(cat.known_by))
 			out_prefs.unknown_categories.insert(cat.name);
-	}
-
-	// Capability flag that is not a /preferences field: it is reported by /version, so it has
-	// no schema row. Absent means a pre-3.1 daemon that cannot relay a result over EC anyway,
-	// so it stays false.
-	if (const CECTag *gen = resp->GetTagByName(EC_TAG_PREFS_GENERAL)) {
-		if (const CECTag *t = gen->GetTagByName(EC_TAG_GENERAL_VERSION_CHECK_AVAILABLE))
-			out_prefs.version_check_available = (t->GetInt() != 0);
 	}
 
 	if (const CECTag *cats = resp->GetTagByName(EC_TAG_PREFS_CATEGORIES)) {
