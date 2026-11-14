@@ -538,10 +538,7 @@ bool CamuleAppCommon::InitCommon(int argc, wxChar **argv)
 	cmdline.AddSwitch(wxT("r"), wxT("reset-config"), wxT("Resets config to default values."));
 
 #ifdef CLIENT_GUI
-	cmdline.AddSwitch(wxT("s"), wxT("skip"), wxT("Skip connection dialog."));
-#else
-	// Change webserver path. This is also a config option, so this switch will go at some time.
-	cmdline.AddOption("w", "use-amuleweb", "Specify location of amuleweb binary.");
+	cmdline.AddSwitch("s", "skip", "Skip connection dialog.");
 #endif
 	cmdline.AddSwitch("d",
 		"disable-fatal",
@@ -1000,13 +997,7 @@ bool CamuleAppCommon::InitCommon(int argc, wxChar **argv)
 	CPreferences::LoadAllItems(wxConfigBase::Get());
 
 #ifdef CLIENT_GUI
-	m_skipConnectionDialog = cmdline.Found(wxT("skip"));
-#else
-	wxString amulewebPath;
-	if (cmdline.Found(wxT("use-amuleweb"), &amulewebPath)) {
-		thePrefs::SetWSPath(amulewebPath);
-		AddLogLineNS(CFormat(LOG_PRELOCALE("Using amuleweb in '%s'.")) % amulewebPath);
-	}
+	m_skipConnectionDialog = cmdline.Found("skip");
 #endif
 
 	// An autostart entry pointing at a stale path (the AppImage / .app / install dir moved

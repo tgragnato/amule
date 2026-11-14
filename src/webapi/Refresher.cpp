@@ -36,6 +36,7 @@
 #include "State.h"
 
 #include "Constants.h"                            // PS_* / PR_* / US_* / DS_* / OBST_* enums
+#include "SourceRoutePolicy.h"                    // ESourceRoute and the contact-route helpers
 #include "OtherFunctions.h"                       // GetFiletypeByName for the search-result `type`
 #include <common/Path.h>                          // CPath
 #include "ClientList.h"                           // buddyState enum (Disconnected/Connecting/Connected)
@@ -122,30 +123,29 @@ const char *ClientObfuscationName(std::uint8_t code)
 		return "unknown";
 	}
 }
-// Map EC_TAG_CLIENT_FROM (ESourceFrom, Constants.h) to a stable lowercase token,
-// mirroring the GUI's Origin column without leaking the daemon locale.
-std::string SourceOriginName(std::uint32_t from)
+// Map the route nibble of EC_TAG_CLIENT_CONTACT_ROUTE (ESourceRoute, SourceRoutePolicy.h) to a
+// stable lowercase token. Empty when no contact has been attempted, which reads as null.
+std::string ContactRouteName(std::uint8_t packed)
 {
-	switch (from) {
-	case SF_LOCAL_SERVER:
-		return "local_server";
-	case SF_REMOTE_SERVER:
-		return "remote_server";
-	case SF_KADEMLIA:
-		return "kad";
-	case SF_SOURCE_EXCHANGE:
-		return "source_exchange";
-	case SF_PASSIVE:
-		return "passive";
-	case SF_LINK:
-		return "link";
-	case SF_SOURCE_SEEDS:
-		return "source_seeds";
-	case SF_SEARCH_RESULT:
-		return "search_result";
-	default:
-		return "unknown";
+	switch (UnpackContactRoute(packed)) {
+	case EContactRouteReport::Dial:
+		return "dial";
+	case EContactRouteReport::DirectUdpCallback:
+		return "direct_udp_callback";
+	case EContactRouteReport::ServerCallback:
+		return "server_callback";
+	case EContactRouteReport::KadBuddy:
+		return "kad_buddy";
+	case EContactRouteReport::ForeignNatCallback:
+		return "foreign_nat_callback";
+	case EContactRouteReport::ServerHolePunch:
+		return "server_hole_punch";
+	case EContactRouteReport::LugdunumCallback:
+		return "lugdunum_callback";
+	case EContactRouteReport::None:
+		break;
 	}
+	return std::string();
 }
 
 namespace
@@ -1020,6 +1020,23 @@ void MergeClientTag(const CEC_UpDownClient_Tag *c, ClientSnapshot &cs, bool is_n
 		if (c->AssignIfExist(EC_TAG_CLIENT_FROM, v))
 			cs.source_origin = SourceOriginName(v);
 	}
+	{
+		// Absent on a core older than the tag: the guard leaves the mask empty, and the row
+		// then reports the one channel EC_TAG_CLIENT_FROM carries.
+		std::uint32_t v = 0;
+		if (c->AssignIfExist(EC_TAG_CLIENT_FROM_MASK, v))
+			cs.source_origins_mask = v;
+	}
+	{
+		// Absent on a core older than the tag: the guard leaves the defaults.
+		std::uint8_t v = 0;
+		if (c->AssignIfExist(EC_TAG_CLIENT_CONTACT_ROUTE, v)) {
+			cs.contact_route = ContactRouteName(v);
+			cs.route_unproven = ContactRouteIsUnproven(v);
+			cs.route_from_fallback = ContactRouteFromFallback(v);
+			cs.route_ipv6 = ContactRouteOverIPv6(v);
+		}
+	}
 	// PARTFILE_NAME rides inside the client tag only while the peer is
 	// downloading from us; leave the cached value when absent.
 	if (const CECTag *t = c->GetTagByName(EC_TAG_PARTFILE_NAME)) {
@@ -1579,6 +1596,68 @@ void ParseKadFromPacket(const CECPacket *resp, KadSnapshot &out)
 	if (const CECTag *t = resp->GetTagByName(EC_TAG_STATS_BUDDY_PORT)) {
 		out.buddy_port = static_cast<std::uint16_t>(t->GetInt());
 	}
+	if (const CECTag *t = resp->GetTagByName(EC_TAG_STATS_BUDDY_SERVED_LIMIT)) {
+		out.served_limit = static_cast<std::uint32_t>(t->GetInt());
+		out.served_count = static_cast<std::uint32_t>(
+			resp->GetTagByNameSafe(EC_TAG_STATS_BUDDY_SERVED)->GetInt());
+		out.has_served = true;
+	}
+	if (const CECTag *buddy = resp->GetTagByName(EC_TAG_KAD_BUDDY)) {
+		const auto get = [buddy](ec_tagname_t name) -> std::uint64_t {
+			return buddy->GetTagByNameSafe(name)->GetInt();
+		};
+		KadBuddyServingSnapshot &serving = out.buddy_serving;
+		serving.pending_count = get(EC_TAG_KAD_BUDDY_PENDING);
+		serving.served_seconds = get(EC_TAG_KAD_BUDDY_SERVING_SECONDS);
+		serving.requests.received = get(EC_TAG_KAD_BUDDY_SERVING_REQUESTS);
+		serving.requests.offered = get(EC_TAG_KAD_BUDDY_SERVING_OFFERED);
+		serving.requests.refused_firewalled = get(EC_TAG_KAD_BUDDY_SERVING_REFUSED_FIREWALLED);
+		serving.requests.refused_full = get(EC_TAG_KAD_BUDDY_SERVING_REFUSED_FULL);
+		serving.requests.refused_conflict = get(EC_TAG_KAD_BUDDY_SERVING_REFUSED_CONFLICT);
+		serving.requests.rate_limited = get(EC_TAG_KAD_BUDDY_SERVING_RATE_LIMITED);
+		serving.requests.expired = get(EC_TAG_KAD_BUDDY_SERVING_OFFERS_EXPIRED);
+		serving.requests.superseded = get(EC_TAG_KAD_BUDDY_SERVING_OFFERS_SUPERSEDED);
+		serving.requests.duplicate = get(EC_TAG_KAD_BUDDY_SERVING_OFFERS_DUPLICATE);
+		serving.requests.evicted = get(EC_TAG_KAD_BUDDY_SERVING_OFFERS_EVICTED);
+		serving.requests.refused_same_ip = get(EC_TAG_KAD_BUDDY_SERVING_REFUSED_SAME_IP);
+		serving.requests.natt = get(EC_TAG_KAD_BUDDY_SERVING_REQUESTS_NATT);
+		serving.buddies.started = get(EC_TAG_KAD_BUDDY_SERVING_STARTED);
+		serving.buddies.released_extra = get(EC_TAG_KAD_BUDDY_SERVING_RELEASED_EXTRA);
+		serving.buddies.ended = get(EC_TAG_KAD_BUDDY_SERVING_ENDED);
+		serving.buddies.timed_out = get(EC_TAG_KAD_BUDDY_SERVING_TIMED_OUT);
+		serving.callbacks.relayed = get(EC_TAG_KAD_BUDDY_SERVING_CALLBACKS);
+		serving.callbacks.relayed_bytes = get(EC_TAG_KAD_BUDDY_SERVING_CALLBACK_BYTES);
+		serving.callbacks.no_buddy = get(EC_TAG_KAD_BUDDY_SERVING_CALLBACKS_NO_BUDDY);
+		serving.callbacks.mismatched = get(EC_TAG_KAD_BUDDY_SERVING_CALLBACKS_MISMATCHED);
+		serving.callbacks.rate_limited = get(EC_TAG_KAD_BUDDY_SERVING_CALLBACKS_RATE_LIMITED);
+		serving.callbacks.peak_requests_per_minute =
+			get(EC_TAG_KAD_BUDDY_SERVING_CALLBACK_REQUESTS_PEAK);
+		serving.reasks.relayed = get(EC_TAG_KAD_BUDDY_SERVING_REASKS);
+		serving.reasks.relayed_bytes = get(EC_TAG_KAD_BUDDY_SERVING_REASK_BYTES);
+		serving.reasks.no_buddy = get(EC_TAG_KAD_BUDDY_SERVING_REASKS_NO_BUDDY);
+		serving.reasks.mismatched = get(EC_TAG_KAD_BUDDY_SERVING_REASKS_MISMATCHED);
+		serving.reasks.malformed = get(EC_TAG_KAD_BUDDY_SERVING_REASKS_MALFORMED);
+		serving.callbacks.over_budget = get(EC_TAG_KAD_BUDDY_SERVING_CALLBACKS_OVER_BUDGET);
+		serving.reasks.over_budget = get(EC_TAG_KAD_BUDDY_SERVING_REASKS_OVER_BUDGET);
+		serving.peak_relayed_bytes_per_minute = get(EC_TAG_KAD_BUDDY_SERVING_RELAY_BYTES_PEAK);
+		KadBuddyOwnSnapshot &own = out.buddy_own;
+		own.search_count = get(EC_TAG_KAD_BUDDY_OWN_SEARCHES);
+		own.held_search_count = get(EC_TAG_KAD_BUDDY_OWN_SEARCHES_HELD);
+		own.needed_seconds = get(EC_TAG_KAD_BUDDY_OWN_NEEDED_SECONDS);
+		own.missing_seconds = get(EC_TAG_KAD_BUDDY_OWN_MISSING_SECONDS);
+		own.connected_seconds = get(EC_TAG_KAD_BUDDY_OWN_SECONDS);
+		own.requests.sent = get(EC_TAG_KAD_BUDDY_OWN_REQUESTS);
+		own.requests.skipped = get(EC_TAG_KAD_BUDDY_OWN_REQUESTS_SKIPPED);
+		own.requests.offered = get(EC_TAG_KAD_BUDDY_OWN_OFFERS);
+		own.connections.attempted = get(EC_TAG_KAD_BUDDY_OWN_CONNECT_ATTEMPTS);
+		own.connections.failed = get(EC_TAG_KAD_BUDDY_OWN_CONNECT_FAILURES);
+		own.buddies.started = get(EC_TAG_KAD_BUDDY_OWN_CONNECTED);
+		own.buddies.ended = get(EC_TAG_KAD_BUDDY_OWN_ENDED);
+		own.buddies.timed_out = get(EC_TAG_KAD_BUDDY_OWN_TIMED_OUT);
+		own.received_callback_count = get(EC_TAG_KAD_BUDDY_OWN_CALLBACKS);
+		own.received_reask_count = get(EC_TAG_KAD_BUDDY_OWN_REASKS);
+		out.has_buddy_counters = true;
+	}
 }
 
 // --- /logs/amule (incremental, piggybacks on STAT_REQ) -----------------
@@ -1668,8 +1747,8 @@ void MergeServerTag(const CEC_Server_Tag *st, ServerSnapshot &s, bool is_new)
 	if (const CECTag *t = st->GetTagByName(EC_TAG_SERVER_COUNTRY)) {
 		s.country_code = std::string(t->GetStringData().utf8_str());
 	}
-	// IP + port shipping shape varies by EC detail level. FULL/WEB/UPDATE (webserver,
-	// amulecmd) pack them into the OUTER tag as IPv4 data (st->GetIPv4Data()). INC_UPDATE /
+	// IP + port shipping shape varies by EC detail level. FULL/WEB/UPDATE (amulecmd)
+	// pack them into the OUTER tag as IPv4 data (st->GetIPv4Data()). INC_UPDATE /
 	// GET_UPDATE (amulegui, amuleapi) ship them as CHILD tags EC_TAG_SERVER_IP +
 	// EC_TAG_SERVER_PORT; the outer tag carries the ECID instead, so GetIPv4Data() returns
 	// all-zeros and /servers[].address silently degrades to "0.0.0.0:0". Try the child-tag
@@ -2200,8 +2279,7 @@ void ParseStatsTreeFromPacket(const CECPacket *resp, StatsTreeNode &out)
 	if (!resp)
 		return;
 	// amuled emits a single root EC_TAG_STATTREE_NODE whose label is always an unlabeled
-	// container, so it is dropped and its direct children surface at the top level -- what
-	// amuleweb's am_load_stats_tree.php does too.
+	// container, so it is dropped and its direct children surface at the top level.
 	const CECTag *root = resp->GetTagByName(EC_TAG_STATTREE_NODE);
 	if (!root)
 		return;
@@ -2850,6 +2928,12 @@ void ParseConnectionPrefs(const CECTag *conn, PreferencesSnapshot &out)
 	if (const CECTag *t = conn->GetTagByName(EC_TAG_CONN_SLOT_ALLOCATION)) {
 		out.upload_slot_min_kibibytes_per_second = static_cast<std::uint32_t>(t->GetInt());
 	}
+	if (const CECTag *t = conn->GetTagByName(EC_TAG_CONN_DL_CAP)) {
+		out.download_capacity_kibibytes_per_second = static_cast<std::uint32_t>(t->GetInt());
+	}
+	if (const CECTag *t = conn->GetTagByName(EC_TAG_CONN_UL_CAP)) {
+		out.upload_capacity_kibibytes_per_second = static_cast<std::uint32_t>(t->GetInt());
+	}
 	if (const CECTag *t = conn->GetTagByName(EC_TAG_CONN_TCP_PORT)) {
 		out.tcp_port = static_cast<std::uint16_t>(t->GetInt());
 	}
@@ -2933,8 +3017,8 @@ void ParseConnectionPrefs(const CECTag *conn, PreferencesSnapshot &out)
 
 void ApplyPrefFieldFromTag(const PrefField &f, const CECTag *group, PreferencesSnapshot &out)
 {
-	if (!f.member)
-		return; // write-only row: nothing is ever read back
+	if (!f.member || f.access == PrefAccess::Retired)
+		return; // write-only or retired row: nothing is ever read back
 
 	const CECTag *t = group->GetTagByName(f.tag);
 
@@ -3011,6 +3095,8 @@ void ParsePreferencesFromPacket(
 	// A previous connection's value must not imply support on an older daemon.
 	out_prefs.advanced.write_buffer_limit_supported = false;
 	out_prefs.advanced.write_buffer_limit_mebibytes = 0;
+	out_prefs.advanced.kad_max_served_buddies_supported = false;
+	out_prefs.advanced.kad_max_served_buddies = 0;
 	out_prefs.advanced.debug_categories_supported = false;
 	out_prefs.advanced.verbose_logging_logfile_only = false;
 	out_prefs.advanced.debug_categories.clear();

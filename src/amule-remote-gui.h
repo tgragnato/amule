@@ -300,8 +300,6 @@ public:
 		this->m_full_req_cmd = cmd;
 	}
 
-	// Following is basically the same code as in webserver. Eventually it must be the same
-	// class.
 	void DoRequery(int cmd, int tag)
 	{
 		if (this->m_state != IDLE) {
@@ -1192,6 +1190,8 @@ public:
 	uint8 GetBuddyStatus() const { return theStats::GetBuddyStatus(); }
 	uint32 GetBuddyIP() const { return theStats::GetBuddyIP(); }
 	uint32 GetBuddyPort() const { return theStats::GetBuddyPort(); }
+	uint32 GetServedBuddyCount() const { return theStats::GetServedBuddyCount(); }
+	uint32 GetServedBuddyLimit() const { return theStats::GetServedBuddyLimit(); }
 
 	void StartKad();
 	void StopKad();

@@ -154,9 +154,39 @@ CHttpServer::Response MethodNotAllowed(const char *allow, const char *message)
 	return r;
 }
 
-// Pulls the JWT from the Authorization header or the session cookie, verifies it
-// and rejects revoked tokens. The header wins when both are present: an explicit
-// bearer header signals intent over an implicit cookie.
+// Beast preserves the wire-form casing the client sent, so a literal find
+// misses lowercased headers. Walks the map once on a miss.
+std::string FindHeaderCaseInsensitive(
+	const std::map<std::string, std::string> &headers, const std::string &name)
+{
+	auto it = headers.find(name);
+	if (it != headers.end())
+		return it->second;
+	for (const auto &h : headers) {
+		if (h.first.size() == name.size() &&
+			strncasecmp(h.first.c_str(), name.c_str(), name.size()) == 0) {
+			return h.second;
+		}
+	}
+	return std::string();
+}
+
+// Authentication and logout select credentials identically, but apply different
+// revocation rules. A nonempty bearer takes precedence even if verification later
+// fails; an absent or empty bearer falls back to the named session cookie.
+std::string ExtractSessionToken(const CHttpServer::Request &req, const std::string &cookie_name)
+{
+	std::string token =
+		webapi::ExtractBearerToken(FindHeaderCaseInsensitive(req.headers, "Authorization"));
+	if (token.empty()) {
+		token = webapi::ExtractCookieValue(
+			FindHeaderCaseInsensitive(req.headers, "Cookie"), cookie_name);
+	}
+	return token;
+}
+
+// Verifies the token ExtractSessionToken picks and rejects revoked tokens, proxy
+// sessions the proxy no longer names, and sessions older than a password change.
 AuthOutcome AuthenticateRequest(const CHttpServer::Request &req,
 	CJwt &jwt,
 	webapi::CRevocationSet &revocations,
@@ -166,35 +196,7 @@ AuthOutcome AuthenticateRequest(const CHttpServer::Request &req,
 {
 	AuthOutcome out;
 
-	std::string token;
-	auto auth_it = req.headers.find("Authorization");
-	if (auth_it == req.headers.end()) {
-		// Header names are case-insensitive but Beast preserves what the client
-		// sent, so a lowercase `authorization:` slips past the literal find.
-		for (const auto &h : req.headers) {
-			if (h.first.size() == 13 && strncasecmp(h.first.c_str(), "Authorization", 13) == 0) {
-				auth_it = req.headers.find(h.first);
-				break;
-			}
-		}
-	}
-	if (auth_it != req.headers.end()) {
-		token = webapi::ExtractBearerToken(auth_it->second);
-	}
-	if (token.empty()) {
-		auto ck_it = req.headers.find("Cookie");
-		if (ck_it == req.headers.end()) {
-			for (const auto &h : req.headers) {
-				if (h.first.size() == 6 && strncasecmp(h.first.c_str(), "Cookie", 6) == 0) {
-					ck_it = req.headers.find(h.first);
-					break;
-				}
-			}
-		}
-		if (ck_it != req.headers.end()) {
-			token = webapi::ExtractCookieValue(ck_it->second, cookie_name);
-		}
-	}
+	const std::string token = ExtractSessionToken(req, cookie_name);
 	if (token.empty()) {
 		out.rejection = ErrorResponse(401, "unauthorized", "missing bearer token or session cookie");
 		return out;
@@ -363,8 +365,7 @@ std::string SearchLocation(const std::string &base_path, std::uint32_t search_id
 	return base_path + "/api/v1/search/" + std::to_string(search_id);
 }
 
-// Namespaced apart from amuleweb's `amule_token` so the two daemons can
-// coexist behind one host without a Set-Cookie tug-of-war.
+// Namespaced so amuleapi can share a host with another web app without a Set-Cookie tug-of-war.
 const char *const kSessionCookieName = "amuleapi_token";
 
 // Ceiling for one static-asset read: keeps a StaticRoot pointing at /dev/zero
@@ -446,8 +447,7 @@ std::string BuildStaticEtag(const struct stat &st)
 }
 
 // Resolve the default static directory when amuleapi.conf's [Server]/StaticRoot is
-// empty. Mirrors amuleweb's GetTemplateDir (src/webserver/src/WebInterface.cpp):
-// the macOS .app bundle's Resources/ first (so an installed aMule.app surfaces the
+// empty. Tries the macOS .app bundle's Resources/ first (so an installed aMule.app surfaces the
 // bundled frontend without a conf edit), then a copy beside the running binary
 // (the relocatable Linux static tarball), then AMULEAPI_STATIC_DIR, then
 // wxStandardPaths' platform-adjusted resource dir. First existing one wins.
@@ -515,8 +515,7 @@ std::string ResolveDefaultStaticDir()
 	}
 #endif
 
-	// wxStandardPaths fallback, with the same platform adjustments amuleweb
-	// applies for its `webserver/` lookup.
+	// wxStandardPaths fallback, with the platform adjustments for each install layout.
 	wxString dir = wxStandardPaths::Get().GetResourcesDir();
 #if !defined(__WXMAC__)
 	dir = dir.BeforeLast(wxFileName::GetPathSeparator());
@@ -555,23 +554,6 @@ m_authRateLimiter(webapi::CRateLimiter::Config{ config.AuthCfg().token_failure_w
 
 namespace
 {
-
-// Beast preserves the wire-form casing the client sent, so a literal find
-// misses lowercased headers. Walks the map once on a miss.
-std::string FindHeaderCaseInsensitive(
-	const std::map<std::string, std::string> &headers, const std::string &name)
-{
-	auto it = headers.find(name);
-	if (it != headers.end())
-		return it->second;
-	for (const auto &h : headers) {
-		if (h.first.size() == name.size() &&
-			strncasecmp(h.first.c_str(), name.c_str(), name.size()) == 0) {
-			return h.second;
-		}
-	}
-	return std::string();
-}
 
 // Resolve the CORS Origin echo: the verbatim Origin for
 // `Access-Control-Allow-Origin` plus whether the allowlist named it. Empty when
@@ -650,9 +632,8 @@ bool ParseJsonObjectBody(const std::string &body, picojson::value &out, std::str
 
 } // namespace
 
-// Did the caller present credentials at all? Mirrors what Authenticate() accepts,
-// without verifying them: an invalid or expired credential still means the
-// response was computed for a specific caller and must not be shared.
+// Any Authorization header or session cookie counts, verified or not: the response
+// was computed for a specific caller and must not be shared.
 bool RequestCarriesCredentials(const CHttpServer::Request &req, const std::string &cookie_name)
 {
 	if (!FindHeaderCaseInsensitive(req.headers, "Authorization").empty()) {
@@ -2066,33 +2047,7 @@ CHttpServer::Response CApiDispatcher::HandleLogout(const CHttpServer::Request &r
 	// what it asked for has already happened. Otherwise a tab that fires logout twice
 	// sees a 401 and renders a spurious "session expired". Softer than
 	// AuthenticateRequest: reject only bad-sig, expired or missing; revoked is a noop.
-	std::string token;
-	auto auth_it = req.headers.find("Authorization");
-	if (auth_it == req.headers.end()) {
-		for (const auto &h : req.headers) {
-			if (h.first.size() == 13 && strncasecmp(h.first.c_str(), "Authorization", 13) == 0) {
-				auth_it = req.headers.find(h.first);
-				break;
-			}
-		}
-	}
-	if (auth_it != req.headers.end()) {
-		token = webapi::ExtractBearerToken(auth_it->second);
-	}
-	if (token.empty()) {
-		auto ck_it = req.headers.find("Cookie");
-		if (ck_it == req.headers.end()) {
-			for (const auto &h : req.headers) {
-				if (h.first.size() == 6 && strncasecmp(h.first.c_str(), "Cookie", 6) == 0) {
-					ck_it = req.headers.find(h.first);
-					break;
-				}
-			}
-		}
-		if (ck_it != req.headers.end()) {
-			token = webapi::ExtractCookieValue(ck_it->second, kSessionCookieName);
-		}
-	}
+	const std::string token = ExtractSessionToken(req, kSessionCookieName);
 	if (token.empty()) {
 		m_authRateLimiter.NoteFailure(ip);
 		return ErrorResponse(401, "unauthorized", "missing bearer token or session cookie");
@@ -2736,6 +2691,22 @@ void WriteClientBaseFields(CJsonWriter &w, const webapi::ClientSnapshot &c)
 	// both ToJson AND Equal in EventDiff.cpp; a field in one but not the other never
 	// updates.
 	WriteStringOrNull(w, "source_origin", !c.source_origin.empty(), c.source_origin);
+	// Every channel the source was seen on, not just the one its first copy came from. Empty
+	// on a daemon older than the tag, where `source_origin` is all there is.
+	w.Key("source_origins");
+	w.BeginArray();
+	for (const std::string &token : webapi::SourceOriginNames(c.source_origins_mask)) {
+		w.ValueString(token.c_str());
+	}
+	w.EndArray();
+	// null until a contact has been attempted, and on a daemon older than the tag.
+	WriteStringOrNull(w, "contact_route", !c.contact_route.empty(), c.contact_route);
+	w.Key("route_unproven");
+	w.ValueBool(c.route_unproven);
+	w.Key("route_from_fallback");
+	w.ValueBool(c.route_from_fallback);
+	w.Key("route_ipv6");
+	w.ValueBool(c.route_ipv6);
 	// Gated on the flag the refresher sets when the tag actually arrives: emitted
 	// unconditionally, a peer that never reported its part map was indistinguishable
 	// from one reporting zero, and zero is a real answer.
@@ -7131,6 +7102,104 @@ CHttpServer::Response CApiDispatcher::HandleCategories(const CHttpServer::Reques
 	return ListResponse(m_state, "categories", cats, WriteCategoryObject, params, CategoryComparators());
 }
 
+namespace
+{
+
+// Counters since the daemon started; both objects are null from a daemon that does not send them.
+void WriteKadBuddyCounters(CJsonWriter &w, const webapi::KadSnapshot &k)
+{
+	const auto count = [&w](const char *key, std::uint64_t value) {
+		w.Key(key);
+		w.ValueUInt(value);
+	};
+	w.Key("serving");
+	if (!k.has_buddy_counters) {
+		w.ValueNull();
+	} else {
+		const webapi::KadBuddyServingSnapshot &s = k.buddy_serving;
+		w.BeginObject();
+		count("pending_count", s.pending_count);
+		count("served_seconds", s.served_seconds);
+		w.Key("requests");
+		w.BeginObject();
+		count("received", s.requests.received);
+		count("offered", s.requests.offered);
+		count("refused_firewalled", s.requests.refused_firewalled);
+		count("refused_full", s.requests.refused_full);
+		count("refused_conflict", s.requests.refused_conflict);
+		count("refused_same_ip", s.requests.refused_same_ip);
+		count("rate_limited", s.requests.rate_limited);
+		count("natt", s.requests.natt);
+		count("expired", s.requests.expired);
+		count("superseded", s.requests.superseded);
+		count("duplicate", s.requests.duplicate);
+		count("evicted", s.requests.evicted);
+		w.EndObject();
+		w.Key("buddies");
+		w.BeginObject();
+		count("started", s.buddies.started);
+		count("released_extra", s.buddies.released_extra);
+		count("ended", s.buddies.ended);
+		count("timed_out", s.buddies.timed_out);
+		w.EndObject();
+		w.Key("callbacks");
+		w.BeginObject();
+		count("relayed", s.callbacks.relayed);
+		count("relayed_bytes", s.callbacks.relayed_bytes);
+		count("no_buddy", s.callbacks.no_buddy);
+		count("mismatched", s.callbacks.mismatched);
+		count("rate_limited", s.callbacks.rate_limited);
+		count("over_budget", s.callbacks.over_budget);
+		count("peak_requests_per_minute", s.callbacks.peak_requests_per_minute);
+		w.EndObject();
+		w.Key("reasks");
+		w.BeginObject();
+		count("relayed", s.reasks.relayed);
+		count("relayed_bytes", s.reasks.relayed_bytes);
+		count("no_buddy", s.reasks.no_buddy);
+		count("mismatched", s.reasks.mismatched);
+		count("malformed", s.reasks.malformed);
+		count("over_budget", s.reasks.over_budget);
+		w.EndObject();
+		count("peak_relayed_bytes_per_minute", s.peak_relayed_bytes_per_minute);
+		w.EndObject();
+	}
+	w.Key("own");
+	if (!k.has_buddy_counters) {
+		w.ValueNull();
+	} else {
+		const webapi::KadBuddyOwnSnapshot &o = k.buddy_own;
+		w.BeginObject();
+		count("search_count", o.search_count);
+		count("held_search_count", o.held_search_count);
+		count("needed_seconds", o.needed_seconds);
+		count("missing_seconds", o.missing_seconds);
+		count("connected_seconds", o.connected_seconds);
+		w.Key("requests");
+		w.BeginObject();
+		count("sent", o.requests.sent);
+		count("skipped", o.requests.skipped);
+		count("offered", o.requests.offered);
+		w.EndObject();
+		w.Key("connections");
+		w.BeginObject();
+		count("attempted", o.connections.attempted);
+		count("failed", o.connections.failed);
+		w.EndObject();
+		w.Key("buddies");
+		w.BeginObject();
+		count("started", o.buddies.started);
+		count("ended", o.buddies.ended);
+		count("timed_out", o.buddies.timed_out);
+		w.EndObject();
+		count("received_callback_count", o.received_callback_count);
+		count("received_reask_count", o.received_reask_count);
+		w.EndObject();
+	}
+}
+
+} // namespace
+
 CHttpServer::Response CApiDispatcher::HandleKad(const CHttpServer::Request &req)
 {
 	auto a = Authenticate(req);
@@ -7185,6 +7254,9 @@ CHttpServer::Response CApiDispatcher::HandleKad(const CHttpServer::Request &req)
 	WriteStringOrNull(w, "state", k.has_buddy, k.buddy_status);
 	WriteStringOrNull(w, "ip", k.has_buddy, k.buddy_ip);
 	WriteIntOrNull(w, "port", k.has_buddy, static_cast<int64_t>(k.buddy_port));
+	WriteUIntOrNull(w, "served_count", k.has_served, k.served_count);
+	WriteUIntOrNull(w, "served_limit", k.has_served, k.served_limit);
+	WriteKadBuddyCounters(w, k);
 	w.EndObject();
 	w.EndObject();
 	FinalizeJsonBody(w, r);
@@ -8066,8 +8138,8 @@ namespace
 // shape is defined exactly once.
 //
 // Categories whose name contains a dot are nested one level under their prefix
-// (remote_controls.webserver -> "remote_controls": {"webserver": {...}}). Write-only
-// rows (passwords) and Rejected rows are never emitted.
+// (remote_controls.amuleapi -> "remote_controls": {"amuleapi": {...}}). Write-only
+// rows (passwords), Rejected rows and Retired rows without a member are never emitted.
 void WritePrefFieldValue(CJsonWriter &w, const webapi::PrefField &f, const webapi::PreferencesSnapshot &p)
 {
 	// The accessor takes a non-const snapshot; emitting never mutates it.
@@ -8100,6 +8172,7 @@ void WritePrefFieldValue(CJsonWriter &w, const webapi::PrefField &f, const webap
 bool PrefFieldIsEmitted(const webapi::PrefField &f, bool admin)
 {
 	return f.access != webapi::PrefAccess::WriteOnly && f.access != webapi::PrefAccess::Rejected &&
+	       (f.access != webapi::PrefAccess::Retired || f.member) &&
 	       (admin || f.access != webapi::PrefAccess::AdminRead);
 }
 
@@ -8416,15 +8489,16 @@ CHttpServer::Response CApiDispatcher::HandlePreferencesPatch(const CHttpServer::
 	// gates ApplyBoolean on it -- which is also why every bool below is a value tag.
 	std::unique_ptr<CECPacket> ec_req(new CECPacket(EC_OP_SET_PREFERENCES, EC_DETAIL_FULL));
 	bool any_change = false;
-	// A daemon-local field (e.g. the online-signature folder) sent back unchanged: a valid no-op, so the
-	// request is not "no writable fields" even when it names nothing else.
-	bool daemon_local_noop = false;
+	// A daemon-local field (e.g. the online-signature folder) sent back unchanged, or a retired
+	// field: a valid no-op, so the request is not "no writable fields" even when it names nothing
+	// else.
+	bool accepted_noop = false;
 	// Names of read-only fields the body carried, so a request naming only
 	// those can say which ones rather than claiming none were known.
 	std::string skipped_read_only;
 
 	// One CECTag per EC group, created on first use. Two categories can share a group
-	// (remote_controls.webserver / .amuleapi), so they must land in the same tag.
+	// (the remote_controls.* ones), so they must land in the same tag.
 	std::map<ec_tagname_t, CECTag> groups;
 	std::vector<ec_tagname_t> group_order;
 	auto group_for = [&](ec_tagname_t tag) -> CECTag & {
@@ -8478,16 +8552,19 @@ CHttpServer::Response CApiDispatcher::HandlePreferencesPatch(const CHttpServer::
 
 		// Read-only fields (daemon capabilities, live status) are ignored rather than
 		// rejected: the read-modify-write round trip necessarily sends them back.
-		// Bespoke fields are applied further down.
 		//
 		// Remember the names, though: a body naming ONLY non-writable fields would
 		// otherwise fall through to "did not include any known pref fields".
-		if (f.access == webapi::PrefAccess::ReadOnly || f.access == webapi::PrefAccess::Bespoke) {
-			if (f.access == webapi::PrefAccess::ReadOnly) {
-				if (!skipped_read_only.empty())
-					skipped_read_only += ", ";
-				skipped_read_only += std::string(f.category) + "." + f.key;
-			}
+		if (f.access == webapi::PrefAccess::ReadOnly) {
+			if (!skipped_read_only.empty())
+				skipped_read_only += ", ";
+			skipped_read_only += std::string(f.category) + "." + f.key;
+			continue;
+		}
+
+		// Writable in v1, so a write is still accepted; it has nothing left to change.
+		if (f.access == webapi::PrefAccess::Retired) {
+			accepted_noop = true;
 			continue;
 		}
 
@@ -8528,7 +8605,7 @@ CHttpServer::Response CApiDispatcher::HandlePreferencesPatch(const CHttpServer::
 					"cannot be changed through the API";
 				return ErrorResponse(400, "read_only_field", msg.c_str());
 			}
-			daemon_local_noop = true;
+			accepted_noop = true;
 			continue;
 		}
 
@@ -8607,56 +8684,14 @@ CHttpServer::Response CApiDispatcher::HandlePreferencesPatch(const CHttpServer::
 			return ErrorResponse(400, "bad_request", err.c_str());
 	}
 
-	// --- The one field pair the table cannot describe. ------------------
-	// remote_controls.webserver.guest_enabled and .guest_password share a single EC
-	// tag: EC_TAG_WEBSERVER_GUEST carries the enable bool as its value and the password
-	// hash as a child, so there is no 1:1 field-to-tag mapping for the schema. When
-	// only the password is given, the enable bit falls back to the snapshot value.
-	{
-		const picojson::object *ws = nullptr;
-		for (std::size_t c = 0; c < webapi::PrefCategoryCount(); ++c) {
-			if (std::strcmp(webapi::PrefCategories()[c].name, "remote_controls.webserver") == 0) {
-				ws = cat_obj[c];
-				break;
-			}
-		}
-		if (ws) {
-			const auto en_it = ws->find("guest_enabled");
-			const auto pw_it = ws->find("guest_password");
-			const bool has_en = en_it != ws->end();
-			const bool has_pw = pw_it != ws->end();
-			if (has_en || has_pw) {
-				if (has_en && !en_it->second.is<bool>())
-					return ErrorResponse(
-						400, "bad_request", "guest_enabled must be a bool");
-				if (has_pw && !pw_it->second.is<std::string>())
-					return ErrorResponse(
-						400, "bad_request", "guest_password must be a string");
-				const bool enabled = has_en ? en_it->second.get<bool>()
-							    : current.remote_controls.webserver.guest_enabled;
-				CECTag guest(
-					EC_TAG_WEBSERVER_GUEST, static_cast<std::uint8_t>(enabled ? 1 : 0));
-				if (has_pw) {
-					const wxString md5hex = MD5Sum(
-						wxString::FromUTF8(pw_it->second.get<std::string>().c_str()))
-									.GetHash();
-					CMD4Hash h;
-					if (HashFromHex(std::string(md5hex.utf8_str()), h))
-						guest.AddTag(CECTag(EC_TAG_PASSWD_HASH, h));
-				}
-				group_for(EC_TAG_PREFS_REMOTECTRL).AddTag(guest);
-				any_change = true;
-			}
-		}
-	}
-
 	for (ec_tagname_t tag : group_order)
 		ec_req->AddTag(groups.find(tag)->second);
 
 	if (!any_change) {
-		// A daemon-local field echoed back unchanged is an accepted no-op: return the current
-		// state (like a successful PATCH) rather than a "nothing writable" error.
-		if (daemon_local_noop) {
+		// A daemon-local field echoed back unchanged, or a retired field, is an accepted
+		// no-op: return the current state (like a successful PATCH) rather than a "nothing
+		// writable" error.
+		if (accepted_noop) {
 			const webapi::PreferencesSnapshot p = m_state.Preferences();
 			CHttpServer::Response r;
 			r.status = 200;

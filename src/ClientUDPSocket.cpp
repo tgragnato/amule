@@ -35,22 +35,22 @@
 #include <common/EventIDs.h>
 #include <common/Format.h> // Needed for CFormat
 
-#include "Preferences.h"     // Needed for CPreferences
-#include "PartFile.h"        // Needed for CPartFile
-#include "updownclient.h"    // Needed for CUpDownClient
-#include "UploadQueue.h"     // Needed for CUploadQueue
-#include "Packet.h"          // Needed for CPacket
-#include "SharedFileList.h"  // Needed for CSharedFileList
-#include "DownloadQueue.h"   // Needed for CDownloadQueue
-#include "Statistics.h"      // Needed for theStats
-#include "amule.h"           // Needed for theApp
-#include "ClientList.h"      // Needed for clientlist (buddy support)
-#include "ClientTCPSocket.h" // Needed for CClientTCPSocket
-#include "MemFile.h"         // Needed for CMemFile
+#include "Preferences.h"          // Needed for CPreferences
+#include "PartFile.h"             // Needed for CPartFile
+#include "updownclient.h"         // Needed for CUpDownClient
+#include "UploadQueue.h"          // Needed for CUploadQueue
+#include "Packet.h"               // Needed for CPacket
+#include "SharedFileList.h"       // Needed for CSharedFileList
+#include "DownloadQueue.h"        // Needed for CDownloadQueue
+#include "Statistics.h"           // Needed for theStats
+#include "amule.h"                // Needed for theApp
+#include "ClientList.h"           // Needed for clientlist (buddy support)
+#include "KadServedBuddyPolicy.h" // Needed for MaxReaskRelaySize
+#include "ClientTCPSocket.h"      // Needed for CClientTCPSocket
+#include "MemFile.h"              // Needed for CMemFile
 #include "Logger.h"
 #include "kademlia/kademlia/Kademlia.h"
 #include "kademlia/utils/KadUDPKey.h"
-#include "KadBuddyIdLayout.h" // Needed for MatchesBuddyIdEitherLayout (#1835)
 #include <zlib.h>
 #include "EncryptedDatagramSocket.h"
 #ifdef AMULE_UTP_TRANSPORT
@@ -1524,27 +1524,40 @@ void CClientUDPSocket::ProcessPacket(
 	case OP_REASKCALLBACKUDP: {
 		AddDebugLogLineN(logClientUDP, "Client UDP socket; OP_REASKCALLBACKUDP");
 		theStats::AddDownOverheadOther(size);
-		CUpDownClient *buddy = theApp->clientlist->GetBuddy();
-		if (buddy) {
-			if (size < 17 || buddy->GetSocket() == NULL) {
-				break;
-			}
-			if (Kademlia::MatchesBuddyIdEitherLayout(packet, buddy->GetBuddyID())) {
-				/* The packet starts with a 16-byte key for the buddy. It is currently
-				   unused, so the transformation discards the first 10 bytes below and
-				   overwrites the other 6 with ip/port. */
-				CMemFile mem_packet(packet + 10, size - 10);
-				// Change the ip and port while leaving the rest untouched
-				mem_packet.Seek(0, wxFromStart);
-				mem_packet.WriteUInt32(host);
-				mem_packet.WriteUInt16(port);
-				CPacket *response =
-					new CPacket(mem_packet, OP_EMULEPROT, OP_REASKCALLBACKTCP);
-				AddDebugLogLineN(logClientUDP, "Client UDP socket: send OP_REASKCALLBACKTCP");
-				theStats::AddUpOverheadFileRequest(response->GetPacketSize());
-				buddy->GetSocket()->SendPacket(response);
-			}
+		Kademlia::CBuddyRelayCounts &relays = theApp->clientlist->GetBuddyStats().serving.relays;
+		// It is relayed whole and its source can be forged, so nothing larger than a reask can be
+		// is relayed.
+		if (size < 17 || static_cast<std::size_t>(size) > Kademlia::MaxReaskRelaySize) {
+			++relays.reasksMalformed;
+			break;
 		}
+		CUpDownClient *buddy = theApp->clientlist->FindServedBuddy(packet);
+		if (buddy == nullptr) {
+			theApp->clientlist->RecordBuddyRelayDrop(false, packet);
+			break;
+		}
+		if (buddy->GetSocket() == nullptr) {
+			break;
+		}
+		/* The packet starts with a 16-byte key for the buddy. It is currently
+		   unused, so the transformation discards the first 10 bytes below and
+		   overwrites the other 6 with ip/port. */
+		CMemFile mem_packet(packet + 10, size - 10);
+		// Change the ip and port while leaving the rest untouched
+		mem_packet.Seek(0, wxFromStart);
+		mem_packet.WriteUInt32(host);
+		mem_packet.WriteUInt16(port);
+		CPacket *response = new CPacket(mem_packet, OP_EMULEPROT, OP_REASKCALLBACKTCP);
+		const uint32 responseSize = response->GetPacketSize();
+		if (!theApp->clientlist->HasBuddyRelayBudget(buddy, responseSize)) {
+			delete response;
+			++relays.reasksOverBudget;
+			break;
+		}
+		AddDebugLogLineN(logClientUDP, "Client UDP socket: send OP_REASKCALLBACKTCP");
+		theStats::AddUpOverheadFileRequest(responseSize);
+		buddy->GetSocket()->SendPacket(response);
+		theApp->clientlist->RecordBuddyRelay(buddy, false, responseSize);
 		break;
 	}
 	case OP_REASKFILEPING: {

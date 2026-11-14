@@ -1,43 +1,35 @@
-aMule
-=====
+# aMule
 
 [![C/C++ CI and CodeQL](https://github.com/tgragnato/amule/actions/workflows/ccpp.yml/badge.svg)](https://github.com/tgragnato/amule/actions/workflows/ccpp.yml)
 
-![aMule](org.amule.aMule.png)
+![aMule](src/icons/amule.svg)
 
 aMule is an eMule-like client for the eDonkey and Kademlia networks.
 
-Overview
---------
+## Overview
 
-aMule is a multi-platform client for the ED2K file sharing network and based on
-the windows client eMule. aMule started in August 2003, as a fork of xMule,
-which is a fork of lMule.
+aMule is a multi-platform client for the eD2k / Kad file-sharing network,
+originally a fork of the Windows client eMule (via xMule and lMule).
+aMule started in August 2003.
 
-aMule currently supports Linux, FreeBSD, OpenBSD, Windows, MacOS X and X-Box on
-both 32 and 64 bit computers.
+Supported platforms today: Linux, FreeBSD, OpenBSD, NetBSD, macOS, and
+Windows (MSYS2 / mingw-w64), on both x86_64 and ARM64.
 
-aMule is intended to be as user friendly and feature rich as eMule and to
-remain faithful to the look and feel of eMule so users familiar with either
-aMule or eMule will be able switch between the two easily.
-
-Since aMule is based upon the eMule codebase, new features in eMule tend to
-find their way into aMule soon after their inclusion into eMule so users of
-aMule can expect to ride the cutting-edge of ED2k clients.
+aMule aims to stay close to eMule in look-and-feel so users moving between
+the two have minimal friction. New eMule protocol-level features are
+generally adopted into aMule shortly after.
 
 
-Features
---------
+## Features
 
-* an all-in-one app called `amule`.
-* a daemon app called `amuled`. It's amule but with no interface.
-* a client for the server called `amulegui` to connect to a local or distant
-  amuled.
-* `amuleweb` to access amule from a web browser.
-* `amulecmd` to access amule from the command line.
+* `amule` — all-in-one GUI client.
+* `amuled` — headless daemon, no GUI.
+* `amulegui` — remote GUI; connects to a local or remote `amuled` over the
+  EC (External Connection) protocol.
+* `amulecmd` — interactive CLI for a running `amuled`.
+* `amuleapi` — REST API for a running `amuled`.
 
 
-Compiling
----------
+## Building from source
 
 In general, compiling aMule should be as easy as running `cmake -B build` and `cmake --build build -j"$(nproc)"`.

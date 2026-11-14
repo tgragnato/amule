@@ -401,7 +401,7 @@ A key is **omitted** only where absence itself is the meaning: something the dae
 
 So: `null` means "no value", an absent key means "not reported", and neither is ever spelled `0` or `-1`.
 
-This rule covers the whole surface, not just the download and shared objects. These keys are `null` when their value is unknown: `name`, `ip`, `port`, `kad_port`, `country_code`, `software`, `software_version`, `source_origin`, `obfuscation_state`, `first_seen_at` and `session_count` on [`GET /known_clients`](#get-apiv1known_clients); `part_progress_percent` and `parts_offered_count` on the client rows and the `client_*` events; `client_ecid`, `file_type`, `extension`, `min_size_bytes`, `max_size_bytes`, `min_source_count`, `min_bitrate_kilobits_per_second`, `min_duration_seconds`, `codec`, `title`, `album` and `artist` on [`GET /search`](#get-apiv1search), `client_ecid` on [`GET /friends`](#get-apiv1friends) and the `friend_*` events; `last_message` on [`GET /chats`](#get-apiv1chats); `token`, `label_value` and `extra` on the statistics tree; and `media` everywhere it appears. The address fields follow the same rule: `port` on [`GET /friends`](#get-apiv1friends) and the `friend_*` events; `ed2k.public_ip` and `ed2k.server_ip` on [`GET /status`](#get-apiv1status); `public_ip` on [`GET /kad`](#get-apiv1kad); `server_ip` / `server_port` on [`GET /clients/{ecid}`](#get-apiv1clientsecid); `ip` and `port` on [`GET /clients`](#get-apiv1clients) and the client detail row (also nulled by the `client_*` events); and `ed2k.server_port` on [`GET /status`](#get-apiv1status). The `status_changed` event nulls `ed2k.public_ip`, `ed2k.server_ip` and `ed2k.server_port` to match the REST row. Also `null` when unknown: `kad_port` on [`GET /api/v1/clients/{ecid}`](#get-apiv1clientsecid); `last_received_at` on [`GET /api/v1/downloads/{hash}`](#get-apiv1downloadshash); `node_id` on [`GET /api/v1/kad`](#get-apiv1kad); and `server_name` on [`GET /status`](#get-apiv1status) and [`GET /clients/{ecid}`](#get-apiv1clientsecid), which `status_changed` nulls too. The client objects follow suit: `name`, `software`, `software_version`, `reported_os`, `download_file_name`, `upload_file_name`, `upload_file_hash`, `download_file_hash`, `obfuscation_state`, `source_origin` and `client_mod_name` on [`GET /clients`](#get-apiv1clients), the client detail row and the `client_*` events. And the reachability field: `connected` on [`GET /friends`](#get-apiv1friends), [`GET /chats`](#get-apiv1chats), [`GET /known_clients`](#get-apiv1known_clients) and the client objects, is `null` on a daemon that does not report peer connectivity - unknown, rather than a guessed "offline". One quantity, one key on every resource that carries it (R6).
+This rule covers the whole surface, not just the download and shared objects. These keys are `null` when their value is unknown: `name`, `ip`, `port`, `kad_port`, `country_code`, `software`, `software_version`, `source_origin`, `obfuscation_state`, `first_seen_at` and `session_count` on [`GET /known_clients`](#get-apiv1known_clients); `part_progress_percent` and `parts_offered_count` on the client rows and the `client_*` events; `client_ecid`, `file_type`, `extension`, `min_size_bytes`, `max_size_bytes`, `min_source_count`, `min_bitrate_kilobits_per_second`, `min_duration_seconds`, `codec`, `title`, `album` and `artist` on [`GET /search`](#get-apiv1search), `client_ecid` on [`GET /friends`](#get-apiv1friends) and the `friend_*` events; `last_message` on [`GET /chats`](#get-apiv1chats); `token`, `label_value` and `extra` on the statistics tree; and `media` everywhere it appears. The address fields follow the same rule: `port` on [`GET /friends`](#get-apiv1friends) and the `friend_*` events; `ed2k.public_ip` and `ed2k.server_ip` on [`GET /status`](#get-apiv1status); `public_ip` on [`GET /kad`](#get-apiv1kad); `server_ip` / `server_port` on [`GET /clients/{ecid}`](#get-apiv1clientsecid); `ip` and `port` on [`GET /clients`](#get-apiv1clients) and the client detail row (also nulled by the `client_*` events); and `ed2k.server_port` on [`GET /status`](#get-apiv1status). The `status_changed` event nulls `ed2k.public_ip`, `ed2k.server_ip` and `ed2k.server_port` to match the REST row. Also `null` when unknown: `kad_port` on [`GET /api/v1/clients/{ecid}`](#get-apiv1clientsecid); `last_received_at` on [`GET /api/v1/downloads/{hash}`](#get-apiv1downloadshash); `node_id` on [`GET /api/v1/kad`](#get-apiv1kad); and `server_name` on [`GET /status`](#get-apiv1status) and [`GET /clients/{ecid}`](#get-apiv1clientsecid), which `status_changed` nulls too. The client objects follow suit: `name`, `software`, `software_version`, `reported_os`, `download_file_name`, `upload_file_name`, `upload_file_hash`, `download_file_hash`, `obfuscation_state`, `source_origin`, `contact_route` and `client_mod_name` on [`GET /clients`](#get-apiv1clients), the client detail row and the `client_*` events. And the reachability field: `connected` on [`GET /friends`](#get-apiv1friends), [`GET /chats`](#get-apiv1chats), [`GET /known_clients`](#get-apiv1known_clients) and the client objects, is `null` on a daemon that does not report peer connectivity - unknown, rather than a guessed "offline". One quantity, one key on every resource that carries it (R6).
 
 `media` is the one place this reaches an **object** rather than a scalar, so a client tests `media === null` before reaching into it -- which it had to do regardless, since the object's own fields can be absent.
 
@@ -525,7 +525,7 @@ A byte rate is `_bytes_per_second`, not `_bps`. The abbreviation was considered 
 
 The same reasoning gives the media bitrate its full spelling. `media.bitrate_kilobits_per_second` really is kilo**bits** — the helper reports bits per second and the core divides by 1000 — so it is the one quantity on the surface that is not bytes, and the one place `kilo` means 1000 rather than 1024. Abbreviating it would put the surface's only bit-valued rate one character away from its byte-valued ones.
 
-The three bandwidth caps under `connection` are the one place a rate is not per-byte: `max_download_kibibytes_per_second`, `max_upload_kibibytes_per_second` and `upload_slot_min_kibibytes_per_second` carry the KiB/s figure the user types, unconverted, because the core stores and enforces it in those units (`GetMaxUpload() * 1024`). `kibibytes` is spelled out for the same reason every other unit is, and it says 1024 without the reader having to guess which `k` this is.
+The bandwidth settings under `connection` are the one place a rate is not per-byte: `max_download_kibibytes_per_second`, `max_upload_kibibytes_per_second`, `upload_slot_min_kibibytes_per_second`, `download_capacity_kibibytes_per_second` and `upload_capacity_kibibytes_per_second` carry the KiB/s figure the user types, unconverted, because the core stores and enforces it in those units (`GetMaxUpload() * 1024`). `kibibytes` is spelled out for the same reason every other unit is, and it says 1024 without the reader having to guess which `k` this is.
 
 ## Endpoint catalog
 
@@ -1354,6 +1354,11 @@ curl -s -H "Authorization: Bearer $TOKEN" \
       "friend": false,
       "credit_ratio": 2.34,
       "source_origin": "kad",
+      "source_origins": ["local_server", "kad"],
+      "contact_route": "server_callback",
+      "route_unproven": false,
+      "route_from_fallback": false,
+      "route_ipv6": false,
       "parts_offered_count": 42,
       "client_mod_name": null,
       "shared_files_browsable": false,
@@ -1383,8 +1388,9 @@ The last five are on this row and on the `client_added` / `client_updated` SSE p
 | `obfuscation_state` | `undefined`, `enabled`, `supported`, `not_supported`, `disabled`, `unknown` |
 | `software` | `emule`, `cdonkey`, `lxmule`, `amule`, `shareaza`, `emule_plus`, `hydranode`, `mldonkey`, `lphant`, `edonkey_hybrid`, `edonkey`, `old_emule`, `compat`, `unknown` |
 | `source_origin` | `local_server`, `remote_server`, `kad`, `source_exchange`, `passive`, `link`, `source_seeds`, `search_result`, `unknown` |
+| `contact_route` | `dial`, `direct_udp_callback`, `server_callback`, `kad_buddy`, `foreign_nat_callback`, `server_hole_punch`, `lugdunum_callback` |
 
-Every one of them falls back to `"unknown"` for a code the daemon does not map, so a client can treat `"unknown"` as its default branch and never has to handle an unexpected token. Three of them are also nullable on the live client objects: `software`, `obfuscation_state` and `source_origin` are `null` when the daemon never reported the field at all, which is a different thing from reporting a code we could not map. `upload_state`, `download_state` and `ident_state` are never `null` — the daemon always answers those. Note the two distinct sentinels on `obfuscation_state`: `"undefined"` is *the client has not told us yet*, `"unknown"` is *the daemon received a code it does not recognise*. The authoritative mappings are the `Client*Name()` / `SourceOriginName()` functions in `src/webapi/Refresher.cpp`.
+Every one of them falls back to `"unknown"` for a code the daemon does not map, so a client can treat `"unknown"` as its default branch and never has to handle an unexpected token. Three of them are also nullable on the live client objects: `software`, `obfuscation_state` and `source_origin` are `null` when the daemon never reported the field at all, which is a different thing from reporting a code we could not map. `upload_state`, `download_state` and `ident_state` are never `null` — the daemon always answers those. Note the two distinct sentinels on `obfuscation_state`: `"undefined"` is *the client has not told us yet*, `"unknown"` is *the daemon received a code it does not recognise*. `contact_route` is the exception to the `"unknown"` fallback: a route this build does not know reads as `null`, the same as no contact attempted, because a token for it would be a guess. The authoritative mappings are the `Client*Name()` / `SourceOriginName()` / `ContactRouteName()` functions in `src/webapi/Refresher.cpp`.
 
 `connected` says whether a socket to this peer is up right now. A row existing in this list does not answer that: the daemon holds a client object from the first contact attempt, so a peer it is still trying to reach - or can never reach - appears here with `connected: false`. It is `null` on a daemon that does not report peer connectivity. [`GET /friends`](#get-apiv1friends), [`GET /chats`](#get-apiv1chats) and [`GET /known_clients`](#get-apiv1known_clients) carry the same fact under the same key, so joining any of them against this list does not meet it under a second name.
 
@@ -1392,7 +1398,7 @@ Every one of them falls back to `"unknown"` for a code the daemon does not map, 
 
 `credit_ratio` is the credit modifier the core computes for this peer from its transfer history (`CClientCredits::GetCreditRatio()`), the value the desktop labels "DL/UP modifier" and both peer lists show as their Ratio column. It runs from `1` to `10`: a peer you have downloaded under 1 MB from reads `1`, and the value climbs with how much you have taken from it relative to what you sent back. It is **not** `downloaded_bytes_total / uploaded_bytes_total` - do not re-derive it, and do not expect the two to agree. [`GET /known_clients`](#get-apiv1known_clients) carries the same key computed the same way, so a peer reads the same number online or offline. `null` on a daemon that does not send it, and for a peer whose hello has not attached a credit record yet, which is not the same as a peer whose history earns exactly `1`.
 
-`protocol_extensions` is the set of protocol extensions the peer claimed in its handshake, as stable tokens: `extended_source_exchange`, `nat_traversal_utp`, `ipv6`, `serving_buddy_pull`, `nat_traversal_quic`. A list rather than one token because a peer claims any combination of them, and tokens rather than the `EC_TAG_CLIENT_MOD_CAPABILITIES` bitfield they arrive in so no consumer has to carry its own copy of aMule's bit meanings. The order is stable. The daemon has already dropped every extension it does not define, so a token here is one aMule names, and an extension aMule does not name is absent rather than unknown. `[]` means the peer claimed nothing, which is what nearly every peer on the network does — a peer that sent no capability tag and one that sent an all-zero word are the same state on the wire and report the same here. The desktop GUI renders the same set as its *Protocol extensions* row.
+`protocol_extensions` is the set of protocol extensions the peer claimed in its handshake, as stable tokens: `extended_source_exchange`, `nat_traversal_utp`, `ipv6`, `serving_buddy_pull`, `nat_traversal_quic`, `extended_source_exchange_skip_tags`. A list rather than one token because a peer claims any combination of them, and tokens rather than the `EC_TAG_CLIENT_MOD_CAPABILITIES` bitfield they arrive in so no consumer has to carry its own copy of aMule's bit meanings. The order is stable. The daemon has already dropped every extension it does not define, so a token here is one aMule names, and an extension aMule does not name is absent rather than unknown. `[]` means the peer claimed nothing, which is what nearly every peer on the network does — a peer that sent no capability tag and one that sent an all-zero word are the same state on the wire and report the same here. The desktop GUI renders the same set as its *Protocol extensions* row.
 
 It says what the *peer* supports, never what this daemon does: aMule implements none of these extensions yet and advertises none of them back, so the field is recognition only. The bit meanings are wire format shared with eMuleAI and are defined in `src/PeerCapabilities.h`.
 
@@ -1454,6 +1460,11 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "server_name": "eD2K Test Server",
   "kad_port": 4672,
   "source_origin": "kad",
+  "source_origins": ["local_server", "kad"],
+  "contact_route": "kad_buddy",
+  "route_unproven": true,
+  "route_from_fallback": true,
+  "route_ipv6": false,
   "upload_file_name": "example-distribution.iso",
   "parts_offered_count": 42,
   "client_mod_name": null,
@@ -1462,7 +1473,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 }
 ```
 
-The detail fields mirror the desktop "Client Details" modal. Five of the fields below — `source_origin`, `parts_offered_count`, `client_mod_name`, `shared_files_browsable` and `part_progress_percent` — are **not** detail-only: they are on the [`GET /clients`](#get-apiv1clients) row and the SSE payload too, and are described here because this is where the rest of their neighbours live. `ed2k_user_id` is the client's hybrid eD2k id; `high_id` is `true` for a HighID client (id ≥ `16777216`, i.e. `0x1000000`) and `false` for LowID — the same threshold and the same spelling as `ed2k.high_id` on [`GET /status`](#get-apiv1status), so the value means the same thing on both ends of the API. `server_ip` / `server_port` / `server_name` describe the eD2k server the client connects through, and all three are `null` together when the server is unknown. `kad_port` is non-zero when the client is reachable on Kad, and `null` when the client has no recorded address at all — it is nulled together with `ip` and `port`, the way [`GET /known_clients`](#get-apiv1known_clients) has always nulled the three. `source_origin` is how the client was discovered (values in the enumerated-fields table under [`GET /clients`](#get-apiv1clients)). (`upload_file_name`, `friend` and `credit_ratio` are part of the base field set — see [`GET /clients`](#get-apiv1clients) above.) `parts_offered_count` is the count of parts the client holds of the linked file, or `null` when the client has not reported a part map (see [Unknown values](#unknown-values)); `client_mod_name` is the client's client-mod string (often `null`); `shared_files_browsable` is `true` when the client allows browsing its shared files, and `false` when it forbids it. `part_progress_percent` is the client's completeness of the file we are downloading **from** them (`parts_offered_count` over that file's part count) and is `null` when there is no linked download or the part count is unknown (see [Unknown values](#unknown-values)).
+The detail fields mirror the desktop "Client Details" modal. Five of the fields below — `source_origin`, `parts_offered_count`, `client_mod_name`, `shared_files_browsable` and `part_progress_percent` — are **not** detail-only: they are on the [`GET /clients`](#get-apiv1clients) row and the SSE payload too, and are described here because this is where the rest of their neighbours live. `ed2k_user_id` is the client's hybrid eD2k id; `high_id` is `true` for a HighID client (id ≥ `16777216`, i.e. `0x1000000`) and `false` for LowID — the same threshold and the same spelling as `ed2k.high_id` on [`GET /status`](#get-apiv1status), so the value means the same thing on both ends of the API. `server_ip` / `server_port` / `server_name` describe the eD2k server the client connects through, and all three are `null` together when the server is unknown. `kad_port` is non-zero when the client is reachable on Kad, and `null` when the client has no recorded address at all — it is nulled together with `ip` and `port`, the way [`GET /known_clients`](#get-apiv1known_clients) has always nulled the three. `source_origin` is how the client was discovered (values in the enumerated-fields table under [`GET /clients`](#get-apiv1clients)). `source_origins` is every channel it has been seen on, in the same vocabulary and in enum order: copies of one source are merged into the first one, which keeps its own `source_origin`, so a source found by a server and later offered over Kad reports one `source_origin` and two `source_origins`. It is an array, never `null`, and empty against a daemon predating the EC tag that carries it, where `source_origin` is all there is. `contact_route` is how the daemon is reaching it right now, or last tried to: a source is given up only once every route it offers has failed, so the route moves on between attempts. It is `null` until the first attempt. The last two values are the NAT-T steps taken while both ends are firewalled: they are not routes the source's own chain picks, and they are reported because such a source would otherwise show no route at all. `route_unproven` is `true` while the route comes from a record no hello has confirmed, `route_from_fallback` is `true` when the IPv4 identity came from a route the client kept for when every route of its own had failed, and `route_ipv6` is `true` when the route is a dial to the peer's IPv6 address, which is the only place the API reports the family (`ip` is IPv4 only). All three are always present booleans, and all three read `false` against a daemon predating the EC tag that carries them. (`upload_file_name`, `friend` and `credit_ratio` are part of the base field set — see [`GET /clients`](#get-apiv1clients) above.) `parts_offered_count` is the count of parts the client holds of the linked file, or `null` when the client has not reported a part map (see [Unknown values](#unknown-values)); `client_mod_name` is the client's client-mod string (often `null`); `shared_files_browsable` is `true` when the client allows browsing its shared files, and `false` when it forbids it. `part_progress_percent` is the client's completeness of the file we are downloading **from** them (`parts_offered_count` over that file's part count) and is `null` when there is no linked download or the part count is unknown (see [Unknown values](#unknown-values)).
 
 **Errors:** `400 bad_request` (`{ecid}` is not a non-negative integer), `404 not_found` (no client with that ecid in the current snapshot), `405 method_not_allowed` (non-GET), `503 ec_unavailable`.
 
@@ -2403,6 +2414,8 @@ Returns every preference category amuled carries over EC. The `general` and `con
     "max_upload_kibibytes_per_second": 50,
     "max_download_kibibytes_per_second": 0,
     "upload_slot_min_kibibytes_per_second": 3,
+    "download_capacity_kibibytes_per_second": 12500,
+    "upload_capacity_kibibytes_per_second": 2500,
     "tcp_port": 4662,
     "udp_port": 4672,
     "extended_udp_port_enabled": true,
@@ -2494,7 +2507,8 @@ Returns every preference category amuled carries over EC. The `general` and `con
     "write_buffer_limit_supported": true, "write_buffer_limit_mebibytes": 128,
     "file_buffer_bytes": 240000, "max_upload_queue_client_count": 5000,
     "server_keepalive_timeout_minutes": 0, "kad_max_concurrent_source_search_count": 50,
-    "kad_source_reask_minutes": 30, "source_reask_minutes": 15
+    "kad_source_reask_minutes": 30, "source_reask_minutes": 15,
+    "kad_max_served_buddies_supported": true, "kad_max_served_buddies": 8
   },
   "kad": { "update_url": "http://upd.emule-security.org/nodes.dat", "protocol10_supported": true, "protocol10_enabled": true, "strict_aich_publishers": false },
   "geoip": {
@@ -2512,7 +2526,7 @@ shared file queues background verification. Unrequested files and incomplete
 downloads are skipped; uploads continue while a check runs.
 
 
-Booleans are plain JSON `true`/`false` regardless of how amuled encodes them on the wire. **Passwords are never returned** — the webserver admin/guest and amuleapi passwords are write-only (see PATCH). `general.user_hash` is the node's own identity hash, not a password.
+Booleans are plain JSON `true`/`false` regardless of how amuled encodes them on the wire. **Passwords are never returned** (see PATCH). `general.user_hash` is the node's own identity hash, not a password.
 
 **Admin-only fields.** `connection.proxy_user`, `geoip.maxmind_license`, `geoip.custom_update_url`, `servers.update_url`, `servers.update_urls`, `security.ipfilter_update_url` and `kad.update_url` are returned to admin sessions only, because these values may contain credentials or access tokens. Guest responses omit these keys. Admins read and set them as usual. Download URLs in daemon logs and `geoip.last_update_status` show only the scheme, host and port.
 
@@ -2534,11 +2548,13 @@ Booleans are plain JSON `true`/`false` regardless of how amuled encodes them on 
 
 `advanced.debug_categories_supported` is **read-only**: `true` when the daemon reports its debug categories. On a daemon older than 3.3 it is `false`, `advanced.debug_categories` and `advanced.debug_categories_enabled` are empty, `advanced.verbose_logging_logfile_only` reads `false`, and a `PATCH` that sets either writable field answers `409 option_not_supported`.
 
+`advanced.kad_max_served_buddies` is how many firewalled Kad nodes this node serves as their buddy at once, 4 to 16, default 8. The daemon serves at most a tenth of `connection.max_connection_count`, and at least one, so `/kad` `buddy.served_limit` can be lower than this setting. `advanced.kad_max_served_buddies_supported` is **read-only**: `true` when the daemon reports the setting. A daemon older than 3.3 serves one buddy and does not report it, so there it is `false`, the setting reads `0`, and a `PATCH` that sets it answers `409 option_not_supported`.
+
 `advanced.debug_categories` is **read-only** and lists every category name the daemon can log to. `amuled` has no window, so it does not list `GUI`. `advanced.debug_categories_enabled` is the enabled subset, in the same order. Categories produce output only while `advanced.verbose_logging` is `true`. `advanced.verbose_logging_logfile_only` keeps debug messages in the daemon's logfile and out of [`GET /logs/amule`](#get-apiv1logsamule). All of these apply immediately, with no daemon restart, and the daemon saves them. Debug logs can contain peer IP addresses, user hashes and file names, and guests can read `GET /logs/amule`, so turn on `verbose_logging_logfile_only` when guests should not see them. It applies to new lines only: lines already in the log stay readable until [`DELETE /logs/amule`](#delete-apiv1logsamule) clears them. That also empties `amuled`'s logfile, logfile-only lines included, so copy the file first if you need them.
 
-`connection.upnp_enabled` toggles UPnP router forwarding of the daemon's P2P ports — the ports themselves are `connection.tcp_port` (ed2k TCP) and `connection.udp_port` (ed2k/Kad UDP). `connection.upnp_control_point_port` is a separate optional knob: the fixed local port the UPnP control point (libupnp) binds to for the router's callbacks, `0` meaning auto-assign — **not** a forwarded port. `connection.upnp_supported` is **read-only** — the daemon advertises whether it was built with UPnP (`false` on a core built `-DENABLE_UPNP=OFF`, where `upnp_enabled` has no effect); it is ignored if sent on PATCH. (Web-server UPnP is not exposed, since amuleweb is deprecated. EC-port UPnP is reported read-only, as `remote_controls.external_connections.upnp_enabled`.)
+`connection.upnp_enabled` toggles UPnP router forwarding of the daemon's P2P ports — the ports themselves are `connection.tcp_port` (ed2k TCP) and `connection.udp_port` (ed2k/Kad UDP). `connection.upnp_control_point_port` is a separate optional knob: the fixed local port the UPnP control point (libupnp) binds to for the router's callbacks, `0` meaning auto-assign — **not** a forwarded port. `connection.upnp_supported` is **read-only** — the daemon advertises whether it was built with UPnP (`false` on a core built `-DENABLE_UPNP=OFF`, where `upnp_enabled` has no effect); it is ignored if sent on PATCH. (EC-port UPnP is reported read-only, as `remote_controls.external_connections.upnp_enabled`.)
 
-The `connection.proxy_*` fields configure the proxy the **daemon** routes its P2P and HTTP traffic through. `proxy_type` is one of `"socks5"` / `"socks4"` / `"http"` / `"socks4a"` — any other value is a `400`. It is the empty string when the daemon has no proxy type configured at all (the core's `PROXY_NONE`), a state that cannot be set back through this API; use `proxy_enabled: false` to turn the proxy off. `proxy_auth_enabled` toggles username/password authentication. `proxy_password` is **write-only** — accepted on PATCH but never returned on GET (same as the `remote_controls` passwords); PATCH the other proxy fields without it to leave the stored password unchanged.
+The `connection.proxy_*` fields configure the proxy the **daemon** routes its P2P and HTTP traffic through. `proxy_type` is one of `"socks5"` / `"socks4"` / `"http"` / `"socks4a"` — any other value is a `400`. It is the empty string when the daemon has no proxy type configured at all (the core's `PROXY_NONE`), a state that cannot be set back through this API; use `proxy_enabled: false` to turn the proxy off. `proxy_auth_enabled` toggles username/password authentication. `proxy_password` is **write-only** — accepted on PATCH but never returned on GET; PATCH the other proxy fields without it to leave the stored password unchanged.
 
 `servers.accelerated_publication_enabled` lets the daemon publish its shared files at the pace an eD2k server advertises (OFFERFILES v1); servers that advertise none get the standard pace. It defaults to `true` and takes effect from the next server connection. A daemon that predates the setting does not report it: the key then reads `false`, and a PATCH has no effect.
 
@@ -2548,13 +2564,14 @@ The `connection.proxy_*` fields configure the proxy the **daemon** routes its P2
 
 **Auth:** `ADMIN`
 
-**Not every field in the `GET` is writable.** The payload mixes four kinds, and the response does not mark them, so this is the list:
+**Not every field in the `GET` is writable.** The payload mixes five kinds, and the response does not mark them, so this is the list:
 
 | Kind | What `PATCH` does | Examples |
 | --- | --- | --- |
-| Settable | applied | most of the 143 -- `files.mmap_enabled`, `connection.max_connection_count`, … |
-| Read-only status | ignored, request still succeeds | `files.mmap_supported`, `files.media_metadata_available`, `kad.protocol10_supported`, `advanced.debug_categories_supported`, `advanced.debug_categories`, `connection.upnp_supported`, the six `geoip.*`, the seven `remote_controls.external_connections.*` |
-| Write-only | applied, never echoed on `GET` | `remote_controls.webserver.password`, `.guest_password` |
+| Settable | applied | most of the 147 -- `files.mmap_enabled`, `connection.max_connection_count`, … |
+| Read-only status | ignored, request still succeeds | `files.mmap_supported`, `files.media_metadata_available`, `kad.protocol10_supported`, `advanced.debug_categories_supported`, `advanced.kad_max_served_buddies_supported`, `advanced.debug_categories`, `connection.upnp_supported`, the six `geoip.*`, the seven `remote_controls.external_connections.*` |
+| Write-only | applied, never echoed on `GET` | `connection.proxy_password` |
+| Compatibility | ignored, request still succeeds, even when it names nothing else | the eight `remote_controls.webserver.*` |
 | Refused | `400 bad_request` | `remote_controls.amuleapi.password`, `.guest_password`, `.guest_enabled` |
 
 Read-only fields are **ignored rather than rejected** when they arrive alongside at least one writable field, so the obvious way to use this endpoint -- `GET` the object, change one value, `PATCH` the whole thing back -- keeps working. A body naming *only* read-only fields is a `400` that says which ones: `no writable fields in the request; files.mmap_supported is read-only`.
@@ -2569,11 +2586,11 @@ Body shape mirrors the GET; every sub-object and every field is optional, and fi
 { "files": { "add_new_downloads_paused": true }, "servers": { "dead_server_retry_count": 5 } }
 ```
 
-`remote_controls` nests its three independent subsystems as `remote_controls.webserver`, `remote_controls.amuleapi` and `remote_controls.external_connections` rather than prefixing every field. It reports amuleapi's `enabled` / `port` / `bind_address`, but **not** whether its admin or guest password is set. Those live in `amuleapi-passwords`, which amuleapi owns and which may sit on a different host from amuled — so the daemon's view of that file can be the wrong one. Ask the API that actually reads it: [`GET /auth/passwords`](#get-apiv1authpasswords), which is admin-only, whereas this endpoint is readable by any authenticated role. `webserver.guest_enabled` is reported because it is a genuine amuled preference rather than a fact about another process's file.
+`remote_controls` nests its fields as `remote_controls.webserver`, `remote_controls.amuleapi` and `remote_controls.external_connections` rather than prefixing every field. It reports amuleapi's `enabled` / `port` / `bind_address`, but **not** whether its admin or guest password is set. Those live in `amuleapi-passwords`, which amuleapi owns and which may sit on a different host from amuled — so the daemon's view of that file can be the wrong one. Ask the API that actually reads it: [`GET /auth/passwords`](#get-apiv1authpasswords), which is admin-only, whereas this endpoint is readable by any authenticated role.
 
 `remote_controls.external_connections` is the EC listener amuleapi itself reaches the core through, and it is **read-only**. `enabled` is whether external connections are accepted, `bind_address` and `bind_interface` are the address and network interface it listens on (empty for any), `port` is its TCP port, `upnp_enabled` is whether UPnP forwards that port (no effect when `connection.upnp_supported` is `false`), and `encryption_required` is always true: EC encryption is mandatory. `password_set` says whether an EC password is configured; the password itself is never returned. These are the saved settings, which the core applies on its next start, so after a change they can differ from the listener serving this connection. Against an amuled that predates them, all seven are `null`.
 
-**Write-only passwords** (accepted here, never echoed on GET) live under `remote_controls.webserver`: `password`, `guest_password`. Send the plaintext — amuled stores the hash. `guest_password` is accepted whether or not the webserver's guest access is enabled: amuled stores the hash either way, and it simply sits inert until `guest_enabled` is turned on. (amuleapi's own [`PATCH /auth/passwords`](#patch-apiv1authpasswords) does enforce the pairing, and answers `400`; these are different credentials on different daemons.)
+`remote_controls.webserver` is kept for compatibility, because `/api/v1/` is frozen. It has no function. Its keys always read as the fixed values in the example above: `enabled` and `guest_enabled` are `false`, `port` is `4711`, `gzip_enabled` is `true`, `refresh_seconds` is `120` and `template_name` is `""`. Writes to its keys, including `password` and `guest_password`, are ignored. It will be removed in `/api/v2/`.
 
 amuleapi's own `admin` and `guest` passwords are **not** settable here; `remote_controls.amuleapi.password`, `.guest_password` and `.guest_enabled` are rejected with `400 bad_request`. Use [`PATCH /auth/passwords`](#patch-apiv1authpasswords), which writes the credential file this daemon actually reads, requires the current password, and is rate-limited. A field here would instead travel over EC to whichever aMule this amuleapi is attached to and land in that host's config directory.
 
@@ -2595,6 +2612,7 @@ Downloading a database **now** is [`POST /geoip/update`](#post-apiv1geoipupdate)
 |---|---|---|---|
 | `connection.tcp_port` | `1`–`65532` | | the server UDP socket is TCP+3, and the core substitutes the default port for anything higher |
 | `connection.upload_slot_min_kibibytes_per_second` | `1`–`65535` | | the core clamps anything lower up to `1`, so a `0` would answer `200` and read back as `1` |
+| `connection.download_capacity_kibibytes_per_second`, `connection.upload_capacity_kibibytes_per_second` | `3`–`1000000` | | the desktop GUI's range; the line capacity scales the GUI speed graphs and tray speed presets, and limits nothing |
 | `advanced.write_buffer_limit_mebibytes` | `1`–`1024` | | received download payload awaiting writes, in MiB; default 128 |
 | `advanced.file_buffer_bytes` | `0`–`3825000` | `15000` | stored as a `uint8` count of 15000-byte blocks |
 | `advanced.max_upload_queue_client_count` | `0`–`25500` | `100` | stored as a `uint8` count of hundreds |
@@ -2717,7 +2735,26 @@ Standalone view of the Kad subtree from `/status`, plus the detail fields the st
   "public_ip": "203.0.113.5",
   "network": { "user_count": 5400000, "file_count": 1400000000, "node_count": 2400 },
   "indexed": { "sources": 12000, "keywords": 8500, "notes": 0, "load_percent": 14 },
-  "buddy": { "state": "connected", "ip": "203.0.113.9", "port": 4672 }
+  "buddy": {
+    "state": "connected", "ip": "203.0.113.9", "port": 4672,
+    "served_count": 3, "served_limit": 8,
+    "serving": {
+      "pending_count": 0,
+      "served_seconds": 5400,
+      "requests": { "received": 40, "offered": 32, "refused_firewalled": 0, "refused_full": 5, "refused_conflict": 2, "refused_same_ip": 1, "rate_limited": 0, "natt": 4, "expired": 1, "superseded": 0, "duplicate": 0, "evicted": 0 },
+      "buddies": { "started": 2, "released_extra": 0, "ended": 1, "timed_out": 0 },
+      "callbacks": { "relayed": 10, "relayed_bytes": 960, "no_buddy": 0, "mismatched": 1, "rate_limited": 0, "over_budget": 0, "peak_requests_per_minute": 1 },
+      "reasks": { "relayed": 300, "relayed_bytes": 27900, "no_buddy": 3, "mismatched": 0, "malformed": 0, "over_budget": 0 },
+      "peak_relayed_bytes_per_minute": 4500
+    },
+    "own": {
+      "search_count": 0, "held_search_count": 0, "needed_seconds": 0, "missing_seconds": 0, "connected_seconds": 0,
+      "requests": { "sent": 0, "skipped": 0, "offered": 0 },
+      "connections": { "attempted": 0, "failed": 0 },
+      "buddies": { "started": 0, "ended": 0, "timed_out": 0 },
+      "received_callback_count": 0, "received_reask_count": 0
+    }
+  }
 }
 ```
 
@@ -2734,7 +2771,24 @@ Standalone view of the Kad subtree from `/status`, plus the detail fields the st
 | `network.node_count` | int \| null | **This node's own routing table size** - how many Kad contacts it currently holds - *not* a network-wide figure like the two above. Saturates at 65535 (the daemon counts it in a `uint16`). **`null` unless `state` is `connected`**: routing contacts outlive the disconnect, so a non-zero count on a fully stopped Kad is not surfaced. |
 | `indexed.sources` / `.keywords` / `.notes` | int \| null | Kad-store counters: how many entries this node is holding for the network as a DHT participant. `null` unless `state` is `connected`, and also `null` while the daemon is still loading its saved index after Kad starts - a `0` would be a real count, indistinguishable from an idle but connected node. |
 | `indexed.load_percent` | int \| null | **A count, not a percentage**, despite its name: how many keywords have a recorded publish delay, because the nodes that store them reported a high load. A delay that has run out stays counted until that keyword is published again. The desktop panel shows it as *Indexed load*. `null` on the same gate as the three counters above. |
-| `buddy.state` | string \| null | LowID-buddy state for NAT-traversal clients: `no_buddy` / `connecting` / `connected` (`unknown` only if the daemon ever ships a value outside its own enum). **`null` unless `state` is `connected`**, along with `buddy.ip` / `buddy.port`; a `no_buddy` there would be a real state rather than the absence of one. While connected with no buddy, `ip` / `port` are `0.0.0.0` / `0`. |
+| `buddy.state` | string \| null | LowID-buddy state for NAT-traversal clients: `no_buddy` / `connecting` / `connected` (`unknown` only if the daemon ever ships a value outside its own enum). **`null` unless `state` is `connected`**, along with `buddy.ip` / `buddy.port`; a `no_buddy` there would be a real state rather than the absence of one. While connected with no buddy, `ip` / `port` are `0.0.0.0` / `0`. They describe this node's own buddy, which only a firewalled node has: an open node reports `no_buddy`, and counts the firewalled nodes it serves in `buddy.served_count`. |
+| `buddy.served_count` / `.served_limit` | int \| null | How many firewalled nodes this node serves as their buddy now, and the most it serves at once: `advanced.kad_max_served_buddies`, capped at a tenth of the connection limit. A daemon older than 3.3 serves one. A node serves only while it is open on TCP and UDP. `null` unless `state` is `connected`, and from a daemon too old to report them. |
+| `buddy.serving` | object \| null | Counts since the daemon started, for this node as the buddy of a firewalled node. `null` from a daemon too old to report them. The fields are below. |
+| `buddy.serving.pending_count` | int | Buddy requests this node answered with an offer whose node has not connected yet. |
+| `buddy.serving.served_seconds` | int | Total time this node served buddies, summed over them, the current ones included. |
+| `buddy.serving.requests` | object | Buddy requests from firewalled nodes. `received` counts the ones the daemon handled, which end as `offered` or as one of the four refusals: `refused_firewalled` (this node is not open), `refused_full` (it serves `served_limit` buddies already), `refused_conflict` (the daemon already knows that client, or it is this node) or `refused_same_ip` (it serves or has offered to another node at that address). `rate_limited` counts requests dropped before handling, by the per-client limit, and is not part of `received`. `natt` counts handled requests that set a NAT-T bit in their connect options. `expired`, `superseded`, `duplicate` and `evicted` count offers that did not become a buddy: the node did not connect in time, the free slots filled first, the same node linked through another offer, or a newer offer took its place in the full list of pending offers, which holds at most `served_limit`. |
+| `buddy.serving.buddies` | object | `started` counts the nodes that became a served buddy, and `ended` the ones that stopped, for any reason. `timed_out` is the part of `ended` that sent nothing within the receive timeout. `released_extra` counts nodes that connected when no slot was free, while another node at the same address was served, or with a HighID in their hello, and were released. A node with a HighID is reached directly, so it needs no buddy. |
+| `buddy.serving.callbacks` | object | Callback requests for served buddies. `relayed` and `relayed_bytes` count the callbacks passed on to it, with their size on the wire. Dropped: `no_buddy` (no buddy served), `mismatched` (the request names no served buddy), `rate_limited` (over the per-client limit, or a second request from one client for one buddy within a minute) and `over_budget` (the buddy got 64 KiB of relays in the current minute already). `peak_requests_per_minute` is the most requests one client sent in one minute, dropped ones included. |
+| `buddy.serving.reasks` | object | Reasks for served buddies, counted like `callbacks`. `malformed` counts reasks too short to carry the buddy's id, or longer than the largest valid reask (8,228 bytes). |
+| `buddy.serving.peak_relayed_bytes_per_minute` | int | The most bytes relayed to one served buddy in one minute. |
+| `buddy.own` | object \| null | Counts since the daemon started, for this node as a firewalled node with a buddy of its own. `null` from a daemon too old to report them. The fields are below. |
+| `buddy.own.search_count` | int | Kad searches for a buddy. The first looks up this node's BuddyID; the next ones look up a random target. A failed search is retried after 10 minutes. |
+| `buddy.own.held_search_count` | int | Times a due search waited because this node shared no file. It starts once a file is shared. Since 3.3; `0` from an older daemon. |
+| `buddy.own.needed_seconds` / `.missing_seconds` / `.connected_seconds` | int | Time Kad was connected and this node needed a buddy; the part of it without one; and the total time with a buddy, the current one included. |
+| `buddy.own.requests` | object | `sent` counts buddy requests sent to open nodes, and `skipped` the ones not sent because the connection to that node failed within the last hour. `offered` counts the offers received. |
+| `buddy.own.connections` | object | Connections to an offered buddy: `attempted`, and `failed`, which puts that node on the one-hour cooldown. |
+| `buddy.own.buddies` | object | `started`, `ended` and `timed_out`, as under `serving.buddies`, for this node's own buddy. |
+| `buddy.own.received_callback_count` / `.received_reask_count` | int | Callbacks and reasks this node's buddy relayed to it. |
 
 ---
 
@@ -2897,7 +2951,7 @@ The ed2k server-info log buffer. Unlike `/logs/amule`, amuled ships this one as 
 
 **Query parameters:** `max_client_versions=N` (`0`–`255`, default `0` = unlimited) — caps how many per-software **version** rows the daemon serializes. Only the version lists are affected; the OS breakdown and the fixed skeleton nodes are always complete. A long-lived node accumulates hundreds of version rows, so a dashboard showing a top-10 should pass this rather than discard the rest client-side.
 
-A tree mirroring amuled's "Statistics" tree (transfers, connections, clients, servers, downloads). Cached with a 1 s TTL.
+A tree mirroring amuled's "Statistics" tree (transfers, connections, clients, servers, shared files, diagnostics). Cached with a 1 s TTL. The `diagnostics` node holds counters meant for bug reports, with English-only labels: `kad_buddies` (a summary of the buddy counters in [`GET /kad`](#get-apiv1kad), split into `kad_buddies_serving` and `kad_buddies_own`), `kad_receiver_keys`, `nat_traversal` in uTP builds, `ipv6` in IPv6 builds, `source_routes`, which counts how sources were reached when a contact route failed (next route tried, fallbacks used, merges of source copies, sources that turned up on another origin, other hosts on an unproven route), `publishing` and `source_exchange`. `publishing` has a `publishing_kad` and a `publishing_ed2k` node. Each starts with the current state, then counts this session's work. A file counts as published on Kad (`publishing_kad_published`, and its share of the shared files) while a node acknowledged its source entry less than 5 hours ago, the time nodes keep it, and the entry names the buddy that relays for us now. `publishing_kad_published_5_nodes` counts those that 5 or more nodes acknowledged. `publishing_ed2k_offered` counts the files offered to the connected server, 0 without one. `source_exchange` counts the source requests peers sent us this session: answered, or not answered because they asked again too soon, we had no sources to give, the file was unknown, or the request used an unsupported version, and how many sources and extended (ExtSX) answers we sent.
 
 The envelope is `{ "nodes": [...] }`. Each node is `{ "key": "<id>", "label_value": "<value>", "label": "<template>", "values": [...], "children": [...] }`. A leaf is a node whose `children` array is empty. `key` is optional; `label_value` is always present, `null` unless the node's `label` is itself data (see below).
 
@@ -3633,6 +3687,26 @@ Each scrape reads a compact snapshot that amuleapi publishes after a successful 
 | `amule_kad_network_nodes` | gauge | Local routing-table size, only while connected |
 | `amule_kad_indexed` | gauge, `type="sources\|keywords\|notes"` | Locally indexed item counts |
 | `amule_kad_index_load` | gauge | Daemon-reported index load, separate from item counts |
+| `amule_kad_buddies_served`, `amule_kad_buddies_served_limit` | gauge | Firewalled nodes this node serves as their buddy, and the most it serves at once; only while Kad is connected |
+| `amule_kad_buddy_pending_offers` | gauge | Buddy offers whose node has not connected yet |
+| `amule_kad_buddy_requests_total` | counter, `result="offered\|refused_firewalled\|refused_full\|refused_conflict\|refused_same_ip\|rate_limited"` | Buddy requests from firewalled nodes, by result |
+| `amule_kad_buddy_natt_requests_total` | counter | Buddy requests that set a NAT-T bit in their connect options |
+| `amule_kad_buddy_offers_unused_total` | counter, `reason="expired\|superseded\|duplicate\|evicted"` | Offers whose node did not become a buddy |
+| `amule_kad_buddy_served_events_total` | counter, `event="started\|released_extra\|ended\|timed_out"` | Changes to the served buddies; `timed_out` is part of `ended` |
+| `amule_kad_buddy_served_seconds_total` | counter | Time spent serving buddies, summed over them |
+| `amule_kad_buddy_relays_total`, `amule_kad_buddy_relayed_bytes_total` | counter, `kind="callback\|reask"` | Packets and bytes relayed to served buddies |
+| `amule_kad_buddy_relay_drops_total` | counter, `kind`, `reason="no_buddy\|mismatched\|rate_limited\|malformed\|over_budget"` | Packets for a served buddy that were not relayed; callbacks have no `malformed`, reasks no `rate_limited` |
+| `amule_kad_buddy_peak_relayed_bytes_per_minute` | gauge | Most bytes relayed to one served buddy in one minute, since start |
+| `amule_kad_buddy_peak_callback_requests_per_minute` | gauge | Most callback requests from one client in one minute, since start |
+| `amule_kad_buddy_searches_total` | counter | Searches for a buddy of this node's own |
+| `amule_kad_buddy_searches_held_total` | counter | Due searches for a buddy of this node's own held because it shared no file |
+| `amule_kad_buddy_own_requests_total` | counter, `result="sent\|skipped\|offered"` | Buddy requests sent, skipped for the one-hour cooldown, and offers received |
+| `amule_kad_buddy_own_connections_total` | counter, `result="attempted\|failed"` | Connections to an offered buddy |
+| `amule_kad_buddy_own_events_total` | counter, `event="started\|ended\|timed_out"` | Changes to this node's own buddy |
+| `amule_kad_buddy_own_received_total` | counter, `kind="callback\|reask"` | Packets this node's buddy relayed to it |
+| `amule_kad_buddy_own_seconds_total` | counter, `state="needed\|missing\|connected"` | Time a buddy was needed, the part of it without one, and the time with one |
+
+The `kad_buddy` counters come from the daemon whatever the Kad state, and reset when it restarts. They describe both roles: an open node serves firewalled nodes, and a firewalled node needs a buddy of its own, so on a given node one side usually stays at zero.
 
 Download status labels are `downloading`, `waiting`, `hashing`, `erroneous`, `insufficient_disk`, `paused`, `allocating`, `stopped`, `completing`, `completed` and `unknown`. Every status appears, also with a zero count; a status amuleapi does not know counts as `unknown`. An older daemon that does not send a value gets no series for it, while a real zero stays zero. Lifetime counters can go down after a statistics reset or a profile change; `rate()` handles such resets.
 

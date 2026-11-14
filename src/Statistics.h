@@ -29,13 +29,15 @@
 
 #include "kademlia/utils/ContactDistribution.h"
 #include "DisplayRateCounter.h"
-#include "Constants.h"           // Needed for StatsGraphType
-#include "StatTree.h"            // Needed for CStatTreeItem* classes
-#include "GetTickCount.h"        // Needed for GetTickCount64 in CPreciseRateCounter ctor
-#include "SessionTrafficStats.h" // Needed for AMULE_SESSION_TRAFFIC_STATS
+#include "Constants.h"                         // Needed for StatsGraphType
+#include "StatTree.h"                          // Needed for CStatTreeItem* classes
+#include "GetTickCount.h"                      // Needed for GetTickCount64 in CPreciseRateCounter ctor
+#include "kademlia/net/KadReceiverKeyPolicy.h" // Needed for EKadReceiverKeyHandler
+#include "SessionTrafficStats.h"               // Needed for AMULE_SESSION_TRAFFIC_STATS
 
 #include <atomic> // Needed for std::atomic (free-space figures)
 #include <deque>  // Needed for std::deque
+#include <vector> // Needed for std::vector
 
 typedef struct UpdateInfo
 {
@@ -154,6 +156,59 @@ protected:
 
 #ifndef CLIENT_GUI
 
+// Source contact route events counted under Diagnostics, in tree order.
+enum class ESourceRouteEvent
+{
+	NextRoute,
+	FallbackServerRoute,
+	FallbackIPv4,
+	FallbackIPv6,
+	ChainRestored,
+	ReachedAfterFailure,
+	MergeTookRoute,
+	MergeKeptFallback,
+	OriginGained,
+	OtherHostRefused,
+	OtherHostKeptApart,
+	Count
+};
+
+// Publishing and source exchange events counted under Diagnostics, in tree order.
+enum class EPublishEvent
+{
+	KadSourceLookupStarted,
+	KadSourceStoreSent,
+	KadSourceStoreAcknowledged,
+	Ed2kOfferListSent,
+	Ed2kFileOffered,
+	SourceRequestReceived,
+	SourceRequestAnswered,
+	SourceRequestTooSoon,
+	SourceRequestNoSources,
+	SourceRequestUnknownFile,
+	SourceRequestUnsupported,
+	SourceSent,
+	ExtendedAnswerSent,
+	ExtendedSourceSent,
+	RoutedLowIDSourceSent,
+	Count
+};
+
+#ifdef ENABLE_IPV6
+// IPv6 events counted under Diagnostics, in tree order.
+enum class EIPv6Event
+{
+	Dial,
+	DialAnswered,
+	DialUnanswered,
+	InboundHello,
+	HelloWithAddress,
+	ServerSourceAccepted,
+	ServerSourceIgnored,
+	Count
+};
+#endif
+
 class CECTag;
 
 /// Stat tree item for rates/averages.
@@ -219,7 +274,6 @@ public:
 	/* Statistics graph functions */
 
 	void RecordHistory();
-	unsigned GetHistoryForWeb(unsigned cntPoints, double sStep, double *sStart, uint32 **graphData);
 	// EC_OP_STATSGRAPHS variant that also fills per-point active-up / active-down counters and
 	// the latest session totals, so amulegui can render the same 3-line Connections scope and
 	// true session average as monolithic amule. connData is new[]'d on success and owned by the
@@ -371,6 +425,15 @@ public:
 	static void RemoveBannedClient() { --(*s_banned); }
 
 	/**
+	 * Record what one Kad handler saw: a receiver key that proved the sender, or its absence.
+	 *
+	 * Counting is per handler because the answer differs by handler: a callback request is sent
+	 * unencrypted by design and never carries a key, so only the publishes can ever justify
+	 * rejecting a request on that basis.
+	 */
+	static void AddKadReceiverKeyObservation(EKadReceiverKeyHandler handler, bool validReceiverKey);
+
+	/**
 	 * Addresses Kad is currently refusing to talk to (CSafeKad).
 	 *
 	 * Set rather than incremented, because these bans lapse inside an aged map with no event to
@@ -382,6 +445,7 @@ public:
 	 * them would report a peer as barred from uploads when it is merely unwelcome in the
 	 * routing table.
 	 */
+
 #ifdef ENABLE_KAD_NODE_PROTECTION
 	static void SetKadBannedAddresses(uint32 value) { s_kadBanned->SetValue(value); }
 #endif
@@ -404,6 +468,27 @@ public:
 	// A connected uTP stream that followed its peer's NAT to a new source port.
 	static void AddUtpStreamMove() { ++(*s_utpStreamMoves); }
 #endif
+#ifdef ENABLE_IPV6
+	static void AddIPv6Event(EIPv6Event event) { ++(*s_ipv6Events[static_cast<std::size_t>(event)]); }
+#endif
+	static void AddSourceRouteEvent(ESourceRouteEvent event)
+	{
+		++(*s_sourceRouteEvents[static_cast<std::size_t>(event)]);
+	}
+	static void AddPublishEvent(EPublishEvent event, uint64_t count = 1)
+	{
+		*s_publishEvents[static_cast<std::size_t>(event)] += count;
+	}
+	// The sources in one source exchange answer we built.
+	static void AddSourceAnswer(uint32_t sources, bool extended, uint32_t routedLowIDs)
+	{
+		AddPublishEvent(EPublishEvent::SourceSent, sources);
+		if (extended && sources) {
+			AddPublishEvent(EPublishEvent::ExtendedAnswerSent);
+			AddPublishEvent(EPublishEvent::ExtendedSourceSent, sources);
+			AddPublishEvent(EPublishEvent::RoutedLowIDSourceSent, routedLowIDs);
+		}
+	}
 
 	// Servers
 	static void AddServer() { ++(*s_totalServers); }
@@ -613,9 +698,17 @@ private:
 #endif
 	static CStatTreeItemNativeCounter *s_filtered;
 	static CStatTreeItemNativeCounter *s_banned;
+	static CKadReceiverKeyCounts s_kadReceiverKeyCounts;
+	static CStatTreeItemNativeCounter
+		*s_kadReceiverKeyValid[static_cast<std::size_t>(EKadReceiverKeyHandler::Count)];
+	static CStatTreeItemNativeCounter
+		*s_kadReceiverKeyMissing[static_cast<std::size_t>(EKadReceiverKeyHandler::Count)];
 #ifdef ENABLE_KAD_NODE_PROTECTION
 	static CStatTreeItemNativeCounter *s_kadBanned;
 #endif
+
+	// Kad buddies, in the order of the row table in Statistics.cpp
+	static std::vector<CStatTreeItemSimple *> s_kadBuddyRows;
 
 	// NAT traversal and IPv6 traffic
 #if defined(ENABLE_NATT_SERVER_COORDINATION) && defined(AMULE_UTP_TRANSPORT)
@@ -632,7 +725,16 @@ private:
 #ifdef ENABLE_IPV6
 	static CStatTreeItemCounter *s_ipv6Upload;
 	static CStatTreeItemCounter *s_ipv6Download;
+	static CStatTreeItemNativeCounter *s_ipv6Events[static_cast<std::size_t>(EIPv6Event::Count)];
 #endif
+	static CStatTreeItemNativeCounter
+		*s_sourceRouteEvents[static_cast<std::size_t>(ESourceRouteEvent::Count)];
+	static CStatTreeItemCounter *s_publishEvents[static_cast<std::size_t>(EPublishEvent::Count)];
+	static CStatTreeItemSimple *s_kadPublishedNow;
+	static CStatTreeItemSimple *s_kadPublishedShare;
+	static CStatTreeItemSimple *s_kadPublishedWellNow;
+	static CStatTreeItemSimple *s_ed2kOfferedNow;
+	static CStatTreeItemSimple *s_ed2kOfferedShare;
 
 	// Servers
 	static CStatTreeItemSimple *s_workingServers;
@@ -694,6 +796,8 @@ enum StatDataIndex
 	sdBuddyStatus,
 	sdBuddyIP,
 	sdBuddyPort,
+	sdBuddyServed,
+	sdBuddyServedLimit,
 	sdKadInLanMode,
 	sdTotalSentBytes,
 	sdTotalReceivedBytes,
@@ -800,6 +904,9 @@ public:
 	static uint8 GetBuddyStatus() { return s_statData[sdBuddyStatus]; }
 	static uint32 GetBuddyIP() { return s_statData[sdBuddyIP]; }
 	static uint32 GetBuddyPort() { return s_statData[sdBuddyPort]; }
+	static uint32 GetServedBuddyCount() { return static_cast<uint32>(s_statData[sdBuddyServed]); }
+	// 0 from a core that does not report it.
+	static uint32 GetServedBuddyLimit() { return static_cast<uint32>(s_statData[sdBuddyServedLimit]); }
 	static bool IsKadRunningInLanMode() { return s_statData[sdKadInLanMode] != 0; }
 	static uint32 GetKadNodes() { return s_statData[sdKadNodes]; }
 	static Kademlia::ContactDistributionState GetKadContactDistribution(

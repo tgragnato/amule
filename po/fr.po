@@ -364,22 +364,6 @@ msgstr "Quitte l'application."
 
 #: src/amule.cpp
 #, c-format
-msgid "Terminating amuleweb instance with pid '%d' ... "
-msgstr "Interruption de l'instance amuleweb avec le pid '%d' … "
-
-#: src/amule.cpp
-#, c-format
-msgid "Killing amuleweb instance with pid '%d' ... "
-msgstr "Mise à mort de l'instance amuleweb avec le pid '%d' … "
-
-#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
-#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
-#: src/SharedFilesCtrl.cpp
-msgid "Failed"
-msgstr "Échec"
-
-#: src/amule.cpp
-#, c-format
 msgid "Terminating amuleapi instance with pid '%d' ... "
 msgstr "Interruption de l'instance amuleapi avec le pid '%d'… "
 
@@ -387,6 +371,12 @@ msgstr "Interruption de l'instance amuleapi avec le pid '%d'… "
 #, c-format
 msgid "Killing amuleapi instance with pid '%d' ... "
 msgstr "Arrêt de l'instance amuleapi avec le pid '%d'… "
+
+#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
+#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
+#: src/SharedFilesCtrl.cpp
+msgid "Failed"
+msgstr "Échec"
 
 #: src/amule.cpp
 msgid "aMule OnExit: Terminating core."
@@ -542,29 +532,6 @@ msgid "Not starting %s: it is neither next to aMule nor on PATH."
 msgstr "Impossible de démarrer %s : il ne se trouve ni dans le même répertoire qu’aMule ni dans les répertoires du PATH."
 
 #: src/amule.cpp
-#, fuzzy
-msgid "An exception occurred while launching amuleweb."
-msgstr "Une exception est survenue lors du lancement d'amuleapi."
-
-#: src/amule.cpp
-#, c-format
-msgid "web server running on pid %d"
-msgstr "serveur web s'exécutant avec le pid %d"
-
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb authentication token. The web server was not started."
-msgstr ""
-
-#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
-#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
-msgid "ERROR"
-msgstr "ERREUR"
-
-#: src/amule.cpp
-msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
-msgstr "Vous avez demandé à exécuter le serveur web au démarrage, mais le binaire amuleweb ne peut être exécuté. Veuillez installer le paquet contenant le serveur web aMule, ou compilez aMule depuis le code source avec -DBUILD_WEBSERVER=YES et installez-le."
-
-#: src/amule.cpp
 #, c-format
 msgid "Could not write the amuleapi EC token to %s; amuleapi will fall back to its configured password."
 msgstr "Impossible d’écrire le jeton EC d’amuleapi dans %s ; amuleapi utilisera le mot de passe configuré."
@@ -586,15 +553,10 @@ msgstr "Échec du lancement d'amuleapi lors du redémarrage automatique."
 msgid "You requested to run amuleapi on startup, but the amuleapi binary cannot be run. Please install the package containing aMule's REST API server, or build aMule from source with -DBUILD_AMULEAPI=YES and install it."
 msgstr "Vous avez demandé à exécuter amuleapi au démarrage, mais le binaire amuleapi ne peut être exécuté. Veuillez installer le paquet contenant le serveur API RESTd'aMule, ou compilez aMule depuis le code source avec -DBUILD_AMULEAPI=YES et installez-le."
 
-#: src/amule.cpp
-#, fuzzy
-msgid "Could not prepare the amuleweb EC token."
-msgstr "Impossible d'enlever le fichier de jeton de connexion externe d'amuleapi : %s"
-
-#: src/amule.cpp
-#, fuzzy, c-format
-msgid "Could not remove the amuleweb EC token file: %s"
-msgstr "Impossible d'enlever le fichier de jeton de connexion externe d'amuleapi : %s"
+#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
+#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
+msgid "ERROR"
+msgstr "ERREUR"
 
 #: src/amule.cpp
 #, c-format
@@ -1080,23 +1042,14 @@ msgstr "Chiffrement"
 msgid "aMuleGUI"
 msgstr "aMuleGUI"
 
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
-msgstr "E : %.1f%s (%.1f) | R : %.1f%s (%.1f)"
-
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
 msgid " MiB/s"
 msgstr " Mio/s"
 
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/utils/wxCas/src/wxcasframe.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
+#: src/utils/wxCas/src/wxcasframe.cpp
 msgid " KiB/s"
 msgstr " Kio/s"
-
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s | Down: %.1f%s"
-msgstr "E : %.1f%s | R : %.1f%s"
 
 #: src/amuleDlg.cpp
 msgid "Transfer speeds are reported by the daemon. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
@@ -1105,6 +1058,16 @@ msgstr ""
 #: src/amuleDlg.cpp
 msgid "Live speeds are averaged over the last second. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
 msgstr ""
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s | Down: %.1f%s"
+msgstr "E : %.1f%s | R : %.1f%s"
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
+msgstr "E : %.1f%s (%.1f) | R : %.1f%s (%.1f)"
 
 #: src/amuleDlg.cpp
 #, c-format
@@ -2130,6 +2093,55 @@ msgstr "Source Seeds"
 msgid "Search Result"
 msgstr "Résultat de la recherche"
 
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a direct connection"
+msgstr "Connexions actives"
+
+#: src/DataToText.cpp
+msgid "a direct callback"
+msgstr ""
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "our server"
+msgstr "Supprimer le serveur"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the Kad buddy"
+msgstr "Trouver le pote"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the source's own server"
+msgstr "eD2k : serveur actuel"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a server hole punch"
+msgstr "Surcharge Serveur (Paquets) : %s"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a Lugdunum callback"
+msgstr "Mise à jour réussite de %s"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on a fallback route"
+msgstr "Connexion via le serveur"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on an unproven route"
+msgstr "Connexion via le serveur"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s"
+msgstr "Connexion par Kad"
+
 #: src/DataToText.cpp src/DownloadListCtrl.cpp src/OtherFunctions.cpp
 #: src/TransferWnd.cpp
 msgid "Completed"
@@ -2439,10 +2451,6 @@ msgstr[1] "Impossible d'ajouter %u liens (cf. le journal pour les détails)."
 #, c-format
 msgid "Invalid eD2k link! ERROR: %s"
 msgstr "Lien eD2k invalide ! ERREUR : %s"
-
-#: src/ECSpecialMuleTags.cpp
-msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
-msgstr ""
 
 #: src/ECSpecialMuleTags.cpp
 msgid "Refused a remote request to change the online-signature folder: it can only be set in the daemon's own configuration."
@@ -4602,12 +4610,13 @@ msgid "Users connected to the current server and an estimate of the total number
 msgstr "Utilisateurs connectés au serveur actuel et une estimation du nombre total d'utilisateurs."
 
 #: src/muuli_wdr.cpp
-msgid "Up: 0.0 | Down: 0.0"
-msgstr "E : 0.0 | R : 0.0"
+msgid "Up:"
+msgstr ""
 
 #: src/muuli_wdr.cpp
-msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
-msgstr "Taux moyen d'émission et de réception actuelles. S'il est présent, le chiffre entre parenthèses indique la surcharge dût à la communication du client."
+#, fuzzy
+msgid "Down:"
+msgstr "Réception : "
 
 #: src/muuli_wdr.cpp
 msgid "Displays the connected status and active transfers. Red arrows signifies that you are currently not connected, yellow arrows signify that you have low ID (firewalled) and green arrows signify that you have high ID (The optimal connection type)."
@@ -4616,10 +4625,6 @@ msgstr "Affiche l'état de connexion et les transferts actifs. Des flèches roug
 #: src/muuli_wdr.cpp
 msgid "Not Connected ..."
 msgstr "Non connecté…"
-
-#: src/muuli_wdr.cpp
-msgid "Currently connected server."
-msgstr "Serveur connecté."
 
 #: src/muuli_wdr.cpp
 msgid "Search"
@@ -5632,8 +5637,12 @@ msgid "Remove"
 msgstr "Enlever"
 
 #: src/muuli_wdr.cpp
-msgid "(Right click on folder icon for recursive share)"
-msgstr "(Clic droit sur l'icône du répertoire pour un partage récursif)"
+msgid "Double-click: share or unshare this folder. Right-click: share it with all subfolders, including new ones."
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "Bold: shared. Bold italic: shared with all subfolders. Red folder: contains shared folders."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Share hidden files"
@@ -5794,6 +5803,14 @@ msgstr "Nombre maximum de nouvelles connexions / 5 secs"
 #: src/muuli_wdr.cpp
 msgid "Concurrent Kad source lookups"
 msgstr "Recherche concurrentes de sources Kad"
+
+#: src/muuli_wdr.cpp
+msgid "Firewalled Kad nodes served as buddy"
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "How many firewalled Kad nodes this node relays callbacks for. Each one holds a connection, so at most a tenth of the connection limit is served."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Kad source re-search interval (minutes)"
@@ -5990,46 +6007,6 @@ msgstr "Les sessions invitées peuvent lire l'état et les listes, mais ne peuve
 #: src/muuli_wdr.cpp
 msgid "Guest password"
 msgstr "Mot de passe invité"
-
-#: src/muuli_wdr.cpp
-msgid "Web server parameters"
-msgstr "Paramètres du serveur Web"
-
-#: src/muuli_wdr.cpp
-msgid "Run webserver on startup (deprecated)"
-msgstr "Démarrer le serveur web au démarrage (obsolète)"
-
-#: src/muuli_wdr.cpp
-msgid "Web template"
-msgstr "Template web"
-
-#: src/muuli_wdr.cpp
-msgid "Full rights password"
-msgstr "Mot de passe administrateur"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Low rights User"
-msgstr "Activer l'accès utilisateur sans privilèges"
-
-#: src/muuli_wdr.cpp
-msgid "Low rights password"
-msgstr "Mot de passe sans privilèges"
-
-#: src/muuli_wdr.cpp
-msgid "Enable UPnP port forwarding of the web server port"
-msgstr "Activer la redirection de port UPnP sur le port du serveur web"
-
-#: src/muuli_wdr.cpp
-msgid "Web server UPnP TCP port (Optional)"
-msgstr "Port TCP UPnP du serveur web (Facultatif)"
-
-#: src/muuli_wdr.cpp
-msgid "Page Refresh Time (in secs)"
-msgstr "Intervalle de rafraîchissement (en secondes)"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Gzip compression"
-msgstr "Activer la compression Gzip"
 
 #: src/muuli_wdr.cpp
 msgid "Reset page to defaults"
@@ -7053,9 +7030,9 @@ msgstr "Récupération d'informations sur le pote"
 msgid "NAT traversal (QUIC)"
 msgstr "Traversée de NAT (QUIC)"
 
-#: src/Preferences.cpp
-msgid "no options available"
-msgstr "pas d'option disponible"
+#: src/PeerCapabilities.h
+msgid "Skips unknown source exchange tags"
+msgstr ""
 
 #: src/Preferences.cpp
 msgid "Media metadata: FFProbePath is obsolete; aMule now uses its bundled media parser. Removing the old setting."
@@ -7417,12 +7394,9 @@ msgid "macOS does not let an application stop being the default handler. To stop
 msgstr "macOS ne permet pas à une application de cesser d'être le gestionnaire par défaut. Pour qu'aMule arrête de les ouvrir, définissez une autre application par défaut."
 
 #: src/PrefsUnifiedDlg.cpp
-msgid "The web server and aMule API require external connections to be enabled."
+#, fuzzy
+msgid "The aMule API requires external connections to be enabled."
 msgstr "Le serveur web et aMule API nécessitent l'activation des connexions externes."
-
-#: src/PrefsUnifiedDlg.cpp
-msgid "The aMule web server is deprecated. Consider running the aMule API instead."
-msgstr "Le serveur web d'aMule est obsolète. Envisagez d'utiliser aMule API à sa place."
 
 #: src/PrefsUnifiedDlg.cpp
 #, fuzzy
@@ -8463,6 +8437,16 @@ msgid "Connected to buddy at %s"
 msgstr "Connecté au pote à %s"
 
 #: src/ServerWnd.cpp
+#, fuzzy
+msgid "Served buddies:"
+msgstr "Liste des serveurs"
+
+#: src/ServerWnd.cpp
+#, c-format
+msgid "%u of %u"
+msgstr ""
+
+#: src/ServerWnd.cpp
 msgid "IP address:"
 msgstr "Adresse IP :"
 
@@ -8956,36 +8940,6 @@ msgid "Peak Connections (estimate): %i"
 msgstr "Pics de connexions (estimation) : %i"
 
 #: src/Statistics.cpp
-#, fuzzy
-msgid "NAT Traversal (Session)"
-msgstr "Traversée de NAT (uTP)"
-
-#: src/Statistics.cpp
-#, fuzzy, c-format
-msgid "Server Hole Punches: %s"
-msgstr "Surcharge Serveur (Paquets) : %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Server Hole Punches: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Lugdunum Callbacks: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, fuzzy, c-format
-msgid "Successful Lugdunum Callbacks: %s"
-msgstr "Mise à jour réussite de %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "uTP Streams Moved to a New Port: %s"
-msgstr ""
-
-#: src/Statistics.cpp
 #, c-format
 msgid "Unknown: %s"
 msgstr "Inconnu : %s"
@@ -9071,6 +9025,11 @@ msgid "Average file size: %s"
 msgstr "Taille moyenne des fichiers : %s"
 
 #: src/Statistics.cpp
+#, fuzzy
+msgid "Diagnostics"
+msgstr "Diagnostics de recherche"
+
+#: src/Statistics.cpp
 msgid "Operating System"
 msgstr "Système d'Exploitation"
 
@@ -9152,6 +9111,11 @@ msgstr ""
 "Aucun mot-clef de recherche fourni.\n"
 "Tapez « help search » pour obtenir davantage d'aide.\n"
 
+#: src/TextClient.cpp
+#, fuzzy
+msgid "The connected daemon does not support media search filters.\n"
+msgstr "Le démon connecté ne prend pas en charge les recherches totales.\n"
+
 #. TRANSLATORS:
 #. 'help search' is a command to the program, do not translate it.
 #: src/TextClient.cpp
@@ -9163,11 +9127,20 @@ msgstr ""
 "Tapez « help search » pour obtenir davantage d'aide.\n"
 
 #: src/TextClient.cpp
+#, fuzzy
+msgid "The connected daemon does not support search management.\n"
+msgstr "Le démon connecté ne prend pas en charge les recherches totales.\n"
+
+#: src/TextClient.cpp
+msgid "A search ID from 'search list' is required.\n"
+msgstr ""
+
+#: src/TextClient.cpp
 #, c-format
 msgid "Download File: %lu %s\n"
 msgstr "Télécharger le fichier : %lu %s\n"
 
-#: src/TextClient.cpp src/webserver/src/WebServer.cpp
+#: src/TextClient.cpp
 msgid "Request failed with an unknown error."
 msgstr "La requête a échoué avec une erreur inconnue."
 
@@ -9274,6 +9247,27 @@ msgstr ""
 #: src/TextClient.cpp
 msgid "[PartFile]"
 msgstr "[Fichier .part]"
+
+#: src/TextClient.cpp
+msgid "No retained searches.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; availability is unknown.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; further requests remain possible.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "No further results can be requested for this search.\n"
+msgstr "Retourne les résultats de la précédente recherche.\n"
+
+#: src/TextClient.cpp
+msgid "Search stop request processed; retained results were not removed.\n"
+msgstr ""
 
 #: src/TextClient.cpp
 #, c-format
@@ -9528,6 +9522,7 @@ msgid "Execute a search."
 msgstr "Effectuer une recherche."
 
 #: src/TextClient.cpp
+#, fuzzy
 msgid ""
 "A search type has to be specified by giving the type:\n"
 "    GLOBAL\n"
@@ -9543,6 +9538,11 @@ msgid ""
 "    --avail <N>            minimum number of sources\n"
 "    --min-size <N[KMG]>    smallest file size; K=1024, M=K*1024, G=M*1024\n"
 "    --max-size <N[KMG]>    largest file size; same suffixes\n"
+"    --min-bitrate <kbps>   whole number, 0-1000000\n"
+"    --min-duration <sec>   whole number, 0-86400\n"
+"    --codec <text> --title <text> --album <text> --artist <text>\n"
+"Quote media text values containing spaces.\n"
+"Kad applies media filters; eD2k servers may ignore them.\n"
 "Example: 'search global linux iso --type Iso --min-size 100M' returns\n"
 "results for \"linux iso\" of file-type Iso at least 100 MiB.\n"
 msgstr ""
@@ -9578,6 +9578,28 @@ msgstr "Effectuer une recherche Kad"
 #: src/TextClient.cpp
 msgid "Execute an eD2k and Kad search"
 msgstr "Effectuer une recherche eD2k et Kad"
+
+#: src/TextClient.cpp
+msgid "List retained search IDs and queries."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Stop a search, keeping its results."
+msgstr "Aucune autre source n'a cette partie"
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Request more Kad search results."
+msgstr "Nombres de résultats de la recherche : %i\n"
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'. Further results are not guaranteed."
+msgstr ""
 
 #: src/TextClient.cpp
 msgid "Show the results of a search."
@@ -10407,139 +10429,6 @@ msgstr "Répertoire contenant le fichier de signature"
 msgid "Folder where generating the statistic image"
 msgstr "Répertoire où générer l'image des statistiques en ligne"
 
-#: src/webserver/src/WebInterface.cpp
-msgid "Loads template <str>"
-msgstr "Charge le template <str>"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Web server HTTP port"
-msgstr "Port HTTP du serveur Web"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use UPnP port forwarding on web server port"
-msgstr "Utiliser la redirection de port UPnP sur le port du serveur web"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "UPnP port"
-msgstr "Port UPnP"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use gzip compression"
-msgstr "Utiliser la compression gzip"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Full access password for web server"
-msgstr "Mot de passe d'accès total pour le serveur web"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Guest password for web server"
-msgstr "Mot de passe invité pour le serveur web"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Allow guest access"
-msgstr "Autoriser l'accès invité"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Deny guest access"
-msgstr "Interdire l'accès invité"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Load/save web server settings from/to remote aMule"
-msgstr "Charger/sauvegarder les paramètres du serveur web depuis/vers un aMule distant"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule config file path. DO NOT USE DIRECTLY!"
-msgstr "Chemin du fichier de configuration d'aMule. NE PAS UTILISER DIRECTEMENT !"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Disable PHP interpreter (deprecated)"
-msgstr "Désactiver l'interpréteur PHP (obsolète)"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Recompile PHP pages on each request"
-msgstr "Recompiler les pages PHP à chaque requête"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule Web Server"
-msgstr "Serveur Web d'aMule"
-
-#: src/webserver/src/WebServer.cpp
-msgid "web client connection accepted\n"
-msgstr "connexion du client web acceptée\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "ERROR: cannot accept web client connection\n"
-msgstr "ERREUR : impossible d'accepter la connexion au client web\n"
-
-#: src/webserver/src/WebServer.cpp
-#, c-format
-msgid "Request failed with the following error: %s."
-msgstr "La requête a échoué avec le message d'erreur suivant : %s."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Index file not found: "
-msgstr "Fichier d'index non trouvé : "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session expired - requesting login\n"
-msgstr "La session a expiré - demande de l'identifiant\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, logged in\n"
-msgstr "Session correcte, identifié\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, not logged in\n"
-msgstr "Session correcte, non identifié\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No session opened - will request login\n"
-msgstr "Pas de session ouverte - l'identifiant va être demandé\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session created - requesting login\n"
-msgstr "Session crée - demande de l'identifiant\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [original]: "
-msgstr "Requête en cours [originale] : "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Refusing to read `pass` from URL query string\n"
-msgstr "Refus de lire `pass` depuis la chaîne de requête URL\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No password specified, login will not be allowed."
-msgstr "Pas de mot de passe indiqué, il ne sera pas possible de se connecter."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Checking password\n"
-msgstr "Vérification du mot de passe\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password hash invalid\n"
-msgstr "Hachage du mot de passe invalide\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password ok\n"
-msgstr "Mot de passe correct\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password bad\n"
-msgstr "Mauvais mot de passe\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "You did not enter any password. Blank password is not allowed.\n"
-msgstr "Vous n'avez pas entré de mot de passe. Les mots de passe vides ne sont pas autorisés.\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Logout requested\n"
-msgstr "Déconnexion demandée\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [redirected]: "
-msgstr "Requête en cours [redirigée] : "
-
 #: packaging/windows/installer_strings.c
 msgid "aMule (required)"
 msgstr "aMule (obligatoire)"
@@ -10683,6 +10572,221 @@ msgstr ""
 msgid "Migrating a changed legacy ECPassword after downgrade; the previous verifier no longer authenticates this run."
 msgstr ""
 
+#, c-format
+#~ msgid "Terminating amuleweb instance with pid '%d' ... "
+#~ msgstr "Interruption de l'instance amuleweb avec le pid '%d' … "
+
+#, c-format
+#~ msgid "Killing amuleweb instance with pid '%d' ... "
+#~ msgstr "Mise à mort de l'instance amuleweb avec le pid '%d' … "
+
+#, fuzzy
+#~ msgid "An exception occurred while launching amuleweb."
+#~ msgstr "Une exception est survenue lors du lancement d'amuleapi."
+
+#, c-format
+#~ msgid "web server running on pid %d"
+#~ msgstr "serveur web s'exécutant avec le pid %d"
+
+#~ msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
+#~ msgstr "Vous avez demandé à exécuter le serveur web au démarrage, mais le binaire amuleweb ne peut être exécuté. Veuillez installer le paquet contenant le serveur web aMule, ou compilez aMule depuis le code source avec -DBUILD_WEBSERVER=YES et installez-le."
+
+#, fuzzy
+#~ msgid "Could not prepare the amuleweb EC token."
+#~ msgstr "Impossible d'enlever le fichier de jeton de connexion externe d'amuleapi : %s"
+
+#, fuzzy, c-format
+#~ msgid "Could not remove the amuleweb EC token file: %s"
+#~ msgstr "Impossible d'enlever le fichier de jeton de connexion externe d'amuleapi : %s"
+
+#~ msgid "Web server parameters"
+#~ msgstr "Paramètres du serveur Web"
+
+#~ msgid "Run webserver on startup (deprecated)"
+#~ msgstr "Démarrer le serveur web au démarrage (obsolète)"
+
+#~ msgid "Web template"
+#~ msgstr "Template web"
+
+#~ msgid "Full rights password"
+#~ msgstr "Mot de passe administrateur"
+
+#~ msgid "Enable Low rights User"
+#~ msgstr "Activer l'accès utilisateur sans privilèges"
+
+#~ msgid "Low rights password"
+#~ msgstr "Mot de passe sans privilèges"
+
+#~ msgid "Enable UPnP port forwarding of the web server port"
+#~ msgstr "Activer la redirection de port UPnP sur le port du serveur web"
+
+#~ msgid "Web server UPnP TCP port (Optional)"
+#~ msgstr "Port TCP UPnP du serveur web (Facultatif)"
+
+#~ msgid "Page Refresh Time (in secs)"
+#~ msgstr "Intervalle de rafraîchissement (en secondes)"
+
+#~ msgid "Enable Gzip compression"
+#~ msgstr "Activer la compression Gzip"
+
+#~ msgid "no options available"
+#~ msgstr "pas d'option disponible"
+
+#~ msgid "The aMule web server is deprecated. Consider running the aMule API instead."
+#~ msgstr "Le serveur web d'aMule est obsolète. Envisagez d'utiliser aMule API à sa place."
+
+#~ msgid "Loads template <str>"
+#~ msgstr "Charge le template <str>"
+
+#~ msgid "Web server HTTP port"
+#~ msgstr "Port HTTP du serveur Web"
+
+#~ msgid "Use UPnP port forwarding on web server port"
+#~ msgstr "Utiliser la redirection de port UPnP sur le port du serveur web"
+
+#~ msgid "UPnP port"
+#~ msgstr "Port UPnP"
+
+#~ msgid "Use gzip compression"
+#~ msgstr "Utiliser la compression gzip"
+
+#~ msgid "Full access password for web server"
+#~ msgstr "Mot de passe d'accès total pour le serveur web"
+
+#~ msgid "Guest password for web server"
+#~ msgstr "Mot de passe invité pour le serveur web"
+
+#~ msgid "Allow guest access"
+#~ msgstr "Autoriser l'accès invité"
+
+#~ msgid "Deny guest access"
+#~ msgstr "Interdire l'accès invité"
+
+#~ msgid "Load/save web server settings from/to remote aMule"
+#~ msgstr "Charger/sauvegarder les paramètres du serveur web depuis/vers un aMule distant"
+
+#~ msgid "aMule config file path. DO NOT USE DIRECTLY!"
+#~ msgstr "Chemin du fichier de configuration d'aMule. NE PAS UTILISER DIRECTEMENT !"
+
+#~ msgid "Disable PHP interpreter (deprecated)"
+#~ msgstr "Désactiver l'interpréteur PHP (obsolète)"
+
+#~ msgid "Recompile PHP pages on each request"
+#~ msgstr "Recompiler les pages PHP à chaque requête"
+
+#~ msgid "aMule Web Server"
+#~ msgstr "Serveur Web d'aMule"
+
+#~ msgid "web client connection accepted\n"
+#~ msgstr "connexion du client web acceptée\n"
+
+#~ msgid "ERROR: cannot accept web client connection\n"
+#~ msgstr "ERREUR : impossible d'accepter la connexion au client web\n"
+
+#, c-format
+#~ msgid "Request failed with the following error: %s."
+#~ msgstr "La requête a échoué avec le message d'erreur suivant : %s."
+
+#~ msgid "Index file not found: "
+#~ msgstr "Fichier d'index non trouvé : "
+
+#~ msgid "Session expired - requesting login\n"
+#~ msgstr "La session a expiré - demande de l'identifiant\n"
+
+#~ msgid "Session ok, logged in\n"
+#~ msgstr "Session correcte, identifié\n"
+
+#~ msgid "Session ok, not logged in\n"
+#~ msgstr "Session correcte, non identifié\n"
+
+#~ msgid "No session opened - will request login\n"
+#~ msgstr "Pas de session ouverte - l'identifiant va être demandé\n"
+
+#~ msgid "Session created - requesting login\n"
+#~ msgstr "Session crée - demande de l'identifiant\n"
+
+#~ msgid "Processing request [original]: "
+#~ msgstr "Requête en cours [originale] : "
+
+#~ msgid "Refusing to read `pass` from URL query string\n"
+#~ msgstr "Refus de lire `pass` depuis la chaîne de requête URL\n"
+
+#~ msgid "No password specified, login will not be allowed."
+#~ msgstr "Pas de mot de passe indiqué, il ne sera pas possible de se connecter."
+
+#~ msgid "Checking password\n"
+#~ msgstr "Vérification du mot de passe\n"
+
+#~ msgid "Password hash invalid\n"
+#~ msgstr "Hachage du mot de passe invalide\n"
+
+#~ msgid "Password ok\n"
+#~ msgstr "Mot de passe correct\n"
+
+#~ msgid "Password bad\n"
+#~ msgstr "Mauvais mot de passe\n"
+
+#~ msgid "You did not enter any password. Blank password is not allowed.\n"
+#~ msgstr "Vous n'avez pas entré de mot de passe. Les mots de passe vides ne sont pas autorisés.\n"
+
+#~ msgid "Logout requested\n"
+#~ msgstr "Déconnexion demandée\n"
+
+#~ msgid "Processing request [redirected]: "
+#~ msgstr "Requête en cours [redirigée] : "
+
+#~ msgid "(Right click on folder icon for recursive share)"
+#~ msgstr "(Clic droit sur l'icône du répertoire pour un partage récursif)"
+
+#~ msgid "Currently connected server."
+#~ msgstr "Serveur connecté."
+
+#~ msgid "Up: 0.0 | Down: 0.0"
+#~ msgstr "E : 0.0 | R : 0.0"
+
+#~ msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
+#~ msgstr "Taux moyen d'émission et de réception actuelles. S'il est présent, le chiffre entre parenthèses indique la surcharge dût à la communication du client."
+
+#, fuzzy, c-format
+#~ msgid "Buddies Served: %llu"
+#~ msgstr "Fichiers sur les serveurs en fonctionnement : %llu"
+
+#, fuzzy, c-format
+#~ msgid "Time Served: %s"
+#~ msgstr "Serveurs filtrés : %s"
+
+#, fuzzy, c-format
+#~ msgid "Buddies Connected: %llu"
+#~ msgstr " est connecté à "
+
+#, fuzzy
+#~ msgid "NAT Traversal (Session)"
+#~ msgstr "Traversée de NAT (uTP)"
+
+#, fuzzy
+#~ msgid "Keyword publish"
+#~ msgstr "Mot-clef : %s"
+
+#, fuzzy
+#~ msgid "Source publish"
+#~ msgstr "Sources"
+
+#, fuzzy
+#~ msgid "Firewall check"
+#~ msgstr "Vérification de pare-feu UDP"
+
+#, fuzzy
+#~ msgid "Firewall check 2"
+#~ msgstr "Vérification de pare-feu UDP"
+
+#, fuzzy, c-format
+#~ msgid "Keys valid: %s"
+#~ msgstr "Mot-clef : %s"
+
+#, fuzzy
+#~ msgid "Kad Buddies"
+#~ msgstr "Utilisateur Kad"
+
 #~ msgid "Disable computer's timed standby mode"
 #~ msgstr "Désactiver la mise en veille programmé de l'ordinateur"
 
@@ -10800,9 +10904,6 @@ msgstr ""
 
 #~ msgid "Click on this button to update the servers list from URL ..."
 #~ msgstr "Cliquer ici pour mettre à jour la liste des serveurs à partir de l'URL…"
-
-#~ msgid "Server list"
-#~ msgstr "Liste des serveurs"
 
 #~ msgid "Enter the url to a server.met file here and press the button to the left to update the list of known servers."
 #~ msgstr "Entrer l'URL d'un fichier server.met et presser le bouton à gauche pour rafraîchir la liste des serveurs connus."
@@ -10998,9 +11099,6 @@ msgstr ""
 
 #~ msgid "Rejects packet if the client ip is different from the ip where the packet is received from. Use with caution."
 #~ msgstr "Rejette le paquet si l'IP du client est différente de l'ip d'où le paquet est envoyé. À utiliser avec prudence."
-
-#~ msgid "Return the results of the previous search.\n"
-#~ msgstr "Retourne les résultats de la précédente recherche.\n"
 
 #~ msgid "Show the progress of a search.\n"
 #~ msgstr "Affiche la progression de la recherche.\n"

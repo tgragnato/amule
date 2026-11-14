@@ -96,7 +96,7 @@ CEConnectDlg::CEConnectDlg()
 	wxString pref_host, pref_port;
 	// The literal loopback address rather than "localhost": on Windows, "localhost"
 	// lookups can fail intermittently (IPv4 vs IPv6 stack ordering, hosts-file shape).
-	// 127.0.0.1 is portable, and is the same default amulecmd / amuleweb use (#822).
+	// 127.0.0.1 is portable, and is the same default amulecmd uses (#822).
 	wxConfig::Get()->Read("/EC/Host", &pref_host, "127.0.0.1");
 	wxConfig::Get()->Read("/EC/Port", &pref_port, "4712");
 	wxConfig::Get()->Read("/EC/Password", &pwd_hash);
@@ -1616,6 +1616,7 @@ bool CPreferencesRem::LoadRemote()
 	// Capabilities belong to this connection, not the previously connected core.
 	m_liveNetworkPreferences = false;
 	thePrefs::SetWriteBufferLimitSupported(false);
+	thePrefs::SetKadMaxServedBuddiesSupported(false);
 	thePrefs::SetCoreDebugCategories({});
 	thePrefs::SetCoreVerboseLogfile(false);
 	// Likewise for the Kad repair-hash options, shown off until the core reports them: a
@@ -2949,12 +2950,14 @@ void CKnownFilesRem::ProcessUpdate(const CECTag *reply, CECPacket *, int)
 	// the per-item sort; the single SortList() runs once at the end, and only if a file
 	// was actually added, so a pure in-place stat poll stays sort-free.
 	//
+	// Routine polls must retain per-row invalidation: Freeze/Thaw can repaint the
+	// whole list even for an empty delta. Only a reconnect rebuild freezes painting.
 	// The dialog is part of the condition: these Begin/End pairs and the per-item calls
 	// between them are view work, and an EC reply can arrive with no dialog at all.
 	const bool batchDownloadList = !m_initialUpdate && theApp->amuledlg != nullptr;
 	bool downloadListGrew = false;
 	if (batchDownloadList) {
-		theApp->amuledlg->m_transferwnd->downloadlistctrl->BeginBatchUpdate();
+		theApp->amuledlg->m_transferwnd->downloadlistctrl->BeginBatchUpdate(reconcile);
 	}
 
 	// Same reasoning for the shared-files list: a steady-state poll can surface a burst
@@ -2964,7 +2967,7 @@ void CKnownFilesRem::ProcessUpdate(const CECTag *reply, CECPacket *, int)
 	const bool batchSharedList = !m_initialUpdate && theApp->amuledlg != nullptr;
 	bool sharedListGrew = false;
 	if (batchSharedList) {
-		theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->BeginBatchUpdate();
+		theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->BeginBatchUpdate(reconcile);
 	}
 	// Set below if the reconnect reconcile reply is too empty to trust as a
 	// full snapshot: keep the one-shot armed instead of pruning (see #444).
@@ -3122,13 +3125,13 @@ void CKnownFilesRem::ProcessUpdate(const CECTag *reply, CECPacket *, int)
 	}
 	if (batchDownloadList) {
 		// Sort once if the poll added a file, or on a reconnect resync where the
-		// whole list was reconciled; otherwise EndBatchUpdate() just Thaws.
+		// whole list was reconciled; ordinary in-place polls retain row invalidations.
 		theApp->amuledlg->m_transferwnd->downloadlistctrl->EndBatchUpdate(
 			reconcile || downloadListGrew);
 	}
 	if (batchSharedList) {
 		// Sort once if the poll added a shared file, or on a reconnect resync
-		// where the whole list was reconciled; otherwise EndBatchUpdate() Thaws.
+		// where the whole list was reconciled; ordinary polls retain row invalidations.
 		theApp->amuledlg->m_sharedfileswnd->sharedfilesctrl->EndBatchUpdate(
 			reconcile || sharedListGrew);
 	}
@@ -3408,6 +3411,16 @@ void CUpDownClientListRem::ProcessItemUpdate(const CEC_UpDownClient_Tag *tag, CC
 	uint8 sourceFrom = 0;
 	if (tag->GetSourceFrom(sourceFrom)) {
 		client->m_nSourceFrom = (ESourceFrom)sourceFrom;
+	}
+
+	uint32 originMask = 0;
+	if (tag->GetSourceOriginMask(originMask)) {
+		client->m_sourceFromMask = originMask;
+	}
+
+	uint8 contactRoute = 0;
+	if (tag->GetContactRoute(contactRoute)) {
+		client->SetContactRoute(contactRoute);
 	}
 
 	tag->RemoteFilename(client->m_clientFilename);
@@ -4818,8 +4831,7 @@ void CStatGraphRem::DoRequery()
 	CECPacket request(EC_OP_GET_STATSGRAPHS, EC_DETAIL_FULL);
 	// Send back the most recent timestamp we have seen; daemon-side
 	// CStatistics::GetHistoryForGui uses it as the lower bound so the response only
-	// carries points the GUI has not drawn yet. (GetHistoryForWeb is amuleweb's
-	// near-identical twin, not this path.)
+	// carries points the GUI has not drawn yet.
 	request.AddTag(CECTag(EC_TAG_STATSGRAPH_LAST, m_lastTimestamp));
 	// Seconds between points. This has to be the same step the graphs are going to plot
 	// at -- COScopeCtrl gets it from the "Update delay" preference and asks

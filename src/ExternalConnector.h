@@ -134,8 +134,6 @@ public:
 	~CaMuleExternalConnector();
 
 	// Virtual functions
-	virtual void Pre_Shell() {}
-	virtual void Post_Shell() {}
 	virtual int ProcessCommand(int) { return -1; }
 	virtual void TextShell(const wxString &prompt);
 	virtual void LoadConfigFile();
@@ -144,7 +142,7 @@ public:
 	/**
 	 * Whether this connector keeps its own remote.conf.
 	 *
-	 * True for amulecmd and amuleweb, which have no config file of their own. amuleapi returns
+	 * True for amulecmd, which has no config file of its own. amuleapi returns
 	 * false: it owns amuleapi.conf, and reading remote.conf as well gave two files describing
 	 * the same EC connection, with the winner decided by load order. When false the base class
 	 * registers neither --config-file, --write-config nor --create-config-from, and loads
@@ -161,8 +159,8 @@ public:
 	 * amuleapi.conf. Keeping the option registered would keep offering the one route that
 	 * leaks.
 	 *
-	 * amulecmd and amuleweb keep it. Both are commonly run by hand, and neither owns a config
-	 * file that could hold the value instead.
+	 * amulecmd keeps it. It is commonly run by hand, and owns no config file that could hold
+	 * the value instead.
 	 */
 	virtual bool UsesEcPasswordOption() const { return true; }
 
@@ -173,7 +171,7 @@ public:
 	 * portability by accident, when some other tool happens to have left one behind.
 	 */
 	virtual wxString PortableProbeFile() const { return "remote.conf"; }
-	virtual void LoadAmuleConfig(CECFileConfig &cfg);
+	void LoadAmuleConfig(CECFileConfig &cfg);
 	virtual void OnInitCommandSet();
 	virtual bool OnInit();
 	virtual const wxString GetGreetingTitle() = 0;
@@ -186,6 +184,8 @@ public:
 			Show(s);
 	}
 	const wxString &GetCmdArgs() const { return m_cmdargs; }
+	// Arguments as typed, for quoted values that must keep their whitespace.
+	const wxString &GetRawCmdArgs() const { return m_rawcmdargs; }
 	const wxString &GetLastCmdStr() const { return m_lastcmdstr; }
 	int GetIDFromString(const wxString &buffer)
 	{
@@ -201,6 +201,11 @@ public:
 	void SendPacket(const CECPacket *request) { m_ECClient->SendPacket(request); }
 	void ExpectClose() { m_ECClient->ExpectClose(); }
 	bool IsServerSearchAllActive() const { return m_ECClient && m_ECClient->ServerSupportsSearchAll(); }
+	bool IsServerSearchListActive() const
+	{
+		return m_ECClient && m_ECClient->ServerSupportsMultiSearch() &&
+		       m_ECClient->ServerSupportsSearchList();
+	}
 	bool IsServerSearchMetadataActive() const
 	{
 		return m_ECClient && m_ECClient->ServerSupportsSearchMetadata();
@@ -241,7 +246,7 @@ public:
 	void ShowGreet();
 
 	// Command line processing
-	void OnInitCmdLine(wxCmdLineParser &amuleweb_parser, const char *appname);
+	void OnInitCmdLine(wxCmdLineParser &parser, const char *appname);
 	// --log-file / --no-log-file, for amuleapi only.
 	static void AddLogFileOptions(wxCmdLineParser &parser);
 	bool OnCmdLineParsed(wxCmdLineParser &parser);
@@ -258,7 +263,7 @@ public:
 protected:
 	// Set current locale, if language is not empty.
 	// returns canonical name of set (current) locale
-	virtual wxString SetLocale(const wxString &language);
+	wxString SetLocale(const wxString &language);
 
 	CECFileConfig *m_configFile;
 	wxString m_configDir;
@@ -271,12 +276,11 @@ protected:
 	// where the locality check would otherwise strip ZLIB.
 	bool m_forceZLIB;
 
-	// Select the spawned API or web token's verifier instead of the configured password's.
+	// Select the spawned API token's verifier instead of the configured password's.
 	uint8_t m_ECTokenCredential = 0;
 	// Advertise the multi-search EC capability (EC_TAG_CAN_MULTI_SEARCH) so the daemon
 	// addresses searches by ID and several can run at once. Off by default; only a connector
 	// that reads EC_TAG_SEARCH_ID back and handles per-ID results (amulecmd) sets it true.
-	// amuleweb stays single-search.
 	bool m_canMultiSearch;
 	// With multi-search, read an id-less EC_OP_SEARCH_PROGRESS as every search rather than
 	// the current one. amulecmd turns it off.
@@ -296,6 +300,7 @@ private:
 
 	wxString m_configFileName;
 	wxString m_cmdargs;
+	wxString m_rawcmdargs;
 	wxString m_lastcmdstr;
 	CRemoteConnect *m_ECClient;
 	char *m_InputLine;

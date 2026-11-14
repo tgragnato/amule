@@ -54,6 +54,22 @@ wxString FormatClientSoftware(
  */
 wxString OriginToText(unsigned int source_from);
 
+/**
+ * Every channel a source has been seen on, already translated and joined: "Local Server + Kad".
+ * Falls back to @a primary, the source's own ESourceFrom, when the mask is empty.
+ */
+wxString OriginsToText(unsigned int originMask, unsigned int primary);
+
+//! The contact route as a noun phrase (EContactRouteReport). A wxTRANSLATE marker, so the caller
+//! applies wxGetTranslation(); empty before the first attempt.
+wxString ContactRouteToText(unsigned int route);
+
+/**
+ * The source list's status line while a contact is in flight, already translated: the route and,
+ * when it is one, that the route is a fallback or is unproven. Empty before the first attempt.
+ */
+wxString ContactRouteStatus(unsigned int route, bool unproven, bool fromFallback);
+
 /// @return The textual representation of a partfile conversion state.
 wxString GetConversionState(unsigned int state);
 

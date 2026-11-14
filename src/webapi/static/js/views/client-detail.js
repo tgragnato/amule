@@ -16,7 +16,9 @@ import { softLabel, identLabel, stateBadge } from "./client-table.js";
 import { t } from "../i18n.js";
 
 const hashCell = (h) => html`<span class="mono">${(h || "").toUpperCase() || "—"}</span>`;
-const origin = (c) => c.source_origin ? t("downloads_peer_origin_" + c.source_origin) : "—";
+const origin = (c) => (c.source_origins || []).length
+  ? c.source_origins.map((o) => t("downloads_peer_origin_" + o)).join(" + ")
+  : c.source_origin ? t("downloads_peer_origin_" + c.source_origin) : "—";
 const yesNo = (v) => v ? t("common_yes") : t("common_no");
 // "undefined" is the core's not-reported token; render it (and an empty) as a dash.
 const obfuscation = (c) => c.obfuscation_state && c.obfuscation_state !== "undefined"
@@ -76,7 +78,7 @@ function clientSections(c) {
     has("obfuscation_state") ? statRow("client_detail_obfuscation", obfuscation(c)) : null,
   ];
   const transfer = [
-    has("download_state") ? statRow("client_detail_dl_state", stateBadge(c.download_state)) : null,
+    has("download_state") ? statRow("client_detail_dl_state", stateBadge(c.download_state, c)) : null,
     has("upload_state") ? statRow("client_detail_ul_state", stateBadge(c.upload_state)) : null,
     has("download_speed_bytes_per_second") ? statRow("client_detail_dl_speed", formatSpeed(c.download_speed_bytes_per_second)) : null,
     has("upload_speed_bytes_per_second") ? statRow("client_detail_ul_speed", formatSpeed(c.upload_speed_bytes_per_second)) : null,

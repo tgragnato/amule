@@ -247,6 +247,7 @@ bool CClientTCPSocket::CheckTimeOut()
 			// Outgoing pings and relayed callbacks reset the ordinary socket timer.
 			// Only received packets prove a buddy is still responding.
 			if (m_client->HasBuddyTimedOut()) {
+				theApp->clientlist->RecordBuddyTimeout(m_client);
 				Disconnect("Buddy receive timeout");
 				return true;
 			}
@@ -1452,38 +1453,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t *buffer, uint32 size, uint
 					byRequestedOptions = data_in.ReadUInt16();
 				}
 
-				// Although this shouldn't happen, it's a just in case to any Mods that mess
-				// with version numbers.
-
-				if (byRequestedVersion > 0 || m_client->GetSourceExchange1Version() >= 1) {
-					uint64 dwTimePassed = ::GetTickCount64() -
-							      m_client->GetLastSrcReqTime() +
-							      CONNECTION_LATENCY;
-					bool bNeverAskedBefore = m_client->GetLastSrcReqTime() == 0;
-					if (
-						// if not complete and file is rare
-						(reqfile->IsPartFile() &&
-							(bNeverAskedBefore ||
-								dwTimePassed > SOURCECLIENTREASKS) &&
-							static_cast<CPartFile *>(reqfile)->GetSourceCount() <=
-								RARE_FILE) ||
-						// OR if file is not rare or if file is complete
-						((bNeverAskedBefore ||
-							dwTimePassed >
-								SOURCECLIENTREASKS * MINCOMMONPENALTY))) {
-						m_client->SetLastSrcReqTime();
-						CPacket *tosend = reqfile->CreateSrcInfoPacket(
-							m_client, byRequestedVersion, byRequestedOptions);
-						if (tosend) {
-							theStats::AddUpOverheadSourceExchange(
-								tosend->GetPacketSize());
-							AddDebugLogLineN(logLocalClient,
-								"Local Client: OP_ANSWERSOURCES to " +
-									m_client->GetFullIP());
-							SendPacket(tosend, true);
-						}
-					}
-				}
+				AnswerSourceRequest(reqfile, byRequestedVersion, byRequestedOptions, false);
 				break;
 			}
 			}
@@ -1777,48 +1747,13 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t *buffer, uint32 size, uint
 			byRequestedOptions = data_in.ReadUInt16();
 		}
 
-		if (byRequestedVersion > 0 || m_client->GetSourceExchange1Version() >= 1) {
-			// first check shared file list, then download list
-			const CMD4Hash fileID = data_in.ReadHash();
-			CKnownFile *file = theApp->sharedfiles->GetFileByID(fileID);
-			if (!file) {
-				file = theApp->downloadqueue->GetFileByID(fileID);
-			}
-			if (file) {
-				// Some clients do not follow the OP_REQUESTFILENAME,
-				// OP_SETREQFILEID, OP_REQUESTSOURCES sequence. Those get a random
-				// set of sources rather than the optimal one, because we do not
-				// know their download part status -- which SetUploadFileID may
-				// clear.
-				m_client->SetUploadFileID(file);
-
-				uint64 dwTimePassed = ::GetTickCount64() - m_client->GetLastSrcReqTime() +
-						      CONNECTION_LATENCY;
-				bool bNeverAskedBefore = m_client->GetLastSrcReqTime() == 0;
-				if (
-					// if not complete and file is rare, allow once every 40 minutes
-					(file->IsPartFile() &&
-						static_cast<CPartFile *>(file)->GetSourceCount() <=
-							RARE_FILE &&
-						(bNeverAskedBefore || dwTimePassed > SOURCECLIENTREASKS)) ||
-					// OR if file is not rare or if file is complete, allow every 90
-					// minutes
-					((bNeverAskedBefore ||
-						dwTimePassed > SOURCECLIENTREASKS * MINCOMMONPENALTY))) {
-					m_client->SetLastSrcReqTime();
-					CPacket *tosend = file->CreateSrcInfoPacket(
-						m_client, byRequestedVersion, byRequestedOptions);
-					if (tosend) {
-						theStats::AddUpOverheadSourceExchange(
-							tosend->GetPacketSize());
-						AddDebugLogLineN(logLocalClient,
-							"Local Client: OP_ANSWERSOURCES to " +
-								m_client->GetFullIP());
-						SendPacket(tosend, true, true);
-					}
-				}
-			}
+		// first check shared file list, then download list
+		const CMD4Hash fileID = data_in.ReadHash();
+		CKnownFile *file = theApp->sharedfiles->GetFileByID(fileID);
+		if (!file) {
+			file = theApp->downloadqueue->GetFileByID(fileID);
 		}
+		AnswerSourceRequest(file, byRequestedVersion, byRequestedOptions, true);
 		break;
 	}
 	case OP_ANSWERSOURCES: {
@@ -1998,6 +1933,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t *buffer, uint32 size, uint
 		if (!Kademlia::MatchesBuddyIdEitherLayout(receivedBytes, expectedBytes)) {
 			break;
 		}
+		++theApp->clientlist->GetBuddyStats().own.callbacksReceived;
 		CUInt128 fileid = data.ReadUInt128();
 		uint8_t fileid2[16];
 		fileid.ToByteArray(fileid2);
@@ -2011,7 +1947,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t *buffer, uint32 size, uint
 		uint32 ip = data.ReadUInt32();
 		uint16 tcp = data.ReadUInt16();
 		CUpDownClient *callback;
-		callback = theApp->clientlist->FindClientByIP(wxUINT32_SWAP_ALWAYS(ip), tcp);
+		callback = theApp->clientlist->FindCallbackClientByIP(wxUINT32_SWAP_ALWAYS(ip), tcp);
 		if (callback == NULL) {
 			// #warning Do we actually have to check friend status here?
 			callback = new CUpDownClient(tcp, ip, 0, 0, NULL, false, false);
@@ -2026,8 +1962,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t *buffer, uint32 size, uint
 			logRemoteClient, "Remote Client: OP_BUDDYPING from " + m_client->GetFullIP());
 		theStats::AddDownOverheadKad(size);
 
-		CUpDownClient *buddy = theApp->clientlist->GetBuddy();
-		if (buddy != m_client || m_client->GetKadVersion() == 0 ||
+		if (!theApp->clientlist->IsServedBuddyLinked(m_client) || m_client->GetKadVersion() == 0 ||
 			!m_client->AllowIncomingBuddyPing()) {
 			// This ping was not from our buddy or wrong version or packet sent to fast. Ignore
 			break;
@@ -2065,6 +2000,7 @@ bool CClientTCPSocket::ProcessExtPacket(const uint8_t *buffer, uint32 size, uint
 		}
 		AddDebugLogLineN(
 			logRemoteClient, "Remote Client: OP_REASKCALLBACKTCP from " + m_client->GetFullIP());
+		++theApp->clientlist->GetBuddyStats().own.reasksReceived;
 		CMemFile data_in(buffer, size);
 		uint32 destip = data_in.ReadUInt32();
 		if (destip == 0xFFFFFFFF) {
@@ -2427,6 +2363,10 @@ bool CClientTCPSocket::PacketReceived(CPacket *packet)
 		exception = "InvalidPacket exception: " + err.what();
 	} catch (const wxString &error) {
 		exception = "error: " + (error.IsEmpty() ? wxString("Unknown error") : error);
+	} catch (const CHelloFromOtherHost &otherHost) {
+		// Not an error of this source: its route led elsewhere, so the next route is tried.
+		Disconnect(otherHost.reason);
+		return false;
 	}
 
 	if (!exception.IsEmpty()) {
@@ -2483,6 +2423,46 @@ SocketSentBytes CClientTCPSocket::SendFileAndControlData(
 	}
 
 	return returnStatus;
+}
+
+void CClientTCPSocket::AnswerSourceRequest(
+	CKnownFile *file, uint8 requestedVersion, uint16 requestedOptions, bool setUploadFile)
+{
+	theStats::AddPublishEvent(EPublishEvent::SourceRequestReceived);
+	// Just in case a mod messes with version numbers.
+	if (requestedVersion == 0 && m_client->GetSourceExchange1Version() < 1) {
+		theStats::AddPublishEvent(EPublishEvent::SourceRequestUnsupported);
+		return;
+	}
+	if (!file) {
+		theStats::AddPublishEvent(EPublishEvent::SourceRequestUnknownFile);
+		return;
+	}
+	if (setUploadFile) {
+		// Some clients do not follow the OP_REQUESTFILENAME, OP_SETREQFILEID,
+		// OP_REQUESTSOURCES sequence. Those get a random set of sources rather than the
+		// optimal one, because we do not know their download part status -- which
+		// SetUploadFileID may clear.
+		m_client->SetUploadFileID(file);
+	}
+	// A rare part file may be asked again after 40 minutes, anything else after 90.
+	const bool rare = file->IsPartFile() && static_cast<CPartFile *>(file)->GetSourceCount() <= RARE_FILE;
+	const uint64 interval = rare ? SOURCECLIENTREASKS : SOURCECLIENTREASKS * MINCOMMONPENALTY;
+	const uint64 passed = ::GetTickCount64() - m_client->GetLastSrcReqTime() + CONNECTION_LATENCY;
+	if (m_client->GetLastSrcReqTime() != 0 && passed <= interval) {
+		theStats::AddPublishEvent(EPublishEvent::SourceRequestTooSoon);
+		return;
+	}
+	m_client->SetLastSrcReqTime();
+	CPacket *tosend = file->CreateSrcInfoPacket(m_client, requestedVersion, requestedOptions);
+	if (!tosend) {
+		theStats::AddPublishEvent(EPublishEvent::SourceRequestNoSources);
+		return;
+	}
+	theStats::AddPublishEvent(EPublishEvent::SourceRequestAnswered);
+	theStats::AddUpOverheadSourceExchange(tosend->GetPacketSize());
+	AddDebugLogLineN(logLocalClient, "Local Client: OP_ANSWERSOURCES to " + m_client->GetFullIP());
+	SendPacket(tosend, true);
 }
 
 void CClientTCPSocket::SendPacket(

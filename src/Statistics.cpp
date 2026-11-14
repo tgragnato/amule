@@ -44,6 +44,7 @@
 #include "ListenSocket.h" // (tree, GetAverageConnections)
 #include "ServerList.h"   // Needed for CServerList (tree)
 #include <cmath>          // Needed for std::floor
+#include <type_traits>    // Needed for std::extent_v
 #include "updownclient.h" // Needed for CUpDownClient
 #else
 #include "GetTickCount.h"         // Needed for GetTickCount64()
@@ -54,6 +55,10 @@
 #include <wx/intl.h>
 #include "Logger.h"
 #include "Preferences.h" // Needed for thePrefs
+#ifndef CLIENT_GUI
+#include "ClientList.h"     // Needed for the Kad buddy rows
+#include "SharedFileList.h" // Needed for the publishing rows
+#endif
 
 #ifdef __BSD__
 // glibc -> bsd libc
@@ -202,9 +207,96 @@ CStatTreeItemNativeCounter *CStatistics::s_hasSocket;
 #endif
 CStatTreeItemNativeCounter *CStatistics::s_filtered;
 CStatTreeItemNativeCounter *CStatistics::s_banned;
+CKadReceiverKeyCounts CStatistics::s_kadReceiverKeyCounts;
+CStatTreeItemNativeCounter
+	*CStatistics::s_kadReceiverKeyValid[static_cast<std::size_t>(EKadReceiverKeyHandler::Count)];
+CStatTreeItemNativeCounter
+	*CStatistics::s_kadReceiverKeyMissing[static_cast<std::size_t>(EKadReceiverKeyHandler::Count)];
 #ifdef ENABLE_KAD_NODE_PROTECTION
 CStatTreeItemNativeCounter *CStatistics::s_kadBanned;
 #endif
+
+std::vector<CStatTreeItemSimple *> CStatistics::s_kadBuddyRows;
+
+namespace
+{
+struct KadBuddyRow
+{
+	bool serving; // Otherwise our own buddy.
+	const char *key;
+	const char *label;
+	EDisplayMode mode;
+};
+
+const KadBuddyRow kadBuddyRows[] = {
+	{ true, "kad_buddies_served", "Served Now: %llu", dmDefault },
+	{ true, "kad_buddies_requests_received", "Buddy Requests Received: %llu", dmDefault },
+	{ true, "kad_buddies_offers_sent", "Buddy Offers Sent: %llu", dmDefault },
+	{ true, "kad_buddies_requests_refused", "Buddy Requests Refused: %llu", dmDefault },
+	{ true, "kad_buddies_requests_natt", "Buddy Requests From NAT-T Nodes: %llu", dmDefault },
+	{ true, "kad_buddies_requests_rate_limited", "Buddy Requests Over the Rate Limit: %llu", dmDefault },
+	{ true, "kad_buddies_offers_unused", "Unused Buddy Offers: %llu", dmDefault },
+	{ true, "kad_buddies_served_started", "Buddies Served: %llu", dmDefault },
+	{ true, "kad_buddies_served_timed_out", "Served Buddies Timed Out: %llu", dmDefault },
+	{ true, "kad_buddies_time_served", "Time Served: %s", dmTime },
+	{ true, "kad_buddies_callbacks_relayed", "Callbacks Relayed: %llu", dmDefault },
+	{ true, "kad_buddies_reasks_relayed", "Reasks Relayed: %llu", dmDefault },
+	{ true, "kad_buddies_relayed_data", "Data Relayed: %s", dmBytes },
+	{ true, "kad_buddies_callbacks_dropped", "Callbacks Dropped: %llu", dmDefault },
+	{ true, "kad_buddies_reasks_dropped", "Reasks Dropped: %llu", dmDefault },
+	{ true, "kad_buddies_busiest_minute", "Busiest Minute to One Buddy: %s", dmBytes },
+	{ false, "kad_buddies_own_searches", "Buddy Searches: %llu", dmDefault },
+	{ false, "kad_buddies_own_searches_held", "Buddy Searches Held for a Shared File: %llu", dmDefault },
+	{ false, "kad_buddies_own_requests_sent", "Buddy Requests Sent: %llu", dmDefault },
+	{ false, "kad_buddies_own_offers_received", "Buddy Offers Received: %llu", dmDefault },
+	{ false, "kad_buddies_own_connect_failures", "Failed Buddy Connections: %llu", dmDefault },
+	{ false, "kad_buddies_own_connected", "Buddies Connected: %llu", dmDefault },
+	{ false, "kad_buddies_own_timed_out", "Buddies Timed Out: %llu", dmDefault },
+	{ false, "kad_buddies_own_needed", "Time a Buddy Was Needed: %s", dmTime },
+	{ false, "kad_buddies_own_missing", "Time Without a Buddy: %s", dmTime },
+	{ false, "kad_buddies_own_callbacks", "Callbacks Received: %llu", dmDefault },
+	{ false, "kad_buddies_own_reasks", "Reasks Received: %llu", dmDefault },
+};
+
+// In the order of kadBuddyRows.
+std::vector<uint64> KadBuddyRowValues(const CClientList &clients)
+{
+	const Kademlia::CBuddyStats::Serving &s = clients.GetBuddyStats().serving;
+	const Kademlia::CBuddyStats::Own &o = clients.GetBuddyStats().own;
+	return {
+		clients.GetServedBuddyCount(),
+		s.requestsReceived,
+		s.requestsOffered,
+		s.requestsRefusedFirewalled + s.requestsRefusedFull + s.requestsRefusedConflict +
+			s.requestsRefusedSameIP,
+		s.requestsNatT,
+		s.requestsRateLimited,
+		s.offersExpired + s.offersSuperseded + s.offersDuplicate + s.offersEvicted,
+		s.started,
+		s.timedOut,
+		(s.endedMs + clients.GetServedLinkedMs()) / 1000,
+		s.relays.callbacks,
+		s.relays.reasks,
+		s.relays.callbackBytes + s.relays.reaskBytes,
+		s.relays.callbacksNoBuddy + s.relays.callbacksMismatched + s.relays.callbacksRateLimited +
+			s.relays.callbacksOverBudget,
+		s.relays.reasksNoBuddy + s.relays.reasksMismatched + s.relays.reasksMalformed +
+			s.relays.reasksOverBudget,
+		s.peakRelayBytesPerMinute,
+		o.searches,
+		o.searchesHeld,
+		o.requestsSent,
+		o.offersReceived,
+		o.connectFailures,
+		o.connected,
+		o.timedOut,
+		o.neededMs / 1000,
+		o.withoutBuddyMs / 1000,
+		o.callbacksReceived,
+		o.reasksReceived,
+	};
+}
+} // namespace
 
 // NAT traversal and IPv6 traffic
 #if defined(ENABLE_NATT_SERVER_COORDINATION) && defined(AMULE_UTP_TRANSPORT)
@@ -221,7 +313,16 @@ CStatTreeItemNativeCounter *CStatistics::s_utpStreamMoves;
 #ifdef ENABLE_IPV6
 CStatTreeItemCounter *CStatistics::s_ipv6Upload;
 CStatTreeItemCounter *CStatistics::s_ipv6Download;
+CStatTreeItemNativeCounter *CStatistics::s_ipv6Events[static_cast<std::size_t>(EIPv6Event::Count)];
 #endif
+CStatTreeItemNativeCounter
+	*CStatistics::s_sourceRouteEvents[static_cast<std::size_t>(ESourceRouteEvent::Count)];
+CStatTreeItemCounter *CStatistics::s_publishEvents[static_cast<std::size_t>(EPublishEvent::Count)];
+CStatTreeItemSimple *CStatistics::s_kadPublishedNow;
+CStatTreeItemSimple *CStatistics::s_kadPublishedShare;
+CStatTreeItemSimple *CStatistics::s_kadPublishedWellNow;
+CStatTreeItemSimple *CStatistics::s_ed2kOfferedNow;
+CStatTreeItemSimple *CStatistics::s_ed2kOfferedShare;
 
 // Servers
 CStatTreeItemSimple *CStatistics::s_workingServers;
@@ -302,6 +403,23 @@ CStatistics::~CStatistics()
 
 	delete s_upOverheadRate;
 	delete s_downOverheadRate;
+}
+
+void CStatistics::AddKadReceiverKeyObservation(EKadReceiverKeyHandler handler, bool validReceiverKey)
+{
+	const std::size_t index = static_cast<std::size_t>(handler);
+	if (index >= static_cast<std::size_t>(EKadReceiverKeyHandler::Count)) {
+		return;
+	}
+	s_kadReceiverKeyCounts.Record(handler, validReceiverKey);
+	if (s_kadReceiverKeyValid[index] != nullptr) {
+		s_kadReceiverKeyValid[index]->SetValue(
+			static_cast<uint32>(s_kadReceiverKeyCounts.GetValid(handler)));
+	}
+	if (s_kadReceiverKeyMissing[index] != nullptr) {
+		s_kadReceiverKeyMissing[index]->SetValue(
+			static_cast<uint32>(s_kadReceiverKeyCounts.GetMissing(handler)));
+	}
 }
 
 void CStatistics::Load()
@@ -520,69 +638,6 @@ unsigned CStatistics::GetHistory(        // Assemble arrays of sample points for
 }
 
 #ifndef CLIENT_GUI
-
-unsigned CStatistics::GetHistoryForWeb( // Assemble arrays of sample points for the webserver
-	unsigned cntPoints,             // maximum number of sample points to assemble
-	double sStep,                   // time difference between sample points
-	double *sStart,                 // earliest allowed timestamp
-	uint32 **graphData)             // a pointer to a pointer that will point to the graph data array
-{
-	if (*sStart < 0.0) {
-		*sStart = 0.0;
-	}
-	if (sStep == 0.0 || cntPoints == 0)
-		return (0);
-	unsigned cntFilled = 0;
-	listRPOS pos = listHR.rbegin();
-	double LastTimeStamp = pos->sTimestamp;
-	double sTarget = LastTimeStamp;
-
-	HR **pphr = new HR *[cntPoints];
-
-	while (pos != listHR.rend()) {
-		if (pos->sTimestamp > sTarget) {
-			++pos; // find next history record
-			continue;
-		}
-		pphr[cntFilled] = &(*pos);
-		if (++cntFilled == cntPoints) // enough points
-			break;
-		if (pos->sTimestamp <= *sStart) // reached beginning of requested time
-			break;
-		if ((sTarget -= sStep) <= 0.0) { // don't overshoot the beginning
-			pphr[cntFilled++] = NULL;
-			break;
-		}
-	}
-
-	if (cntFilled) {
-		*graphData = new uint32[4 * cntFilled];
-		if (*graphData) {
-			for (unsigned int i = 0; i < cntFilled; i++) {
-				HR *phr = pphr[cntFilled - i - 1];
-				if (phr) {
-					(*graphData)[4 * i] =
-						ENDIAN_HTONL((uint32)(phr->kBpsDownCur * 1024.0));
-					(*graphData)[4 * i + 1] =
-						ENDIAN_HTONL((uint32)(phr->kBpsUpCur * 1024.0));
-					(*graphData)[4 * i + 2] = ENDIAN_HTONL((uint32)phr->cntConnections);
-					(*graphData)[4 * i + 3] = ENDIAN_HTONL((uint32)phr->kadNodesCur);
-				} else {
-					(*graphData)[4 * i] = (*graphData)[4 * i + 1] = 0;
-					(*graphData)[4 * i + 2] = (*graphData)[4 * i + 3] = 0;
-				}
-			}
-		}
-	} else {
-		*graphData = NULL;
-	}
-
-	delete[] pphr;
-
-	*sStart = LastTimeStamp;
-
-	return cntFilled;
-}
 
 unsigned CStatistics::GetHistoryForGui(unsigned cntPoints,
 	double sStep,
@@ -948,24 +1003,6 @@ void CStatistics::InitStatsTree()
 	s_avgConnections->SetValue(0.0);
 	tmpRoot1->AddChild((new CStatTreeItemPeakConnections(wxTRANSLATE("Peak Connections (estimate): %i")))
 				   ->SetKey("peak_connections"));
-#ifdef AMULE_UTP_TRANSPORT
-	tmpRoot2 = tmpRoot1->AddChild(
-		(new CStatTreeItemBase(wxTRANSLATE("NAT Traversal (Session)")))->SetKey("nat_traversal"));
-#endif
-#if defined(ENABLE_NATT_SERVER_COORDINATION) && defined(AMULE_UTP_TRANSPORT)
-	s_serverHolePunchAttempts = static_cast<CStatTreeItemNativeCounter *>(
-		tmpRoot2->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Server Hole Punches: %s"))));
-	s_serverHolePunchSuccesses = static_cast<CStatTreeItemNativeCounter *>(tmpRoot2->AddChild(
-		new CStatTreeItemNativeCounter(wxTRANSLATE("Successful Server Hole Punches: %s"))));
-	s_lugdunumCallbackAttempts = static_cast<CStatTreeItemNativeCounter *>(
-		tmpRoot2->AddChild(new CStatTreeItemNativeCounter(wxTRANSLATE("Lugdunum Callbacks: %s"))));
-	s_lugdunumCallbackSuccesses = static_cast<CStatTreeItemNativeCounter *>(tmpRoot2->AddChild(
-		new CStatTreeItemNativeCounter(wxTRANSLATE("Successful Lugdunum Callbacks: %s"))));
-#endif
-#ifdef AMULE_UTP_TRANSPORT
-	s_utpStreamMoves = static_cast<CStatTreeItemNativeCounter *>(tmpRoot2->AddChild(
-		new CStatTreeItemNativeCounter(wxTRANSLATE("uTP Streams Moved to a New Port: %s"))));
-#endif
 
 	s_clients = static_cast<CStatTreeItemHiddenCounter *>(s_statTree->AddChild(
 		new CStatTreeItemHiddenCounter(wxTRANSLATE("Clients"), stSortChildren | stSortByValue)));
@@ -986,6 +1023,7 @@ void CStatistics::InitStatsTree()
 	s_kadBanned = static_cast<CStatTreeItemNativeCounter *>(s_clients->AddChild(
 		new CStatTreeItemNativeCounter(wxTRANSLATE("Kad banned addresses: %s")), 1));
 #endif
+
 	s_clients->AddChild(
 		(new CStatTreeItemTotalClients(wxTRANSLATE("Total: %i Known: %i"), s_clients, s_unknown))
 			->SetKey("clients_total"),
@@ -1026,6 +1064,217 @@ void CStatistics::InitStatsTree()
 		(new CStatTreeItemAverage(
 			 wxTRANSLATE("Average file size: %s"), s_sizeOfShare, s_numberOfShared, dmBytes))
 			->SetKey("shared_avg_size"));
+
+	// Counters for bug reports. English only: translating them would cost translators
+	// more than it gives users.
+	CStatTreeItemBase *const diagnostics = s_statTree->AddChild(
+		(new CStatTreeItemBase(wxTRANSLATE("Diagnostics")))->SetKey("diagnostics"));
+	tmpRoot1 = diagnostics->AddChild((new CStatTreeItemBase("Kad Buddies"))->SetKey("kad_buddies"));
+	CStatTreeItemBase *serving = tmpRoot1->AddChild(
+		(new CStatTreeItemBase("Serving Firewalled Nodes"))->SetKey("kad_buddies_serving"));
+	CStatTreeItemBase *own =
+		tmpRoot1->AddChild((new CStatTreeItemBase("Our Own Buddy"))->SetKey("kad_buddies_own"));
+	s_kadBuddyRows.clear();
+	for (const KadBuddyRow &row : kadBuddyRows) {
+		auto *item = new CStatTreeItemSimple(row.label, stNone, row.mode);
+		item->SetKey(row.key);
+		(row.serving ? serving : own)->AddChild(item);
+		s_kadBuddyRows.push_back(item);
+	}
+
+	{
+		// What each Kad request handler learned about receiver keys, per handler rather than as one
+		// total: only the publishes can ever carry a key reliably, so a single figure would hide the
+		// handlers that never can and say nothing about the ones that can.
+		CStatTreeItemBase *const keys = diagnostics->AddChild(
+			(new CStatTreeItemBase("Kad Receiver Keys"))->SetKey("kad_receiver_keys"));
+		// In EKadReceiverKeyHandler order.
+		struct HandlerItem
+		{
+			wxString name;
+			const char *validKey;
+			const char *missingKey;
+		};
+		const HandlerItem handlers[] = {
+			{ "Keyword publish",
+				"kad_recv_key_keyword_publish_valid",
+				"kad_recv_key_keyword_publish_missing" },
+			{ "Source publish",
+				"kad_recv_key_source_publish_valid",
+				"kad_recv_key_source_publish_missing" },
+			{ "Notes publish",
+				"kad_recv_key_notes_publish_valid",
+				"kad_recv_key_notes_publish_missing" },
+			{ "Firewall check",
+				"kad_recv_key_firewall_check_valid",
+				"kad_recv_key_firewall_check_missing" },
+			{ "Firewall check 2",
+				"kad_recv_key_firewall_check2_valid",
+				"kad_recv_key_firewall_check2_missing" },
+			{ "Find buddy", "kad_recv_key_find_buddy_valid", "kad_recv_key_find_buddy_missing" },
+			{ "Callback", "kad_recv_key_callback_valid", "kad_recv_key_callback_missing" },
+		};
+		static_assert(std::extent_v<decltype(handlers)> ==
+				      static_cast<std::size_t>(EKadReceiverKeyHandler::Count),
+			"one stats item per receiver key handler");
+		for (std::size_t i = 0; i < static_cast<std::size_t>(EKadReceiverKeyHandler::Count); ++i) {
+			CStatTreeItemBase *const handler =
+				keys->AddChild(new CStatTreeItemBase(handlers[i].name));
+			s_kadReceiverKeyValid[i] = static_cast<CStatTreeItemNativeCounter *>(
+				handler->AddChild(new CStatTreeItemNativeCounter("Keys valid: %s"), 1));
+			s_kadReceiverKeyValid[i]->SetKey(wxString::FromAscii(handlers[i].validKey));
+			s_kadReceiverKeyMissing[i] = static_cast<CStatTreeItemNativeCounter *>(
+				handler->AddChild(new CStatTreeItemNativeCounter("Keys missing: %s"), 1));
+			s_kadReceiverKeyMissing[i]->SetKey(wxString::FromAscii(handlers[i].missingKey));
+		}
+	}
+
+#ifdef AMULE_UTP_TRANSPORT
+	tmpRoot2 = diagnostics->AddChild(
+		(new CStatTreeItemBase("NAT Traversal (Session)"))->SetKey("nat_traversal"));
+#endif
+#if defined(ENABLE_NATT_SERVER_COORDINATION) && defined(AMULE_UTP_TRANSPORT)
+	s_serverHolePunchAttempts = static_cast<CStatTreeItemNativeCounter *>(
+		tmpRoot2->AddChild(new CStatTreeItemNativeCounter("Server Hole Punches: %s")));
+	s_serverHolePunchSuccesses = static_cast<CStatTreeItemNativeCounter *>(
+		tmpRoot2->AddChild(new CStatTreeItemNativeCounter("Successful Server Hole Punches: %s")));
+	s_lugdunumCallbackAttempts = static_cast<CStatTreeItemNativeCounter *>(
+		tmpRoot2->AddChild(new CStatTreeItemNativeCounter("Lugdunum Callbacks: %s")));
+	s_lugdunumCallbackSuccesses = static_cast<CStatTreeItemNativeCounter *>(
+		tmpRoot2->AddChild(new CStatTreeItemNativeCounter("Successful Lugdunum Callbacks: %s")));
+#endif
+#ifdef AMULE_UTP_TRANSPORT
+	s_utpStreamMoves = static_cast<CStatTreeItemNativeCounter *>(
+		tmpRoot2->AddChild(new CStatTreeItemNativeCounter("uTP Streams Moved to a New Port: %s")));
+#endif
+
+#ifdef ENABLE_IPV6
+	{
+		CStatTreeItemBase *const ipv6 =
+			diagnostics->AddChild((new CStatTreeItemBase("IPv6 (Session)"))->SetKey("ipv6"));
+		struct EventItem
+		{
+			const char *label;
+			const char *key;
+		};
+		// In EIPv6Event order.
+		const EventItem events[] = {
+			{ "Connections Dialled: %s", "ipv6_dials" },
+			{ "Dials Answered: %s", "ipv6_dials_answered" },
+			{ "Dials Not Answered: %s", "ipv6_dials_unanswered" },
+			{ "Inbound Hellos From Outside Our /48: %s", "ipv6_inbound_hellos" },
+			{ "Hellos With an IPv6 Address: %s", "ipv6_hellos_with_address" },
+			{ "Server Sources Accepted: %s", "ipv6_server_sources_accepted" },
+			{ "Server Sources Ignored: %s", "ipv6_server_sources_ignored" },
+		};
+		static_assert(std::extent_v<decltype(events)> == static_cast<std::size_t>(EIPv6Event::Count),
+			"one stats item per IPv6 event");
+		for (std::size_t i = 0; i < static_cast<std::size_t>(EIPv6Event::Count); ++i) {
+			s_ipv6Events[i] = static_cast<CStatTreeItemNativeCounter *>(
+				ipv6->AddChild(new CStatTreeItemNativeCounter(events[i].label)));
+			s_ipv6Events[i]->SetKey(events[i].key);
+		}
+	}
+#endif
+	{
+		CStatTreeItemBase *const routes = diagnostics->AddChild(
+			(new CStatTreeItemBase("Source Contact Routes (Session)"))->SetKey("source_routes"));
+		struct EventItem
+		{
+			const char *label;
+			const char *key;
+		};
+		// In ESourceRouteEvent order.
+		const EventItem events[] = {
+			{ "Next Route Tried After a Failed One: %s", "source_routes_next_route" },
+			{ "Fallback Server Routes Used: %s", "source_routes_fallback_server_route" },
+			{ "Last-Resort IPv4 Addresses Used: %s", "source_routes_fallback_ipv4" },
+			{ "Last-Resort IPv6 Addresses Used: %s", "source_routes_fallback_ipv6" },
+			{ "Chains Restored After Every Route Failed: %s", "source_routes_chain_restored" },
+			{ "Sources Reached After a Failed Route: %s", "source_routes_reached_after_failure" },
+			{ "Copies That Added a Route: %s", "source_routes_merge_took_route" },
+			{ "Copies Kept Only as a Fallback: %s", "source_routes_merge_kept_fallback" },
+			{ "Sources That Gained Another Origin: %s", "source_routes_origin_gained" },
+			{ "Other Hosts Refused on an Unproven Route: %s",
+				"source_routes_other_host_refused" },
+			{ "Other Hosts Kept Apart From a Source: %s", "source_routes_other_host_kept_apart" },
+		};
+		static_assert(
+			std::extent_v<decltype(events)> == static_cast<std::size_t>(ESourceRouteEvent::Count),
+			"one stats item per source route event");
+		for (std::size_t i = 0; i < static_cast<std::size_t>(ESourceRouteEvent::Count); ++i) {
+			s_sourceRouteEvents[i] = static_cast<CStatTreeItemNativeCounter *>(
+				routes->AddChild(new CStatTreeItemNativeCounter(events[i].label)));
+			s_sourceRouteEvents[i]->SetKey(events[i].key);
+		}
+	}
+	{
+		CStatTreeItemBase *const publishing =
+			diagnostics->AddChild((new CStatTreeItemBase("Publishing"))->SetKey("publishing"));
+		CStatTreeItemBase *const kad = publishing->AddChild(
+			(new CStatTreeItemBase("Kad Sources"))->SetKey("publishing_kad"));
+		CStatTreeItemBase *const ed2k = publishing->AddChild(
+			(new CStatTreeItemBase("eD2k Server"))->SetKey("publishing_ed2k"));
+		CStatTreeItemBase *const exchange = diagnostics->AddChild(
+			(new CStatTreeItemBase("Source Exchange (Session)"))->SetKey("source_exchange"));
+		// Current state: nodes keep a source entry for KADEMLIAREPUBLISHTIMES.
+		const auto addNow = [](CStatTreeItemBase *parent, const char *label, const char *key) {
+			auto *item = new CStatTreeItemSimple(label);
+			item->SetKey(key);
+			parent->AddChild(item);
+			return item;
+		};
+		s_kadPublishedNow = addNow(kad, "Files Published Now: %llu", "publishing_kad_published");
+		s_kadPublishedNow->SetValue(uint64(0));
+		s_kadPublishedShare =
+			addNow(kad, "Shared Files Published Now: %.1f%%", "publishing_kad_published_share");
+		s_kadPublishedShare->SetValue(0.0);
+		s_kadPublishedWellNow = addNow(kad,
+			"Files Acknowledged by 5 or More Nodes: %llu",
+			"publishing_kad_published_5_nodes");
+		s_kadPublishedWellNow->SetValue(uint64(0));
+		s_ed2kOfferedNow = addNow(
+			ed2k, "Files Offered to the Connected Server: %llu", "publishing_ed2k_offered");
+		s_ed2kOfferedNow->SetValue(uint64(0));
+		s_ed2kOfferedShare =
+			addNow(ed2k, "Shared Files Offered: %.1f%%", "publishing_ed2k_offered_share");
+		s_ed2kOfferedShare->SetValue(0.0);
+
+		struct EventItem
+		{
+			CStatTreeItemBase *parent;
+			const char *label;
+			const char *key;
+		};
+		// In EPublishEvent order.
+		const EventItem events[] = {
+			{ kad, "Lookups Started (Session): %s", "publishing_kad_lookups" },
+			{ kad, "Stores Sent (Session): %s", "publishing_kad_stores_sent" },
+			{ kad, "Stores Acknowledged (Session): %s", "publishing_kad_stores_acknowledged" },
+			{ ed2k, "Offer Lists Sent (Session): %s", "publishing_ed2k_offer_lists" },
+			{ ed2k, "Files Offered (Session): %s", "publishing_ed2k_files_offered" },
+			{ exchange, "Requests Received: %s", "source_exchange_requests" },
+			{ exchange, "Requests Answered: %s", "source_exchange_answered" },
+			{ exchange, "Not Answered, Asked Too Soon: %s", "source_exchange_too_soon" },
+			{ exchange, "Not Answered, No Sources to Give: %s", "source_exchange_no_sources" },
+			{ exchange, "Not Answered, Unknown File: %s", "source_exchange_unknown_file" },
+			{ exchange, "Not Answered, Unsupported Version: %s", "source_exchange_unsupported" },
+			{ exchange, "Sources Sent: %s", "source_exchange_sources_sent" },
+			{ exchange, "Extended Answers Sent: %s", "source_exchange_extended_answers" },
+			{ exchange, "Extended Sources Sent: %s", "source_exchange_extended_sources" },
+			{ exchange,
+				"LowID Sources Sent With a Buddy Route: %s",
+				"source_exchange_lowid_routed_sources" },
+		};
+		static_assert(
+			std::extent_v<decltype(events)> == static_cast<std::size_t>(EPublishEvent::Count),
+			"one stats item per publishing event");
+		for (std::size_t i = 0; i < static_cast<std::size_t>(EPublishEvent::Count); ++i) {
+			s_publishEvents[i] = static_cast<CStatTreeItemCounter *>(
+				events[i].parent->AddChild(new CStatTreeItemCounter(events[i].label)));
+			s_publishEvents[i]->SetKey(events[i].key);
+		}
+	}
 
 	// Stable machine keys for API consumers (EC_TAG_STAT_NODE_KEY), assigned here so
 	// they stay fixed regardless of label wording or translation.
@@ -1114,6 +1363,20 @@ void CStatistics::UpdateStatsTree()
 	uint32 servtfile;
 	float servocc;
 	theApp->serverlist->GetStatus(servfail, servuser, servfile, servtuser, servtfile, servocc);
+	const std::vector<uint64> buddyValues = KadBuddyRowValues(*theApp->clientlist);
+	wxASSERT(buddyValues.size() == s_kadBuddyRows.size());
+	for (std::size_t i = 0; i < s_kadBuddyRows.size() && i < buddyValues.size(); ++i) {
+		s_kadBuddyRows[i]->SetValue(buddyValues[i]);
+	}
+	const CSharedFileList::SPublishingState publishing = theApp->sharedfiles->GetPublishingState();
+	const double shared = publishing.shared ? static_cast<double>(publishing.shared) : 1.0;
+	s_kadPublishedNow->SetValue(publishing.kadPublished);
+	s_kadPublishedShare->SetValue(100.0 * static_cast<double>(publishing.kadPublished) / shared);
+	s_kadPublishedWellNow->SetValue(publishing.kadPublishedWell);
+	// Offered flags outlive a disconnection; nothing is offered without a server.
+	const uint64 offered = theApp->IsConnectedED2K() ? publishing.ed2kOffered : 0;
+	s_ed2kOfferedNow->SetValue(offered);
+	s_ed2kOfferedShare->SetValue(100.0 * static_cast<double>(offered) / shared);
 	s_workingServers->SetValue((uint64)((*s_totalServers) - servfail));
 	s_failedServers->SetValue((uint64)servfail);
 	s_usersOnWorking->SetValue((uint64)servuser);
@@ -1430,6 +1693,8 @@ void CStatistics::UpdateStats(const CECPacket *stats, bool distributionRequested
 	s_statData[sdBuddyStatus] = stats->GetTagByNameSafe(EC_TAG_STATS_BUDDY_STATUS)->GetInt();
 	s_statData[sdBuddyIP] = stats->GetTagByNameSafe(EC_TAG_STATS_BUDDY_IP)->GetInt();
 	s_statData[sdBuddyPort] = stats->GetTagByNameSafe(EC_TAG_STATS_BUDDY_PORT)->GetInt();
+	s_statData[sdBuddyServed] = stats->GetTagByNameSafe(EC_TAG_STATS_BUDDY_SERVED)->GetInt();
+	s_statData[sdBuddyServedLimit] = stats->GetTagByNameSafe(EC_TAG_STATS_BUDDY_SERVED_LIMIT)->GetInt();
 	s_statData[sdKadInLanMode] = stats->GetTagByNameSafe(EC_TAG_STATS_KAD_IN_LAN_MODE)->GetInt();
 	s_statData[sdTotalSentBytes] = stats->GetTagByNameSafe(EC_TAG_STATS_TOTAL_SENT_BYTES)->GetInt();
 	s_statData[sdTotalReceivedBytes] =

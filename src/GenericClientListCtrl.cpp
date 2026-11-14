@@ -46,8 +46,9 @@
 #include "PartBarLegendUI.h" // Needed for ShowPartBarLegend, ToMuleColour
 #include "PartFile.h"        // Needed for CPartFile
 #include "Preferences.h"
-#include "SharedFileList.h" // Needed for CSharedFileList
-#include "ClientRef.h"      // Needed for CClientRef
+#include "SharedFileList.h"    // Needed for CSharedFileList
+#include "ClientRef.h"         // Needed for CClientRef
+#include "SourceRoutePolicy.h" // Needed for EContactRouteReport
 // CUpDownClient (country accessors, #439). MUST match the build's client class: the reduced EC
 // client for amulegui, the full one for monolithic. The wrong header gives this TU a different
 // CUpDownClient layout than the rest of the GUI, so member reads land at the wrong offset.
@@ -740,7 +741,20 @@ wxString CGenericClientListCtrl::GetItemColumnText(wxUIntPtr data, unsigned colu
 			return _("On Queue");
 		}
 		if (notA4AF) {
-			return DownloadStateToStr(client.GetDownloadState(), client.IsRemoteQueueFull());
+			// While a contact is in flight the route says more than the state does: the state
+			// has one word for every callback, so a direct UDP callback to the peer and a
+			// hole punch through two servers both read as "via server".
+			const uint8 state = client.GetDownloadState();
+			if (state == DS_CONNECTING || state == DS_WAITCALLBACK ||
+				state == DS_WAITCALLBACKKAD || state == DS_LOWTOLOWIP) {
+				const wxString route = ContactRouteStatus(client.GetContactRoute(),
+					client.IsRouteUnproven(),
+					client.IsIdentityFromFallback());
+				if (!route.IsEmpty()) {
+					return route;
+				}
+			}
+			return DownloadStateToStr(state, client.IsRemoteQueueFull());
 		}
 		wxString buffer = _("Asked for another file");
 		if (client.GetRequestFile() && client.GetRequestFile()->GetFileName().IsOk()) {
@@ -764,7 +778,9 @@ wxString CGenericClientListCtrl::GetItemColumnText(wxUIntPtr data, unsigned colu
 		return _("None");
 
 	case ColumnUserOrigin:
-		return wxGetTranslation(OriginToText(client.GetSourceFrom()));
+		// Not just the channel this copy was created on: a source found by our server and then
+		// offered again over Kad was reached two ways, and the merge keeps only the first.
+		return OriginsToText(client.GetSourceOriginMask(), client.GetSourceFrom());
 
 	case ColumnUserFileNameDownload:
 		if (const CPartFile *pf = client.GetRequestFile()) {

@@ -102,8 +102,8 @@ TEST(HelperBinaryPath, ConfiguredDirectoryIsKept)
 
 TEST(HelperBinaryPath, UnknownSelfOrEmptyNameChangesNothing)
 {
-	ASSERT_EQUALS(wxString("amuleweb"),
-		ResolveHelperBinary("amuleweb", "", "", Holding({ SiblingOf("amuleweb") })));
+	ASSERT_EQUALS(wxString("amuleapi"),
+		ResolveHelperBinary("amuleapi", "", "", Holding({ SiblingOf("amuleapi") })));
 	ASSERT_EQUALS(wxString(""), ResolveHelperBinary("", kSelf, kBin, Holding({ SiblingOf("") })));
 }
 

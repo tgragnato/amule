@@ -339,22 +339,6 @@ msgstr "Konča program."
 
 #: src/amule.cpp
 #, c-format
-msgid "Terminating amuleweb instance with pid '%d' ... "
-msgstr "Končanje izvoda amuleweb s PID »%d« ... "
-
-#: src/amule.cpp
-#, c-format
-msgid "Killing amuleweb instance with pid '%d' ... "
-msgstr "Ubijanje izvoda amuleweb s PID »%d« ... "
-
-#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
-#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
-#: src/SharedFilesCtrl.cpp
-msgid "Failed"
-msgstr "Neuspeh"
-
-#: src/amule.cpp
-#, c-format
 msgid "Terminating amuleapi instance with pid '%d' ... "
 msgstr "Končanje izvoda amuleapi s PID »%d« ... "
 
@@ -362,6 +346,12 @@ msgstr "Končanje izvoda amuleapi s PID »%d« ... "
 #, c-format
 msgid "Killing amuleapi instance with pid '%d' ... "
 msgstr "Ubijanje izvoda amuleapi s PID »%d« ... "
+
+#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
+#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
+#: src/SharedFilesCtrl.cpp
+msgid "Failed"
+msgstr "Neuspeh"
 
 #: src/amule.cpp
 msgid "aMule OnExit: Terminating core."
@@ -522,28 +512,6 @@ msgid "Not starting %s: it is neither next to aMule nor on PATH."
 msgstr ""
 
 #: src/amule.cpp
-msgid "An exception occurred while launching amuleweb."
-msgstr ""
-
-#: src/amule.cpp
-#, c-format
-msgid "web server running on pid %d"
-msgstr "spletni strežnik teče s PID %d"
-
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb authentication token. The web server was not started."
-msgstr ""
-
-#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
-#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
-msgid "ERROR"
-msgstr "NAPAKA"
-
-#: src/amule.cpp
-msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
-msgstr "Zahtevali ste zagon spletnega strežnika ob zagonu, vendar binarne datoteke amuleweb ni mogoče zagnati. Namestite paket, ki vsebuje spletni strežnik aMule, ali zgradite aMule iz izvorne kode z -DBUILD_WEBSERVER=YES in ga namestite."
-
-#: src/amule.cpp
 #, c-format
 msgid "Could not write the amuleapi EC token to %s; amuleapi will fall back to its configured password."
 msgstr ""
@@ -565,15 +533,10 @@ msgstr ""
 msgid "You requested to run amuleapi on startup, but the amuleapi binary cannot be run. Please install the package containing aMule's REST API server, or build aMule from source with -DBUILD_AMULEAPI=YES and install it."
 msgstr "Zahtevali ste zagon amuleapi ob zagonu, vendar binarne datoteke amuleapi ni mogoče zagnati. Namestite paket, ki vsebuje strežnik REST API za aMule, ali zgradite aMule iz izvorne kode z -DBUILD_AMULEAPI=YES in ga namestite."
 
-#: src/amule.cpp
-#, fuzzy
-msgid "Could not prepare the amuleweb EC token."
-msgstr "Gesla amuleapi ni bilo mogoče shraniti: %s"
-
-#: src/amule.cpp
-#, fuzzy, c-format
-msgid "Could not remove the amuleweb EC token file: %s"
-msgstr "Gesla amuleapi ni bilo mogoče shraniti: %s"
+#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
+#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
+msgid "ERROR"
+msgstr "NAPAKA"
 
 #: src/amule.cpp
 #, fuzzy, c-format
@@ -1061,23 +1024,14 @@ msgstr "Opis"
 msgid "aMuleGUI"
 msgstr "aMule dnevnik"
 
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
-msgstr "Gor: %.1f%s (%.1f) | Dol: %.1f%s (%.1f)"
-
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
 msgid " MiB/s"
 msgstr ""
 
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/utils/wxCas/src/wxcasframe.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
+#: src/utils/wxCas/src/wxcasframe.cpp
 msgid " KiB/s"
 msgstr ""
-
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s | Down: %.1f%s"
-msgstr "Gor: %.1f%s | Dol: %.1f%s"
 
 #: src/amuleDlg.cpp
 msgid "Transfer speeds are reported by the daemon. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
@@ -1086,6 +1040,16 @@ msgstr ""
 #: src/amuleDlg.cpp
 msgid "Live speeds are averaged over the last second. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
 msgstr ""
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s | Down: %.1f%s"
+msgstr "Gor: %.1f%s | Dol: %.1f%s"
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
+msgstr "Gor: %.1f%s (%.1f) | Dol: %.1f%s (%.1f)"
 
 #: src/amuleDlg.cpp
 #, c-format
@@ -2139,6 +2103,55 @@ msgstr "Izvorna semena"
 msgid "Search Result"
 msgstr "Rezultat iskanja"
 
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a direct connection"
+msgstr "Dejavne povezave"
+
+#: src/DataToText.cpp
+msgid "a direct callback"
+msgstr ""
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "our server"
+msgstr "Odstrani strežnik"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the Kad buddy"
+msgstr "Brez kolegov"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the source's own server"
+msgstr "Seznam strežnikov eD2k (server.met)"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a server hole punch"
+msgstr "Presežek strežnikov (paketov): %s"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a Lugdunum callback"
+msgstr "%s je bila uspešno posodobljena"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on a fallback route"
+msgstr "Povezovanje preko strežnika"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on an unproven route"
+msgstr "Povezovanje preko strežnika"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s"
+msgstr "Povezovanje preko Kad"
+
 #: src/DataToText.cpp src/DownloadListCtrl.cpp src/OtherFunctions.cpp
 #: src/TransferWnd.cpp
 msgid "Completed"
@@ -2454,10 +2467,6 @@ msgstr[3] "Ni bilo mogoče dodati %u povezav (podrobnosti si oglejte v dnevniku)
 #, c-format
 msgid "Invalid eD2k link! ERROR: %s"
 msgstr "Neveljavna povezava eD2k. NAPAKA: %s"
-
-#: src/ECSpecialMuleTags.cpp
-msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
-msgstr ""
 
 #: src/ECSpecialMuleTags.cpp
 msgid "Refused a remote request to change the online-signature folder: it can only be set in the daemon's own configuration."
@@ -4653,12 +4662,13 @@ msgid "Users connected to the current server and an estimate of the total number
 msgstr "Število uporabnikov povezanih na ta strežnik in ocena skupnega števila uporabnikov."
 
 #: src/muuli_wdr.cpp
-msgid "Up: 0.0 | Down: 0.0"
-msgstr "Gor: 0,0 | Dol: 0,0"
+msgid "Up:"
+msgstr ""
 
 #: src/muuli_wdr.cpp
-msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
-msgstr "Trenutno povprečje prenosa v obe smeri. Če je vklopljen prikaz presežka, številke v oklepaju ponazarjajo presežek prenosa od komunikacije med odjemalci."
+#, fuzzy
+msgid "Down:"
+msgstr "Prejemanje: "
 
 #: src/muuli_wdr.cpp
 msgid "Displays the connected status and active transfers. Red arrows signifies that you are currently not connected, yellow arrows signify that you have low ID (firewalled) and green arrows signify that you have high ID (The optimal connection type)."
@@ -4667,10 +4677,6 @@ msgstr "Prikazuje stanje povezave in dejavne prenose. Rdeče puščice pomenijo,
 #: src/muuli_wdr.cpp
 msgid "Not Connected ..."
 msgstr "Ni povezave …"
-
-#: src/muuli_wdr.cpp
-msgid "Currently connected server."
-msgstr "Trenutno povezan strežnik."
 
 #: src/muuli_wdr.cpp
 msgid "Search"
@@ -5680,8 +5686,12 @@ msgid "Remove"
 msgstr "Odstrani"
 
 #: src/muuli_wdr.cpp
-msgid "(Right click on folder icon for recursive share)"
-msgstr "(desni klik na ikono mape izbere tudi podmape)"
+msgid "Double-click: share or unshare this folder. Right-click: share it with all subfolders, including new ones."
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "Bold: shared. Bold italic: shared with all subfolders. Red folder: contains shared folders."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Share hidden files"
@@ -5845,6 +5855,14 @@ msgstr "Maks. novih povezav / 5 sek."
 #: src/muuli_wdr.cpp
 msgid "Concurrent Kad source lookups"
 msgstr "Sočasna iskanja virov Kad"
+
+#: src/muuli_wdr.cpp
+msgid "Firewalled Kad nodes served as buddy"
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "How many firewalled Kad nodes this node relays callbacks for. Each one holds a connection, so at most a tenth of the connection limit is served."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Kad source re-search interval (minutes)"
@@ -6041,46 +6059,6 @@ msgstr "Gostujoče seje lahko berejo stanje in sezname, vendar ne morejo ničesa
 #: src/muuli_wdr.cpp
 msgid "Guest password"
 msgstr "Gostujoče geslo"
-
-#: src/muuli_wdr.cpp
-msgid "Web server parameters"
-msgstr "Parametri spletnega strežnika"
-
-#: src/muuli_wdr.cpp
-msgid "Run webserver on startup (deprecated)"
-msgstr "Zaženi spletni strežnik ob zagonu (opuščeno)"
-
-#: src/muuli_wdr.cpp
-msgid "Web template"
-msgstr "Spletna predloga"
-
-#: src/muuli_wdr.cpp
-msgid "Full rights password"
-msgstr "Geslo za vse pravice"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Low rights User"
-msgstr "Omogoči uporabnika z nizkimi pravicami"
-
-#: src/muuli_wdr.cpp
-msgid "Low rights password"
-msgstr "Geslo za nizke pravice"
-
-#: src/muuli_wdr.cpp
-msgid "Enable UPnP port forwarding of the web server port"
-msgstr "Vklopi posredovanje vrat UPnP za vrata spletnega strežnika"
-
-#: src/muuli_wdr.cpp
-msgid "Web server UPnP TCP port (Optional)"
-msgstr "Vrata TCP za UPnP za spletni strežnik (neobvezno)"
-
-#: src/muuli_wdr.cpp
-msgid "Page Refresh Time (in secs)"
-msgstr "Čas med osvežitvami strani (v sek.)"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Gzip compression"
-msgstr "Omogoči stiskanje gzip"
 
 #: src/muuli_wdr.cpp
 msgid "Reset page to defaults"
@@ -7125,9 +7103,9 @@ msgstr ""
 msgid "NAT traversal (QUIC)"
 msgstr ""
 
-#: src/Preferences.cpp
-msgid "no options available"
-msgstr "na voljo ni nobene možnosti"
+#: src/PeerCapabilities.h
+msgid "Skips unknown source exchange tags"
+msgstr ""
 
 #: src/Preferences.cpp
 msgid "Media metadata: FFProbePath is obsolete; aMule now uses its bundled media parser. Removing the old setting."
@@ -7493,12 +7471,9 @@ msgid "macOS does not let an application stop being the default handler. To stop
 msgstr ""
 
 #: src/PrefsUnifiedDlg.cpp
-msgid "The web server and aMule API require external connections to be enabled."
+#, fuzzy
+msgid "The aMule API requires external connections to be enabled."
 msgstr "Spletni strežnik in API aMule zahtevata omogočene zunanje povezave."
-
-#: src/PrefsUnifiedDlg.cpp
-msgid "The aMule web server is deprecated. Consider running the aMule API instead."
-msgstr "Spletni strežnik aMule je opuščen. Namesto tega razmislite o uporabi API-ja aMule."
 
 #: src/PrefsUnifiedDlg.cpp
 #, fuzzy
@@ -8573,6 +8548,16 @@ msgid "Connected to buddy at %s"
 msgstr "Povezano s kolegom na %s"
 
 #: src/ServerWnd.cpp
+#, fuzzy
+msgid "Served buddies:"
+msgstr "Seznam strežnikov"
+
+#: src/ServerWnd.cpp
+#, c-format
+msgid "%u of %u"
+msgstr ""
+
+#: src/ServerWnd.cpp
 msgid "IP address:"
 msgstr "Naslov IP:"
 
@@ -9097,35 +9082,6 @@ msgid "Peak Connections (estimate): %i"
 msgstr "Največ povezav (ocena): %i"
 
 #: src/Statistics.cpp
-msgid "NAT Traversal (Session)"
-msgstr ""
-
-#: src/Statistics.cpp
-#, fuzzy, c-format
-msgid "Server Hole Punches: %s"
-msgstr "Presežek strežnikov (paketov): %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Server Hole Punches: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Lugdunum Callbacks: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, fuzzy, c-format
-msgid "Successful Lugdunum Callbacks: %s"
-msgstr "%s je bila uspešno posodobljena"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "uTP Streams Moved to a New Port: %s"
-msgstr ""
-
-#: src/Statistics.cpp
 #, c-format
 msgid "Unknown: %s"
 msgstr "Neznani: %s"
@@ -9211,6 +9167,10 @@ msgid "Average file size: %s"
 msgstr "Povprečna velikost datoteke: %s"
 
 #: src/Statistics.cpp
+msgid "Diagnostics"
+msgstr ""
+
+#: src/Statistics.cpp
 msgid "Operating System"
 msgstr "Operacijski sistem"
 
@@ -9292,6 +9252,10 @@ msgstr ""
 "Ni podane ključne besede za iskanje.\n"
 "Vtipkajte »help search« za več pomoči.\n"
 
+#: src/TextClient.cpp
+msgid "The connected daemon does not support media search filters.\n"
+msgstr ""
+
 #. TRANSLATORS:
 #. 'help search' is a command to the program, do not translate it.
 #: src/TextClient.cpp
@@ -9303,11 +9267,19 @@ msgstr ""
 "Napišite »help search« za dodatno pomoč.\n"
 
 #: src/TextClient.cpp
+msgid "The connected daemon does not support search management.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "A search ID from 'search list' is required.\n"
+msgstr ""
+
+#: src/TextClient.cpp
 #, c-format
 msgid "Download File: %lu %s\n"
 msgstr "Prejmi datoteko: %lu %s\n"
 
-#: src/TextClient.cpp src/webserver/src/WebServer.cpp
+#: src/TextClient.cpp
 msgid "Request failed with an unknown error."
 msgstr "Zahteva spodletela z neznano napako."
 
@@ -9414,6 +9386,27 @@ msgstr ""
 #: src/TextClient.cpp
 msgid "[PartFile]"
 msgstr "[Delna datoteka]"
+
+#: src/TextClient.cpp
+msgid "No retained searches.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; availability is unknown.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; further requests remain possible.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "No further results can be requested for this search.\n"
+msgstr "Vrne rezultate prejšnjega iskanja.\n"
+
+#: src/TextClient.cpp
+msgid "Search stop request processed; retained results were not removed.\n"
+msgstr ""
 
 #: src/TextClient.cpp
 #, c-format
@@ -9680,6 +9673,11 @@ msgid ""
 "    --avail <N>            minimum number of sources\n"
 "    --min-size <N[KMG]>    smallest file size; K=1024, M=K*1024, G=M*1024\n"
 "    --max-size <N[KMG]>    largest file size; same suffixes\n"
+"    --min-bitrate <kbps>   whole number, 0-1000000\n"
+"    --min-duration <sec>   whole number, 0-86400\n"
+"    --codec <text> --title <text> --album <text> --artist <text>\n"
+"Quote media text values containing spaces.\n"
+"Kad applies media filters; eD2k servers may ignore them.\n"
 "Example: 'search global linux iso --type Iso --min-size 100M' returns\n"
 "results for \"linux iso\" of file-type Iso at least 100 MiB.\n"
 msgstr ""
@@ -9715,6 +9713,28 @@ msgstr "Izvrši iskanje kad."
 #, fuzzy
 msgid "Execute an eD2k and Kad search"
 msgstr "Izvrši iskanje kad."
+
+#: src/TextClient.cpp
+msgid "List retained search IDs and queries."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Stop a search, keeping its results."
+msgstr "Ta ukaz ne sme imeti parametrov."
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Request more Kad search results."
+msgstr "Število rezultatov iskanja: %i\n"
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'. Further results are not guaranteed."
+msgstr ""
 
 #: src/TextClient.cpp
 msgid "Show the results of a search."
@@ -10542,139 +10562,6 @@ msgstr "Mapa, ki vsebuje vašo datoteko s podpisom"
 msgid "Folder where generating the statistic image"
 msgstr "Mapa, v katerem je ustvarjena statistična slika"
 
-#: src/webserver/src/WebInterface.cpp
-msgid "Loads template <str>"
-msgstr "Naloži predlogo <str>"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Web server HTTP port"
-msgstr "Vrata HTTP spletnega strežnika"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use UPnP port forwarding on web server port"
-msgstr "Uporabi posredovanje vrat UPnP za vrata spletnega strežnika"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "UPnP port"
-msgstr "Vrata UPnP"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use gzip compression"
-msgstr "Uporabi stiskanje gzip"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Full access password for web server"
-msgstr "Geslo za polni dostop do spletnega strežnika"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Guest password for web server"
-msgstr "Geslo za goste na spletnem strežniku"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Allow guest access"
-msgstr "Dovoli dostop gostom"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Deny guest access"
-msgstr "Zavrni dostop gostom"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Load/save web server settings from/to remote aMule"
-msgstr "Naloži/shrani nastavitve spletnega strežnika od/na oddaljeni aMule"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule config file path. DO NOT USE DIRECTLY!"
-msgstr "Pot do nastavitvene datoteke. NE UPORABITE NEPOSREDNO."
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Disable PHP interpreter (deprecated)"
-msgstr "Onemogoči tolmača PHP-ja (opuščeno)"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Recompile PHP pages on each request"
-msgstr "Ponovno prevedi strani PHP ob vsaki zahtevi"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule Web Server"
-msgstr "Spletni strežnik aMule"
-
-#: src/webserver/src/WebServer.cpp
-msgid "web client connection accepted\n"
-msgstr "povezava spletnega odjemalca sprejeta\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "ERROR: cannot accept web client connection\n"
-msgstr "NAPAKA: ni moč sprejeti povezave spletnega odjemalca\n"
-
-#: src/webserver/src/WebServer.cpp
-#, c-format
-msgid "Request failed with the following error: %s."
-msgstr "Zahteve ni bilo mogoče izvesti zaradi napake: %s."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Index file not found: "
-msgstr "Indeksne datoteke ni mogoče najti: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session expired - requesting login\n"
-msgstr "Seja potekla – zahtevek za prijavo\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, logged in\n"
-msgstr "Seja v redu, prijavljen\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, not logged in\n"
-msgstr "Seja v redu, ni prijave\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No session opened - will request login\n"
-msgstr "Ni odprte seje – zahtevek za prijavo\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session created - requesting login\n"
-msgstr "Seja ustvarjena – zahtevek za prijavo\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [original]: "
-msgstr "Obdelovanje zahteve [izvorno]: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Refusing to read `pass` from URL query string\n"
-msgstr "Branje `pass` iz poizvedbenega niza URL zavrnjeno\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No password specified, login will not be allowed."
-msgstr "Geslo ni nastavljeno, prijava ne bo dovoljena."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Checking password\n"
-msgstr "Preverjanje gesla\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password hash invalid\n"
-msgstr "Koda gesla ni veljavna\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password ok\n"
-msgstr "Geslo v redu\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password bad\n"
-msgstr "Napačno geslo\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "You did not enter any password. Blank password is not allowed.\n"
-msgstr "Niste navedli gesla. Prazno geslo ni dovoljeno.\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Logout requested\n"
-msgstr "Zahtevana odjava\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [redirected]: "
-msgstr "Obdelovanje zahteve [preusmerjeno]: "
-
 #: packaging/windows/installer_strings.c
 msgid "aMule (required)"
 msgstr "aMule (obvezno)"
@@ -10812,6 +10699,213 @@ msgstr ""
 msgid "Migrating a changed legacy ECPassword after downgrade; the previous verifier no longer authenticates this run."
 msgstr ""
 
+#, c-format
+#~ msgid "Terminating amuleweb instance with pid '%d' ... "
+#~ msgstr "Končanje izvoda amuleweb s PID »%d« ... "
+
+#, c-format
+#~ msgid "Killing amuleweb instance with pid '%d' ... "
+#~ msgstr "Ubijanje izvoda amuleweb s PID »%d« ... "
+
+#, c-format
+#~ msgid "web server running on pid %d"
+#~ msgstr "spletni strežnik teče s PID %d"
+
+#~ msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
+#~ msgstr "Zahtevali ste zagon spletnega strežnika ob zagonu, vendar binarne datoteke amuleweb ni mogoče zagnati. Namestite paket, ki vsebuje spletni strežnik aMule, ali zgradite aMule iz izvorne kode z -DBUILD_WEBSERVER=YES in ga namestite."
+
+#, fuzzy
+#~ msgid "Could not prepare the amuleweb EC token."
+#~ msgstr "Gesla amuleapi ni bilo mogoče shraniti: %s"
+
+#, fuzzy, c-format
+#~ msgid "Could not remove the amuleweb EC token file: %s"
+#~ msgstr "Gesla amuleapi ni bilo mogoče shraniti: %s"
+
+#~ msgid "Web server parameters"
+#~ msgstr "Parametri spletnega strežnika"
+
+#~ msgid "Run webserver on startup (deprecated)"
+#~ msgstr "Zaženi spletni strežnik ob zagonu (opuščeno)"
+
+#~ msgid "Web template"
+#~ msgstr "Spletna predloga"
+
+#~ msgid "Full rights password"
+#~ msgstr "Geslo za vse pravice"
+
+#~ msgid "Enable Low rights User"
+#~ msgstr "Omogoči uporabnika z nizkimi pravicami"
+
+#~ msgid "Low rights password"
+#~ msgstr "Geslo za nizke pravice"
+
+#~ msgid "Enable UPnP port forwarding of the web server port"
+#~ msgstr "Vklopi posredovanje vrat UPnP za vrata spletnega strežnika"
+
+#~ msgid "Web server UPnP TCP port (Optional)"
+#~ msgstr "Vrata TCP za UPnP za spletni strežnik (neobvezno)"
+
+#~ msgid "Page Refresh Time (in secs)"
+#~ msgstr "Čas med osvežitvami strani (v sek.)"
+
+#~ msgid "Enable Gzip compression"
+#~ msgstr "Omogoči stiskanje gzip"
+
+#~ msgid "no options available"
+#~ msgstr "na voljo ni nobene možnosti"
+
+#~ msgid "The aMule web server is deprecated. Consider running the aMule API instead."
+#~ msgstr "Spletni strežnik aMule je opuščen. Namesto tega razmislite o uporabi API-ja aMule."
+
+#~ msgid "Loads template <str>"
+#~ msgstr "Naloži predlogo <str>"
+
+#~ msgid "Web server HTTP port"
+#~ msgstr "Vrata HTTP spletnega strežnika"
+
+#~ msgid "Use UPnP port forwarding on web server port"
+#~ msgstr "Uporabi posredovanje vrat UPnP za vrata spletnega strežnika"
+
+#~ msgid "UPnP port"
+#~ msgstr "Vrata UPnP"
+
+#~ msgid "Use gzip compression"
+#~ msgstr "Uporabi stiskanje gzip"
+
+#~ msgid "Full access password for web server"
+#~ msgstr "Geslo za polni dostop do spletnega strežnika"
+
+#~ msgid "Guest password for web server"
+#~ msgstr "Geslo za goste na spletnem strežniku"
+
+#~ msgid "Allow guest access"
+#~ msgstr "Dovoli dostop gostom"
+
+#~ msgid "Deny guest access"
+#~ msgstr "Zavrni dostop gostom"
+
+#~ msgid "Load/save web server settings from/to remote aMule"
+#~ msgstr "Naloži/shrani nastavitve spletnega strežnika od/na oddaljeni aMule"
+
+#~ msgid "aMule config file path. DO NOT USE DIRECTLY!"
+#~ msgstr "Pot do nastavitvene datoteke. NE UPORABITE NEPOSREDNO."
+
+#~ msgid "Disable PHP interpreter (deprecated)"
+#~ msgstr "Onemogoči tolmača PHP-ja (opuščeno)"
+
+#~ msgid "Recompile PHP pages on each request"
+#~ msgstr "Ponovno prevedi strani PHP ob vsaki zahtevi"
+
+#~ msgid "aMule Web Server"
+#~ msgstr "Spletni strežnik aMule"
+
+#~ msgid "web client connection accepted\n"
+#~ msgstr "povezava spletnega odjemalca sprejeta\n"
+
+#~ msgid "ERROR: cannot accept web client connection\n"
+#~ msgstr "NAPAKA: ni moč sprejeti povezave spletnega odjemalca\n"
+
+#, c-format
+#~ msgid "Request failed with the following error: %s."
+#~ msgstr "Zahteve ni bilo mogoče izvesti zaradi napake: %s."
+
+#~ msgid "Index file not found: "
+#~ msgstr "Indeksne datoteke ni mogoče najti: "
+
+#~ msgid "Session expired - requesting login\n"
+#~ msgstr "Seja potekla – zahtevek za prijavo\n"
+
+#~ msgid "Session ok, logged in\n"
+#~ msgstr "Seja v redu, prijavljen\n"
+
+#~ msgid "Session ok, not logged in\n"
+#~ msgstr "Seja v redu, ni prijave\n"
+
+#~ msgid "No session opened - will request login\n"
+#~ msgstr "Ni odprte seje – zahtevek za prijavo\n"
+
+#~ msgid "Session created - requesting login\n"
+#~ msgstr "Seja ustvarjena – zahtevek za prijavo\n"
+
+#~ msgid "Processing request [original]: "
+#~ msgstr "Obdelovanje zahteve [izvorno]: "
+
+#~ msgid "Refusing to read `pass` from URL query string\n"
+#~ msgstr "Branje `pass` iz poizvedbenega niza URL zavrnjeno\n"
+
+#~ msgid "No password specified, login will not be allowed."
+#~ msgstr "Geslo ni nastavljeno, prijava ne bo dovoljena."
+
+#~ msgid "Checking password\n"
+#~ msgstr "Preverjanje gesla\n"
+
+#~ msgid "Password hash invalid\n"
+#~ msgstr "Koda gesla ni veljavna\n"
+
+#~ msgid "Password ok\n"
+#~ msgstr "Geslo v redu\n"
+
+#~ msgid "Password bad\n"
+#~ msgstr "Napačno geslo\n"
+
+#~ msgid "You did not enter any password. Blank password is not allowed.\n"
+#~ msgstr "Niste navedli gesla. Prazno geslo ni dovoljeno.\n"
+
+#~ msgid "Logout requested\n"
+#~ msgstr "Zahtevana odjava\n"
+
+#~ msgid "Processing request [redirected]: "
+#~ msgstr "Obdelovanje zahteve [preusmerjeno]: "
+
+#~ msgid "(Right click on folder icon for recursive share)"
+#~ msgstr "(desni klik na ikono mape izbere tudi podmape)"
+
+#~ msgid "Currently connected server."
+#~ msgstr "Trenutno povezan strežnik."
+
+#~ msgid "Up: 0.0 | Down: 0.0"
+#~ msgstr "Gor: 0,0 | Dol: 0,0"
+
+#~ msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
+#~ msgstr "Trenutno povprečje prenosa v obe smeri. Če je vklopljen prikaz presežka, številke v oklepaju ponazarjajo presežek prenosa od komunikacije med odjemalci."
+
+#, fuzzy, c-format
+#~ msgid "Buddies Served: %llu"
+#~ msgstr "Datoteke na delujočih strežnikih: %llu"
+
+#, fuzzy, c-format
+#~ msgid "Time Served: %s"
+#~ msgstr "Filtrirani strežniki: %s"
+
+#, fuzzy, c-format
+#~ msgid "Buddies Connected: %llu"
+#~ msgstr " je povezan z "
+
+#, fuzzy
+#~ msgid "Keyword publish"
+#~ msgstr "Filtrirani: %s"
+
+#, fuzzy
+#~ msgid "Source publish"
+#~ msgstr "Viri"
+
+#, fuzzy
+#~ msgid "Firewall check"
+#~ msgstr "za požarnim zidom"
+
+#, fuzzy
+#~ msgid "Firewall check 2"
+#~ msgstr "za požarnim zidom"
+
+#, fuzzy, c-format
+#~ msgid "Keys valid: %s"
+#~ msgstr "Filtrirani: %s"
+
+#, fuzzy
+#~ msgid "Kad Buddies"
+#~ msgstr "Uporabnik Kad"
+
 #~ msgid "Disable computer's timed standby mode"
 #~ msgstr "Onemogoči prehod računalnika v pripravljenost"
 
@@ -10886,9 +10980,6 @@ msgstr ""
 
 #~ msgid "Click on this button to update the servers list from URL ..."
 #~ msgstr "Kliknite ta gumb za posodobitev seznama strežnikov iz URL-ja."
-
-#~ msgid "Server list"
-#~ msgstr "Seznam strežnikov"
 
 #~ msgid "Enter the url to a server.met file here and press the button to the left to update the list of known servers."
 #~ msgstr "Vnesite URL do datoteke server.met in kliknite gumb na levi, da posodobite seznam strežnikov."
@@ -11071,9 +11162,6 @@ msgstr ""
 
 #~ msgid "Rejects packet if the client ip is different from the ip where the packet is received from. Use with caution."
 #~ msgstr "Zavrne paket, če se odjemalčev IP razlikuje od IP-ja kjer paket izvira. Bodite pazljivi pri uporabi te možnosti."
-
-#~ msgid "Return the results of the previous search.\n"
-#~ msgstr "Vrne rezultate prejšnjega iskanja.\n"
 
 #~ msgid "Show the progress of a search.\n"
 #~ msgstr "Prikaže napredek iskanja.\n"

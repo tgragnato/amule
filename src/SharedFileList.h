@@ -150,7 +150,6 @@ public:
 	// files from sharing by filter" log line (issue #1530). `truncated` reports that the
 	// rejected names hit their cap, which makes any count taken from `out` a lower bound.
 	void GetShareCandidateNames(wxArrayString &out, bool &truncated) const;
-	void UpdateItem(CKnownFile *toupdate);
 	void GetSharedFilesByDirectory(const wxString &directory, CKnownFilePtrList &list);
 	void ClearED2KPublishInfo();
 	void RepublishFile(CKnownFile *pFile);
@@ -200,8 +199,26 @@ public:
 
 	/* Kad Stuff */
 	void Publish();
+	//! Writes kadkeywords.dat, so a restart does not republish every keyword at once.
+	void SaveKeywordPublishTimes();
 	//! The publish gate, PublishSrc() and StorePacket() all decide from these facts.
 	static SKadPublishFacts CurrentKadPublishFacts();
+	//! How a source published now reaches us; only a buddy publish names a buddy.
+	struct SKadSourceRoute
+	{
+		EKadSourcePublish mode;
+		uint32 buddyIP = 0;
+		uint16 buddyPort = 0;
+	};
+	static SKadSourceRoute CurrentKadSourceRoute();
+	struct SPublishingState
+	{
+		uint64 shared = 0;
+		uint64 kadPublished = 0;
+		uint64 kadPublishedWell = 0; // Acknowledged by 5 or more nodes.
+		uint64 ed2kOffered = 0;
+	};
+	SPublishingState GetPublishingState() const;
 	void AddKeywords(CKnownFile *pFile);
 	void RemoveKeywords(CKnownFile *pFile);
 	// This is actually unused, but keep it here - will be needed later.

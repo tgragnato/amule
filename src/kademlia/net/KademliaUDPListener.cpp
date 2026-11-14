@@ -36,6 +36,8 @@ there client on the eMule forum..
 #include <wx/wx.h>
 
 #include "KademliaUDPListener.h"
+#include "../utils/PublishMetrics.h"
+#include "KadReceiverKeyPolicy.h" // Needed for CKadReceiverKeyCounts
 #include "SearchExpression.h"
 
 #include <protocol/Protocols.h>
@@ -63,6 +65,8 @@ there client on the eMule forum..
 #include "../../Statistics.h"
 #include "../../MemFile.h"
 #include "../../KadBuddyCallback.h"
+#include "../../KadBuddySearchPolicy.h" // Needed for OwnBuddyID
+#include "../../KadServedBuddyPolicy.h" // Needed for IsNatTCapableRequest
 #include "../../updownclient.h"
 #include "../../ClientTCPSocket.h"
 #include "../../Logger.h"
@@ -116,7 +120,7 @@ void CheckTagRecords(CMemFile &bio, uint16_t count)
 	bio.Seek(static_cast<sint64>(start), wxFromStart);
 }
 
-// A valid key proves the sender receives at this IP. Measured only: nothing rejects a request without one.
+// Log the key result already computed by ClientUDPSocket.cpp; the same value is counted below.
 void LogReceiverKey(const char *request, uint32_t ip, uint16_t port, bool validReceiverKey)
 {
 	AddDebugLogLineN(logClientKadUDP,
@@ -238,7 +242,7 @@ void CKademliaUDPListener::SendNullPacket(uint8_t opcode,
 	SendPacket(packetdata, opcode, ip, port, targetKey, cryptTargetID);
 }
 
-void CKademliaUDPListener::SendPublishSourcePacket(
+bool CKademliaUDPListener::SendPublishSourcePacket(
 	const CContact &contact, const CUInt128 &targetID, const CUInt128 &contactID, const TagPtrList &tags)
 {
 	uint8_t opcode;
@@ -259,14 +263,15 @@ void CKademliaUDPListener::SendPublishSourcePacket(
 	}
 	if (contact.GetVersion() >= 6) { // obfuscated ?
 		const CUInt128 &clientID = contact.GetClientID();
-		SendPacket(packetdata,
+		return SendPacket(packetdata,
 			opcode,
 			contact.GetIPAddress(),
 			contact.GetUDPPort(),
 			contact.GetUDPKey(),
 			&clientID);
 	} else {
-		SendPacket(packetdata, opcode, contact.GetIPAddress(), contact.GetUDPPort(), 0, NULL);
+		return SendPacket(
+			packetdata, opcode, contact.GetIPAddress(), contact.GetUDPPort(), 0, nullptr);
 	}
 }
 
@@ -297,8 +302,33 @@ void CKademliaUDPListener::ProcessPacket(const uint8_t *data,
 	const uint8_t *packetData = data + 2;
 	uint32_t lenPacket = lenData - 2;
 
+	Kademlia::CBuddyStats::Serving &buddyServing = theApp->clientlist->GetBuddyStats().serving;
+	if (opcode == KADEMLIA_CALLBACK_REQ) {
+		buddyServing.callbackRequestsPerClient.Add(ip, 1, ::GetTickCount64());
+	}
 	const IncomingPacket admission = InTrackListIsAllowedPacket(ip, opcode, validReceiverKey);
 	if (admission != IncomingPacket::Allowed) {
+		if (opcode == KADEMLIA_FINDBUDDY_REQ) {
+			++buddyServing.requestsRateLimited;
+			theApp->clientlist->LogBuddyPacketLimited("Buddy request",
+				KadIPPortToString(ip, port),
+				InTrackListCount(ip, opcode),
+				InTrackListAllowedPerMinute(opcode),
+				nullptr);
+		} else if (opcode == KADEMLIA_CALLBACK_REQ) {
+			++buddyServing.relays.callbacksRateLimited;
+			uint8_t destination[16];
+			const bool hasDestination = lenPacket >= sizeof(destination);
+			if (hasDestination) {
+				CMemFile peek(packetData, sizeof(destination));
+				peek.ReadUInt128().ToByteArray(destination);
+			}
+			theApp->clientlist->LogBuddyPacketLimited("Callback request",
+				KadIPPortToString(ip, port),
+				InTrackListCount(ip, opcode),
+				InTrackListAllowedPerMinute(opcode),
+				hasDestination ? destination : nullptr);
+		}
 		// Only keyed packets reach MassiveFlood, so spoofing cannot get an honest peer banned.
 		if (admission == IncomingPacket::MassiveFlood) {
 			theApp->clientlist->AddBannedClient(wxUINT32_SWAP_ALWAYS(ip));
@@ -366,21 +396,21 @@ void CKademliaUDPListener::ProcessPacket(const uint8_t *data,
 	case KADEMLIA2_PUBLISH_NOTES_REQ:
 		DebugRecv(Kad2PublishNotesReq, ip, port);
 		LogReceiverKey("Kad2 notes publish", ip, port, validReceiverKey);
-		Process2PublishNotesRequest(packetData, lenPacket, ip, port, senderKey);
+		Process2PublishNotesRequest(packetData, lenPacket, ip, port, senderKey, validReceiverKey);
 		break;
 	case KADEMLIA2_PUBLISH_KEY_REQ:
 		DebugRecv(Kad2PublishKeyReq, ip, port);
 		LogReceiverKey("Kad2 keyword publish", ip, port, validReceiverKey);
-		Process2PublishKeyRequest(packetData, lenPacket, ip, port, senderKey);
+		Process2PublishKeyRequest(packetData, lenPacket, ip, port, senderKey, validReceiverKey);
 		break;
 	case KADEMLIA2_PUBLISH_SOURCE_REQ:
 		DebugRecv(Kad2PublishSourceReq, ip, port);
 		LogReceiverKey("Kad2 source publish", ip, port, validReceiverKey);
-		Process2PublishSourceRequest(packetData, lenPacket, ip, port, senderKey);
+		Process2PublishSourceRequest(packetData, lenPacket, ip, port, senderKey, validReceiverKey);
 		break;
 	case KADEMLIA_PUBLISH_RES:
 		DebugRecv(KadPublishRes, ip, port);
-		ProcessPublishResponse(packetData, lenPacket, ip);
+		ProcessPublishResponse(packetData, lenPacket, ip, port);
 		break;
 	case KADEMLIA2_PUBLISH_RES:
 		DebugRecv(Kad2PublishRes, ip, port);
@@ -389,12 +419,12 @@ void CKademliaUDPListener::ProcessPacket(const uint8_t *data,
 	case KADEMLIA_FIREWALLED_REQ:
 		DebugRecv(KadFirewalledReq, ip, port);
 		LogReceiverKey("Kad firewall check", ip, port, validReceiverKey);
-		ProcessFirewalledRequest(packetData, lenPacket, ip, port, senderKey);
+		ProcessFirewalledRequest(packetData, lenPacket, ip, port, senderKey, validReceiverKey);
 		break;
 	case KADEMLIA_FIREWALLED2_REQ:
 		DebugRecv(KadFirewalled2Req, ip, port);
 		LogReceiverKey("Kad firewall2 check", ip, port, validReceiverKey);
-		ProcessFirewalled2Request(packetData, lenPacket, ip, port, senderKey);
+		ProcessFirewalled2Request(packetData, lenPacket, ip, port, senderKey, validReceiverKey);
 		break;
 	case KADEMLIA_FIREWALLED_RES:
 		DebugRecv(KadFirewalledRes, ip, port);
@@ -407,7 +437,7 @@ void CKademliaUDPListener::ProcessPacket(const uint8_t *data,
 	case KADEMLIA_FINDBUDDY_REQ:
 		DebugRecv(KadFindBuddyReq, ip, port);
 		LogReceiverKey("Kad find buddy request", ip, port, validReceiverKey);
-		ProcessFindBuddyRequest(packetData, lenPacket, ip, port, senderKey);
+		ProcessFindBuddyRequest(packetData, lenPacket, ip, port, senderKey, validReceiverKey);
 		break;
 	case KADEMLIA_FINDBUDDY_RES:
 		DebugRecv(KadFindBuddyRes, ip, port);
@@ -416,7 +446,7 @@ void CKademliaUDPListener::ProcessPacket(const uint8_t *data,
 	case KADEMLIA_CALLBACK_REQ:
 		DebugRecv(KadCallbackReq, ip, port);
 		LogReceiverKey("Kad callback request", ip, port, validReceiverKey);
-		ProcessCallbackRequest(packetData, lenPacket, ip, port, senderKey);
+		ProcessCallbackRequest(packetData, lenPacket, ip, port, senderKey, validReceiverKey);
 		break;
 	case KADEMLIA2_PING:
 		DebugRecv(Kad2Ping, ip, port);
@@ -1059,8 +1089,10 @@ void CKademliaUDPListener::Process2PublishKeyRequest(const uint8_t *packetData,
 	uint32_t lenPacket,
 	uint32_t ip,
 	uint16_t port,
-	const CKadUDPKey &senderKey)
+	const CKadUDPKey &senderKey,
+	bool validReceiverKey)
 {
+	theStats::AddKadReceiverKeyObservation(EKadReceiverKeyHandler::KeywordPublish, validReceiverKey);
 	if (!CKademlia::GetIndexed()->IsReady()) {
 		return;
 	}
@@ -1226,8 +1258,10 @@ void CKademliaUDPListener::Process2PublishSourceRequest(const uint8_t *packetDat
 	uint32_t lenPacket,
 	uint32_t ip,
 	uint16_t port,
-	const CKadUDPKey &senderKey)
+	const CKadUDPKey &senderKey,
+	bool validReceiverKey)
 {
+	theStats::AddKadReceiverKeyObservation(EKadReceiverKeyHandler::SourcePublish, validReceiverKey);
 	if (!CKademlia::GetIndexed()->IsReady()) {
 		return;
 	}
@@ -1376,7 +1410,8 @@ void CKademliaUDPListener::Process2PublishSourceRequest(const uint8_t *packetDat
 
 // KADEMLIA_PUBLISH_RES
 // Used only by Kad1.0
-void CKademliaUDPListener::ProcessPublishResponse(const uint8_t *packetData, uint32_t lenPacket, uint32_t ip)
+void CKademliaUDPListener::ProcessPublishResponse(
+	const uint8_t *packetData, uint32_t lenPacket, uint32_t ip, uint16_t port)
 {
 	CHECK_PACKET_MIN_SIZE(16);
 	CHECK_TRACKED_PACKET(KADEMLIA_PUBLISH_REQ);
@@ -1391,7 +1426,7 @@ void CKademliaUDPListener::ProcessPublishResponse(const uint8_t *packetData, uin
 		load = bio.ReadUInt8();
 	}
 
-	CSearchManager::ProcessPublishResult(file, load, loadResponse);
+	CSearchManager::ProcessPublishResult(file, load, loadResponse, ip, port);
 }
 
 // KADEMLIA2_PUBLISH_RES
@@ -1411,7 +1446,7 @@ void CKademliaUDPListener::Process2PublishResponse(const uint8_t *packetData,
 	CMemFile bio(packetData, lenPacket);
 	CUInt128 file = bio.ReadUInt128();
 	uint8_t load = bio.ReadUInt8();
-	CSearchManager::ProcessPublishResult(file, load, true);
+	CSearchManager::ProcessPublishResult(file, load, true, ip, port);
 	if (bio.GetLength() > bio.GetPosition()) {
 		// for future use
 		uint8_t options = bio.ReadUInt8();
@@ -1455,8 +1490,10 @@ void CKademliaUDPListener::Process2PublishNotesRequest(const uint8_t *packetData
 	uint32_t lenPacket,
 	uint32_t ip,
 	uint16_t port,
-	const CKadUDPKey &senderKey)
+	const CKadUDPKey &senderKey,
+	bool validReceiverKey)
 {
+	theStats::AddKadReceiverKeyObservation(EKadReceiverKeyHandler::NotesPublish, validReceiverKey);
 	if (!CKademlia::GetIndexed()->IsReady()) {
 		return;
 	}
@@ -1543,8 +1580,10 @@ void CKademliaUDPListener::ProcessFirewalledRequest(const uint8_t *packetData,
 	uint32_t lenPacket,
 	uint32_t ip,
 	uint16_t port,
-	const CKadUDPKey &senderKey)
+	const CKadUDPKey &senderKey,
+	bool validReceiverKey)
 {
+	theStats::AddKadReceiverKeyObservation(EKadReceiverKeyHandler::FirewallCheck, validReceiverKey);
 	CHECK_PACKET_EXACT_SIZE(2);
 
 	CMemFile bio(packetData, lenPacket);
@@ -1568,8 +1607,10 @@ void CKademliaUDPListener::ProcessFirewalled2Request(const uint8_t *packetData,
 	uint32_t lenPacket,
 	uint32_t ip,
 	uint16_t port,
-	const CKadUDPKey &senderKey)
+	const CKadUDPKey &senderKey,
+	bool validReceiverKey)
 {
+	theStats::AddKadReceiverKeyObservation(EKadReceiverKeyHandler::Firewall2Check, validReceiverKey);
 	CHECK_PACKET_MIN_SIZE(19);
 
 	CMemFile bio(packetData, lenPacket);
@@ -1643,17 +1684,21 @@ void CKademliaUDPListener::ProcessFindBuddyRequest(const uint8_t *packetData,
 	uint32_t lenPacket,
 	uint32_t ip,
 	uint16_t port,
-	const CKadUDPKey &senderKey)
+	const CKadUDPKey &senderKey,
+	bool validReceiverKey)
 {
+	theStats::AddKadReceiverKeyObservation(EKadReceiverKeyHandler::FindBuddy, validReceiverKey);
 	// Verify packet is expected size
 	CHECK_PACKET_MIN_SIZE(34);
 
+	Kademlia::CBuddyStats::Serving &stats = theApp->clientlist->GetBuddyStats().serving;
+	++stats.requestsReceived;
 	if (CKademlia::GetPrefs()->GetFirewalled() || CUDPFirewallTester::IsFirewalledUDP(true) ||
 		!CUDPFirewallTester::IsVerified()) {
 		// We are firewalled but somehow we still got this packet.. Don't send a response..
-		return;
-	} else if (theApp->clientlist->GetBuddyStatus() == Connected) {
-		// we already have a buddy
+		++stats.requestsRefusedFirewalled;
+		AddDebugLogLineN(logKadBuddy,
+			"Buddy request from " + KadIPPortToString(ip, port) + " refused: we are firewalled");
 		return;
 	}
 
@@ -1661,11 +1706,35 @@ void CKademliaUDPListener::ProcessFindBuddyRequest(const uint8_t *packetData,
 	CUInt128 BuddyID = bio.ReadUInt128();
 	CUInt128 userID = bio.ReadUInt128();
 	uint16_t tcpport = bio.ReadUInt16();
+	// eMuleAI and eMuleQt append their connect options; stock clients send 34 bytes.
+	const bool natT = lenPacket > 34 && Kademlia::IsNatTCapableRequest(bio.ReadUInt8());
+	if (natT) {
+		++stats.requestsNatT;
+	}
 
 	CUInt128 zero;
 	CContact contact(userID, ip, port, tcpport, 0, 0, false, zero);
-	if (!theApp->clientlist->IncomingBuddy(&contact, &BuddyID)) {
-		return; // cancelled for some reason, don't send a response
+	const char *refusal = nullptr;
+	switch (theApp->clientlist->IncomingBuddy(&contact, &BuddyID, natT)) {
+	case CClientList::EIncomingBuddy::Offered:
+		break;
+	case CClientList::EIncomingBuddy::Full:
+		++stats.requestsRefusedFull;
+		refusal = "the slots it may take are in use";
+		break;
+	case CClientList::EIncomingBuddy::SameIP:
+		++stats.requestsRefusedSameIP;
+		refusal = "we already serve, or have offered to, that address";
+		break;
+	case CClientList::EIncomingBuddy::Conflict:
+		++stats.requestsRefusedConflict;
+		refusal = "we already know that client, or it is us";
+		break;
+	}
+	if (refusal != nullptr) {
+		AddDebugLogLineN(logKadBuddy,
+			"Buddy request from " + KadIPPortToString(ip, port) + " refused: " + refusal);
+		return;
 	}
 
 	CMemFile packetdata(34);
@@ -1679,6 +1748,8 @@ void CKademliaUDPListener::ProcessFindBuddyRequest(const uint8_t *packetData,
 
 	DebugSend(KadFindBuddyRes, ip, port);
 	SendPacket(packetdata, KADEMLIA_FINDBUDDY_RES, ip, port, senderKey, NULL);
+	++stats.requestsOffered;
+	AddDebugLogLineN(logKadBuddy, "Buddy offer sent to " + KadIPPortToString(ip, port));
 }
 
 // KADEMLIA_FINDBUDDY_RES
@@ -1694,9 +1765,7 @@ void CKademliaUDPListener::ProcessFindBuddyResponse(const uint8_t *packetData,
 	CHECK_TRACKED_PACKET(KADEMLIA_FINDBUDDY_REQ);
 
 	CMemFile bio(packetData, lenPacket);
-	CUInt128 check = bio.ReadUInt128();
-	check ^= CUInt128(true);
-	if (CKademlia::GetPrefs()->GetKadID() == check) {
+	if (bio.ReadUInt128() == OwnBuddyID(CKademlia::GetPrefs()->GetKadID())) {
 		CUInt128 userID = bio.ReadUInt128();
 		uint16_t tcpport = bio.ReadUInt16();
 		uint8_t connectOptions = 0;
@@ -1706,6 +1775,8 @@ void CKademliaUDPListener::ProcessFindBuddyResponse(const uint8_t *packetData,
 			connectOptions = bio.ReadUInt8();
 		}
 
+		++theApp->clientlist->GetBuddyStats().own.offersReceived;
+		AddDebugLogLineN(logKadBuddy, "Buddy offer from " + KadIPPortToString(ip, port));
 		CUInt128 zero;
 		CContact contact(userID, ip, port, tcpport, 0, 0, false, zero);
 		theApp->clientlist->RequestBuddy(&contact, connectOptions);
@@ -1717,25 +1788,50 @@ void CKademliaUDPListener::ProcessFindBuddyResponse(const uint8_t *packetData,
 void CKademliaUDPListener::ProcessCallbackRequest(const uint8_t *packetData,
 	uint32_t lenPacket,
 	uint32_t ip,
-	uint16_t WXUNUSED(port),
-	const CKadUDPKey &WXUNUSED(senderKey))
+	uint16_t port,
+	const CKadUDPKey &WXUNUSED(senderKey),
+	bool validReceiverKey)
 {
+	theStats::AddKadReceiverKeyObservation(EKadReceiverKeyHandler::Callback, validReceiverKey);
 	// Verify packet is expected size
 	CHECK_PACKET_MIN_SIZE(34);
 
-	CUpDownClient *buddy = theApp->clientlist->GetBuddy();
-	if (buddy != NULL) {
+	uint8_t destination[16];
+	{
+		CMemFile peek(packetData, sizeof(destination));
+		peek.ReadUInt128().ToByteArray(destination);
+	}
+	CUpDownClient *buddy = theApp->clientlist->FindServedBuddy(destination);
+	if (buddy == nullptr) {
+		theApp->clientlist->RecordBuddyRelayDrop(true, destination);
+	} else {
 		CMemFile bio(packetData, lenPacket);
 		CMemFile packetdata(lenPacket + 6);
 		if (!BuildBuddyCallback(bio, CUInt128(buddy->GetBuddyID()), ip, packetdata)) {
+			theApp->clientlist->RecordBuddyRelayDrop(true, destination);
 			return;
 		}
 
+		Kademlia::CBuddyRelayCounts &relays = theApp->clientlist->GetBuddyStats().serving.relays;
+		// One a minute from each sender for each buddy: a caller that downloads from two of our
+		// buddies reaches both, while one repeating itself is limited as stock eMule limits it.
+		if (!theApp->clientlist->AllowBuddyCallback(buddy, ip)) {
+			++relays.callbacksRateLimited;
+			theApp->clientlist->LogBuddyCallbackLimited(KadIPPortToString(ip, port), destination);
+			return;
+		}
 		if (buddy->GetSocket()) {
 			CPacket *packet = new CPacket(packetdata, OP_EMULEPROT, OP_CALLBACK);
+			const uint32 packetSize = packet->GetPacketSize();
+			if (!theApp->clientlist->HasBuddyRelayBudget(buddy, packetSize)) {
+				delete packet;
+				++relays.callbacksOverBudget;
+				return;
+			}
 			AddDebugLogLineN(logLocalClient, "Local Client: OP_CALLBACK to " + KadIPToString(ip));
 			buddy->GetSocket()->SendPacket(packet);
-			theStats::AddUpOverheadFileRequest(packet->GetPacketSize());
+			theStats::AddUpOverheadFileRequest(packetSize);
+			theApp->clientlist->RecordBuddyRelay(buddy, true, packetSize);
 		} else {
 			throw wxString::FromAscii(__FUNCTION__) + ": Buddy has no valid socket";
 		}
@@ -1818,7 +1914,7 @@ void CKademliaUDPListener::Process2FirewallUDP(const uint8_t *packetData, uint32
 	}
 }
 
-void CKademliaUDPListener::SendPacket(const CMemFile &data,
+bool CKademliaUDPListener::SendPacket(const CMemFile &data,
 	uint8_t opcode,
 	uint32_t destinationHost,
 	uint16_t destinationPort,
@@ -1839,13 +1935,17 @@ void CKademliaUDPListener::SendPacket(const CMemFile &data,
 		cryptKey = NULL;
 	}
 	theStats::AddUpOverheadKad(packet->GetPacketSize());
-	theApp->clientudp->SendPacket(packet,
+	const bool queued = theApp->clientudp->TrySendPacket(packet,
 		wxUINT32_SWAP_ALWAYS(destinationHost),
 		destinationPort,
 		true,
 		cryptKey,
 		true,
 		targetKey.GetKeyValue(theApp->GetPublicIP(false)));
+	if (queued && opcode == KADEMLIA2_REQ && theLogger.IsEnabled(logKadPublish)) {
+		CPublishMetrics::Instance().LookupQueued(destinationHost, ::GetTickCount64());
+	}
+	return queued;
 }
 
 #if 0

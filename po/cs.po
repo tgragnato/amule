@@ -356,22 +356,6 @@ msgstr "Ukončování pomocných aplikací..."
 
 #: src/amule.cpp
 #, c-format
-msgid "Terminating amuleweb instance with pid '%d' ... "
-msgstr "Ukončování instance amuleweb s PID '%d' ... "
-
-#: src/amule.cpp
-#, c-format
-msgid "Killing amuleweb instance with pid '%d' ... "
-msgstr "Vynucuje se ukončení instance amuleweb s PID '%d' ... "
-
-#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
-#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
-#: src/SharedFilesCtrl.cpp
-msgid "Failed"
-msgstr "Nezdařilo se"
-
-#: src/amule.cpp
-#, c-format
 msgid "Terminating amuleapi instance with pid '%d' ... "
 msgstr "Ukončování instance amuleapi s PID '%d' ... "
 
@@ -379,6 +363,12 @@ msgstr "Ukončování instance amuleapi s PID '%d' ... "
 #, c-format
 msgid "Killing amuleapi instance with pid '%d' ... "
 msgstr "Vynucuje se ukončení instance amuleapi s PID '%d' ... "
+
+#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
+#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
+#: src/SharedFilesCtrl.cpp
+msgid "Failed"
+msgstr "Nezdařilo se"
 
 #: src/amule.cpp
 msgid "aMule OnExit: Terminating core."
@@ -530,28 +520,6 @@ msgid "Not starting %s: it is neither next to aMule nor on PATH."
 msgstr "Nespouštím %s: není vedle aMule ani v PATH."
 
 #: src/amule.cpp
-msgid "An exception occurred while launching amuleweb."
-msgstr "Došlo k výjimce při spouštění amuleweb."
-
-#: src/amule.cpp
-#, c-format
-msgid "web server running on pid %d"
-msgstr "Webový server běží s PID %d"
-
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb authentication token. The web server was not started."
-msgstr "Nepodařilo se připravit ověřovací token amuleweb. Webový server nebyl spuštěn."
-
-#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
-#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
-msgid "ERROR"
-msgstr "CHYBA"
-
-#: src/amule.cpp
-msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
-msgstr "Požádali jste o spuštění webového serveru po startu, avšak binární soubor amuleweb nelze spustit. Nainstalujte balíček obsahující webový server aMule, nebo sestavte aMule ze zdrojového kódu pomocí přepínače -DBUILD_WEBSERVER=YES a pak jej nainstalujte."
-
-#: src/amule.cpp
 #, c-format
 msgid "Could not write the amuleapi EC token to %s; amuleapi will fall back to its configured password."
 msgstr "Nebylo možné zapsat token amuleapi EC do %s; amuleapi se tedy vrátí k použití nastaveného hesla."
@@ -573,14 +541,10 @@ msgstr "Nepodařilo se spustit amuleapi během automatického restartu."
 msgid "You requested to run amuleapi on startup, but the amuleapi binary cannot be run. Please install the package containing aMule's REST API server, or build aMule from source with -DBUILD_AMULEAPI=YES and install it."
 msgstr "Požádali jste o spuštění amuleapi po startu, avšak binární soubor amuleapi nelze spustit. Nainstalujte balíček obsahující REST API server aMule, nebo sestavte aMule ze zdrojového kódu pomocí přepínače -DBUILD_AMULEAPI=YES a pak jej nainstalujte."
 
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb EC token."
-msgstr "Nepodařilo se připravit EC token amuleweb."
-
-#: src/amule.cpp
-#, c-format
-msgid "Could not remove the amuleweb EC token file: %s"
-msgstr "Nepodařilo se odebrat soubor EC tokenu amuleapi: %s"
+#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
+#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
+msgid "ERROR"
+msgstr "CHYBA"
 
 #: src/amule.cpp
 #, c-format
@@ -1064,23 +1028,14 @@ msgstr "Šifrování"
 msgid "aMuleGUI"
 msgstr "aMuleGUI"
 
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
-msgstr "Odesílání: %.1f%s (%.1f) | Stahování: %.1f%s (%.1f)"
-
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
 msgid " MiB/s"
 msgstr " MiB/s"
 
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/utils/wxCas/src/wxcasframe.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
+#: src/utils/wxCas/src/wxcasframe.cpp
 msgid " KiB/s"
 msgstr " KiB/s"
-
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s | Down: %.1f%s"
-msgstr "Odesílání: %.1f%s | Stahování: %.1f%s"
 
 #: src/amuleDlg.cpp
 msgid "Transfer speeds are reported by the daemon. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
@@ -1089,6 +1044,16 @@ msgstr "Rychlost přenosů je hlášena daemonem. Celkové odesílání zahrnuje
 #: src/amuleDlg.cpp
 msgid "Live speeds are averaged over the last second. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
 msgstr "Rychlosti živě jsou průměrovány za poslední sekundu. Celkové odesílání zahrnuje kontrolní provoz; rychlosti odesílání peera zahrnují jen pakety souborů. Hodnoty v závorkách ukazují režii protokolu v KiB/s."
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s | Down: %.1f%s"
+msgstr "Odesílání: %.1f%s | Stahování: %.1f%s"
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
+msgstr "Odesílání: %.1f%s (%.1f) | Stahování: %.1f%s (%.1f)"
 
 #: src/amuleDlg.cpp
 #, c-format
@@ -2121,6 +2086,55 @@ msgstr "Uchované zdroje"
 msgid "Search Result"
 msgstr "Výsledek hledání"
 
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a direct connection"
+msgstr "Aktivní připojení"
+
+#: src/DataToText.cpp
+msgid "a direct callback"
+msgstr ""
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "our server"
+msgstr "Odstranit server"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the Kad buddy"
+msgstr "Vyhledat kamaráda"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the source's own server"
+msgstr "eD2k: Aktuální server"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a server hole punch"
+msgstr "Server Hole Punches: %s"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a Lugdunum callback"
+msgstr "Zpětná volání v Lugdunum: %s"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on a fallback route"
+msgstr "Připojování přes server"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on an unproven route"
+msgstr "Připojování přes server"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s"
+msgstr "Připojování přes síť Kad"
+
 #: src/DataToText.cpp src/DownloadListCtrl.cpp src/OtherFunctions.cpp
 #: src/TransferWnd.cpp
 msgid "Completed"
@@ -2432,10 +2446,6 @@ msgstr[2] "Nelze přidat %u odkazů (podrobnosti viz protokol)."
 #, c-format
 msgid "Invalid eD2k link! ERROR: %s"
 msgstr "Neplatný odkaz eD2k! CHYBA: %s"
-
-#: src/ECSpecialMuleTags.cpp
-msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
-msgstr "Odmítnut vzdálený požadavek na nastavení šablony webového serveru: hodnota musí být prostý název šablony, nikoli cestou."
 
 #: src/ECSpecialMuleTags.cpp
 msgid "Refused a remote request to change the online-signature folder: it can only be set in the daemon's own configuration."
@@ -4590,12 +4600,13 @@ msgid "Users connected to the current server and an estimate of the total number
 msgstr "Uživatelé připojeni k aktuálnímu serveru a odhad celkového počtu uživatelů."
 
 #: src/muuli_wdr.cpp
-msgid "Up: 0.0 | Down: 0.0"
-msgstr "Up: 0.0 | Down: 0.0"
+msgid "Up:"
+msgstr ""
 
 #: src/muuli_wdr.cpp
-msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
-msgstr "Aktuální průměrné rychlosti odesílání a stahování. Pokud je povoleno, čísla v závorkách označují režii z komunikace mezi klienty."
+#, fuzzy
+msgid "Down:"
+msgstr "Stahování: "
 
 #: src/muuli_wdr.cpp
 msgid "Displays the connected status and active transfers. Red arrows signifies that you are currently not connected, yellow arrows signify that you have low ID (firewalled) and green arrows signify that you have high ID (The optimal connection type)."
@@ -4604,10 +4615,6 @@ msgstr "Zobrazuje stav připojení a aktivní přenosy. Červené šipky znamena
 #: src/muuli_wdr.cpp
 msgid "Not Connected ..."
 msgstr "Nepřipojeno..."
-
-#: src/muuli_wdr.cpp
-msgid "Currently connected server."
-msgstr "Aktuálně připojený server."
 
 #: src/muuli_wdr.cpp
 msgid "Search"
@@ -5619,8 +5626,12 @@ msgid "Remove"
 msgstr "Odebrat"
 
 #: src/muuli_wdr.cpp
-msgid "(Right click on folder icon for recursive share)"
-msgstr "(Klikněte pravým tlačítkem na ikonu složky pro rekurzivní sdílení)"
+msgid "Double-click: share or unshare this folder. Right-click: share it with all subfolders, including new ones."
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "Bold: shared. Bold italic: shared with all subfolders. Red folder: contains shared folders."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Share hidden files"
@@ -5781,6 +5792,14 @@ msgstr "Maximum nových připojení za 5 sekund"
 #: src/muuli_wdr.cpp
 msgid "Concurrent Kad source lookups"
 msgstr "Souběžná vyhledávání zdrojů Kad"
+
+#: src/muuli_wdr.cpp
+msgid "Firewalled Kad nodes served as buddy"
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "How many firewalled Kad nodes this node relays callbacks for. Each one holds a connection, so at most a tenth of the connection limit is served."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Kad source re-search interval (minutes)"
@@ -5977,46 +5996,6 @@ msgstr "Sezení hostů mohou číst stav a seznamy, ale nemohou nic měnit. Vypn
 #: src/muuli_wdr.cpp
 msgid "Guest password"
 msgstr "Heslo hosta"
-
-#: src/muuli_wdr.cpp
-msgid "Web server parameters"
-msgstr "Parametry webového serveru"
-
-#: src/muuli_wdr.cpp
-msgid "Run webserver on startup (deprecated)"
-msgstr "Spustit webový server při startu (zastaralé)"
-
-#: src/muuli_wdr.cpp
-msgid "Web template"
-msgstr "Šablona webového rozhraní"
-
-#: src/muuli_wdr.cpp
-msgid "Full rights password"
-msgstr "Heslo pro úplná oprávnění"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Low rights User"
-msgstr "Povolit uživatele s omezenými oprávněními"
-
-#: src/muuli_wdr.cpp
-msgid "Low rights password"
-msgstr "Heslo pro omezená oprávnění"
-
-#: src/muuli_wdr.cpp
-msgid "Enable UPnP port forwarding of the web server port"
-msgstr "Povolit přesměrování portu webového serveru přes UPnP"
-
-#: src/muuli_wdr.cpp
-msgid "Web server UPnP TCP port (Optional)"
-msgstr "Port TCP UPnP webového serveru (volitelný)"
-
-#: src/muuli_wdr.cpp
-msgid "Page Refresh Time (in secs)"
-msgstr "Interval obnovení stránky (v sekundách)"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Gzip compression"
-msgstr "Povolit kompresi gzip"
 
 #: src/muuli_wdr.cpp
 msgid "Reset page to defaults"
@@ -7046,9 +7025,9 @@ msgstr "Získávání informací o kamarádovi"
 msgid "NAT traversal (QUIC)"
 msgstr "NAT traverzování (QUIC)"
 
-#: src/Preferences.cpp
-msgid "no options available"
-msgstr "nejsou k dispozici žádné možnosti"
+#: src/PeerCapabilities.h
+msgid "Skips unknown source exchange tags"
+msgstr ""
 
 #: src/Preferences.cpp
 #, fuzzy
@@ -7411,12 +7390,9 @@ msgid "macOS does not let an application stop being the default handler. To stop
 msgstr "macOS neumožňuje aplikaci přestat být výchozím obslužným programem. Abyste zabránili otevírání aMule, nastavte jinou aplikaci jako výchozí."
 
 #: src/PrefsUnifiedDlg.cpp
-msgid "The web server and aMule API require external connections to be enabled."
+#, fuzzy
+msgid "The aMule API requires external connections to be enabled."
 msgstr "Webový server a aMule API vyžadují povolení externích připojení."
-
-#: src/PrefsUnifiedDlg.cpp
-msgid "The aMule web server is deprecated. Consider running the aMule API instead."
-msgstr "Webový server aMule je zastaralý. Zvažte místo něho použít aMule API."
 
 #: src/PrefsUnifiedDlg.cpp
 msgid ""
@@ -8463,6 +8439,16 @@ msgid "Connected to buddy at %s"
 msgstr "Připojeno ke kamarádovi na adrese %s"
 
 #: src/ServerWnd.cpp
+#, fuzzy
+msgid "Served buddies:"
+msgstr "Seznam serverů"
+
+#: src/ServerWnd.cpp
+#, c-format
+msgid "%u of %u"
+msgstr ""
+
+#: src/ServerWnd.cpp
 msgid "IP address:"
 msgstr "IP adresa:"
 
@@ -8969,35 +8955,6 @@ msgid "Peak Connections (estimate): %i"
 msgstr "Nejvyšší počet připojení (odhad): %i"
 
 #: src/Statistics.cpp
-msgid "NAT Traversal (Session)"
-msgstr "NAT Traversal (relace)"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Server Hole Punches: %s"
-msgstr "Server Hole Punches: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Server Hole Punches: %s"
-msgstr "Úspěšné Server Hole Punches: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Lugdunum Callbacks: %s"
-msgstr "Zpětná volání v Lugdunum: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Lugdunum Callbacks: %s"
-msgstr "Úspěšná zpětná volání Lugdunum: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "uTP Streams Moved to a New Port: %s"
-msgstr "uTP streamy přesunuty na nový port: %s"
-
-#: src/Statistics.cpp
 #, c-format
 msgid "Unknown: %s"
 msgstr "Neznámí: %s"
@@ -9083,6 +9040,11 @@ msgid "Average file size: %s"
 msgstr "Průměrná velikost souboru: %s"
 
 #: src/Statistics.cpp
+#, fuzzy
+msgid "Diagnostics"
+msgstr "Diagnostika hledání"
+
+#: src/Statistics.cpp
 msgid "Operating System"
 msgstr "Operační systém"
 
@@ -9164,6 +9126,11 @@ msgstr ""
 "Nebylo zadáno klíčové slovo pro vyhledávání.\n"
 "Další nápovědu zobrazíte příkazem 'help search'.\n"
 
+#: src/TextClient.cpp
+#, fuzzy
+msgid "The connected daemon does not support media search filters.\n"
+msgstr "Připojený daemon nepodporuje Vyhledávání všude.\n"
+
 #. TRANSLATORS:
 #. 'help search' is a command to the program, do not translate it.
 #: src/TextClient.cpp
@@ -9175,11 +9142,20 @@ msgstr ""
 "Další nápovědu zobrazíte příkazem 'help search'.\n"
 
 #: src/TextClient.cpp
+#, fuzzy
+msgid "The connected daemon does not support search management.\n"
+msgstr "Připojený daemon nepodporuje Vyhledávání všude.\n"
+
+#: src/TextClient.cpp
+msgid "A search ID from 'search list' is required.\n"
+msgstr ""
+
+#: src/TextClient.cpp
 #, c-format
 msgid "Download File: %lu %s\n"
 msgstr "Stahování souboru: %lu %s\n"
 
-#: src/TextClient.cpp src/webserver/src/WebServer.cpp
+#: src/TextClient.cpp
 msgid "Request failed with an unknown error."
 msgstr "Požadavek selhal kvůli neznámé chybě."
 
@@ -9286,6 +9262,27 @@ msgstr ""
 #: src/TextClient.cpp
 msgid "[PartFile]"
 msgstr "[Částečný soubor]"
+
+#: src/TextClient.cpp
+msgid "No retained searches.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; availability is unknown.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; further requests remain possible.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "No further results can be requested for this search.\n"
+msgstr "Zobrazí výsledky posledního vyhledávání.\n"
+
+#: src/TextClient.cpp
+msgid "Search stop request processed; retained results were not removed.\n"
+msgstr ""
 
 #: src/TextClient.cpp
 #, c-format
@@ -9540,6 +9537,7 @@ msgid "Execute a search."
 msgstr "Spustit vyhledávání."
 
 #: src/TextClient.cpp
+#, fuzzy
 msgid ""
 "A search type has to be specified by giving the type:\n"
 "    GLOBAL\n"
@@ -9555,6 +9553,11 @@ msgid ""
 "    --avail <N>            minimum number of sources\n"
 "    --min-size <N[KMG]>    smallest file size; K=1024, M=K*1024, G=M*1024\n"
 "    --max-size <N[KMG]>    largest file size; same suffixes\n"
+"    --min-bitrate <kbps>   whole number, 0-1000000\n"
+"    --min-duration <sec>   whole number, 0-86400\n"
+"    --codec <text> --title <text> --album <text> --artist <text>\n"
+"Quote media text values containing spaces.\n"
+"Kad applies media filters; eD2k servers may ignore them.\n"
 "Example: 'search global linux iso --type Iso --min-size 100M' returns\n"
 "results for \"linux iso\" of file-type Iso at least 100 MiB.\n"
 msgstr ""
@@ -9590,6 +9593,28 @@ msgstr "Spustit vyhledávání v síti Kad"
 #: src/TextClient.cpp
 msgid "Execute an eD2k and Kad search"
 msgstr "Spustit vyhledávání v eD2k a Kad"
+
+#: src/TextClient.cpp
+msgid "List retained search IDs and queries."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Stop a search, keeping its results."
+msgstr "Žádné otevřené hledání nemá tento výsledek."
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Request more Kad search results."
+msgstr "Počet výsledků vyhledávání: %i\n"
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'. Further results are not guaranteed."
+msgstr ""
 
 #: src/TextClient.cpp
 msgid "Show the results of a search."
@@ -10419,139 +10444,6 @@ msgstr "Adresář obsahující soubor s podpisem"
 msgid "Folder where generating the statistic image"
 msgstr "Adresář pro vytváření obrázku statistik"
 
-#: src/webserver/src/WebInterface.cpp
-msgid "Loads template <str>"
-msgstr "Načíst šablonu <str>"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Web server HTTP port"
-msgstr "Port HTTP webového serveru"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use UPnP port forwarding on web server port"
-msgstr "Použít přesměrování portu webového serveru přes UPnP"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "UPnP port"
-msgstr "Port UPnP"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use gzip compression"
-msgstr "Použít kompresi gzip"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Full access password for web server"
-msgstr "Heslo webového serveru pro úplný přístup"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Guest password for web server"
-msgstr "Heslo hosta webového serveru"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Allow guest access"
-msgstr "Povolit přístup hostům"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Deny guest access"
-msgstr "Zakázat přístup hostům"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Load/save web server settings from/to remote aMule"
-msgstr "Načíst/uložit nastavení webového serveru ze/do vzdáleného aMule"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule config file path. DO NOT USE DIRECTLY!"
-msgstr "Cesta ke konfiguračnímu souboru aMule. NEPOUŽÍVAT PŘÍMO!"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Disable PHP interpreter (deprecated)"
-msgstr "Zakázat interpret PHP (zastaralé)"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Recompile PHP pages on each request"
-msgstr "Při každém požadavku znovu zkompilovat stránky PHP"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule Web Server"
-msgstr "Webový server aMule"
-
-#: src/webserver/src/WebServer.cpp
-msgid "web client connection accepted\n"
-msgstr "připojení webového klienta přijato\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "ERROR: cannot accept web client connection\n"
-msgstr "CHYBA: nelze přijmout připojení webového klienta\n"
-
-#: src/webserver/src/WebServer.cpp
-#, c-format
-msgid "Request failed with the following error: %s."
-msgstr "Požadavek selhal kvůli následující chybě: %s."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Index file not found: "
-msgstr "Soubor indexu nebyl nalezen: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session expired - requesting login\n"
-msgstr "Relace vypršela – bude vyžadováno přihlášení\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, logged in\n"
-msgstr "Relace je platná, uživatel je přihlášen\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, not logged in\n"
-msgstr "Relace je platná, uživatel není přihlášen\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No session opened - will request login\n"
-msgstr "Není otevřena žádná relace – bude vyžadováno přihlášení\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session created - requesting login\n"
-msgstr "Relace byla vytvořena – bude vyžadováno přihlášení\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [original]: "
-msgstr "Zpracování požadavku [původní]: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Refusing to read `pass` from URL query string\n"
-msgstr "Odmítám číst `pass` z řetězce dotazu URL\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No password specified, login will not be allowed."
-msgstr "Nebylo zadáno heslo; přihlášení nebude povoleno."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Checking password\n"
-msgstr "Kontrola hesla\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password hash invalid\n"
-msgstr "Hash hesla je neplatný\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password ok\n"
-msgstr "Heslo je správné\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password bad\n"
-msgstr "Heslo je nesprávné\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "You did not enter any password. Blank password is not allowed.\n"
-msgstr "Nebylo zadáno žádné heslo. Prázdné heslo není povoleno.\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Logout requested\n"
-msgstr "Bylo vyžádáno odhlášení\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [redirected]: "
-msgstr "Zpracování požadavku [přesměrovaný]: "
-
 #: packaging/windows/installer_strings.c
 msgid "aMule (required)"
 msgstr "aMule (vyžadováno)"
@@ -10694,6 +10586,236 @@ msgstr "Nelze porovnat zastaralé ECPassword s ECPasswordVerifier; odmítám ext
 msgid "Migrating a changed legacy ECPassword after downgrade; the previous verifier no longer authenticates this run."
 msgstr "Migrace změněného zastaralého ECPassword po přechodu na starší verzi; předchozí ověřovač již tuto relaci neověřuje."
 
+#, c-format
+#~ msgid "Terminating amuleweb instance with pid '%d' ... "
+#~ msgstr "Ukončování instance amuleweb s PID '%d' ... "
+
+#, c-format
+#~ msgid "Killing amuleweb instance with pid '%d' ... "
+#~ msgstr "Vynucuje se ukončení instance amuleweb s PID '%d' ... "
+
+#~ msgid "An exception occurred while launching amuleweb."
+#~ msgstr "Došlo k výjimce při spouštění amuleweb."
+
+#, c-format
+#~ msgid "web server running on pid %d"
+#~ msgstr "Webový server běží s PID %d"
+
+#~ msgid "Could not prepare the amuleweb authentication token. The web server was not started."
+#~ msgstr "Nepodařilo se připravit ověřovací token amuleweb. Webový server nebyl spuštěn."
+
+#~ msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
+#~ msgstr "Požádali jste o spuštění webového serveru po startu, avšak binární soubor amuleweb nelze spustit. Nainstalujte balíček obsahující webový server aMule, nebo sestavte aMule ze zdrojového kódu pomocí přepínače -DBUILD_WEBSERVER=YES a pak jej nainstalujte."
+
+#~ msgid "Could not prepare the amuleweb EC token."
+#~ msgstr "Nepodařilo se připravit EC token amuleweb."
+
+#, c-format
+#~ msgid "Could not remove the amuleweb EC token file: %s"
+#~ msgstr "Nepodařilo se odebrat soubor EC tokenu amuleapi: %s"
+
+#~ msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
+#~ msgstr "Odmítnut vzdálený požadavek na nastavení šablony webového serveru: hodnota musí být prostý název šablony, nikoli cestou."
+
+#~ msgid "Web server parameters"
+#~ msgstr "Parametry webového serveru"
+
+#~ msgid "Run webserver on startup (deprecated)"
+#~ msgstr "Spustit webový server při startu (zastaralé)"
+
+#~ msgid "Web template"
+#~ msgstr "Šablona webového rozhraní"
+
+#~ msgid "Full rights password"
+#~ msgstr "Heslo pro úplná oprávnění"
+
+#~ msgid "Enable Low rights User"
+#~ msgstr "Povolit uživatele s omezenými oprávněními"
+
+#~ msgid "Low rights password"
+#~ msgstr "Heslo pro omezená oprávnění"
+
+#~ msgid "Enable UPnP port forwarding of the web server port"
+#~ msgstr "Povolit přesměrování portu webového serveru přes UPnP"
+
+#~ msgid "Web server UPnP TCP port (Optional)"
+#~ msgstr "Port TCP UPnP webového serveru (volitelný)"
+
+#~ msgid "Page Refresh Time (in secs)"
+#~ msgstr "Interval obnovení stránky (v sekundách)"
+
+#~ msgid "Enable Gzip compression"
+#~ msgstr "Povolit kompresi gzip"
+
+#~ msgid "no options available"
+#~ msgstr "nejsou k dispozici žádné možnosti"
+
+#~ msgid "The aMule web server is deprecated. Consider running the aMule API instead."
+#~ msgstr "Webový server aMule je zastaralý. Zvažte místo něho použít aMule API."
+
+#~ msgid "Loads template <str>"
+#~ msgstr "Načíst šablonu <str>"
+
+#~ msgid "Web server HTTP port"
+#~ msgstr "Port HTTP webového serveru"
+
+#~ msgid "Use UPnP port forwarding on web server port"
+#~ msgstr "Použít přesměrování portu webového serveru přes UPnP"
+
+#~ msgid "UPnP port"
+#~ msgstr "Port UPnP"
+
+#~ msgid "Use gzip compression"
+#~ msgstr "Použít kompresi gzip"
+
+#~ msgid "Full access password for web server"
+#~ msgstr "Heslo webového serveru pro úplný přístup"
+
+#~ msgid "Guest password for web server"
+#~ msgstr "Heslo hosta webového serveru"
+
+#~ msgid "Allow guest access"
+#~ msgstr "Povolit přístup hostům"
+
+#~ msgid "Deny guest access"
+#~ msgstr "Zakázat přístup hostům"
+
+#~ msgid "Load/save web server settings from/to remote aMule"
+#~ msgstr "Načíst/uložit nastavení webového serveru ze/do vzdáleného aMule"
+
+#~ msgid "aMule config file path. DO NOT USE DIRECTLY!"
+#~ msgstr "Cesta ke konfiguračnímu souboru aMule. NEPOUŽÍVAT PŘÍMO!"
+
+#~ msgid "Disable PHP interpreter (deprecated)"
+#~ msgstr "Zakázat interpret PHP (zastaralé)"
+
+#~ msgid "Recompile PHP pages on each request"
+#~ msgstr "Při každém požadavku znovu zkompilovat stránky PHP"
+
+#~ msgid "aMule Web Server"
+#~ msgstr "Webový server aMule"
+
+#~ msgid "web client connection accepted\n"
+#~ msgstr "připojení webového klienta přijato\n"
+
+#~ msgid "ERROR: cannot accept web client connection\n"
+#~ msgstr "CHYBA: nelze přijmout připojení webového klienta\n"
+
+#, c-format
+#~ msgid "Request failed with the following error: %s."
+#~ msgstr "Požadavek selhal kvůli následující chybě: %s."
+
+#~ msgid "Index file not found: "
+#~ msgstr "Soubor indexu nebyl nalezen: "
+
+#~ msgid "Session expired - requesting login\n"
+#~ msgstr "Relace vypršela – bude vyžadováno přihlášení\n"
+
+#~ msgid "Session ok, logged in\n"
+#~ msgstr "Relace je platná, uživatel je přihlášen\n"
+
+#~ msgid "Session ok, not logged in\n"
+#~ msgstr "Relace je platná, uživatel není přihlášen\n"
+
+#~ msgid "No session opened - will request login\n"
+#~ msgstr "Není otevřena žádná relace – bude vyžadováno přihlášení\n"
+
+#~ msgid "Session created - requesting login\n"
+#~ msgstr "Relace byla vytvořena – bude vyžadováno přihlášení\n"
+
+#~ msgid "Processing request [original]: "
+#~ msgstr "Zpracování požadavku [původní]: "
+
+#~ msgid "Refusing to read `pass` from URL query string\n"
+#~ msgstr "Odmítám číst `pass` z řetězce dotazu URL\n"
+
+#~ msgid "No password specified, login will not be allowed."
+#~ msgstr "Nebylo zadáno heslo; přihlášení nebude povoleno."
+
+#~ msgid "Checking password\n"
+#~ msgstr "Kontrola hesla\n"
+
+#~ msgid "Password hash invalid\n"
+#~ msgstr "Hash hesla je neplatný\n"
+
+#~ msgid "Password ok\n"
+#~ msgstr "Heslo je správné\n"
+
+#~ msgid "Password bad\n"
+#~ msgstr "Heslo je nesprávné\n"
+
+#~ msgid "You did not enter any password. Blank password is not allowed.\n"
+#~ msgstr "Nebylo zadáno žádné heslo. Prázdné heslo není povoleno.\n"
+
+#~ msgid "Logout requested\n"
+#~ msgstr "Bylo vyžádáno odhlášení\n"
+
+#~ msgid "Processing request [redirected]: "
+#~ msgstr "Zpracování požadavku [přesměrovaný]: "
+
+#~ msgid "(Right click on folder icon for recursive share)"
+#~ msgstr "(Klikněte pravým tlačítkem na ikonu složky pro rekurzivní sdílení)"
+
+#~ msgid "Currently connected server."
+#~ msgstr "Aktuálně připojený server."
+
+#~ msgid "Up: 0.0 | Down: 0.0"
+#~ msgstr "Up: 0.0 | Down: 0.0"
+
+#~ msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
+#~ msgstr "Aktuální průměrné rychlosti odesílání a stahování. Pokud je povoleno, čísla v závorkách označují režii z komunikace mezi klienty."
+
+#, fuzzy, c-format
+#~ msgid "Buddies Served: %llu"
+#~ msgstr "Soubory na funkčních serverech: %llu"
+
+#, fuzzy, c-format
+#~ msgid "Time Served: %s"
+#~ msgstr "Filtrované servery: %s"
+
+#, fuzzy, c-format
+#~ msgid "Buddies Connected: %llu"
+#~ msgstr " - připojení k "
+
+#~ msgid "NAT Traversal (Session)"
+#~ msgstr "NAT Traversal (relace)"
+
+#, c-format
+#~ msgid "Successful Server Hole Punches: %s"
+#~ msgstr "Úspěšné Server Hole Punches: %s"
+
+#, c-format
+#~ msgid "Successful Lugdunum Callbacks: %s"
+#~ msgstr "Úspěšná zpětná volání Lugdunum: %s"
+
+#, c-format
+#~ msgid "uTP Streams Moved to a New Port: %s"
+#~ msgstr "uTP streamy přesunuty na nový port: %s"
+
+#, fuzzy
+#~ msgid "Keyword publish"
+#~ msgstr "Klíčové slovo: %s"
+
+#, fuzzy
+#~ msgid "Source publish"
+#~ msgstr "Zdroje"
+
+#, fuzzy
+#~ msgid "Firewall check"
+#~ msgstr "UDP kontrola firewallu"
+
+#, fuzzy
+#~ msgid "Firewall check 2"
+#~ msgstr "UDP kontrola firewallu"
+
+#, fuzzy, c-format
+#~ msgid "Keys valid: %s"
+#~ msgstr "Klíčové slovo: %s"
+
+#, fuzzy
+#~ msgid "Kad Buddies"
+#~ msgstr "Uživatel Kad"
+
 #~ msgid "This aMule has no media helper (amule-media-probe)"
 #~ msgstr "Tento aMule nemá žádného pomocníka médií (amule-media-probe)"
 
@@ -10820,9 +10942,6 @@ msgstr "Migrace změněného zastaralého ECPassword po přechodu na starší ve
 
 #~ msgid "Click on this button to update the servers list from URL ..."
 #~ msgstr "Klikněte na toto tlačítko pro aktualizaci seznamu serverů z URL ..."
-
-#~ msgid "Server list"
-#~ msgstr "Seznam serverů"
 
 #~ msgid "Enter the url to a server.met file here and press the button to the left to update the list of known servers."
 #~ msgstr "Zde zadejte URL souboru server.met a stiskněte tlačítko vlevo pro aktualizaci seznamu známých serverů."
@@ -10992,9 +11111,6 @@ msgstr "Migrace změněného zastaralého ECPassword po přechodu na starší ve
 
 #~ msgid "aMule will sort the columns in your download list automatically"
 #~ msgstr "aMule automaticky seřadí kolonky ve vaší frontě stahování"
-
-#~ msgid "Return the results of the previous search.\n"
-#~ msgstr "Zobrazí výsledky posledního vyhledávání.\n"
 
 #~ msgid "Show the progress of a search.\n"
 #~ msgstr "Zobrazí průběh vyhledávání.\n"

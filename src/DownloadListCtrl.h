@@ -86,14 +86,6 @@ public:
 	// is AND-ed with the current category, and the rebuild it triggers is RebuildFilteredView()
 	// below. Purely GUI-side, so it behaves the same in the monolithic app and the remote GUI.
 
-	/// Bracket a burst of AddFile()/UpdateItem() calls (a reconnect resync, issue #444, or any
-	/// poll that adds a batch of downloads, issue #615) so the list repaints once (Freeze) and
-	/// sorts once instead of per item. Existing rows are updated in place; new rows are
-	/// appended without a per-item sort. EndBatchUpdate() does the single SortList(), unless
-	/// doSort is false.
-	void BeginBatchUpdate();
-	void EndBatchUpdate(bool doSort = true);
-
 	/// Removes @a file from the list.
 	void RemoveFile(CPartFile *file);
 
@@ -105,7 +97,7 @@ public:
 	/// category, and redrawing if needed. Always a CPartFile*, kept as const void* for source
 	/// compatibility with existing callers (GuiEvents.cpp's DownloadCtrlUpdateItem).
 	void UpdateItem(const void *toupdate);
-	void RefreshLiveItems();
+	//! Queue a periodic row update for the GUI's one-second RefreshDeferred() tick.
 	void DeferUpdateItem(const void *item);
 
 	uint8 GetCategory() const { return m_category; }
@@ -165,6 +157,7 @@ protected:
 
 	/// @see CMuleVirtualDataViewCtrl::RebuildFilteredView
 	void RebuildFilteredView() override;
+	bool RefreshDeferredItem(wxUIntPtr data) override;
 
 private:
 	/// Rebuilds the visible rows from the model in one pass, keeping the files that pass the
@@ -234,17 +227,12 @@ private:
 	//! RebuildVisibleList() walks this to decide what to show; AddFile() uses it to reject
 	//! duplicates.
 	std::set<CPartFile *> m_files;
-	std::set<CPartFile *> m_pendingUpdates;
 
 	//! Pointer to the current menu object, used to avoid multiple menus.
 	wxMenu *m_menu = nullptr;
 
 	//! The currently displayed category
 	uint8 m_category = 0;
-
-	//! True between BeginBatchUpdate()/EndBatchUpdate(): AddFile() appends
-	//! rows but defers the per-item SortList to one final sort (issue #444).
-	bool m_batchUpdate = false;
 
 	//! The number of displayed files
 	int m_filecount = 0;

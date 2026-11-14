@@ -62,9 +62,12 @@
 
 #include "kademlia/kademlia/Kademlia.h"
 #include "kademlia/kademlia/Search.h"
+#include "kademlia/routing/RoutingZone.h"
 #include "ClientList.h"
+#include "updownclient.h"                        // Needed for CUpDownClient (buddy route)
 #include "KadCallbackPolicy.h"                   // Needed for DirectCallbackAvailable
 #include "kademlia/kademlia/UDPFirewallTester.h" // Needed for CUDPFirewallTester
+#include "KadKeywordPublishTimes.h"              // Needed for KadKeywordPublishTimes::Times
 #ifdef ENABLE_IPV6
 #include "AdvertisedIPv6.h" // Needed for AdvertisedIPv6ForPeers
 #endif
@@ -206,6 +209,9 @@ public:
 	CPublishKeyword *GetNextKeyword();
 	void ResetNextKeyword();
 
+	void LoadPublishTimes(const CPath &path);
+	void SavePublishTimes(const CPath &path) const;
+
 	uint32 GetNextPublishTime() const { return m_tNextPublishKeywordTime; }
 	void SetNextPublishTime(uint32 tNextPublishKeywordTime)
 	{
@@ -228,6 +234,9 @@ protected:
 	std::map<wxString, CKeyWordList::iterator> m_keywordIndex;
 
 	CPublishKeyword *FindKeyword(const wxString &rstrKeyword, CKeyWordList::iterator *ppos = NULL);
+
+	// Saved times not yet taken by a keyword, keyed by keyword hash.
+	KadKeywordPublishTimes::Times m_savedTimes;
 };
 
 CPublishKeywordList::CPublishKeywordList()
@@ -274,6 +283,11 @@ void CPublishKeywordList::AddKeyword(const wxString &keyword, CKnownFile *file)
 	CPublishKeyword *pubKw = FindKeyword(keyword);
 	if (pubKw == NULL) {
 		pubKw = new CPublishKeyword(keyword);
+		const auto saved = m_savedTimes.find(pubKw->GetKadID());
+		if (saved != m_savedTimes.end()) {
+			pubKw->SetNextPublishTime(saved->second);
+			m_savedTimes.erase(saved);
+		}
 		m_lstKeywords.push_back(pubKw);
 		CKeyWordList::iterator it = m_lstKeywords.end();
 		--it;
@@ -327,6 +341,58 @@ void CPublishKeywordList::RemoveAllKeywords()
 	SetNextPublishTime(0);
 }
 
+namespace
+{
+CPath KeywordPublishTimesPath()
+{
+	return CPath(thePrefs::GetConfigDir() + KadKeywordPublishTimes::FileName);
+}
+} // namespace
+
+void CPublishKeywordList::LoadPublishTimes(const CPath &path)
+{
+	CFile file;
+	if (!path.FileExists() || !file.Open(path)) {
+		return;
+	}
+	if (!KadKeywordPublishTimes::Read(file, time(nullptr), m_savedTimes)) {
+		AddDebugLogLineN(logKnownFiles,
+			CFormat("%s is damaged or newer; keeping what was read") %
+				KadKeywordPublishTimes::FileName);
+	}
+}
+
+void CPublishKeywordList::SavePublishTimes(const CPath &path) const
+{
+	const uint32 now = time(nullptr);
+	KadKeywordPublishTimes::Times times;
+	// Keep saved times whose files are not shared now; they may come back.
+	for (const auto &saved : m_savedTimes) {
+		if (saved.second > now) {
+			times.insert(saved);
+		}
+	}
+	for (const CPublishKeyword *keyword : m_lstKeywords) {
+		if (keyword->GetNextPublishTime() > now) {
+			times[keyword->GetKadID()] = keyword->GetNextPublishTime();
+		}
+	}
+	CFile file(path, CFile::write_safe);
+	if (!file.IsOpened()) {
+		return;
+	}
+	try {
+		KadKeywordPublishTimes::Write(file, times);
+		if (!file.Close()) {
+			throw CIOFailureException(
+				wxString("Cannot commit ") + KadKeywordPublishTimes::FileName);
+		}
+	} catch (const CIOFailureException &e) {
+		AddLogLineC(CFormat(_("Error while saving %s file: %s")) % KadKeywordPublishTimes::FileName %
+			    e.what());
+	}
+}
+
 void CPublishKeywordList::RemoveAllKeywordReferences()
 {
 	CKeyWordList::iterator it = m_lstKeywords.begin();
@@ -362,6 +428,7 @@ CSharedFileList::CSharedFileList(CKnownFileList *in_filelist)
 	m_lastPublishED2KFlag = true;
 	/* Kad Stuff */
 	m_keywords = new CPublishKeywordList;
+	m_keywords->LoadPublishTimes(KeywordPublishTimesPath());
 	m_lastPublishKadSrc = 0;
 	m_lastPublishKadNotes = 0;
 	m_currFileKey = 0;
@@ -633,13 +700,28 @@ CSharedFileList::AddPathResult CSharedFileList::AddPathToShares(
 		// decline with previousPath == directory is close to unreachable, since the watcher
 		// route returns on an index hit before reaching here and the bulk walk visits each root
 		// once.
+		CKnownFile *sharedCopy = nullptr;
 		{
 			wxMutexLocker lock(list_mut);
-			if (m_Files_map.find(toadd->GetFileHash()) != m_Files_map.end()) {
+			CKnownFileMap::const_iterator it = m_Files_map.find(toadd->GetFileHash());
+			if (it != m_Files_map.end()) {
+				sharedCopy = it->second;
+			}
+		}
+		if (sharedCopy) {
+			// A file moved to another shared folder can be seen at its new path before its old
+			// path is gone from the share. Declining it then would leave it unshared once the
+			// old path is removed.
+			if (sharedCopy->IsPartFile() ||
+				sharedCopy->GetFilePath().JoinPaths(sharedCopy->GetFileName()).FileExists()) {
 				AddDebugLogLineN(
 					logKnownFiles, CFormat("File already shared, skipping: %s") % fname);
 				return kAddPathAlreadyShared;
 			}
+			AddDebugLogLineN(logKnownFiles,
+				CFormat("Shared copy of '%s' is gone from disk, sharing it from %s") % fname %
+					directory);
+			RemoveFile(sharedCopy);
 		}
 
 		// Set the path BEFORE AddFile so the path index that AddFile maintains keys off the
@@ -1490,11 +1572,6 @@ void CSharedFileList::GetShareCandidateNames(wxArrayString &out, bool &truncated
 	truncated = m_excludedNamesTruncated;
 }
 
-void CSharedFileList::UpdateItem(CKnownFile *toupdate)
-{
-	Notify_SharedFilesUpdateItem(toupdate);
-}
-
 void CSharedFileList::GetSharedFilesByDirectory(const wxString &directory, CKnownFilePtrList &list)
 {
 	wxMutexLocker lock(list_mut);
@@ -1731,6 +1808,8 @@ bool CSharedFileList::SendListToServer()
 	// Published means offered to the connection, not acknowledged as indexed.
 	// Only mark records when ServerConnect accepts the packet for this connection.
 	if (theApp->serverconnect->SendPacket(packet, true, socket)) {
+		theStats::AddPublishEvent(EPublishEvent::Ed2kOfferListSent);
+		theStats::AddPublishEvent(EPublishEvent::Ed2kFileOffered, count);
 		publication.Sent(GetTickCount64());
 		if (socket->AwaitingOfferFilesAdvertisement()) {
 			publication.SentBeforeAdvertisement(count);
@@ -1848,8 +1927,86 @@ SKadPublishFacts CSharedFileList::CurrentKadPublishFacts()
 	return facts;
 }
 
+CSharedFileList::SKadSourceRoute CSharedFileList::CurrentKadSourceRoute()
+{
+	SKadSourceRoute route{ DecideKadSourcePublish(CurrentKadPublishFacts()) };
+	if (route.mode == EKadSourcePublish::Buddy) {
+		if (const CUpDownClient *buddy = theApp->clientlist->GetBuddy()) {
+			route.buddyIP = buddy->GetIP();
+			route.buddyPort = buddy->GetUDPPort();
+		}
+	}
+	return route;
+}
+
+CSharedFileList::SPublishingState CSharedFileList::GetPublishingState() const
+{
+	const SKadSourceRoute route = CurrentKadSourceRoute();
+	const uint32 now = static_cast<uint32>(time(nullptr));
+	SPublishingState state;
+	wxMutexLocker lock(list_mut);
+	for (const auto &entry : m_Files_map) {
+		const CKnownFile *file = entry.second;
+		++state.shared;
+		if (file->GetPublishedED2K()) {
+			++state.ed2kOffered;
+		}
+		if (KadSourceEntriesLive(route.mode,
+			    file->GetKadSourceAckTime(),
+			    file->GetKadSourceAckBuddyIP(),
+			    file->GetKadSourceAckBuddyPort(),
+			    now,
+			    KADEMLIAREPUBLISHTIMES,
+			    route.buddyIP,
+			    route.buddyPort)) {
+			++state.kadPublished;
+			if (file->GetKadSourceAckNodes() >= 5) {
+				++state.kadPublishedWell;
+			}
+		}
+	}
+	return state;
+}
+
+void CSharedFileList::SaveKeywordPublishTimes()
+{
+	wxMutexLocker lock(list_mut);
+	m_keywords->SavePublishTimes(KeywordPublishTimesPath());
+}
+
 void CSharedFileList::Publish()
 {
+	auto &metrics = Kademlia::CPublishMetrics::Instance();
+	if (theLogger.IsEnabled(logKadPublish) && metrics.ReportDue(::GetTickCount64())) {
+		const auto &lookupIPs = metrics.reportedLookupIPs;
+		const auto &publishIPs = metrics.reportedPublishIPs;
+		// Busy destinations that are our own contacts point at the first hops of our lookups.
+		uint64_t busyContacts = 0;
+		if (Kademlia::CKademlia::IsRunning()) {
+			for (uint32_t ip : lookupIPs[1]) {
+				if (Kademlia::CKademlia::GetRoutingZone()->GetContact(ip, 0, false)) {
+					++busyContacts;
+				}
+			}
+		}
+		AddDebugLogLineN(logKadPublish,
+			CFormat("Kad source publish totals: attempts=%llu start_failures=%llu starts=%llu "
+				"queued=%llu "
+				"acknowledged_ips=%llu "
+				"finished=%llu zero_ack=%llu cancelled=%llu duration_ms=%llu "
+				"max_duration_ms=%llu max_req_per_ip_60s=%llu req_ips_ge6=%zu "
+				"req_ips_ge8=%zu "
+				"req_ips_gt10=%zu req_ips_ge8_contacts=%llu max_pub_per_ip_60s=%llu "
+				"pub_ips_ge2=%zu pub_ips_gt2=%zu omitted_rate_samples=%llu") %
+				metrics.attempts % metrics.startFailures % metrics.starts % metrics.queued %
+				metrics.acknowledged % metrics.finished % metrics.zeroAcknowledgements %
+				metrics.cancelled % metrics.durationMs % metrics.maxDurationMs %
+				metrics.lookupRequests.peak % lookupIPs[0].size() % lookupIPs[1].size() %
+				lookupIPs[2].size() % busyContacts % metrics.publishRequests.peak %
+				publishIPs[0].size() % publishIPs[1].size() %
+				(metrics.lookupRequests.omitted + metrics.publishRequests.omitted));
+	}
+
 	// Variables to save cpu.
 	unsigned int tNow = time(NULL);
 
@@ -1946,21 +2103,42 @@ void CSharedFileList::Publish()
 
 		if (Kademlia::CKademlia::GetTotalStoreSrc() < KADEMLIATOTALSTORESRC) {
 			if (tNow >= m_lastPublishKadSrc) {
-				CKnownFile *pCurKnownFile = GetNextKadFile(m_srcPublishCursor);
+				// Pass over files published in the last 5 h in this tick, rather than one
+				// per KADEMLIAPUBLISHTIME. The bound caps the work when few files are due.
+				const size_t maxChecks = std::min<size_t>(100, GetCount());
+				CKnownFile *pCurKnownFile = nullptr;
+				for (size_t i = 0; i < maxChecks && !pCurKnownFile; ++i) {
+					CKnownFile *file = GetNextKadFile(m_srcPublishCursor);
+					if (!file) {
+						break;
+					}
+					if (file->PublishSrc()) {
+						pCurKnownFile = file;
+					}
+				}
 				if (pCurKnownFile) {
-					if (pCurKnownFile->PublishSrc()) {
-						Kademlia::CUInt128 kadFileID;
-						kadFileID.SetValueBE(pCurKnownFile->GetFileHash().GetHash());
-						if (Kademlia::CSearchManager::PrepareLookup(
-							    Kademlia::CSearch::STOREFILE, true, kadFileID) ==
-							NULL) {
-							pCurKnownFile->SetLastPublishTimeKadSrc(0, 0);
-						}
+					Kademlia::CUInt128 kadFileID;
+					kadFileID.SetValueBE(pCurKnownFile->GetFileHash().GetHash());
+					const bool started =
+						Kademlia::CSearchManager::PrepareLookup(
+							Kademlia::CSearch::STOREFILE, true, kadFileID) !=
+						nullptr;
+					if (theLogger.IsEnabled(logKadPublish)) {
+						metrics.Attempt(started);
+					}
+					if (started) {
+						theStats::AddPublishEvent(
+							EPublishEvent::KadSourceLookupStarted);
+					}
+					AddDebugLogLineN(logKadPublish,
+						CFormat("Kad source publish attempt: target=%s "
+							"started=%u") %
+							kadFileID.ToHexString() % started);
+					if (!started) {
+						pCurKnownFile->SetLastPublishTimeKadSrc(0, 0);
 					}
 				}
 
-				// even if we did not publish a source, reset the timer so that this list is
-				// processed only every KADEMLIAPUBLISHTIME seconds.
 				m_lastPublishKadSrc = KADEMLIAPUBLISHTIME + tNow;
 			}
 		}

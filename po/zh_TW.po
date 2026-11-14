@@ -340,22 +340,6 @@ msgstr "離開程式。"
 
 #: src/amule.cpp
 #, c-format
-msgid "Terminating amuleweb instance with pid '%d' ... "
-msgstr "正在終止 pid %d 的 amuleweb 執行緒... "
-
-#: src/amule.cpp
-#, c-format
-msgid "Killing amuleweb instance with pid '%d' ... "
-msgstr "正在強行終止 pid %d 的 amuleweb 執行緒... "
-
-#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
-#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
-#: src/SharedFilesCtrl.cpp
-msgid "Failed"
-msgstr "失敗"
-
-#: src/amule.cpp
-#, c-format
 msgid "Terminating amuleapi instance with pid '%d' ... "
 msgstr "正在終止 pid 為「%d」的 amuleapi 執行個體... "
 
@@ -363,6 +347,12 @@ msgstr "正在終止 pid 為「%d」的 amuleapi 執行個體... "
 #, c-format
 msgid "Killing amuleapi instance with pid '%d' ... "
 msgstr "正在強制終止 pid 為「%d」的 amuleapi 執行個體... "
+
+#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
+#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
+#: src/SharedFilesCtrl.cpp
+msgid "Failed"
+msgstr "失敗"
 
 #: src/amule.cpp
 msgid "aMule OnExit: Terminating core."
@@ -523,28 +513,6 @@ msgid "Not starting %s: it is neither next to aMule nor on PATH."
 msgstr ""
 
 #: src/amule.cpp
-msgid "An exception occurred while launching amuleweb."
-msgstr ""
-
-#: src/amule.cpp
-#, c-format
-msgid "web server running on pid %d"
-msgstr "執行中的網站伺服器 pid：%d"
-
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb authentication token. The web server was not started."
-msgstr ""
-
-#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
-#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
-msgid "ERROR"
-msgstr "錯誤"
-
-#: src/amule.cpp
-msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
-msgstr "您要求在啟動時執行網站伺服器，但無法執行 amuleweb 執行檔。請安裝包含 aMule 網站伺服器的套件，或從原始碼以 -DBUILD_WEBSERVER=YES 建置 aMule 並安裝。"
-
-#: src/amule.cpp
 #, c-format
 msgid "Could not write the amuleapi EC token to %s; amuleapi will fall back to its configured password."
 msgstr ""
@@ -566,15 +534,10 @@ msgstr ""
 msgid "You requested to run amuleapi on startup, but the amuleapi binary cannot be run. Please install the package containing aMule's REST API server, or build aMule from source with -DBUILD_AMULEAPI=YES and install it."
 msgstr "您要求在啟動時執行 amuleapi，但無法執行 amuleapi 執行檔。請安裝包含 aMule REST API 伺服器的套件，或從原始碼以 -DBUILD_AMULEAPI=YES 建置 aMule 並安裝。"
 
-#: src/amule.cpp
-#, fuzzy
-msgid "Could not prepare the amuleweb EC token."
-msgstr "無法儲存 amuleapi 密碼：%s"
-
-#: src/amule.cpp
-#, fuzzy, c-format
-msgid "Could not remove the amuleweb EC token file: %s"
-msgstr "無法儲存 amuleapi 密碼：%s"
+#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
+#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
+msgid "ERROR"
+msgstr "錯誤"
 
 #: src/amule.cpp
 #, fuzzy, c-format
@@ -1062,23 +1025,14 @@ msgstr "說明"
 msgid "aMuleGUI"
 msgstr "aMule 記錄"
 
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
-msgstr "上傳：%.1f%s (%.1f) | 下載：%.1f%s (%.1f)"
-
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
 msgid " MiB/s"
 msgstr ""
 
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/utils/wxCas/src/wxcasframe.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
+#: src/utils/wxCas/src/wxcasframe.cpp
 msgid " KiB/s"
 msgstr ""
-
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s | Down: %.1f%s"
-msgstr "上傳：%.1f%s | 下載：%.1f%s"
 
 #: src/amuleDlg.cpp
 msgid "Transfer speeds are reported by the daemon. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
@@ -1087,6 +1041,16 @@ msgstr ""
 #: src/amuleDlg.cpp
 msgid "Live speeds are averaged over the last second. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
 msgstr ""
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s | Down: %.1f%s"
+msgstr "上傳：%.1f%s | 下載：%.1f%s"
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
+msgstr "上傳：%.1f%s (%.1f) | 下載：%.1f%s (%.1f)"
 
 #: src/amuleDlg.cpp
 #, c-format
@@ -2112,6 +2076,55 @@ msgstr "來源種子"
 msgid "Search Result"
 msgstr "搜尋結果"
 
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a direct connection"
+msgstr "目前連線數"
+
+#: src/DataToText.cpp
+msgid "a direct callback"
+msgstr ""
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "our server"
+msgstr "移除伺服器"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the Kad buddy"
+msgstr "沒有好友"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the source's own server"
+msgstr "eD2k 伺服器清單（server.met）"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a server hole punch"
+msgstr "  伺服器支出傳輸量/封包： %s"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a Lugdunum callback"
+msgstr "成功更新 %s"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on a fallback route"
+msgstr "正在經伺服器連線"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on an unproven route"
+msgstr "正在經伺服器連線"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s"
+msgstr "正在用 Kad 連線"
+
 #: src/DataToText.cpp src/DownloadListCtrl.cpp src/OtherFunctions.cpp
 #: src/TransferWnd.cpp
 msgid "Completed"
@@ -2421,10 +2434,6 @@ msgstr[0] "無法新增 %u 個連結（詳情請參閱記錄檔）。"
 #, c-format
 msgid "Invalid eD2k link! ERROR: %s"
 msgstr "無效的 eD2k 連結！錯誤：%s "
-
-#: src/ECSpecialMuleTags.cpp
-msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
-msgstr ""
 
 #: src/ECSpecialMuleTags.cpp
 msgid "Refused a remote request to change the online-signature folder: it can only be set in the daemon's own configuration."
@@ -4594,12 +4603,13 @@ msgid "Users connected to the current server and an estimate of the total number
 msgstr "目前伺服器上的連線使用者和估計的總使用者數。"
 
 #: src/muuli_wdr.cpp
-msgid "Up: 0.0 | Down: 0.0"
-msgstr "上傳：0.0 | 下載：0.0"
+msgid "Up:"
+msgstr ""
 
 #: src/muuli_wdr.cpp
-msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
-msgstr "目前平均上傳下載速度。括號中的爲與其他客戶端連線所消耗的頻寬。"
+#, fuzzy
+msgid "Down:"
+msgstr "下載："
 
 #: src/muuli_wdr.cpp
 msgid "Displays the connected status and active transfers. Red arrows signifies that you are currently not connected, yellow arrows signify that you have low ID (firewalled) and green arrows signify that you have high ID (The optimal connection type)."
@@ -4608,10 +4618,6 @@ msgstr "顯示目前連線與傳輸狀態。紅色箭頭表示未連線，黃色
 #: src/muuli_wdr.cpp
 msgid "Not Connected ..."
 msgstr "未連線..."
-
-#: src/muuli_wdr.cpp
-msgid "Currently connected server."
-msgstr "目前連線的伺服器。"
 
 #: src/muuli_wdr.cpp
 msgid "Search"
@@ -5619,8 +5625,12 @@ msgid "Remove"
 msgstr "移除"
 
 #: src/muuli_wdr.cpp
-msgid "(Right click on folder icon for recursive share)"
-msgstr "(滑鼠右鍵點選檔案夾圖示可全部遞迴分享)"
+msgid "Double-click: share or unshare this folder. Right-click: share it with all subfolders, including new ones."
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "Bold: shared. Bold italic: shared with all subfolders. Red folder: contains shared folders."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Share hidden files"
@@ -5784,6 +5794,14 @@ msgstr "5 秒內最大新連線數"
 #: src/muuli_wdr.cpp
 msgid "Concurrent Kad source lookups"
 msgstr "同時進行的 Kad 來源查詢數"
+
+#: src/muuli_wdr.cpp
+msgid "Firewalled Kad nodes served as buddy"
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "How many firewalled Kad nodes this node relays callbacks for. Each one holds a connection, so at most a tenth of the connection limit is served."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Kad source re-search interval (minutes)"
@@ -5980,46 +5998,6 @@ msgstr "訪客工作階段可以讀取狀態與清單，但無法變更任何內
 #: src/muuli_wdr.cpp
 msgid "Guest password"
 msgstr "訪客密碼"
-
-#: src/muuli_wdr.cpp
-msgid "Web server parameters"
-msgstr "網站伺服器參數"
-
-#: src/muuli_wdr.cpp
-msgid "Run webserver on startup (deprecated)"
-msgstr "啟動時執行網站伺服器（已淘汰）"
-
-#: src/muuli_wdr.cpp
-msgid "Web template"
-msgstr "網頁模板"
-
-#: src/muuli_wdr.cpp
-msgid "Full rights password"
-msgstr "絕對權限使用者密碼"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Low rights User"
-msgstr "啟用低權限使用者"
-
-#: src/muuli_wdr.cpp
-msgid "Low rights password"
-msgstr "低權限使用者密碼"
-
-#: src/muuli_wdr.cpp
-msgid "Enable UPnP port forwarding of the web server port"
-msgstr "網站伺服器的通訊埠啟用 UPnP 通訊埠轉向"
-
-#: src/muuli_wdr.cpp
-msgid "Web server UPnP TCP port (Optional)"
-msgstr "網站伺服器的 UPnP TCP 埠 (選用)"
-
-#: src/muuli_wdr.cpp
-msgid "Page Refresh Time (in secs)"
-msgstr "頁面更新時間 (秒)"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Gzip compression"
-msgstr "啟用 Gzip 壓縮"
 
 #: src/muuli_wdr.cpp
 msgid "Reset page to defaults"
@@ -7049,9 +7027,9 @@ msgstr ""
 msgid "NAT traversal (QUIC)"
 msgstr ""
 
-#: src/Preferences.cpp
-msgid "no options available"
-msgstr "沒有選項"
+#: src/PeerCapabilities.h
+msgid "Skips unknown source exchange tags"
+msgstr ""
 
 #: src/Preferences.cpp
 msgid "Media metadata: FFProbePath is obsolete; aMule now uses its bundled media parser. Removing the old setting."
@@ -7413,12 +7391,9 @@ msgid "macOS does not let an application stop being the default handler. To stop
 msgstr ""
 
 #: src/PrefsUnifiedDlg.cpp
-msgid "The web server and aMule API require external connections to be enabled."
+#, fuzzy
+msgid "The aMule API requires external connections to be enabled."
 msgstr "網站伺服器與 aMule API 需要啟用外部連線。"
-
-#: src/PrefsUnifiedDlg.cpp
-msgid "The aMule web server is deprecated. Consider running the aMule API instead."
-msgstr "aMule 網站伺服器已淘汰。建議改為執行 aMule API。"
 
 #: src/PrefsUnifiedDlg.cpp
 #, fuzzy
@@ -8462,6 +8437,16 @@ msgid "Connected to buddy at %s"
 msgstr "已與在 %s 的好友連線"
 
 #: src/ServerWnd.cpp
+#, fuzzy
+msgid "Served buddies:"
+msgstr "伺服器清單"
+
+#: src/ServerWnd.cpp
+#, c-format
+msgid "%u of %u"
+msgstr ""
+
+#: src/ServerWnd.cpp
 msgid "IP address:"
 msgstr "IP 位址："
 
@@ -8944,35 +8929,6 @@ msgid "Peak Connections (estimate): %i"
 msgstr "最高連線數 (估計值)：%i"
 
 #: src/Statistics.cpp
-msgid "NAT Traversal (Session)"
-msgstr ""
-
-#: src/Statistics.cpp
-#, fuzzy, c-format
-msgid "Server Hole Punches: %s"
-msgstr "  伺服器支出傳輸量/封包： %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Server Hole Punches: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Lugdunum Callbacks: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, fuzzy, c-format
-msgid "Successful Lugdunum Callbacks: %s"
-msgstr "成功更新 %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "uTP Streams Moved to a New Port: %s"
-msgstr ""
-
-#: src/Statistics.cpp
 #, c-format
 msgid "Unknown: %s"
 msgstr "不明：%s"
@@ -9058,6 +9014,10 @@ msgid "Average file size: %s"
 msgstr "平均檔案大小：%s"
 
 #: src/Statistics.cpp
+msgid "Diagnostics"
+msgstr ""
+
+#: src/Statistics.cpp
 msgid "Operating System"
 msgstr "作業系統"
 
@@ -9139,6 +9099,10 @@ msgstr ""
 "未提供搜尋關鍵字。\n"
 "輸入「help search」以取得更多說明。\n"
 
+#: src/TextClient.cpp
+msgid "The connected daemon does not support media search filters.\n"
+msgstr ""
+
 #. TRANSLATORS:
 #. 'help search' is a command to the program, do not translate it.
 #: src/TextClient.cpp
@@ -9150,11 +9114,19 @@ msgstr ""
 "輸入「help search」以取得更多說明。\n"
 
 #: src/TextClient.cpp
+msgid "The connected daemon does not support search management.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "A search ID from 'search list' is required.\n"
+msgstr ""
+
+#: src/TextClient.cpp
 #, c-format
 msgid "Download File: %lu %s\n"
 msgstr "下載檔案：%lu %s\n"
 
-#: src/TextClient.cpp src/webserver/src/WebServer.cpp
+#: src/TextClient.cpp
 msgid "Request failed with an unknown error."
 msgstr "要求失敗，不明的錯誤。"
 
@@ -9261,6 +9233,27 @@ msgstr ""
 #: src/TextClient.cpp
 msgid "[PartFile]"
 msgstr "[--暫存檔--]"
+
+#: src/TextClient.cpp
+msgid "No retained searches.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; availability is unknown.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; further requests remain possible.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "No further results can be requested for this search.\n"
+msgstr "傳回前幾次的搜尋結果。\n"
+
+#: src/TextClient.cpp
+msgid "Search stop request processed; retained results were not removed.\n"
+msgstr ""
 
 #: src/TextClient.cpp
 #, c-format
@@ -9530,6 +9523,11 @@ msgid ""
 "    --avail <N>            minimum number of sources\n"
 "    --min-size <N[KMG]>    smallest file size; K=1024, M=K*1024, G=M*1024\n"
 "    --max-size <N[KMG]>    largest file size; same suffixes\n"
+"    --min-bitrate <kbps>   whole number, 0-1000000\n"
+"    --min-duration <sec>   whole number, 0-86400\n"
+"    --codec <text> --title <text> --album <text> --artist <text>\n"
+"Quote media text values containing spaces.\n"
+"Kad applies media filters; eD2k servers may ignore them.\n"
 "Example: 'search global linux iso --type Iso --min-size 100M' returns\n"
 "results for \"linux iso\" of file-type Iso at least 100 MiB.\n"
 msgstr ""
@@ -9565,6 +9563,28 @@ msgstr "執行 Kad 搜尋"
 #, fuzzy
 msgid "Execute an eD2k and Kad search"
 msgstr "執行 Kad 搜尋"
+
+#: src/TextClient.cpp
+msgid "List retained search IDs and queries."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Stop a search, keeping its results."
+msgstr "這個指令不能有參數。"
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Request more Kad search results."
+msgstr "搜尋結果：%i\n"
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'. Further results are not guaranteed."
+msgstr ""
 
 #: src/TextClient.cpp
 msgid "Show the results of a search."
@@ -10393,139 +10413,6 @@ msgstr "簽名識別檔所在資料夾"
 msgid "Folder where generating the statistic image"
 msgstr "統計圖存放資料夾"
 
-#: src/webserver/src/WebInterface.cpp
-msgid "Loads template <str>"
-msgstr "載入模板 <str>"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Web server HTTP port"
-msgstr "網站伺服器 HTTP 埠"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use UPnP port forwarding on web server port"
-msgstr "網站伺服器通訊埠使用 UPnP 通訊埠轉向"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "UPnP port"
-msgstr "UPnP 埠"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use gzip compression"
-msgstr "使用 gzip 壓縮"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Full access password for web server"
-msgstr "網站伺服器的 完整存取密碼"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Guest password for web server"
-msgstr "網站伺服器的 訪客密碼"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Allow guest access"
-msgstr "允許訪客連線"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Deny guest access"
-msgstr "拒絕訪客連線"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Load/save web server settings from/to remote aMule"
-msgstr "載入/儲存 遠端 aMule 的網站伺服器設定 "
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule config file path. DO NOT USE DIRECTLY!"
-msgstr "aMule 設定檔路徑。請勿直接使用！"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Disable PHP interpreter (deprecated)"
-msgstr "停用 PHP 解譯器（不建議）"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Recompile PHP pages on each request"
-msgstr "爲每個要求重編譯 PHP 頁面"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule Web Server"
-msgstr "aMule 網站伺服器"
-
-#: src/webserver/src/WebServer.cpp
-msgid "web client connection accepted\n"
-msgstr "已接受網頁客戶端連線\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "ERROR: cannot accept web client connection\n"
-msgstr "錯誤：無法接受網頁客戶端連線\n"
-
-#: src/webserver/src/WebServer.cpp
-#, c-format
-msgid "Request failed with the following error: %s."
-msgstr "要求失敗，錯誤爲：%s 。"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Index file not found: "
-msgstr "找不到索引檔："
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session expired - requesting login\n"
-msgstr "作業階段過期 - 正在要求登入\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, logged in\n"
-msgstr "作業階段正常，已登入\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, not logged in\n"
-msgstr "作業階段正常，未登入\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No session opened - will request login\n"
-msgstr "未開啟作業階段 - 將要求登入\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session created - requesting login\n"
-msgstr "作業階段已建立 - 正在要求登入\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [original]: "
-msgstr "正在處理要求 [原始]："
-
-#: src/webserver/src/WebServer.cpp
-msgid "Refusing to read `pass` from URL query string\n"
-msgstr "拒絕從 URL 查詢字串讀取 `pass`\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No password specified, login will not be allowed."
-msgstr "未輸入密碼，不允許登入。"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Checking password\n"
-msgstr "正在檢查密碼\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password hash invalid\n"
-msgstr "密碼 hash 值無效\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password ok\n"
-msgstr "密碼正確\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password bad\n"
-msgstr "密碼錯誤\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "You did not enter any password. Blank password is not allowed.\n"
-msgstr "您沒有輸入密碼，密碼不允許空白。\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Logout requested\n"
-msgstr "已要求登出\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [redirected]: "
-msgstr "正在處理 [已重定向] 的要求："
-
 #: packaging/windows/installer_strings.c
 msgid "aMule (required)"
 msgstr "aMule（必要）"
@@ -10663,6 +10550,213 @@ msgstr ""
 msgid "Migrating a changed legacy ECPassword after downgrade; the previous verifier no longer authenticates this run."
 msgstr ""
 
+#, c-format
+#~ msgid "Terminating amuleweb instance with pid '%d' ... "
+#~ msgstr "正在終止 pid %d 的 amuleweb 執行緒... "
+
+#, c-format
+#~ msgid "Killing amuleweb instance with pid '%d' ... "
+#~ msgstr "正在強行終止 pid %d 的 amuleweb 執行緒... "
+
+#, c-format
+#~ msgid "web server running on pid %d"
+#~ msgstr "執行中的網站伺服器 pid：%d"
+
+#~ msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
+#~ msgstr "您要求在啟動時執行網站伺服器，但無法執行 amuleweb 執行檔。請安裝包含 aMule 網站伺服器的套件，或從原始碼以 -DBUILD_WEBSERVER=YES 建置 aMule 並安裝。"
+
+#, fuzzy
+#~ msgid "Could not prepare the amuleweb EC token."
+#~ msgstr "無法儲存 amuleapi 密碼：%s"
+
+#, fuzzy, c-format
+#~ msgid "Could not remove the amuleweb EC token file: %s"
+#~ msgstr "無法儲存 amuleapi 密碼：%s"
+
+#~ msgid "Web server parameters"
+#~ msgstr "網站伺服器參數"
+
+#~ msgid "Run webserver on startup (deprecated)"
+#~ msgstr "啟動時執行網站伺服器（已淘汰）"
+
+#~ msgid "Web template"
+#~ msgstr "網頁模板"
+
+#~ msgid "Full rights password"
+#~ msgstr "絕對權限使用者密碼"
+
+#~ msgid "Enable Low rights User"
+#~ msgstr "啟用低權限使用者"
+
+#~ msgid "Low rights password"
+#~ msgstr "低權限使用者密碼"
+
+#~ msgid "Enable UPnP port forwarding of the web server port"
+#~ msgstr "網站伺服器的通訊埠啟用 UPnP 通訊埠轉向"
+
+#~ msgid "Web server UPnP TCP port (Optional)"
+#~ msgstr "網站伺服器的 UPnP TCP 埠 (選用)"
+
+#~ msgid "Page Refresh Time (in secs)"
+#~ msgstr "頁面更新時間 (秒)"
+
+#~ msgid "Enable Gzip compression"
+#~ msgstr "啟用 Gzip 壓縮"
+
+#~ msgid "no options available"
+#~ msgstr "沒有選項"
+
+#~ msgid "The aMule web server is deprecated. Consider running the aMule API instead."
+#~ msgstr "aMule 網站伺服器已淘汰。建議改為執行 aMule API。"
+
+#~ msgid "Loads template <str>"
+#~ msgstr "載入模板 <str>"
+
+#~ msgid "Web server HTTP port"
+#~ msgstr "網站伺服器 HTTP 埠"
+
+#~ msgid "Use UPnP port forwarding on web server port"
+#~ msgstr "網站伺服器通訊埠使用 UPnP 通訊埠轉向"
+
+#~ msgid "UPnP port"
+#~ msgstr "UPnP 埠"
+
+#~ msgid "Use gzip compression"
+#~ msgstr "使用 gzip 壓縮"
+
+#~ msgid "Full access password for web server"
+#~ msgstr "網站伺服器的 完整存取密碼"
+
+#~ msgid "Guest password for web server"
+#~ msgstr "網站伺服器的 訪客密碼"
+
+#~ msgid "Allow guest access"
+#~ msgstr "允許訪客連線"
+
+#~ msgid "Deny guest access"
+#~ msgstr "拒絕訪客連線"
+
+#~ msgid "Load/save web server settings from/to remote aMule"
+#~ msgstr "載入/儲存 遠端 aMule 的網站伺服器設定 "
+
+#~ msgid "aMule config file path. DO NOT USE DIRECTLY!"
+#~ msgstr "aMule 設定檔路徑。請勿直接使用！"
+
+#~ msgid "Disable PHP interpreter (deprecated)"
+#~ msgstr "停用 PHP 解譯器（不建議）"
+
+#~ msgid "Recompile PHP pages on each request"
+#~ msgstr "爲每個要求重編譯 PHP 頁面"
+
+#~ msgid "aMule Web Server"
+#~ msgstr "aMule 網站伺服器"
+
+#~ msgid "web client connection accepted\n"
+#~ msgstr "已接受網頁客戶端連線\n"
+
+#~ msgid "ERROR: cannot accept web client connection\n"
+#~ msgstr "錯誤：無法接受網頁客戶端連線\n"
+
+#, c-format
+#~ msgid "Request failed with the following error: %s."
+#~ msgstr "要求失敗，錯誤爲：%s 。"
+
+#~ msgid "Index file not found: "
+#~ msgstr "找不到索引檔："
+
+#~ msgid "Session expired - requesting login\n"
+#~ msgstr "作業階段過期 - 正在要求登入\n"
+
+#~ msgid "Session ok, logged in\n"
+#~ msgstr "作業階段正常，已登入\n"
+
+#~ msgid "Session ok, not logged in\n"
+#~ msgstr "作業階段正常，未登入\n"
+
+#~ msgid "No session opened - will request login\n"
+#~ msgstr "未開啟作業階段 - 將要求登入\n"
+
+#~ msgid "Session created - requesting login\n"
+#~ msgstr "作業階段已建立 - 正在要求登入\n"
+
+#~ msgid "Processing request [original]: "
+#~ msgstr "正在處理要求 [原始]："
+
+#~ msgid "Refusing to read `pass` from URL query string\n"
+#~ msgstr "拒絕從 URL 查詢字串讀取 `pass`\n"
+
+#~ msgid "No password specified, login will not be allowed."
+#~ msgstr "未輸入密碼，不允許登入。"
+
+#~ msgid "Checking password\n"
+#~ msgstr "正在檢查密碼\n"
+
+#~ msgid "Password hash invalid\n"
+#~ msgstr "密碼 hash 值無效\n"
+
+#~ msgid "Password ok\n"
+#~ msgstr "密碼正確\n"
+
+#~ msgid "Password bad\n"
+#~ msgstr "密碼錯誤\n"
+
+#~ msgid "You did not enter any password. Blank password is not allowed.\n"
+#~ msgstr "您沒有輸入密碼，密碼不允許空白。\n"
+
+#~ msgid "Logout requested\n"
+#~ msgstr "已要求登出\n"
+
+#~ msgid "Processing request [redirected]: "
+#~ msgstr "正在處理 [已重定向] 的要求："
+
+#~ msgid "(Right click on folder icon for recursive share)"
+#~ msgstr "(滑鼠右鍵點選檔案夾圖示可全部遞迴分享)"
+
+#~ msgid "Currently connected server."
+#~ msgstr "目前連線的伺服器。"
+
+#~ msgid "Up: 0.0 | Down: 0.0"
+#~ msgstr "上傳：0.0 | 下載：0.0"
+
+#~ msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
+#~ msgstr "目前平均上傳下載速度。括號中的爲與其他客戶端連線所消耗的頻寬。"
+
+#, fuzzy, c-format
+#~ msgid "Buddies Served: %llu"
+#~ msgstr "有效檔案數：%llu"
+
+#, fuzzy, c-format
+#~ msgid "Time Served: %s"
+#~ msgstr "已過濾：%s"
+
+#, fuzzy, c-format
+#~ msgid "Buddies Connected: %llu"
+#~ msgstr " 已連線到"
+
+#, fuzzy
+#~ msgid "Keyword publish"
+#~ msgstr "已過濾：%s"
+
+#, fuzzy
+#~ msgid "Source publish"
+#~ msgstr "來源"
+
+#, fuzzy
+#~ msgid "Firewall check"
+#~ msgstr "防火牆內"
+
+#, fuzzy
+#~ msgid "Firewall check 2"
+#~ msgstr "防火牆內"
+
+#, fuzzy, c-format
+#~ msgid "Keys valid: %s"
+#~ msgstr "已過濾：%s"
+
+#, fuzzy
+#~ msgid "Kad Buddies"
+#~ msgstr "Kad 使用者"
+
 #~ msgid "Disable computer's timed standby mode"
 #~ msgstr "停用電腦的自動進入待命模式功能"
 
@@ -10737,9 +10831,6 @@ msgstr ""
 
 #~ msgid "Click on this button to update the servers list from URL ..."
 #~ msgstr "點選這個按鈕從該網址更新伺服器清單 ..."
-
-#~ msgid "Server list"
-#~ msgstr "伺服器清單"
 
 #~ msgid "Enter the url to a server.met file here and press the button to the left to update the list of known servers."
 #~ msgstr "輸入 server.met 檔案的網址並按下左邊的按鈕以更新已知伺服器清單。"
@@ -10918,9 +11009,6 @@ msgstr ""
 
 #~ msgid "Rejects packet if the client ip is different from the ip where the packet is received from. Use with caution."
 #~ msgstr "拒絕客戶端 IP 與接收封包中的 IP 不同的封包。(請小心使用)"
-
-#~ msgid "Return the results of the previous search.\n"
-#~ msgstr "傳回前幾次的搜尋結果。\n"
 
 #~ msgid "Show the progress of a search.\n"
 #~ msgstr "顯示搜尋進度。\n"

@@ -127,10 +127,6 @@ if (BUILD_UTIL)
 	add_subdirectory (utils)
 endif()
 
-if (BUILD_WEBSERVER)
-	add_subdirectory (webserver)
-endif()
-
 # Pure-logic primitives (JWT / ETag / route patterns / JSON writer)
 # that the upcoming amuleapi binary and its unit tests link against.
 # Built unconditionally — no transitive cost for builds that don't
@@ -507,37 +503,6 @@ if (BUILD_MONOLITHIC)
 
 		amule_bundle_translations (amule)
 
-		# Bundle the default webserver template into the .app at
-		# Contents/Resources/webserver/default/. amuleweb's macOS
-		# template lookup in WebInterface.cpp::GetTemplateDir uses
-		# LSCopyApplicationURLsForBundleIdentifier("org.amule.aMule")
-		# to find the bundle, then expects login.php and friends under
-		# Contents/Resources/webserver/<templateName>/. The unix-style
-		# INSTALL rule in src/webserver/default/CMakeLists.txt writes
-		# to ${PKGDATADIR}/webserver/default which is outside the .app
-		# bundle scope, so without this bundling step every macOS user
-		# enabling the web server gets a fatal "Cannot find template:
-		# default" at amuleweb startup. The file list is the one set
-		# in src/webserver/default/CMakeLists.txt so the bundle stays
-		# in sync with the unix INSTALL rule automatically.
-		if (BUILD_WEBSERVER AND WEBSERVER_DEFAULT_TEMPLATE_FILES)
-			set (_tmpl_src "${CMAKE_SOURCE_DIR}/src/webserver/default")
-			set (_tmpl_dst
-				"$<TARGET_BUNDLE_CONTENT_DIR:amule>/Resources/webserver/default")
-			add_custom_command (TARGET amule POST_BUILD
-				COMMAND ${CMAKE_COMMAND} -E make_directory "${_tmpl_dst}"
-				COMMENT "Bundling default webserver template into aMule.app"
-				VERBATIM
-			)
-			foreach (_tmpl IN LISTS WEBSERVER_DEFAULT_TEMPLATE_FILES)
-				add_custom_command (TARGET amule POST_BUILD
-					COMMAND ${CMAKE_COMMAND} -E copy_if_different
-						"${_tmpl_src}/${_tmpl}" "${_tmpl_dst}/"
-					VERBATIM
-				)
-			endforeach()
-		endif()
-
 		# Mirror for amuleapi's static-frontend root. Resolves at
 		# runtime via LSCopyApplicationURLsForBundleIdentifier(
 		# "org.amule.aMule") + CFBundleCopyResourceURL("amuleapi-
@@ -859,7 +824,6 @@ if (NEED_LIB_MULEAPPCORE)
 		RC4Encrypt.cpp
 		StateMachine.cpp
 		TerminationProcessAmuleApi.cpp
-		TerminationProcessAmuleweb.cpp
 		ThreadScheduler.cpp
 		UserHash.cpp
 	)
@@ -1011,6 +975,77 @@ IF (NEED_LIB_MULESOCKET)
 		PRIVATE ${Boost_LIBRARIES}
 		PUBLIC wxWidgets::BASE
 	)
+	# CAsioSocketImpl's 64-bit atomics need libatomic on 32-bit targets without a
+	# hardware 8-byte CAS. PUBLIC, so amulecmd, which does not link
+	# muleappcore, gets it too.
+	if (LIBATOMIC)
+		target_link_libraries (mulesocket PUBLIC ${LIBATOMIC})
+	endif()
+endif()
+
+# On MinGW-built Windows targets, bundle the MSYS2 MinGW64 runtime DLLs
+# next to the installed executables so the install tree is self-contained.
+# Must live here (not in root CMakeLists.txt) because CMake appends
+# subdirectory install scripts at the END of the root cmake_install.cmake,
+# so a root-level install(CODE) would run before the exes are installed.
+if (WIN32 AND MINGW AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.16)
+	set(_media_probe_dependency "")
+    if(TARGET amule-media-probe)
+        set(_media_probe_dependency "list(APPEND _exes \"$<TARGET_FILE:amule-media-probe>\")")
+    endif()
+    get_filename_component (MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+
+	install (CODE "
+		message (STATUS \"Resolving Windows runtime dependencies...\")
+		file (GLOB _exes \"\${CMAKE_INSTALL_PREFIX}/bin/*.exe\")
+		${_media_probe_dependency}
+		file (GET_RUNTIME_DEPENDENCIES
+			EXECUTABLES \${_exes}
+			RESOLVED_DEPENDENCIES_VAR _resolved
+			UNRESOLVED_DEPENDENCIES_VAR _unresolved
+			DIRECTORIES \"${MINGW_BIN_DIR}\"
+			PRE_EXCLUDE_REGEXES
+				\"api-ms-.*\"
+				\"ext-ms-.*\"
+			POST_EXCLUDE_REGEXES
+				\".*[Ss]ystem32.*\"
+				\".*SysWOW64.*\"
+		)
+		foreach (_dll \${_resolved})
+			file (INSTALL \${_dll} DESTINATION \"\${CMAKE_INSTALL_PREFIX}/bin\" FOLLOW_SYMLINK_CHAIN)
+		endforeach()
+		list (LENGTH _resolved _count)
+		message (STATUS \"Bundled \${_count} runtime DLL(s) into \${CMAKE_INSTALL_PREFIX}/bin\")
+		if (_unresolved)
+			message (WARNING \"Unresolved runtime dependencies:\\n  \${_unresolved}\")
+		endif()
+	")
+
+	# MSYS2's libcurl is built with an absolute --with-ca-bundle path
+	# (e.g. /clangarm64/etc/ssl/certs/ca-bundle.crt) that does not exist
+	# on end-user machines, so wxWebRequest HTTPS fails with error 77
+	# anywhere outside the dev box. Ship the MSYS2 CA bundle next to the
+	# .exe so a portable install can find it; CamuleApp::OnInit points
+	# CURL_CA_BUNDLE at it on startup when the user has not set their own.
+	find_file (MINGW_CA_BUNDLE
+		NAMES cert.pem ca-bundle.crt
+		PATHS "${MINGW_BIN_DIR}/../etc/ssl/certs"
+		      "${MINGW_BIN_DIR}/../etc/ssl"
+		      "${MINGW_BIN_DIR}/../ssl/certs"
+		      "${MINGW_BIN_DIR}/../ssl"
+		NO_DEFAULT_PATH)
+	if (MINGW_CA_BUNDLE)
+		install (FILES "${MINGW_CA_BUNDLE}"
+			DESTINATION bin
+			RENAME ca-bundle.crt)
+		message (STATUS "Will bundle CA certificates from ${MINGW_CA_BUNDLE}")
+	else()
+		message (WARNING
+			"No MSYS2 CA bundle found under ${MINGW_BIN_DIR}/../etc/ssl; "
+			"libcurl HTTPS will fail at runtime unless CURL_CA_BUNDLE is "
+			"set externally. Install mingw-w64-*-ca-certificates and "
+			"re-run cmake to populate this.")
+	endif()
 endif()
 
 # `gettext_process_po_files` puts the per-language `.gmo` builds in the
@@ -1028,7 +1063,7 @@ endif()
 # it would later install. Skipped under ENABLE_NLS=OFF because
 # `pofiles` is only created when `add_subdirectory(po)` runs.
 if (ENABLE_NLS AND TARGET pofiles)
-	foreach (_bin amule amuled amulecmd amulegui amuleweb ed2k alc alcc cas wxcas fileview)
+	foreach (_bin amule amuled amulecmd amulegui ed2k alc alcc cas wxcas fileview)
 		if (TARGET ${_bin})
 			add_dependencies (${_bin} pofiles)
 		endif()

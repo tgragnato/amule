@@ -507,8 +507,8 @@ bool CServerSocket::ProcessPacket(const uint8_t *packet, uint32 size, int8 opcod
 			// UpdateAdvertisedIPv6() needs it.
 			if (cur_server->SupportsIPv6Updates()) {
 				AddDebugLogLineN(logServer, "OP_IDCHANGE: server accepts OP_IPV6_UPDATE");
-				// The address may have changed between the login and this IDCHANGE.
-				serverconnect->UpdateAdvertisedIPv6(AdvertisedIPv6ForPeers());
+				serverconnect->UpdateAdvertisedIPv6(ServerAddressToSend(
+					CurrentAdvertisedIPv6Facts(), cur_server->SupportsIPv6Probe()));
 			}
 #endif
 
@@ -547,10 +547,10 @@ bool CServerSocket::ProcessPacket(const uint8_t *packet, uint32 size, int8 opcod
 			CMemFile sources(packet, size);
 			CMD4Hash fileid = sources.ReadHash();
 			if (CPartFile *file = theApp->downloadqueue->GetFileByID(fileid)) {
-				const CNetworkAddress *loginIPv6 = nullptr;
+				const std::vector<CNetworkAddress> *ownIPv6 = nullptr;
 #ifdef ENABLE_IPV6
 				if (IsIPv6SentinelParsingOn()) {
-					loginIPv6 = &GetLoginIPv6();
+					ownIPv6 = &GetSentIPv6();
 				}
 #endif
 				file->AddSources(sources,
@@ -558,7 +558,7 @@ bool CServerSocket::ProcessPacket(const uint8_t *packet, uint32 size, int8 opcod
 					cur_server->GetPort(),
 					SF_LOCAL_SERVER,
 					(opcode == OP_FOUNDSOURCES_OBFU),
-					loginIPv6);
+					ownIPv6);
 			} else {
 				AddDebugLogLineN(
 					logServer, "Sources received for unknown file: " + fileid.Encode());
@@ -621,6 +621,14 @@ bool CServerSocket::ProcessPacket(const uint8_t *packet, uint32 size, int8 opcod
 #ifdef ENABLE_NATT_SERVER_COORDINATION
 				bool nattKeepaliveChanged = false;
 #endif
+#ifdef ENABLE_IPV6
+				// A server that omits the tag has no verdict for us; the previous answer must
+				// not survive into this ident.
+				if (cur_server) {
+					cur_server->SetIPv6Verdict(
+						EServerIPv6Verdict::Unknown, CNetworkAddress::Absent());
+				}
+#endif
 				for (uint32 i = 0; i < nTags; i++) {
 					// Force Unicode=true rather than relying on the server's
 					// SRV_TCPFLG_UNICODE bit: many real-world servers ship
@@ -637,6 +645,21 @@ bool CServerSocket::ProcessPacket(const uint8_t *packet, uint32 size, int8 opcod
 					} else if (update && tag.GetNameID() == ST_DESCRIPTION) {
 						update->SetDescription(tag.GetStr());
 					}
+#ifdef ENABLE_IPV6
+					else if (tag.GetNameID() == ST_IPV6_STATUS && tag.IsInt()) {
+						const std::uint64_t rawStatus =
+							static_cast<std::uint64_t>(tag.GetInt());
+						cur_server->SetIPv6Verdict(
+							ParseServerIPv6Verdict(
+								rawStatus <= 0xFF
+									? std::optional<std::uint8_t>(
+										  static_cast<std::uint8_t>(
+											  rawStatus))
+									: std::nullopt),
+							SelectedLocalIPv6().value_or(
+								CNetworkAddress::Absent()));
+					}
+#endif
 #ifdef ENABLE_NATT_SERVER_COORDINATION
 					else if (tag.GetNameID() == ST_NATT_TOKEN && tag.IsHash()) {
 						NatServerHolePunch::Hash token{};
@@ -776,7 +799,29 @@ bool CServerSocket::ProcessPacket(const uint8_t *packet, uint32 size, int8 opcod
 					achUserHash = data.ReadHash();
 				}
 
-				CUpDownClient *client = theApp->clientlist->FindClientByIP(dwIP, nPort);
+				// By the reported hash first: NAT neighbours can share an address and port.
+				CUpDownClient *client = nullptr;
+				if (size >= 23) {
+					for (const CClientRef &ref :
+						theApp->clientlist->GetClientsByHash(achUserHash)) {
+						CUpDownClient *known = ref.GetClient();
+						if (known != nullptr && known->GetIP() == dwIP &&
+							known->GetUserPort() == nPort) {
+							client = known;
+							break;
+						}
+					}
+				}
+				if (!client) {
+					client = theApp->clientlist->FindCallbackClientByIP(dwIP, nPort);
+					// A NAT neighbour's client, known from its hello: dial anew.
+					if (client != nullptr && size >= 23 &&
+						client->GetCreditsHash() != nullptr &&
+						client->HasValidHash() &&
+						client->GetUserHash() != achUserHash) {
+						client = nullptr;
+					}
+				}
 
 				if (!client) {
 					client = new CUpDownClient(nPort, dwIP, 0, 0, 0, true, true);

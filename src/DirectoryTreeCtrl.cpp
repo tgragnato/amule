@@ -41,6 +41,7 @@ wxBEGIN_EVENT_TABLE(CDirectoryTreeCtrl, wxTreeCtrl)
 	EVT_TREE_ITEM_RIGHT_CLICK(wxID_ANY, CDirectoryTreeCtrl::OnRButtonDown)
 	EVT_TREE_ITEM_ACTIVATED(wxID_ANY, CDirectoryTreeCtrl::OnItemActivated)
 	EVT_TREE_ITEM_EXPANDED(wxID_ANY, CDirectoryTreeCtrl::OnItemExpanding)
+	EVT_CHAR(CDirectoryTreeCtrl::OnChar)
 wxEND_EVENT_TABLE()
 
 class CItemData : public wxTreeItemData
@@ -169,6 +170,24 @@ bool CDirectoryTreeCtrl::NeedsRepaintFor(const PathList &explicitDirs, const Pat
 	return wanted != m_paintedRoots;
 }
 
+void CDirectoryTreeCtrl::OnChar(wxKeyEvent &evt)
+{
+	// Until an item is selected, the generic tree's current item is the hidden root, and its
+	// '-'/'*' handling (and Left on macOS) collapses it, which asserts.
+	switch (evt.GetKeyCode()) {
+	case '-':
+	case '*':
+	case WXK_SUBTRACT:
+	case WXK_MULTIPLY:
+	case WXK_LEFT:
+		if (GetFocusedItem() == GetRootItem()) {
+			return;
+		}
+		break;
+	}
+	evt.Skip();
+}
+
 void CDirectoryTreeCtrl::OnItemExpanding(wxTreeEvent &evt)
 {
 	wxTreeItemId hItem = evt.GetItem();
@@ -219,8 +238,10 @@ void CDirectoryTreeCtrl::OnRButtonDown(wxTreeEvent &evt)
 	// new is enumerated: collapsed subtrees keep their visual state and are bolded the next
 	// time they are expanded (AddChildItem checks IsInsideRecursiveShare).
 	const wxTreeItemId hItem = evt.GetItem();
-	const bool wasBold = IsBold(hItem);
 	const CPath fullPath = GetFullPath(hItem);
+	// Not IsBold(): a folder-only share, such as one saved before recursive shares existed,
+	// becomes recursive in one click instead of being unshared first.
+	const bool share = !IsRecursiveShare(fullPath);
 
 	// A descendant of an existing recursive root is already covered by that root, so its own
 	// recursive marker is either redundant or impotent (DelRecursiveShare on a non-root is a
@@ -235,7 +256,7 @@ void CDirectoryTreeCtrl::OnRButtonDown(wxTreeEvent &evt)
 		return;
 	}
 
-	if (wasBold) {
+	if (!share) {
 		// Unshare. Clean both the recursive intent and any m_lstShared entries underneath
 		// this path -- the latter removes the flat descendants a previous Prefs session may
 		// have committed from a recursive share. An in-memory map sweep catches subdirs
@@ -249,9 +270,9 @@ void CDirectoryTreeCtrl::OnRButtonDown(wxTreeEvent &evt)
 	// Walk only the ALREADY-LOADED descendants, so the in-tree visual stays consistent without
 	// forcing disk I/O. CheckChanged inside this walk resets hItem's per-item font to match the
 	// new bold state, so the recursive-off path needs no separate font revert.
-	MarkChildren(hItem, !wasBold, false);
+	MarkChildren(hItem, share, false);
 
-	if (!wasBold) {
+	if (share) {
 		// Overlay the bold-italic marker so the item carrying the recursive intent is
 		// distinguishable from descendants that inherit it as plain bold. After
 		// MarkChildren, or CheckChanged's plain-bold per-item font on hItem would clobber
@@ -483,8 +504,9 @@ bool CDirectoryTreeCtrl::HasSharedSubdirectory(const CPath &path)
 	// 2. `path` itself is, or sits below, a recursive root, which implicitly shares every
 	// descendant. Without this branch a recursive-only root loaded from shareddir-recursive.dat
 	// would show plain bold without the "has shared subdirs" icon, because its descendants live
-	// only in the recursive expansion.
-	if (IsRecursiveShare(path) || IsInsideRecursiveShare(path)) {
+	// only in the recursive expansion. A folder with no subfolders has nothing below to share,
+	// which keeps it yellow, as MarkChildren paints it after a right-click.
+	if ((IsRecursiveShare(path) || IsInsideRecursiveShare(path)) && HasSubdirectories(path)) {
 		return true;
 	}
 

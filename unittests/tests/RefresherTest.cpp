@@ -31,7 +31,8 @@
 #include "Server.h" // SRV_PR_*
 #include "PrefsSchema.h"
 #include "ClientTagNames.h"
-#include "Constants.h" // ESourceFrom
+#include "Constants.h"         // ESourceFrom
+#include "SourceRoutePolicy.h" // PackContactRoute
 #include "Refresher.h"
 #include "State.h"
 
@@ -2300,6 +2301,13 @@ TEST(Refresher, ClientDetailFieldsDecode)
 	hi.AddTag(CECTag(EC_TAG_CLIENT_SERVER_NAME, wxString::FromUTF8("test-server")));
 	hi.AddTag(CECTag(EC_TAG_CLIENT_KAD_PORT, static_cast<std::uint16_t>(4672)));
 	hi.AddTag(CECTag(EC_TAG_CLIENT_FROM, static_cast<std::uint64_t>(3))); // SF_KADEMLIA
+	// Seen on our server first, then over Kad: the row reports both, the field keeps the first.
+	hi.AddTag(CECTag(EC_TAG_CLIENT_FROM_MASK,
+		static_cast<std::uint64_t>(SourceFromBit(SF_LOCAL_SERVER) | SourceFromBit(SF_KADEMLIA))));
+	// Kad buddy route (4), reached on a fallback address, not yet proved by a hello.
+	hi.AddTag(CECTag(EC_TAG_CLIENT_CONTACT_ROUTE,
+		static_cast<std::uint64_t>(
+			PackContactRoute(EContactRouteReport::KadBuddy, true, true, false))));
 	hi.AddTag(CECTag(EC_TAG_PARTFILE_NAME, wxString::FromUTF8("upload.iso")));
 	hi.AddTag(CECTag(EC_TAG_CLIENT_AVAILABLE_PARTS, static_cast<std::uint32_t>(7)));
 	hi.AddTag(CECTag(EC_TAG_CLIENT_MOD_VERSION, wxString::FromUTF8("mod-x")));
@@ -2335,6 +2343,15 @@ TEST(Refresher, ClientDetailFieldsDecode)
 	ASSERT_EQUALS(std::string("de"), cs.country_code);
 	ASSERT_EQUALS(static_cast<std::uint16_t>(4672), cs.kad_port);
 	ASSERT_EQUALS(std::string("kad"), cs.source_origin);
+	{
+		const std::vector<std::string> origins = webapi::SourceOriginNames(cs.source_origins_mask);
+		ASSERT_EQUALS(static_cast<size_t>(2), origins.size());
+		ASSERT_EQUALS(std::string("local_server"), origins[0]);
+		ASSERT_EQUALS(std::string("kad"), origins[1]);
+	}
+	ASSERT_EQUALS(std::string("kad_buddy"), cs.contact_route);
+	ASSERT_TRUE(cs.route_unproven);
+	ASSERT_TRUE(cs.route_from_fallback);
 	ASSERT_EQUALS(std::string("upload.iso"), cs.upload_file_name);
 	ASSERT_TRUE(cs.has_parts_offered_count);
 	ASSERT_EQUALS(static_cast<std::uint32_t>(7), cs.parts_offered_count);
@@ -2430,6 +2447,7 @@ TEST(Refresher, PreferencesExtendedCategoriesDecode)
 	cw.AddTag(CECTag(EC_TAG_CORETW_MAX_CONN_PER_FIVE, static_cast<std::uint32_t>(200)));
 	cw.AddTag(CECTag(EC_TAG_CORETW_WRITE_BUFFER_LIMIT_MIB, static_cast<std::uint32_t>(256)));
 	cw.AddTag(CECTag(EC_TAG_CORETW_KAD_REASK_MS, static_cast<std::uint32_t>(1800000)));
+	cw.AddTag(CECTag(EC_TAG_CORETW_KAD_MAX_SERVED_BUDDIES, static_cast<std::uint32_t>(12)));
 	resp.AddTag(cw);
 
 	CECEmptyTag kad(EC_TAG_PREFS_KADEMLIA);
@@ -2480,6 +2498,8 @@ TEST(Refresher, PreferencesExtendedCategoriesDecode)
 	// EC carries milliseconds; the API speaks the minutes the core actually
 	// stores, so the decode divides by 60000 (#1159 section 5).
 	ASSERT_EQUALS(static_cast<std::uint32_t>(30), p.advanced.kad_source_reask_minutes);
+	ASSERT_TRUE(p.advanced.kad_max_served_buddies_supported);
+	ASSERT_EQUALS(static_cast<std::uint32_t>(12), p.advanced.kad_max_served_buddies);
 	ASSERT_EQUALS(std::string("http://nodes"), p.kad.update_url);
 
 }
@@ -2528,10 +2548,11 @@ TEST(Refresher, PreferencesEnumAndNestedRemoteControlsDecode)
 	resp.AddTag(conn);
 
 	CECEmptyTag rc(EC_TAG_PREFS_REMOTECTRL);
-	rc.AddTag(CECEmptyTag(EC_TAG_WEBSERVER_AUTORUN)); // presence == true
-	rc.AddTag(CECTag(EC_TAG_WEBSERVER_PORT, static_cast<std::uint32_t>(4711)));
-	rc.AddTag(CECTag(EC_TAG_WEBSERVER_REFRESH, static_cast<std::uint32_t>(120)));
-	rc.AddTag(CECTag(EC_TAG_WEBSERVER_TEMPLATE, wxString::FromUTF8("php-default")));
+	// The retired web-server tags (0x1501-0x1506), as a pre-3.3.0 core sent them.
+	rc.AddTag(CECEmptyTag(static_cast<ec_tagname_t>(0x1501))); // autorun, presence == true
+	rc.AddTag(CECTag(static_cast<ec_tagname_t>(0x1502), static_cast<std::uint32_t>(8080)));
+	rc.AddTag(CECTag(static_cast<ec_tagname_t>(0x1505), static_cast<std::uint32_t>(300)));
+	rc.AddTag(CECTag(static_cast<ec_tagname_t>(0x1506), wxString::FromUTF8("php-default")));
 	rc.AddTag(CECTag(EC_TAG_AMULEAPI_PORT, static_cast<std::uint32_t>(4712)));
 	rc.AddTag(CECTag(EC_TAG_AMULEAPI_BIND, wxString::FromUTF8("127.0.0.1")));
 	resp.AddTag(rc);
@@ -2544,16 +2565,35 @@ TEST(Refresher, PreferencesEnumAndNestedRemoteControlsDecode)
 	// defaulting to the first enum member.
 	ASSERT_EQUALS(std::string("http"), p.proxy_type);
 
-	// One flat EC category fans out into the two nested API sub-objects.
-	ASSERT_TRUE(p.remote_controls.webserver.enabled);
+	// The retired sub-object ignores the wire and keeps its fixed values.
+	ASSERT_TRUE(!p.remote_controls.webserver.enabled);
 	ASSERT_EQUALS(static_cast<std::uint32_t>(4711), p.remote_controls.webserver.port);
 	ASSERT_EQUALS(static_cast<std::uint32_t>(120), p.remote_controls.webserver.refresh_seconds);
-	ASSERT_EQUALS(std::string("php-default"), p.remote_controls.webserver.template_name);
-	ASSERT_TRUE(!p.remote_controls.webserver.guest_enabled); // absent -> false
+	ASSERT_EQUALS(std::string(), p.remote_controls.webserver.template_name);
+	ASSERT_TRUE(p.remote_controls.webserver.gzip_enabled);
+	ASSERT_TRUE(!p.remote_controls.webserver.guest_enabled);
 
 	ASSERT_TRUE(!p.remote_controls.amuleapi.enabled); // absent -> false
 	ASSERT_EQUALS(static_cast<std::uint32_t>(4712), p.remote_controls.amuleapi.port);
 	ASSERT_EQUALS(std::string("127.0.0.1"), p.remote_controls.amuleapi.bind_address);
+}
+
+TEST(Refresher, PreferencesLineCapacitiesDecode)
+{
+	CECPacket resp(EC_OP_SET_PREFERENCES);
+	CECEmptyTag conn(EC_TAG_PREFS_CONNECTIONS);
+	conn.AddTag(CECTag(EC_TAG_CONN_DL_CAP, static_cast<std::uint32_t>(12500)));
+	conn.AddTag(CECTag(EC_TAG_CONN_UL_CAP, static_cast<std::uint32_t>(2500)));
+	conn.AddTag(CECTag(EC_TAG_CONN_MAX_DL, static_cast<std::uint32_t>(0)));
+	resp.AddTag(conn);
+
+	PreferencesSnapshot p;
+	std::vector<CategorySnapshot> cats;
+	ParsePreferencesFromPacket(&resp, p, cats);
+
+	ASSERT_EQUALS(static_cast<std::uint32_t>(12500), p.download_capacity_kibibytes_per_second);
+	ASSERT_EQUALS(static_cast<std::uint32_t>(2500), p.upload_capacity_kibibytes_per_second);
+	ASSERT_EQUALS(static_cast<std::uint32_t>(0), p.max_download_kibibytes_per_second);
 }
 
 // The EC listener's settings are value tags, so a false bool arrives as false rather than as
@@ -2592,7 +2632,7 @@ TEST(Refresher, PreferencesExternalConnectionsDecodeOrStayUnknown)
 		// A daemon from before these tags: the group is there, the port tag is not.
 		CECPacket resp(EC_OP_SET_PREFERENCES);
 		CECEmptyTag rc(EC_TAG_PREFS_REMOTECTRL);
-		rc.AddTag(CECTag(EC_TAG_WEBSERVER_PORT, static_cast<std::uint32_t>(4711)));
+		rc.AddTag(CECTag(EC_TAG_AMULEAPI_PORT, static_cast<std::uint32_t>(4711)));
 		resp.AddTag(rc);
 
 		PreferencesSnapshot p;
@@ -2601,7 +2641,7 @@ TEST(Refresher, PreferencesExternalConnectionsDecodeOrStayUnknown)
 
 		ASSERT_EQUALS(static_cast<std::size_t>(1), p.unknown_categories.count(category));
 		ASSERT_EQUALS(static_cast<std::size_t>(1), p.unknown_categories.size());
-		ASSERT_EQUALS(static_cast<std::uint32_t>(4711), p.remote_controls.webserver.port);
+		ASSERT_EQUALS(static_cast<std::uint32_t>(4711), p.remote_controls.amuleapi.port);
 	}
 	{
 		CECPacket resp(EC_OP_SET_PREFERENCES);
@@ -2720,11 +2760,12 @@ TEST(Refresher, PrefsSchemaIsWellFormed)
 		// Rows that round-trip a value need a backing member; rows that
 		// never do must not have one. DaemonLocal reads its member on GET and
 		// compares against it on PATCH (to accept an unchanged echo), so it needs one too.
+		// A Retired row has one exactly when it is emitted, so either is valid.
 		const bool needs_member =
 			f.access == PrefAccess::ReadWrite || f.access == PrefAccess::AdminRead ||
-			f.access == PrefAccess::ReadOnly || f.access == PrefAccess::DaemonLocal ||
-			f.access == PrefAccess::Bespoke;
-		ASSERT_TRUE(needs_member == (f.member != nullptr));
+			f.access == PrefAccess::ReadOnly || f.access == PrefAccess::DaemonLocal;
+		if (f.access != PrefAccess::Retired)
+			ASSERT_TRUE(needs_member == (f.member != nullptr));
 
 		// Enum rows carry a non-empty, nullptr-terminated name table.
 		if (f.type == PrefType::Enum) {
@@ -2748,12 +2789,14 @@ TEST(Refresher, PrefsSchemaIsWellFormed)
 			ASSERT_TRUE(found);
 		}
 
-		if (f.access != PrefAccess::WriteOnly && f.access != PrefAccess::Rejected)
+		if (f.access != PrefAccess::WriteOnly && f.access != PrefAccess::Rejected &&
+			(f.access != PrefAccess::Retired || f.member))
 			++emitted;
 	}
 
-	ASSERT_EQUALS(static_cast<std::size_t>(132), emitted);
-	ASSERT_TRUE(seen.count("geoip.supported") == 0);
+	// The documented payload is 147 fields. A row added or dropped without
+	// updating docs/api/REFERENCE.md should trip this.
+	ASSERT_EQUALS(static_cast<std::size_t>(147), emitted);
 }
 
 // The schema's irregularities are enumerated rather than merely counted: each is deliberate and
@@ -2764,7 +2807,7 @@ TEST(Refresher, PrefsSchemaIsWellFormed)
 // API states the positive fact and the schema undoes the EC negation on read and write alike.
 TEST(Refresher, PrefsSchemaIrregularitiesStayContained)
 {
-	std::size_t inverted = 0, foreign_group = 0, bespoke = 0, admin_read = 0;
+	std::size_t inverted = 0, foreign_group = 0, retired = 0, admin_read = 0;
 	for (std::size_t i = 0; i < PrefSchemaSize(); ++i) {
 		const PrefField &f = PrefSchema()[i];
 		if (f.invert) {
@@ -2776,9 +2819,11 @@ TEST(Refresher, PrefsSchemaIrregularitiesStayContained)
 			++foreign_group;
 			ASSERT_EQUALS(std::string("upnp_supported"), std::string(f.key));
 		}
-		if (f.access == PrefAccess::Bespoke) {
-			++bespoke;
-			ASSERT_EQUALS(std::string("guest_enabled"), std::string(f.key));
+		// Kept only because /api/v1/ is frozen; nothing else may join them.
+		if (f.access == PrefAccess::Retired) {
+			++retired;
+			ASSERT_EQUALS(std::string("remote_controls.webserver"), std::string(f.category));
+			ASSERT_EQUALS(static_cast<ec_tagname_t>(0), f.tag);
 		}
 		// Hidden from guests: the REST reference lists each one.
 		if (f.access == PrefAccess::AdminRead) {
@@ -2791,8 +2836,8 @@ TEST(Refresher, PrefsSchemaIrregularitiesStayContained)
 	}
 	ASSERT_EQUALS(static_cast<std::size_t>(2), inverted);
 	ASSERT_EQUALS(static_cast<std::size_t>(1), foreign_group);
-	ASSERT_EQUALS(static_cast<std::size_t>(1), bespoke);
-	ASSERT_EQUALS(static_cast<std::size_t>(5), admin_read);
+	ASSERT_EQUALS(static_cast<std::size_t>(8), retired);
+	ASSERT_EQUALS(static_cast<std::size_t>(7), admin_read);
 
 	// One category is gated on a tag proving the daemon has it. That tag must be one of the
 	// category's own value-encoded rows: a presence-encoded one is absent whenever it is false,
@@ -3459,6 +3504,67 @@ TEST(Refresher, KadPublicIpIsOursAndBuddyIpIsSeparate)
 	ASSERT_EQUALS(std::string("203.0.113.9"), out.buddy_ip);
 }
 
+TEST(Refresher, KadBuddyCountersAreParsedFromTheirContainer)
+{
+	CECPacket resp(EC_OP_STATS);
+	resp.AddTag(MakeConnState(0x04 | 0x10));
+	resp.AddTag(CECTag(EC_TAG_STATS_BUDDY_SERVED, static_cast<std::uint32_t>(1)));
+	resp.AddTag(CECTag(EC_TAG_STATS_BUDDY_SERVED_LIMIT, static_cast<std::uint32_t>(1)));
+	CECEmptyTag buddy(EC_TAG_KAD_BUDDY);
+	buddy.AddTag(CECTag(EC_TAG_KAD_BUDDY_PENDING, static_cast<std::uint32_t>(2)));
+	buddy.AddTag(CECTag(EC_TAG_KAD_BUDDY_SERVING_REQUESTS, static_cast<std::uint32_t>(40)));
+	buddy.AddTag(CECTag(EC_TAG_KAD_BUDDY_SERVING_OFFERS_EXPIRED, static_cast<std::uint32_t>(3)));
+	buddy.AddTag(CECTag(EC_TAG_KAD_BUDDY_SERVING_OFFERS_DUPLICATE, static_cast<std::uint32_t>(6)));
+	buddy.AddTag(CECTag(EC_TAG_KAD_BUDDY_SERVING_OFFERS_EVICTED, static_cast<std::uint32_t>(7)));
+	buddy.AddTag(CECTag(EC_TAG_KAD_BUDDY_SERVING_REFUSED_SAME_IP, static_cast<std::uint32_t>(8)));
+	buddy.AddTag(CECTag(EC_TAG_KAD_BUDDY_SERVING_REQUESTS_NATT, static_cast<std::uint32_t>(9)));
+	buddy.AddTag(CECTag(EC_TAG_KAD_BUDDY_SERVING_CALLBACKS_OVER_BUDGET, static_cast<std::uint32_t>(10)));
+	buddy.AddTag(CECTag(EC_TAG_KAD_BUDDY_SERVING_REASKS_OVER_BUDGET, static_cast<std::uint32_t>(11)));
+	buddy.AddTag(CECTag(EC_TAG_KAD_BUDDY_SERVING_REASK_BYTES, static_cast<std::uint64_t>(5000000000ULL)));
+	buddy.AddTag(CECTag(EC_TAG_KAD_BUDDY_SERVING_CALLBACK_REQUESTS_PEAK, static_cast<std::uint32_t>(4)));
+	buddy.AddTag(CECTag(EC_TAG_KAD_BUDDY_OWN_CONNECTED, static_cast<std::uint32_t>(5)));
+	buddy.AddTag(CECTag(EC_TAG_KAD_BUDDY_OWN_MISSING_SECONDS, static_cast<std::uint32_t>(60)));
+	buddy.AddTag(CECTag(EC_TAG_KAD_BUDDY_OWN_SEARCHES_HELD, static_cast<std::uint32_t>(12)));
+	resp.AddTag(buddy);
+
+	KadSnapshot out;
+	ParseKadFromPacket(&resp, out);
+
+	ASSERT_TRUE(out.has_served);
+	ASSERT_EQUALS(1u, out.served_count);
+	ASSERT_EQUALS(1u, out.served_limit);
+	ASSERT_TRUE(out.has_buddy_counters);
+	ASSERT_EQUALS(std::uint64_t(2), out.buddy_serving.pending_count);
+	ASSERT_EQUALS(std::uint64_t(40), out.buddy_serving.requests.received);
+	ASSERT_EQUALS(std::uint64_t(3), out.buddy_serving.requests.expired);
+	ASSERT_EQUALS(std::uint64_t(6), out.buddy_serving.requests.duplicate);
+	ASSERT_EQUALS(std::uint64_t(7), out.buddy_serving.requests.evicted);
+	ASSERT_EQUALS(std::uint64_t(8), out.buddy_serving.requests.refused_same_ip);
+	ASSERT_EQUALS(std::uint64_t(9), out.buddy_serving.requests.natt);
+	ASSERT_EQUALS(std::uint64_t(10), out.buddy_serving.callbacks.over_budget);
+	ASSERT_EQUALS(std::uint64_t(11), out.buddy_serving.reasks.over_budget);
+	ASSERT_EQUALS(std::uint64_t(5000000000ULL), out.buddy_serving.reasks.relayed_bytes);
+	ASSERT_EQUALS(std::uint64_t(4), out.buddy_serving.callbacks.peak_requests_per_minute);
+	ASSERT_EQUALS(std::uint64_t(5), out.buddy_own.buddies.started);
+	ASSERT_EQUALS(std::uint64_t(60), out.buddy_own.missing_seconds);
+	ASSERT_EQUALS(std::uint64_t(12), out.buddy_own.held_search_count);
+	// A counter the daemon did not send reads as zero, not as garbage.
+	ASSERT_EQUALS(std::uint64_t(0), out.buddy_own.search_count);
+}
+
+TEST(Refresher, KadBuddyCountersAreAbsentFromAnOlderDaemon)
+{
+	CECPacket resp(EC_OP_STATS);
+	resp.AddTag(MakeConnState(0x04 | 0x10));
+	resp.AddTag(CECTag(EC_TAG_STATS_BUDDY_STATUS, static_cast<std::uint8_t>(0)));
+
+	KadSnapshot out;
+	ParseKadFromPacket(&resp, out);
+
+	ASSERT_FALSE(out.has_served);
+	ASSERT_FALSE(out.has_buddy_counters);
+}
+
 TEST(Refresher, KadBuddyStatusIsNoBuddyWhenTagAbsent)
 {
 	// amuled ships EC_TAG_STATS_BUDDY_STATUS only while Kad is connected. Absent, the field
@@ -3769,7 +3875,6 @@ TEST(PrefsSchema, AnUnboundedNumericRowIsADeliberateChoice)
 	// the core during that audit.
 	static const char *const kKnownUnbounded[] = {
 		"files.min_free_space_mebibytes",
-		"remote_controls.webserver.refresh_seconds",
 	};
 	const webapi::PrefField *schema = webapi::PrefSchema();
 	for (std::size_t i = 0; i < webapi::PrefSchemaSize(); ++i) {
@@ -4131,6 +4236,25 @@ TEST(Refresher, DebugSettingsDoNotSurviveAnOlderCore)
 	CECPacket empty(EC_OP_SET_PREFERENCES);
 	ParsePreferencesFromPacket(&empty, prefs, cats);
 	ASSERT_FALSE(prefs.advanced.debug_categories_supported);
+}
+
+TEST(Refresher, ServedBuddiesCapabilityDoesNotSurviveAnOlderCore)
+{
+	CECPacket modern(EC_OP_SET_PREFERENCES);
+	CECEmptyTag advanced(EC_TAG_PREFS_CORETWEAKS);
+	advanced.AddTag(CECTag(EC_TAG_CORETW_KAD_MAX_SERVED_BUDDIES, uint32_t{ 8 }));
+	modern.AddTag(advanced);
+	PreferencesSnapshot prefs;
+	std::vector<CategorySnapshot> cats;
+	ParsePreferencesFromPacket(&modern, prefs, cats);
+	ASSERT_TRUE(prefs.advanced.kad_max_served_buddies_supported);
+	ASSERT_EQUALS(uint32_t{ 8 }, prefs.advanced.kad_max_served_buddies);
+
+	CECPacket legacy(EC_OP_SET_PREFERENCES);
+	legacy.AddTag(CECEmptyTag(EC_TAG_PREFS_CORETWEAKS));
+	ParsePreferencesFromPacket(&legacy, prefs, cats);
+	ASSERT_FALSE(prefs.advanced.kad_max_served_buddies_supported);
+	ASSERT_EQUALS(uint32_t{ 0 }, prefs.advanced.kad_max_served_buddies);
 }
 
 TEST(Refresher, WriteBufferCapabilityDoesNotSurviveAnOlderCore)

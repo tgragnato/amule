@@ -312,28 +312,18 @@ msgstr ""
 
 #: src/amule.cpp
 #, c-format
-msgid "Terminating amuleweb instance with pid '%d' ... "
-msgstr ""
-
-#: src/amule.cpp
-#, c-format
-msgid "Killing amuleweb instance with pid '%d' ... "
-msgstr ""
-
-#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
-#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
-#: src/SharedFilesCtrl.cpp
-msgid "Failed"
-msgstr ""
-
-#: src/amule.cpp
-#, c-format
 msgid "Terminating amuleapi instance with pid '%d' ... "
 msgstr ""
 
 #: src/amule.cpp
 #, c-format
 msgid "Killing amuleapi instance with pid '%d' ... "
+msgstr ""
+
+#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
+#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
+#: src/SharedFilesCtrl.cpp
+msgid "Failed"
 msgstr ""
 
 #: src/amule.cpp
@@ -482,28 +472,6 @@ msgid "Not starting %s: it is neither next to aMule nor on PATH."
 msgstr ""
 
 #: src/amule.cpp
-msgid "An exception occurred while launching amuleweb."
-msgstr ""
-
-#: src/amule.cpp
-#, c-format
-msgid "web server running on pid %d"
-msgstr ""
-
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb authentication token. The web server was not started."
-msgstr ""
-
-#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
-#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
-msgid "ERROR"
-msgstr ""
-
-#: src/amule.cpp
-msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
-msgstr ""
-
-#: src/amule.cpp
 #, c-format
 msgid "Could not write the amuleapi EC token to %s; amuleapi will fall back to its configured password."
 msgstr ""
@@ -525,13 +493,9 @@ msgstr ""
 msgid "You requested to run amuleapi on startup, but the amuleapi binary cannot be run. Please install the package containing aMule's REST API server, or build aMule from source with -DBUILD_AMULEAPI=YES and install it."
 msgstr ""
 
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb EC token."
-msgstr ""
-
-#: src/amule.cpp
-#, c-format
-msgid "Could not remove the amuleweb EC token file: %s"
+#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
+#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
+msgid "ERROR"
 msgstr ""
 
 #: src/amule.cpp
@@ -1004,22 +968,13 @@ msgstr ""
 msgid "aMuleGUI"
 msgstr ""
 
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
-msgstr ""
-
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
 msgid " MiB/s"
 msgstr ""
 
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/utils/wxCas/src/wxcasframe.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
+#: src/utils/wxCas/src/wxcasframe.cpp
 msgid " KiB/s"
-msgstr ""
-
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s | Down: %.1f%s"
 msgstr ""
 
 #: src/amuleDlg.cpp
@@ -1028,6 +983,16 @@ msgstr ""
 
 #: src/amuleDlg.cpp
 msgid "Live speeds are averaged over the last second. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
+msgstr ""
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s | Down: %.1f%s"
+msgstr ""
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
 msgstr ""
 
 #: src/amuleDlg.cpp
@@ -2043,6 +2008,49 @@ msgstr ""
 msgid "Search Result"
 msgstr ""
 
+#: src/DataToText.cpp
+msgid "a direct connection"
+msgstr ""
+
+#: src/DataToText.cpp
+msgid "a direct callback"
+msgstr ""
+
+#: src/DataToText.cpp
+msgid "our server"
+msgstr ""
+
+#: src/DataToText.cpp
+msgid "the Kad buddy"
+msgstr ""
+
+#: src/DataToText.cpp
+msgid "the source's own server"
+msgstr ""
+
+#: src/DataToText.cpp
+msgid "a server hole punch"
+msgstr ""
+
+#: src/DataToText.cpp
+msgid "a Lugdunum callback"
+msgstr ""
+
+#: src/DataToText.cpp
+#, c-format
+msgid "Connecting via %s, on a fallback route"
+msgstr ""
+
+#: src/DataToText.cpp
+#, c-format
+msgid "Connecting via %s, on an unproven route"
+msgstr ""
+
+#: src/DataToText.cpp
+#, c-format
+msgid "Connecting via %s"
+msgstr ""
+
 #: src/DataToText.cpp src/DownloadListCtrl.cpp src/OtherFunctions.cpp
 #: src/TransferWnd.cpp
 msgid "Completed"
@@ -2349,10 +2357,6 @@ msgstr[1] ""
 #: src/DownloadQueue.cpp
 #, c-format
 msgid "Invalid eD2k link! ERROR: %s"
-msgstr ""
-
-#: src/ECSpecialMuleTags.cpp
-msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
 msgstr ""
 
 #: src/ECSpecialMuleTags.cpp
@@ -4455,11 +4459,11 @@ msgid "Users connected to the current server and an estimate of the total number
 msgstr ""
 
 #: src/muuli_wdr.cpp
-msgid "Up: 0.0 | Down: 0.0"
+msgid "Up:"
 msgstr ""
 
 #: src/muuli_wdr.cpp
-msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
+msgid "Down:"
 msgstr ""
 
 #: src/muuli_wdr.cpp
@@ -4468,10 +4472,6 @@ msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Not Connected ..."
-msgstr ""
-
-#: src/muuli_wdr.cpp
-msgid "Currently connected server."
 msgstr ""
 
 #: src/muuli_wdr.cpp
@@ -5463,7 +5463,11 @@ msgid "Remove"
 msgstr ""
 
 #: src/muuli_wdr.cpp
-msgid "(Right click on folder icon for recursive share)"
+msgid "Double-click: share or unshare this folder. Right-click: share it with all subfolders, including new ones."
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "Bold: shared. Bold italic: shared with all subfolders. Red folder: contains shared folders."
 msgstr ""
 
 #: src/muuli_wdr.cpp
@@ -5624,6 +5628,14 @@ msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Concurrent Kad source lookups"
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "Firewalled Kad nodes served as buddy"
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "How many firewalled Kad nodes this node relays callbacks for. Each one holds a connection, so at most a tenth of the connection limit is served."
 msgstr ""
 
 #: src/muuli_wdr.cpp
@@ -5820,46 +5832,6 @@ msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Guest password"
-msgstr ""
-
-#: src/muuli_wdr.cpp
-msgid "Web server parameters"
-msgstr ""
-
-#: src/muuli_wdr.cpp
-msgid "Run webserver on startup (deprecated)"
-msgstr ""
-
-#: src/muuli_wdr.cpp
-msgid "Web template"
-msgstr ""
-
-#: src/muuli_wdr.cpp
-msgid "Full rights password"
-msgstr ""
-
-#: src/muuli_wdr.cpp
-msgid "Enable Low rights User"
-msgstr ""
-
-#: src/muuli_wdr.cpp
-msgid "Low rights password"
-msgstr ""
-
-#: src/muuli_wdr.cpp
-msgid "Enable UPnP port forwarding of the web server port"
-msgstr ""
-
-#: src/muuli_wdr.cpp
-msgid "Web server UPnP TCP port (Optional)"
-msgstr ""
-
-#: src/muuli_wdr.cpp
-msgid "Page Refresh Time (in secs)"
-msgstr ""
-
-#: src/muuli_wdr.cpp
-msgid "Enable Gzip compression"
 msgstr ""
 
 #: src/muuli_wdr.cpp
@@ -6862,8 +6834,8 @@ msgstr ""
 msgid "NAT traversal (QUIC)"
 msgstr ""
 
-#: src/Preferences.cpp
-msgid "no options available"
+#: src/PeerCapabilities.h
+msgid "Skips unknown source exchange tags"
 msgstr ""
 
 #: src/Preferences.cpp
@@ -7203,11 +7175,7 @@ msgid "macOS does not let an application stop being the default handler. To stop
 msgstr ""
 
 #: src/PrefsUnifiedDlg.cpp
-msgid "The web server and aMule API require external connections to be enabled."
-msgstr ""
-
-#: src/PrefsUnifiedDlg.cpp
-msgid "The aMule web server is deprecated. Consider running the aMule API instead."
+msgid "The aMule API requires external connections to be enabled."
 msgstr ""
 
 #: src/PrefsUnifiedDlg.cpp
@@ -8230,6 +8198,15 @@ msgid "Connected to buddy at %s"
 msgstr ""
 
 #: src/ServerWnd.cpp
+msgid "Served buddies:"
+msgstr ""
+
+#: src/ServerWnd.cpp
+#, c-format
+msgid "%u of %u"
+msgstr ""
+
+#: src/ServerWnd.cpp
 msgid "IP address:"
 msgstr ""
 
@@ -8723,35 +8700,6 @@ msgid "Peak Connections (estimate): %i"
 msgstr ""
 
 #: src/Statistics.cpp
-msgid "NAT Traversal (Session)"
-msgstr ""
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Server Hole Punches: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Server Hole Punches: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Lugdunum Callbacks: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Lugdunum Callbacks: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, c-format
-msgid "uTP Streams Moved to a New Port: %s"
-msgstr ""
-
-#: src/Statistics.cpp
 #, c-format
 msgid "Unknown: %s"
 msgstr ""
@@ -8837,6 +8785,10 @@ msgid "Average file size: %s"
 msgstr ""
 
 #: src/Statistics.cpp
+msgid "Diagnostics"
+msgstr ""
+
+#: src/Statistics.cpp
 msgid "Operating System"
 msgstr ""
 
@@ -8914,6 +8866,10 @@ msgid ""
 "Type 'help search' to get more help.\n"
 msgstr ""
 
+#: src/TextClient.cpp
+msgid "The connected daemon does not support media search filters.\n"
+msgstr ""
+
 #. TRANSLATORS:
 #. 'help search' is a command to the program, do not translate it.
 #: src/TextClient.cpp
@@ -8923,11 +8879,19 @@ msgid ""
 msgstr ""
 
 #: src/TextClient.cpp
+msgid "The connected daemon does not support search management.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "A search ID from 'search list' is required.\n"
+msgstr ""
+
+#: src/TextClient.cpp
 #, c-format
 msgid "Download File: %lu %s\n"
 msgstr ""
 
-#: src/TextClient.cpp src/webserver/src/WebServer.cpp
+#: src/TextClient.cpp
 msgid "Request failed with an unknown error."
 msgstr ""
 
@@ -9026,6 +8990,26 @@ msgstr ""
 #: src/TextClient.cpp
 msgid "[PartFile]"
 msgstr "[PartFile]"
+
+#: src/TextClient.cpp
+msgid "No retained searches.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; availability is unknown.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; further requests remain possible.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "No further results can be requested for this search.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "Search stop request processed; retained results were not removed.\n"
+msgstr ""
 
 #: src/TextClient.cpp
 #, c-format
@@ -9283,6 +9267,11 @@ msgid ""
 "    --avail <N>            minimum number of sources\n"
 "    --min-size <N[KMG]>    smallest file size; K=1024, M=K*1024, G=M*1024\n"
 "    --max-size <N[KMG]>    largest file size; same suffixes\n"
+"    --min-bitrate <kbps>   whole number, 0-1000000\n"
+"    --min-duration <sec>   whole number, 0-86400\n"
+"    --codec <text> --title <text> --album <text> --artist <text>\n"
+"Quote media text values containing spaces.\n"
+"Kad applies media filters; eD2k servers may ignore them.\n"
 "Example: 'search global linux iso --type Iso --min-size 100M' returns\n"
 "results for \"linux iso\" of file-type Iso at least 100 MiB.\n"
 msgstr ""
@@ -9316,6 +9305,26 @@ msgstr ""
 
 #: src/TextClient.cpp
 msgid "Execute an eD2k and Kad search"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "List retained search IDs and queries."
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "Stop a search, keeping its results."
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'."
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "Request more Kad search results."
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'. Further results are not guaranteed."
 msgstr ""
 
 #: src/TextClient.cpp
@@ -10120,139 +10129,6 @@ msgstr ""
 msgid "Folder where generating the statistic image"
 msgstr ""
 
-#: src/webserver/src/WebInterface.cpp
-msgid "Loads template <str>"
-msgstr ""
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Web server HTTP port"
-msgstr ""
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use UPnP port forwarding on web server port"
-msgstr ""
-
-#: src/webserver/src/WebInterface.cpp
-msgid "UPnP port"
-msgstr ""
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use gzip compression"
-msgstr ""
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Full access password for web server"
-msgstr ""
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Guest password for web server"
-msgstr ""
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Allow guest access"
-msgstr ""
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Deny guest access"
-msgstr ""
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Load/save web server settings from/to remote aMule"
-msgstr "தொலைநிலை aMule இலிருந்து/வரை வலை சேவையக அமைப்புகளை ஏற்றவும்/சேமிக்கவும்"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule config file path. DO NOT USE DIRECTLY!"
-msgstr ""
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Disable PHP interpreter (deprecated)"
-msgstr ""
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Recompile PHP pages on each request"
-msgstr ""
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule Web Server"
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "web client connection accepted\n"
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "ERROR: cannot accept web client connection\n"
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-#, c-format
-msgid "Request failed with the following error: %s."
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "Index file not found: "
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session expired - requesting login\n"
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, logged in\n"
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, not logged in\n"
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "No session opened - will request login\n"
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session created - requesting login\n"
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [original]: "
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "Refusing to read `pass` from URL query string\n"
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "No password specified, login will not be allowed."
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "Checking password\n"
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password hash invalid\n"
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password ok\n"
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password bad\n"
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "You did not enter any password. Blank password is not allowed.\n"
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "Logout requested\n"
-msgstr ""
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [redirected]: "
-msgstr ""
-
 #: packaging/windows/installer_strings.c
 msgid "aMule (required)"
 msgstr ""
@@ -10388,6 +10264,9 @@ msgstr ""
 #: src/libs/ec/cpp/ECSRPConfig.cpp
 msgid "Migrating a changed legacy ECPassword after downgrade; the previous verifier no longer authenticates this run."
 msgstr ""
+
+#~ msgid "Load/save web server settings from/to remote aMule"
+#~ msgstr "தொலைநிலை aMule இலிருந்து/வரை வலை சேவையக அமைப்புகளை ஏற்றவும்/சேமிக்கவும்"
 
 #~ msgid "ERROR: A valid password is required to use external connections, and aMule daemon cannot be used without external connections. To run aMule daemon, you must set the \"ECPassword\" field in the file ~/.aMule/amule.conf with an appropriate value. Execute amuled with the flag --ec-config to set the password. More information can be found at https://amule-org.github.io/docs"
 #~ msgstr "பிழை: வெளிப்புற இணைப்புகளைப் பயன்படுத்த சரியான கடவுச்சொல் தேவை, மேலும் வெளிப்புற இணைப்புகள் இல்லாமல் aMule daemon ஐ பயன்படுத்த முடியாது. aMule daemon ஐ இயக்க, ~/.aMule/amule.conf கோப்பில் \"ECPassword\" புலத்தில் பொருத்தமான மதிப்பை அமைக்க வேண்டும். கடவுச்சொல்லை அமைக்க --ec-config கொடியுடன் amuled ஐ இயக்கவும். மேலும் தகவலுக்கு https://amule-org.github.io/docs ஐப் பார்க்கவும்."

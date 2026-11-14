@@ -44,6 +44,7 @@ there client on the eMule forum..
 
 #include "SearchManager.h"
 #include "../utils/LookupTrace.h"
+#include "../utils/PublishMetrics.h"
 
 class CKnownFile;
 class CTag;
@@ -58,10 +59,15 @@ class CKadClientSearcher;
 class CSearch
 {
 	friend class CSearchManager;
+	bool m_publishMeasured = false;
+	bool m_publishCompleted = false;
 
 public:
 	const CLookupTrace &GetLookupTrace() const noexcept { return m_lookupTrace; }
 	uint64_t GetLookupStarted() const noexcept { return m_lookupStarted; }
+	// For a finished source publish: counts the nodes that stored our entry and records them
+	// on the file.
+	void RecordStoreAcknowledgements() const;
 
 	uint32_t GetSearchID() const noexcept { return m_searchID; }
 	void SetSearchID(uint32_t id) noexcept

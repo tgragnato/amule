@@ -73,6 +73,7 @@
 #ifdef ENABLE_IPV6
 #include "AddressFamilyPolicy.h"    // Needed for AddressFamilyPolicy::SetConfigured
 #include "AdvertisedIPv6.h"         // Needed for ChooseAdvertisedIPv6
+#include "IPv6ReachabilityProof.h"  // Needed for clearing inbound proof on address changes
 #include "IPv6ChangeNotification.h" // Needed for ShouldMarkIPv6ChangeNotification
 #endif
 #include "HashListFile.h"
@@ -110,7 +111,6 @@
 #include <Credentials.h>                // webcommon::EcTokenFilePath / GenerateEcToken
 #include "ExternalCommand.h"            // Windows child-process argument quoting
 #include "TerminationProcessAmuleApi.h" // Needed for CTerminationProcessAmuleApi
-#include "TerminationProcessAmuleweb.h" // Needed for CTerminationProcessAmuleweb
 #include "ThreadTasks.h"
 #include "UploadQueue.h"         // Needed for CUploadQueue
 #include "PartFileWriteThread.h" // Needed for CPartFileWriteThread
@@ -256,7 +256,6 @@ CamuleApp::CamuleApp()
 
 	m_localip = 0;
 	m_dwPublicIP = 0;
-	webserver_pid = 0;
 	amuleapi_pid = 0;
 
 	enable_daemon_fork = false;
@@ -288,9 +287,6 @@ int CamuleApp::OnExit()
 	if (m_ecTokenVerifier.Valid() || m_ecTokenFileExpiryMs) {
 		ClearAmuleApiToken();
 	}
-	if (m_ecWebTokenVerifier.Valid() || m_ecWebTokenFileExpiryMs) {
-		ClearAmulewebToken();
-	}
 
 	if (m_app_state != APP_STATE_STARTING) {
 		AddLogLineNS(_("Now, exiting main app..."));
@@ -314,19 +310,6 @@ int CamuleApp::OnExit()
 	clientcredits->SaveList();
 
 	ReportShutdownStatus(_("Stopping helper applications..."));
-
-	// Kill amuleweb if running
-	if (webserver_pid) {
-		AddLogLineNS(CFormat(_("Terminating amuleweb instance with pid '%d' ... ")) % webserver_pid);
-		wxKillError rc;
-		if (wxKill(webserver_pid, wxSIGTERM, &rc) == -1) {
-			AddLogLineNS(
-				CFormat(_("Killing amuleweb instance with pid '%d' ... ")) % webserver_pid);
-			if (wxKill(webserver_pid, wxSIGKILL, &rc) == -1) {
-				AddLogLineNS(_("Failed"));
-			}
-		}
-	}
 
 	// Kill amuleapi if running
 	if (amuleapi_pid) {
@@ -386,6 +369,9 @@ int CamuleApp::OnExit()
 
 	ReportShutdownStatus(_("Saving downloads and shared files..."));
 
+	if (sharedfiles) {
+		sharedfiles->SaveKeywordPublishTimes();
+	}
 	// Destroying CDownloadQueue calls destructor for CPartFile
 	// calling CSharedFileList::SafeAddKFile occasionally.
 	delete sharedfiles;
@@ -1294,82 +1280,6 @@ bool CamuleApp::OnInit()
 		ipfilter->StartPendingNetworks();
 	}
 
-	// Run webserver?
-	if (thePrefs::GetWSIsEnabled()) {
-		wxString aMuleConfigFile = thePrefs::GetConfigDir() + m_configFile;
-		wxString amulewebPath = ResolveHelperBinary(
-			thePrefs::GetWSPath(), AutostartManager::GetCanonicalExecutablePath());
-
-#if defined(__WXMAC__) && !defined(AMULE_DAEMON)
-		// For the Mac GUI application, look for amuleweb in the bundle
-		CFURLRef amulewebUrl =
-			CFBundleCopyAuxiliaryExecutableURL(CFBundleGetMainBundle(), CFSTR("amuleweb"));
-
-		if (amulewebUrl) {
-			CFURLRef absoluteUrl = CFURLCopyAbsoluteURL(amulewebUrl);
-			CFRelease(amulewebUrl);
-
-			if (absoluteUrl) {
-				CFStringRef amulewebCfstr =
-					CFURLCopyFileSystemPath(absoluteUrl, kCFURLPOSIXPathStyle);
-				CFRelease(absoluteUrl);
-				amulewebPath = wxCFStringRef(amulewebCfstr).AsString();
-			}
-		}
-#endif
-
-#define QUOTE "\'"
-
-		bool webserver_ok = false;
-		bool tokenPrepared = true;
-		if (amulewebPath.IsEmpty()) {
-			AddLogLineC(CFormat(_("Not starting %s: it is neither next to aMule nor on PATH.")) %
-				    thePrefs::GetWSPath());
-		} else if (PrepareAmulewebToken()) {
-			wxString cmd = QUOTE + amulewebPath +
-				       QUOTE " " QUOTE "--amule-config-file=" + aMuleConfigFile + QUOTE;
-			CTerminationProcessAmuleweb *p = new CTerminationProcessAmuleweb(
-				cmd, &webserver_pid, [this] { OnAmulewebTerminated(); });
-			try {
-				webserver_pid = static_cast<int>(wxExecute(cmd, wxEXEC_ASYNC, p));
-			} catch (const std::exception &) {
-				webserver_pid = 0;
-				AddLogLineC(_("An exception occurred while launching amuleweb."));
-			}
-			webserver_ok = webserver_pid > 0;
-			if (webserver_ok) {
-				AddLogLineC(CFormat(_("web server running on pid %d")) % webserver_pid);
-			} else {
-				delete p;
-			}
-		} else {
-			tokenPrepared = false;
-		}
-		if (!webserver_ok) {
-			ClearAmulewebToken();
-			// Defer the modal until after OnInit returns. During OnInit the main window is
-			// not yet visible on Windows, so a modal ShowAlert spawns invisible and blocks
-			// the message loop waiting on input that cannot be given -- aMule then boots
-			// into an unresponsive white window with only the error ding audible.
-			CallAfter([this, tokenPrepared]() {
-				if (!tokenPrepared) {
-					ShowAlert(_("Could not prepare the amuleweb authentication token. "
-						    "The web server was not started."),
-						_("ERROR"),
-						wxOK | wxICON_ERROR);
-					return;
-				}
-				ShowAlert(_("You requested to run web server on startup, "
-					    "but the amuleweb binary cannot be run. Please "
-					    "install the package containing aMule web "
-					    "server, or build aMule from source with "
-					    "-DBUILD_WEBSERVER=YES and install it."),
-					_("ERROR"),
-					wxOK | wxICON_ERROR);
-			});
-		}
-	}
-
 	// Read amuleapi-passwords so the preferences know what is actually configured before
 	// the dialog can be opened, and before the bind-vs-password warning below has to reason
 	// about it.
@@ -1453,8 +1363,8 @@ void CamuleApp::StartAmuleApi(bool startup)
 		}
 
 		ECCrypt::SecureWipe(reinterpret_cast<uint8_t *>(ecToken.data()), ecToken.size());
-		// No --amule-config-file here, unlike amuleweb above: amuleapi takes the ephemeral
-		// token written just now instead of reading the hashed EC password out of amule.conf.
+		// No --amule-config-file here: amuleapi takes the ephemeral token written just now
+		// instead of reading the hashed EC password out of amule.conf.
 		// It finds the token through the config dir passed below, which is also where its
 		// admin and guest credentials live. The HTTP bind address and port, and where to reach
 		// our EC listener, are passed explicitly; a non-loopback bind requires an admin password
@@ -1509,8 +1419,10 @@ void CamuleApp::StartAmuleApi(bool startup)
 		m_amuleApiProcess = nullptr;
 		delete p;
 		ClearAmuleApiToken();
-		// See the amuleweb branch above for why this is deferred with
-		// CallAfter rather than shown inline during OnInit.
+		// Defer the modal until after OnInit returns. During OnInit the main window is not
+		// yet visible on Windows, so a modal ShowAlert spawns invisible and blocks the message
+		// loop waiting on input that cannot be given -- aMule then boots into an unresponsive
+		// white window with only the error ding audible.
 		if (!startup) {
 			AddLogLineN(_("Could not launch amuleapi during automatic restart."));
 			ScheduleAmuleApiRestart();
@@ -1526,50 +1438,6 @@ void CamuleApp::StartAmuleApi(bool startup)
 				wxOK | wxICON_ERROR);
 		});
 	}
-}
-
-bool CamuleApp::PrepareAmulewebToken()
-{
-	if (!ClearAmulewebToken())
-		return false;
-	std::string token;
-	bool ready = false;
-	try {
-		token = webcommon::GenerateEcToken();
-		const auto verifier = ECSRP::Verifier::Create(token, GetEcTokenVerifier().salt);
-		const auto path =
-			webcommon::EcWebTokenFilePath(std::string(thePrefs::GetConfigDir().utf8_str()));
-		ready = webcommon::WriteFileAtomic0600(path, token + "\n");
-		if (ready) {
-			m_ecWebTokenVerifier = verifier;
-			m_ecWebTokenFileExpiryMs = theStats::GetUptimeMillis() + EC_TOKEN_FILE_TTL_MS;
-		}
-	} catch (const std::exception &) {
-		// Refuse to launch without a usable credential; no exception may escape startup.
-	}
-	ECCrypt::SecureWipe(reinterpret_cast<uint8_t *>(token.data()), token.size());
-	if (!ready)
-		AddLogLineC(_("Could not prepare the amuleweb EC token."));
-	return ready;
-}
-
-bool CamuleApp::ClearAmulewebToken()
-{
-	m_ecWebTokenVerifier = m_ecDummyTokenVerifier;
-	m_ecWebTokenFileExpiryMs = 0;
-	const wxString path = wxString::FromUTF8(
-		webcommon::EcWebTokenFilePath(std::string(thePrefs::GetConfigDir().utf8_str())).c_str());
-	if (wxFileExists(path) && !wxRemoveFile(path)) {
-		m_ecWebTokenFileExpiryMs = theStats::GetUptimeMillis() + EC_TOKEN_FILE_TTL_MS;
-		AddLogLineC(CFormat(_("Could not remove the amuleweb EC token file: %s")) % path);
-		return false;
-	}
-	return true;
-}
-
-void CamuleApp::OnAmulewebTerminated()
-{
-	ClearAmulewebToken();
 }
 
 bool CamuleApp::ClearAmuleApiToken()
@@ -1889,6 +1757,7 @@ void RefreshLocalPublicIPv6Addresses()
 		ChooseAdvertisedIPv6(interfaces, thePrefs::GetNetworkInterface());
 	if (choice != s_advertisedIPv6Choice) {
 		ObservedPublicIPv6().ForgetVerdicts();
+		IPv6ReachabilityProof().Clear();
 	}
 	s_advertisedIPv6Choice = choice;
 #endif
@@ -1900,13 +1769,26 @@ std::optional<CNetworkAddress> SelectedLocalIPv6()
 	return s_advertisedIPv6Choice;
 }
 
-std::optional<CNetworkAddress> AdvertisedIPv6ForPeers()
+SAdvertisedIPv6Facts CurrentAdvertisedIPv6Facts()
 {
 	SAdvertisedIPv6Facts facts;
 	facts.choice = s_advertisedIPv6Choice;
 	facts.contradicted = s_advertisedIPv6Choice &&
 			     ObservedPublicIPv6().IsPrefixVetoed(*s_advertisedIPv6Choice, ::GetTickCount64());
 	facts.mode = thePrefs::GetAdvertiseIPv6Mode();
+	// The two kinds of evidence: the server's dial-back verdict, and a hello that reached us from
+	// another /48. A failed probe withdraws the address even when the hello proved it, because the
+	// server tests what peers actually reach.
+	CServer *const server = theApp->serverconnect ? theApp->serverconnect->GetCurrentServer() : nullptr;
+	// A verdict is about one address, so a change to another one has not been probed and the old
+	// answer must not speak for it.
+	const bool verdictIsAboutChoice = server != nullptr && facts.choice.has_value() &&
+					  server->GetIPv6VerdictAddress() == *facts.choice;
+	facts.serverVerified =
+		verdictIsAboutChoice && server->GetIPv6Verdict() == EServerIPv6Verdict::Verified;
+	facts.serverProbeFailed =
+		verdictIsAboutChoice && server->GetIPv6Verdict() == EServerIPv6Verdict::Failed;
+	facts.provedByInboundHello = IPv6ReachabilityProof().IsProven(::GetTickCount64());
 	facts.ipv6Built = true;
 	facts.familyPermitted = AddressFamilyPolicy::PermitsIPv6();
 	facts.proxyEnabled = thePrefs::GetProxyData()->m_proxyEnable;
@@ -1914,6 +1796,25 @@ std::optional<CNetworkAddress> AdvertisedIPv6ForPeers()
 	// listener is down; a concrete IPv6 bind (a configured /eMule/Address) accepts on that one
 	// address only, which need not be the one chosen from the interfaces.
 	facts.listenerAcceptsIPv6 = theApp->listensocket && theApp->listensocket->BoundHost() == "[::]";
+	return facts;
+}
+
+std::optional<CNetworkAddress> AdvertisedIPv6ForPeers()
+{
+	const SAdvertisedIPv6Facts facts = CurrentAdvertisedIPv6Facts();
+
+	// Always ignores a failed probe by design: the user asserted the port is reachable. It must
+	// not pass silently, but this runs on every refresh, so only the transition is logged.
+	static bool loggedFailedProbe = false;
+	if (facts.mode == EIPv6AdvertisingMode::Always && facts.serverProbeFailed != loggedFailedProbe) {
+		loggedFailedProbe = facts.serverProbeFailed;
+		if (facts.serverProbeFailed) {
+			AddLogLineN(
+				CFormat("Advertising our IPv6 address anyway: the server could not "
+					"reach %s in its dial-back probe") %
+				(facts.choice ? facts.choice->ToWxString() : wxString("the chosen address")));
+		}
+	}
 
 	const std::optional<CNetworkAddress> advertised = DecideAdvertisedIPv6(facts);
 	if (ShouldRepublishKadSources(s_lastKadPublishedIPv6, facts)) {
@@ -1938,9 +1839,14 @@ std::optional<CNetworkAddress> AdvertisedIPv6ForPeers()
 		}
 		SetSocketAdvertisedIPv6(advertised.value_or(CNetworkAddress::Absent()));
 		s_lastAdvertisedIPv6 = advertised;
-		if (theApp->serverconnect) {
-			theApp->serverconnect->UpdateAdvertisedIPv6(advertised);
-		}
+	}
+
+	if (theApp->serverconnect) {
+		// One send per refresh: the address a probing server has to test, or what the peers
+		// decision allows. UpdateAdvertisedIPv6() sends only when the address changed.
+		CServer *const server = theApp->serverconnect->GetCurrentServer();
+		theApp->serverconnect->UpdateAdvertisedIPv6(
+			ServerAddressToSend(facts, server != nullptr && server->SupportsIPv6Probe()));
 	}
 	return advertised;
 }
@@ -2433,6 +2339,7 @@ void CamuleApp::OnCoreTimer(CTimerEvent &WXUNUSED(evt))
 	if (msCur - msPrevKnownMet >= 30 * 60 * 1000 /*There must be a prefs option for this*/) {
 		// Save Shared Files data
 		knownfiles->Save();
+		sharedfiles->SaveKeywordPublishTimes();
 		msPrevKnownMet = msCur;
 	}
 
@@ -2442,6 +2349,8 @@ void CamuleApp::OnCoreTimer(CTimerEvent &WXUNUSED(evt))
 	// known.met is not rewritten twice in quick succession.
 	if (m_knownMetDirtiedMs && msCur - m_knownMetDirtiedMs >= 30000) {
 		knownfiles->Save();
+		// This resets the periodic timer too, which would otherwise hold back this save.
+		sharedfiles->SaveKeywordPublishTimes();
 		m_knownMetDirtiedMs = 0;
 		msPrevKnownMet = msCur;
 	}
@@ -2464,14 +2373,6 @@ void CamuleApp::OnCoreTimer(CTimerEvent &WXUNUSED(evt))
 						EC_TOKEN_FILE_TTL_MS % tokenPath);
 			}
 		}
-	}
-	if (m_ecWebTokenFileExpiryMs && msCur >= m_ecWebTokenFileExpiryMs) {
-		m_ecWebTokenFileExpiryMs = 0;
-		const wxString path = wxString::FromUTF8(
-			webcommon::EcWebTokenFilePath(std::string(thePrefs::GetConfigDir().utf8_str()))
-				.c_str());
-		if (wxFileExists(path) && !wxRemoveFile(path))
-			m_ecWebTokenFileExpiryMs = msCur + EC_TOKEN_FILE_TTL_MS;
 	}
 
 	// Recommended by lugdunummaster himself - from emule 0.30c
@@ -3294,6 +3195,16 @@ uint32 CamuleApp::GetBuddyPort() const
 	return clientlist->GetBuddyPort();
 }
 
+uint32 CamuleApp::GetServedBuddyCount() const
+{
+	return clientlist->GetServedBuddyCount();
+}
+
+uint32 CamuleApp::GetServedBuddyLimit() const
+{
+	return clientlist->GetServedBuddyLimit();
+}
+
 const Kademlia::CUInt128 &CamuleApp::GetKadID() const
 {
 	return Kademlia::CKademlia::GetKadID();
@@ -3640,15 +3551,14 @@ wxDEFINE_EVENT(wxEVT_CORE_SERVER_DNS_DONE, wxEvent); // File_checked_for_headers
 
 const ECSRP::Verifier &CamuleApp::GetEcTokenVerifier(uint8_t credential)
 {
-	if (credential != ECSRP::ApiToken && credential != ECSRP::WebToken)
+	if (credential != ECSRP::ApiToken)
 		throw std::invalid_argument("Invalid EC token credential");
 	if (!m_ecDummyTokenVerifier.Valid()) {
 		auto random = ECCrypt::RandomBytes(16);
 		m_ecDummyTokenVerifier = ECSRP::Verifier::Create(ECSRP::Hex(random));
 		ECCrypt::SecureWipe(random);
 	}
-	auto &verifier = credential == ECSRP::WebToken ? m_ecWebTokenVerifier : m_ecTokenVerifier;
-	if (!verifier.Valid())
-		verifier = m_ecDummyTokenVerifier;
-	return verifier;
+	if (!m_ecTokenVerifier.Valid())
+		m_ecTokenVerifier = m_ecDummyTokenVerifier;
+	return m_ecTokenVerifier;
 }

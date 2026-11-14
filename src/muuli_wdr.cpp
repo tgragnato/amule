@@ -43,6 +43,8 @@
 #include "KadContactHistogram.h"
 #include "DialogLayout.h" // Scrollable details dialogs
 #include "TextClearButton.h"
+#include "TransferRateLabel.h"
+#include "ConnectionStatusLabel.h"
 #include "OtherFunctions.h" // Needed for LabelWithColon
 #include "SourceSearchLimits.h"
 #include "WriteBufferLimits.h"
@@ -126,7 +128,7 @@ wxSizer *muleDlg( wxWindow *parent, bool call_fit, bool set_sizer )
     item7->SetToolTip( _("Events are displayed here. For a complete list of events, refer to the log in the Networks tab.") );
     item6->Add( item7, wxSizerFlags().Center() );
 
-    wxStaticText *item8 = new wxStaticText( parent, -1, _("Loading ..."), wxDefaultPosition, wxSize(140,-1), wxST_NO_AUTORESIZE );
+    wxStaticText *item8 = new wxStaticText( parent, -1, _("Loading ..."), wxDefaultPosition, wxSize(140,-1), wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_END );
     item8->SetName( "infoLabel" );
     item6->Add( item8, wxSizerFlags(1).FixedMinSize().Center().Border(wxLEFT, 5) );
     wxStaticLine *item9 = new wxStaticLine( parent, -1, wxDefaultPosition, wxSize(-1,20), wxLI_VERTICAL );
@@ -169,10 +171,19 @@ wxSizer *muleDlg( wxWindow *parent, bool call_fit, bool set_sizer )
     wxStaticBitmap *item13 = new wxStaticBitmap( parent, -1, wxArtProvider::GetBitmapBundle( "amule:status_speed_idle" ), wxDefaultPosition, wxDefaultSize );
     item13->SetName( "transferImg" );
     item6->Add( item13, wxSizerFlags().Center().Border(wxLEFT|wxRIGHT, 5) );
-    wxStaticText *item14 = new wxStaticText( parent, -1, _("Up: 0.0 | Down: 0.0"), wxDefaultPosition, wxDefaultSize, 0 );
-    item14->SetToolTip( _("Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication.") );
-    item14->SetName( "speedLabel" );
-    item6->Add( item14, wxSizerFlags().Center().Border(wxLEFT|wxRIGHT, 5) );
+    wxStaticText *uploadCaption = new wxStaticText( parent, -1, _("Up:") );
+    uploadCaption->SetName( "uploadRateCaption" );
+    item6->Add( uploadCaption, wxSizerFlags().Center().Border(wxLEFT|wxRIGHT, 5) );
+    TransferRateLabel *uploadRate = new TransferRateLabel( parent, -1, TransferRateLabel::FormatRate(0, 0, false) );
+    uploadRate->SetName( "uploadRateLabel" );
+    item6->Add( uploadRate, wxSizerFlags().Center() );
+    item6->Add( new wxStaticText( parent, -1, "|" ), wxSizerFlags().Center().Border(wxLEFT|wxRIGHT, 5) );
+    wxStaticText *downloadCaption = new wxStaticText( parent, -1, _("Down:") );
+    downloadCaption->SetName( "downloadRateCaption" );
+    item6->Add( downloadCaption, wxSizerFlags().Center().Border(wxRIGHT, 5) );
+    TransferRateLabel *downloadRate = new TransferRateLabel( parent, -1, TransferRateLabel::FormatRate(0, 0, false) );
+    downloadRate->SetName( "downloadRateLabel" );
+    item6->Add( downloadRate, wxSizerFlags().Center().Border(wxRIGHT, 5) );
 
     wxStaticLine *item15 = new wxStaticLine( parent, -1, wxDefaultPosition, wxSize(-1,20), wxLI_VERTICAL );
     item6->Add( item15, wxSizerFlags().Center().Border(wxLEFT, 5) );
@@ -180,8 +191,7 @@ wxSizer *muleDlg( wxWindow *parent, bool call_fit, bool set_sizer )
     item16->SetToolTip( _("Displays the connected status and active transfers. Red arrows signifies that you are currently not connected, yellow arrows signify that you have low ID (firewalled) and green arrows signify that you have high ID (The optimal connection type).") );
     item16->SetName( "connImage" );
     item6->Add( item16, wxSizerFlags().Center().Border(wxLEFT|wxRIGHT, 5) );
-    wxStaticText *item17 = new wxStaticText( parent, -1, _("Not Connected ..."), wxDefaultPosition, wxDefaultSize, 0 );
-    item17->SetToolTip( _("Currently connected server.") );
+    ConnectionStatusLabel *item17 = new ConnectionStatusLabel( parent, -1, _("Not Connected ...") );
     item17->SetName( "connLabel" );
     item6->Add( item17, wxSizerFlags().Center().Border(wxRIGHT, 5) );
 #if defined(__WXMAC__)
@@ -1954,8 +1964,10 @@ wxSizer *PreferencesDirectoriesTab( wxWindow *parent, bool call_fit, bool set_si
     itemSDAddRow->Add( itemSDRemove, wxSizerFlags().CenterVertical().Border(wxLEFT, 4) );
     item9->Add( itemSDAddRow, wxSizerFlags().Expand().Border(wxTOP, 4) );
 #else
-    wxStaticText *item11 = new wxStaticText( item10, -1, _("(Right click on folder icon for recursive share)"), wxDefaultPosition, wxDefaultSize, wxALIGN_CENTRE );
-    item9->Add( item11, 0, wxALIGN_CENTER, 0 );
+    WrappingStaticText *item11 = new WrappingStaticText( item10, -1, _("Double-click: share or unshare this folder. Right-click: share it with all subfolders, including new ones."), wxALIGN_CENTRE_HORIZONTAL );
+    item9->Add( item11, wxSizerFlags().Expand() );
+    WrappingStaticText *item11b = new WrappingStaticText( item10, -1, _("Bold: shared. Bold italic: shared with all subfolders. Red folder: contains shared folders."), wxALIGN_CENTRE_HORIZONTAL );
+    item9->Add( item11b, wxSizerFlags().Expand().Border(wxBOTTOM, 2) );
 
     CDirectoryTreeCtrl *item12 = new CDirectoryTreeCtrl(item10, IDC_SHARESELECTOR, wxPoint(0,0), wxSize(100,100), wxSUNKEN_BORDER|wxTR_DEFAULT_STYLE|wxTR_HIDE_ROOT );
     wxASSERT( item12 );
@@ -1965,7 +1977,7 @@ wxSizer *PreferencesDirectoriesTab( wxWindow *parent, bool call_fit, bool set_si
     item13->SetValue( TRUE );
     item9->Add( item13, 0, wxALIGN_CENTER_VERTICAL, 0 );
     // Auto-rescan toggle. When on, the fs-watcher reflects changes in the shared dirs without a
-    // manual reload; new subdirs created under any path in the tree above are auto-shared.
+    // manual reload; new subdirs are auto-shared only under a recursive share root.
     wxCheckBox *itemAutoRescan = new wxCheckBox( item10, IDC_AUTO_RESCAN_SHARED, _("Automatically rescan shared folders for changes"), wxDefaultPosition, wxDefaultSize, 0 );
     itemAutoRescan->SetValue( TRUE );
     item9->Add( itemAutoRescan, 0, wxALIGN_CENTER_VERTICAL, 0 );
@@ -2184,6 +2196,10 @@ wxSizer *PreferencesaMuleTweaksTab( wxWindow *parent, bool call_fit, bool set_si
     item6->Add( new wxSpinCtrl( item5, IDC_MAXCON5SEC, "50", wxDefaultPosition, wxDefaultSize, 0, 20, 500, 50 ), wxSizerFlags().CenterVertical() );
     item6->Add( new wxStaticText( item5, -1, _("Concurrent Kad source lookups"), wxDefaultPosition, wxDefaultSize, 0 ), wxSizerFlags().CenterVertical() );
     item6->Add( new wxSpinCtrl( item5, IDC_KADMAXSEARCHES, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, KAD_MAX_SOURCE_SEARCHES.min, KAD_MAX_SOURCE_SEARCHES.max, KAD_MAX_SOURCE_SEARCHES.def ), wxSizerFlags().CenterVertical() );
+    item6->Add( new wxStaticText( item5, -1, _("Firewalled Kad nodes served as buddy"), wxDefaultPosition, wxDefaultSize, 0 ), wxSizerFlags().CenterVertical() );
+    auto *servedBuddies = new wxSpinCtrl( item5, IDC_KADMAXSERVEDBUDDIES, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, Kademlia::KAD_SERVED_BUDDIES.min, Kademlia::KAD_SERVED_BUDDIES.max, Kademlia::KAD_SERVED_BUDDIES.def );
+    servedBuddies->SetToolTip( _("How many firewalled Kad nodes this node relays callbacks for. Each one holds a connection, so at most a tenth of the connection limit is served.") );
+    item6->Add( servedBuddies, wxSizerFlags().CenterVertical() );
     item6->Add( new wxStaticText( item5, -1, _("Kad source re-search interval (minutes)"), wxDefaultPosition, wxDefaultSize, 0 ), wxSizerFlags().CenterVertical() );
     item6->Add( new wxSpinCtrl( item5, IDC_KADREASKTIME, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, KAD_SOURCE_REASK_MINUTES.min, KAD_SOURCE_REASK_MINUTES.max, KAD_SOURCE_REASK_MINUTES.def ), wxSizerFlags().CenterVertical() );
     item6->Add( new wxStaticText( item5, -1, _("Source re-ask interval (minutes)"), wxDefaultPosition, wxDefaultSize, 0 ), wxSizerFlags().CenterVertical() );
@@ -2373,7 +2389,7 @@ wxSizer *PreferencesRemoteControlsTab( wxWindow *parent, bool call_fit, bool set
 #ifndef CLIENT_GUI
     // The folders a remote EC/amuleapi client may point the incoming, temp, shared or category
     // folders at. Local amule.conf config (allowed-remote-dirs.dat), never settable over EC, and
-    // used only when this instance runs the EC listener or the web server. Empty (the default)
+    // used only when this instance runs the EC listener. Empty (the default)
     // means a remote client cannot change any folder.
     wxStaticBox *itemARBox = new wxStaticBox( parent, -1, _("Folders remote clients may use") );
     wxStaticBoxSizer *itemAR = new wxStaticBoxSizer( itemARBox, wxVERTICAL );
@@ -2459,59 +2475,6 @@ wxSizer *PreferencesRemoteControlsTab( wxWindow *parent, bool call_fit, bool set
     item36->Add( item42, wxSizerFlags().Expand().CenterVertical() );
 
     item0->Add( item36, wxSizerFlags().Expand().Border(wxALL, 0) );
-    wxStaticBox *item15 = new wxStaticBox( parent, -1, _("Web server parameters") );
-    wxStaticBoxSizer *item14 = new wxStaticBoxSizer( item15, wxVERTICAL );
-
-    wxCheckBox *item16 = new wxCheckBox( item15, IDC_ENABLE_WEB, _("Run webserver on startup (deprecated)"), wxDefaultPosition, wxDefaultSize, 0 );
-    item14->Add( item16, wxSizerFlags().CenterVertical().Border(wxLEFT, 5) );
-
-    wxFlexGridSizer *item17 = new wxFlexGridSizer( 2, 0, 0 );
-    item17->AddGrowableCol( 1 );
-
-    wxStaticText *item18 = new wxStaticText( item15, -1, _("Web template"), wxDefaultPosition, wxDefaultSize, 0 );
-    item17->Add( item18, wxSizerFlags().CenterVertical().Border(wxRIGHT, 5) );
-    wxString *strs19 = (wxString*) NULL;
-    wxChoice *item19 = new wxChoice( item15, IDC_WEBTEMPLATE, wxDefaultPosition, wxSize(200,-1), 0, strs19, 0 );
-    item17->Add( item19, wxSizerFlags().CenterVertical().Right() );
-    wxStaticText *item20 = new wxStaticText( item15, -1, _("Full rights password"), wxDefaultPosition, wxDefaultSize, 0 );
-    item17->Add( item20, wxSizerFlags().CenterVertical().Border(wxRIGHT, 5) );
-    CMuleTextCtrl *item21 = new CMuleTextCtrl( item15, IDC_WEB_PASSWD, "", wxDefaultPosition, wxSize(80,-1), wxTE_PASSWORD );
-    item17->Add( item21, wxSizerFlags(1).Expand() );
-    wxCheckBox *item22 = new wxCheckBox( item15, IDC_ENABLE_WEB_LOW, _("Enable Low rights User"), wxDefaultPosition, wxDefaultSize, 0 );
-    item22->SetValue( TRUE );
-    item17->Add( item22, wxSizerFlags().CenterVertical().Border(wxRIGHT, 5) );
-
-    item17->Add( 20, 20, wxSizerFlags().Center().Border(wxALL, 5) );
-    wxStaticText *item23 = new wxStaticText( item15, -1, _("Low rights password"), wxDefaultPosition, wxDefaultSize, 0 );
-    item17->Add( item23, wxSizerFlags().CenterVertical().Border(wxRIGHT, 5) );
-    CMuleTextCtrl *item24 = new CMuleTextCtrl( item15, IDC_WEB_PASSWD_LOW, "", wxDefaultPosition, wxSize(80,-1), wxTE_PASSWORD );
-    item17->Add( item24, wxSizerFlags(1).Expand().CenterVertical() );
-    item14->Add( item17, wxSizerFlags().Expand().CenterVertical() );
-    wxBoxSizer *item25 = new wxBoxSizer( wxHORIZONTAL );
-
-    wxStaticText *item26 = new wxStaticText( item15, -1, _("TCP port:"), wxDefaultPosition, wxDefaultSize, 0 );
-    item25->Add( item26, wxSizerFlags(1).CenterVertical() );
-
-    wxSpinCtrl *item27 = new wxSpinCtrl( item15, IDC_WEB_PORT, "10000", wxDefaultPosition, wxDefaultSize, 0, 1025, 65535, 10000 );
-    item25->Add( item27, wxSizerFlags().Center() );
-
-    wxBoxSizer *item29 = new wxBoxSizer( wxHORIZONTAL );
-
-    item14->Add( item29, wxSizerFlags().Expand().CenterVertical().Border(wxLEFT, 20) );
-    wxBoxSizer *item32 = new wxBoxSizer( wxHORIZONTAL );
-
-    wxStaticText *item33 = new wxStaticText( item15, -1, _("Page Refresh Time (in secs)"), wxDefaultPosition, wxDefaultSize, 0 );
-    item32->Add( item33, wxSizerFlags(1).Center() );
-
-    wxSpinCtrl *item34 = new wxSpinCtrl( item15, IDC_WEB_REFRESH_TIMEOUT, "120", wxDefaultPosition, wxDefaultSize, 0, 120, 600, 120 );
-    item32->Add( item34, wxSizerFlags().Center() );
-
-    item14->Add( item32, wxSizerFlags().Expand().CenterVertical() );
-    wxCheckBox *item35 = new wxCheckBox( item15, IDC_WEB_GZIP, _("Enable Gzip compression"), wxDefaultPosition, wxDefaultSize, 0 );
-    item35->SetValue( TRUE );
-    item14->Add( item35, wxSizerFlags().CenterVertical().Border(wxALL, 5) );
-
-    item0->Add( item14, wxSizerFlags().Expand().Border(wxALL, 0) );
     if (set_sizer)
     {
         parent->SetSizer( item0 );

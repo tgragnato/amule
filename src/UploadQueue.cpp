@@ -389,8 +389,8 @@ void CUploadQueue::Process()
 
 	if (tick - m_lastDisplayUpdate >= 1000) {
 		m_lastDisplayUpdate = tick;
-		// Many peers can upload the same file. Refresh each file once, after all peer
-		// snapshots are published, rather than repainting it once per peer mid-sweep.
+		// Many peers can upload the same file. Queue each file once, after all peer
+		// snapshots are published; the GUI repaints it on its own one-second tick.
 		std::set<const CKnownFile *> files;
 		for (const CClientRef &client : m_uploadinglist) {
 			if (const CKnownFile *file = client.GetUploadFile()) {
@@ -398,7 +398,7 @@ void CUploadQueue::Process()
 			}
 		}
 		for (const CKnownFile *file : files) {
-			Notify_SharedFilesUpdateItem(const_cast<CKnownFile *>(file));
+			Notify_SharedFilesUpdateItemDeferred(const_cast<CKnownFile *>(file));
 		}
 	}
 
@@ -736,8 +736,6 @@ void CUploadQueue::AddClientToQueue(CUpDownClient *client)
 
 bool CUploadQueue::RemoveFromUploadQueue(CUpDownClient *client, const wxString &reason)
 {
-	theApp->clientlist->AddTrackClient(client);
-
 	// Guard the find+erase against concurrent iteration by the disk I/O thread.
 	bool found = false;
 	{
@@ -751,6 +749,8 @@ bool CUploadQueue::RemoveFromUploadQueue(CUpDownClient *client, const wxString &
 	}
 
 	if (found) {
+		// Only a client that had a slot, as eMule does: every deleted client passes through here.
+		theApp->clientlist->AddTrackClient(client);
 		AddDebugLogLineN(logFileIO,
 			CFormat("Upload slot ended: id=%u reason=\"%s\" seconds=%u session_bytes=%u "
 				"client=\"%s\"") %

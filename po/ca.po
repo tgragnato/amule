@@ -15,7 +15,7 @@ msgstr ""
 "Project-Id-Version: aMule\n"
 "Report-Msgid-Bugs-To: https://github.com/amule-org/amule/issues\n"
 "POT-Creation-Date: 2026-10-09 12:39+0000\n"
-"PO-Revision-Date: 2026-11-05 10:40+0000\n"
+"PO-Revision-Date: 2026-11-10 13:01+0000\n"
 "Last-Translator: Kisnov <kisnov@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Catalan <https://hosted.weblate.org/projects/amule/amule-application/ca/>\n"
 "Language: ca\n"
@@ -358,22 +358,6 @@ msgstr "S'estan aturant les aplicacions auxiliars..."
 
 #: src/amule.cpp
 #, c-format
-msgid "Terminating amuleweb instance with pid '%d' ... "
-msgstr "S'està aturant el procés amuleweb amb pid '%d' ... "
-
-#: src/amule.cpp
-#, c-format
-msgid "Killing amuleweb instance with pid '%d' ... "
-msgstr "Aturant el procés amuleweb amb pid '%d' ... "
-
-#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
-#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
-#: src/SharedFilesCtrl.cpp
-msgid "Failed"
-msgstr "Fallades"
-
-#: src/amule.cpp
-#, c-format
 msgid "Terminating amuleapi instance with pid '%d' ... "
 msgstr "S'està aturant la instància d'amuleapi amb el pid «%d» ... "
 
@@ -381,6 +365,12 @@ msgstr "S'està aturant la instància d'amuleapi amb el pid «%d» ... "
 #, c-format
 msgid "Killing amuleapi instance with pid '%d' ... "
 msgstr "S'està matant la instància d'amuleapi amb el pid «%d» ... "
+
+#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
+#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
+#: src/SharedFilesCtrl.cpp
+msgid "Failed"
+msgstr "Fallades"
 
 #: src/amule.cpp
 msgid "aMule OnExit: Terminating core."
@@ -532,28 +522,6 @@ msgid "Not starting %s: it is neither next to aMule nor on PATH."
 msgstr "No s'inicia %s: no es troba ni a la mateixa carpeta que aMule ni al PATH."
 
 #: src/amule.cpp
-msgid "An exception occurred while launching amuleweb."
-msgstr "S'ha produït una excepció en executar l'amuleweb."
-
-#: src/amule.cpp
-#, c-format
-msgid "web server running on pid %d"
-msgstr "servidor web executant-se al pid %d"
-
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb authentication token. The web server was not started."
-msgstr "No s'ha pogut preparar el testimoni d'autenticació de l'amuleweb. No s'ha iniciat el servidor web."
-
-#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
-#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
-msgid "ERROR"
-msgstr "ERROR"
-
-#: src/amule.cpp
-msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
-msgstr "Heu demanat que s'executi el servidor web a l'inici, però el fitxer binari de l'amuleweb no es pot executar. Instal·leu el paquet que conté el servidor web de l'aMule, o compileu l'aMule des del codi font amb -DBUILD_WEBSERVER=YES i instal·leu-lo."
-
-#: src/amule.cpp
 #, c-format
 msgid "Could not write the amuleapi EC token to %s; amuleapi will fall back to its configured password."
 msgstr "No s'ha pogut escriure el testimoni EC d'amuleapi a %s; amuleapi recorrerà a la contrasenya configurada."
@@ -575,14 +543,10 @@ msgstr "No s'ha pogut executar amuleapi durant el reinici automàtic."
 msgid "You requested to run amuleapi on startup, but the amuleapi binary cannot be run. Please install the package containing aMule's REST API server, or build aMule from source with -DBUILD_AMULEAPI=YES and install it."
 msgstr "Heu demanat que s'executi amuleapi a l'inici, però el fitxer binari d'amuleapi no es pot executar. Instal·leu el paquet que conté el servidor de l'API REST de l'aMule, o compileu l'aMule des del codi font amb -DBUILD_AMULEAPI=YES i instal·leu-lo."
 
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb EC token."
-msgstr "No s'ha pogut preparar el testimoni EC de l'amuleweb."
-
-#: src/amule.cpp
-#, c-format
-msgid "Could not remove the amuleweb EC token file: %s"
-msgstr "No s'ha pogut eliminar el fitxer del testimoni EC de l'amuleweb: %s"
+#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
+#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
+msgid "ERROR"
+msgstr "ERROR"
 
 #: src/amule.cpp
 #, c-format
@@ -1066,23 +1030,14 @@ msgstr "Xifratge"
 msgid "aMuleGUI"
 msgstr "aMuleGUI"
 
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
-msgstr "PU: %.1f%s (%.1f) | BA: %.1f%s (%.1f)"
-
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
 msgid " MiB/s"
 msgstr " MiB/s"
 
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/utils/wxCas/src/wxcasframe.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
+#: src/utils/wxCas/src/wxcasframe.cpp
 msgid " KiB/s"
 msgstr " KiB/s"
-
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s | Down: %.1f%s"
-msgstr "PU: %.1f%s | BA: %.1f%s"
 
 #: src/amuleDlg.cpp
 msgid "Transfer speeds are reported by the daemon. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
@@ -1091,6 +1046,16 @@ msgstr "Les velocitats de transferència les informa el dimoni. La pujada total 
 #: src/amuleDlg.cpp
 msgid "Live speeds are averaged over the last second. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
 msgstr "Les velocitats en directe són la mitjana de l'últim segon. La pujada total inclou el trànsit de control; les velocitats de pujada dels clients només inclouen els paquets de fitxers. Els valors entre parèntesis mostren la sobrecàrrega del protocol en KiB/s."
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s | Down: %.1f%s"
+msgstr "PU: %.1f%s | BA: %.1f%s"
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
+msgstr "PU: %.1f%s (%.1f) | BA: %.1f%s (%.1f)"
 
 #: src/amuleDlg.cpp
 #, c-format
@@ -1795,15 +1760,15 @@ msgstr "Ofuscació"
 #. TRANSLATORS: the upload credit a peer has earned by sending us data.
 #: src/ClientNameCellDrawing.cpp
 msgid "Credits"
-msgstr ""
+msgstr "Crèdits"
 
 #: src/ClientNameCellDrawing.cpp
 msgid "Moves up faster in our upload queue"
-msgstr ""
+msgstr "Avança més ràpid a la nostra cua de pujades"
 
 #: src/ClientNameCellDrawing.cpp
 msgid "Does not support the eMule extended protocol"
-msgstr ""
+msgstr "No admet el protocol estès d'eMule"
 
 #: src/ClientRef.cpp
 msgid "Not complete"
@@ -2112,6 +2077,55 @@ msgstr "Llavors font"
 #: src/DataToText.cpp
 msgid "Search Result"
 msgstr "Resultat de la cerca"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a direct connection"
+msgstr "Connexions actives"
+
+#: src/DataToText.cpp
+msgid "a direct callback"
+msgstr ""
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "our server"
+msgstr "Esborra el servidor"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the Kad buddy"
+msgstr "Cerca d'amic"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the source's own server"
+msgstr "eD2k: Servidor actual"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a server hole punch"
+msgstr "Perforacions de NAT amb servidor: %s"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a Lugdunum callback"
+msgstr "Retrotrucades de Lugdunum: %s"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on a fallback route"
+msgstr "S'està connectant via servidor"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on an unproven route"
+msgstr "S'està connectant via servidor"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s"
+msgstr "S'està connectant via Kad"
 
 #: src/DataToText.cpp src/DownloadListCtrl.cpp src/OtherFunctions.cpp
 #: src/TransferWnd.cpp
@@ -2422,10 +2436,6 @@ msgstr[1] "No s'han pogut afegir %u enllaços (consulteu el registre per a més 
 #, c-format
 msgid "Invalid eD2k link! ERROR: %s"
 msgstr "Enllaç eD2k invàlid! ERROR: %s"
-
-#: src/ECSpecialMuleTags.cpp
-msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
-msgstr "S'ha rebutjat una sol·licitud remota per definir la plantilla del servidor web: el valor ha de ser un nom de plantilla simple, no un camí."
 
 #: src/ECSpecialMuleTags.cpp
 msgid "Refused a remote request to change the online-signature folder: it can only be set in the daemon's own configuration."
@@ -2768,7 +2778,7 @@ msgstr "L'extracció de metadades multimèdia està desactivada a les preferènc
 
 #: src/ExternalConn.cpp src/PrefsUnifiedDlg.cpp src/SharedFileList.cpp
 msgid "Media metadata extraction is unavailable: the helper is missing or its OS restrictions failed. See the core log for details."
-msgstr ""
+msgstr "L'extracció de metadades multimèdia no està disponible: falta el programa auxiliar o han fallat les seves restriccions del sistema operatiu. Consulteu el registre del nucli per a més detalls."
 
 #: src/ExternalConn.cpp
 msgid "File is not eligible for media metadata extraction (not an audio/video file, or an incomplete download)"
@@ -4249,9 +4259,9 @@ msgid "Media metadata: bundled amule-media-probe helper is unavailable."
 msgstr "Metadades multimèdia: el programa auxiliar amule-media-probe inclòs no està disponible."
 
 #: src/MediaProbe.cpp
-#, fuzzy, c-format
+#, c-format
 msgid "Media metadata: no result for %s: %s"
-msgstr "Metadades multimèdia: l'analitzador ha fallat per a %s"
+msgstr "Metadades multimèdia: no hi ha cap resultat per a %s: %s"
 
 #: src/MediaProbe.cpp
 #, c-format
@@ -4264,9 +4274,9 @@ msgid "Extracting media metadata: %s"
 msgstr "S'estan extraient les metadades multimèdia: %s"
 
 #: src/MediaProbe.cpp
-#, fuzzy, c-format
+#, c-format
 msgid "Media metadata extraction disabled until restart: %s"
-msgstr "L'extracció de metadades multimèdia està desactivada a les preferències"
+msgstr "L'extracció de metadades multimèdia està desactivada fins que es reiniciï: %s"
 
 #: src/MediaProbeThread.cpp
 #, c-format
@@ -4571,12 +4581,13 @@ msgid "Users connected to the current server and an estimate of the total number
 msgstr "Usuaris connectats al servidor actual i una estimació del nombre total d'usuaris."
 
 #: src/muuli_wdr.cpp
-msgid "Up: 0.0 | Down: 0.0"
-msgstr "PU: 0.0 | BA: 0.0"
+msgid "Up:"
+msgstr ""
 
 #: src/muuli_wdr.cpp
-msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
-msgstr "La mitjana de pujada i baixada actuals. Si està habilitat, el valor entre parèntesis mostra la sobrecàrrega provinent de les comunicacions amb els clients."
+#, fuzzy
+msgid "Down:"
+msgstr "Baixant: "
 
 #: src/muuli_wdr.cpp
 msgid "Displays the connected status and active transfers. Red arrows signifies that you are currently not connected, yellow arrows signify that you have low ID (firewalled) and green arrows signify that you have high ID (The optimal connection type)."
@@ -4585,10 +4596,6 @@ msgstr "Mostra l'estat de la connexió i les transferències actives. El vermell
 #: src/muuli_wdr.cpp
 msgid "Not Connected ..."
 msgstr "Desconnectat ..."
-
-#: src/muuli_wdr.cpp
-msgid "Currently connected server."
-msgstr "Servidor connectat actualment."
 
 #: src/muuli_wdr.cpp
 msgid "Search"
@@ -5120,26 +5127,23 @@ msgstr "Registra una entrada d'inici automàtic per usuari al sistema operatiu p
 
 #: src/muuli_wdr.cpp
 msgid "Prevent automatic sleep: "
-msgstr ""
+msgstr "Evita la suspensió automàtica: "
 
 #: src/muuli_wdr.cpp
-#, fuzzy
 msgid "Off"
-msgstr "inactiu"
+msgstr "Desactivat"
 
 #: src/muuli_wdr.cpp
-#, fuzzy
 msgid "While downloading"
-msgstr "Ja s'està baixant"
+msgstr "Mentre es baixa"
 
 #: src/muuli_wdr.cpp
-#, fuzzy
 msgid "While aMule is running"
-msgstr "L'aMule s'està executant"
+msgstr "Mentre l'aMule s'executa"
 
 #: src/muuli_wdr.cpp
 msgid "While downloading: stay awake while a download is queued and not paused, stopped or in error, or until session uploads match session downloads. While running: stay awake even when idle, disconnected or minimized to the tray. The screen can still turn off."
-msgstr ""
+msgstr "Mentre es baixa: l'ordinador no se suspèn mentre hi hagi una baixada a la cua que no estigui en pausa, aturada o amb errors, o fins que la pujada de la sessió iguali la baixada de la sessió. Mentre l'aMule s'executa: no se suspèn ni tan sols quan està inactiu, desconnectat o minimitzat a la safata del sistema. La pantalla es pot apagar igualment."
 
 #: src/muuli_wdr.cpp packaging/windows/installer_strings.c
 msgid "Makes aMule the default handler for ed2k:// links so clicking one in your browser or file manager opens it here."
@@ -5342,17 +5346,16 @@ msgid "Takes effect after restarting aMule."
 msgstr "S'aplica després de reiniciar l'aMule."
 
 #: src/muuli_wdr.cpp
-#, fuzzy
 msgid "Advertise my IPv6 address:"
-msgstr "Anuncia la meva adreça IPv6 als altres parells"
+msgstr "Anuncia la meva adreça IPv6:"
 
 #: src/muuli_wdr.cpp
 msgid "When verified"
-msgstr ""
+msgstr "Quan s'hagi verificat"
 
 #: src/muuli_wdr.cpp
 msgid "Always"
-msgstr ""
+msgstr "Sempre"
 
 #: src/muuli_wdr.cpp src/StatTree.cpp
 msgid "Never"
@@ -5559,9 +5562,8 @@ msgid "Extract length / bitrate / codec from shared audio and video files"
 msgstr "Extreu la durada, la taxa de bits i el còdec dels fitxers d'àudio i vídeo compartits"
 
 #: src/muuli_wdr.cpp
-#, fuzzy
 msgid "When enabled, aMule uses its bundled media parser to extract metadata from shared media files."
-msgstr "Si està activat, l'aMule fa servir l'analitzador MediaInfo inclòs per extreure les metadades dels fitxers multimèdia compartits."
+msgstr "Si està activat, l'aMule fa servir el seu analitzador multimèdia inclòs per extreure les metadades dels fitxers multimèdia compartits."
 
 #: src/muuli_wdr.cpp
 msgid ""
@@ -5600,8 +5602,12 @@ msgid "Remove"
 msgstr "Esborra"
 
 #: src/muuli_wdr.cpp
-msgid "(Right click on folder icon for recursive share)"
-msgstr "(Per a compartir recursivament feu clic dret sobre el directori)"
+msgid "Double-click: share or unshare this folder. Right-click: share it with all subfolders, including new ones."
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "Bold: shared. Bold italic: shared with all subfolders. Red folder: contains shared folders."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Share hidden files"
@@ -5762,6 +5768,14 @@ msgstr "Connexions noves màx. / 5 segs"
 #: src/muuli_wdr.cpp
 msgid "Concurrent Kad source lookups"
 msgstr "Cerques simultànies de fonts a Kad"
+
+#: src/muuli_wdr.cpp
+msgid "Firewalled Kad nodes served as buddy"
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "How many firewalled Kad nodes this node relays callbacks for. Each one holds a connection, so at most a tenth of the connection limit is served."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Kad source re-search interval (minutes)"
@@ -5958,46 +5972,6 @@ msgstr "Les sessions de convidat poden llegir l'estat i els llistats, però no p
 #: src/muuli_wdr.cpp
 msgid "Guest password"
 msgstr "Contrasenya de convidat"
-
-#: src/muuli_wdr.cpp
-msgid "Web server parameters"
-msgstr "Paràmetres del servidor web"
-
-#: src/muuli_wdr.cpp
-msgid "Run webserver on startup (deprecated)"
-msgstr "Executa el servidor web a l'inici (obsolet)"
-
-#: src/muuli_wdr.cpp
-msgid "Web template"
-msgstr "Plantilla web"
-
-#: src/muuli_wdr.cpp
-msgid "Full rights password"
-msgstr "Contrasenya amb drets totals"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Low rights User"
-msgstr "Habilita l'usuari convidat"
-
-#: src/muuli_wdr.cpp
-msgid "Low rights password"
-msgstr "Contrasenya amb drets restringits"
-
-#: src/muuli_wdr.cpp
-msgid "Enable UPnP port forwarding of the web server port"
-msgstr "Activa l'encaminament UPnP del port del servidor web"
-
-#: src/muuli_wdr.cpp
-msgid "Web server UPnP TCP port (Optional)"
-msgstr "Port TCP UPnP del servidor web (opcional)"
-
-#: src/muuli_wdr.cpp
-msgid "Page Refresh Time (in secs)"
-msgstr "Temps de refresc de la pàgina (en segons)"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Gzip compression"
-msgstr "Habilita la compressió Gzip"
 
 #: src/muuli_wdr.cpp
 msgid "Reset page to defaults"
@@ -7023,14 +6997,13 @@ msgstr "Consulta d'informació de company"
 msgid "NAT traversal (QUIC)"
 msgstr "Travessia de NAT (QUIC)"
 
-#: src/Preferences.cpp
-msgid "no options available"
-msgstr "No hi ha opcions disponibles"
+#: src/PeerCapabilities.h
+msgid "Skips unknown source exchange tags"
+msgstr ""
 
 #: src/Preferences.cpp
-#, fuzzy
 msgid "Media metadata: FFProbePath is obsolete; aMule now uses its bundled media parser. Removing the old setting."
-msgstr "Metadades multimèdia: FFProbePath està obsolet; ara l'aMule fa servir l'analitzador MediaInfo inclòs. S'elimina l'opció antiga."
+msgstr "Metadades multimèdia: FFProbePath està obsolet; ara l'aMule fa servir el seu analitzador multimèdia inclòs. S'elimina l'opció antiga."
 
 #: src/Preferences.cpp
 msgid "Invalid path mapping found, skipping"
@@ -7052,34 +7025,34 @@ msgstr "S'usarà el port per defecte (%d)"
 #: src/Preferences.cpp
 #, c-format
 msgid "Moved the shared folders from %s to shareddir-explicit.dat"
-msgstr ""
+msgstr "S'han traslladat les carpetes compartides de %s a shareddir-explicit.dat"
 
 #: src/Preferences.cpp
 #, c-format
 msgid "Could not read %s. It is left in place and ignored."
-msgstr ""
+msgstr "No s'ha pogut llegir %s. Es deixa on és i s'ignora."
 
 #: src/Preferences.cpp
 #, c-format
 msgid "Removing %s: its folders are already in shareddir-explicit.dat and shareddir-recursive.dat"
-msgstr ""
+msgstr "S'elimina %s: les seves carpetes ja són a shareddir-explicit.dat i shareddir-recursive.dat"
 
 #: src/Preferences.cpp
 #, c-format
 msgid "Ignoring %s: shared folders are kept in shareddir-explicit.dat and shareddir-recursive.dat. The file will be removed."
-msgstr ""
+msgstr "S'ignora %s: les carpetes compartides es desen a shareddir-explicit.dat i shareddir-recursive.dat. S'eliminarà el fitxer."
 
 #: src/Preferences.cpp
 #, c-format
 msgid "%u folder listed only there is not shared:%s"
 msgid_plural "%u folders listed only there are not shared:%s"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "%u carpeta que només hi figura no està compartida:%s"
+msgstr[1] "%u carpetes que només hi figuren no estan compartides:%s"
 
 #: src/Preferences.cpp
-#, fuzzy, c-format
+#, c-format
 msgid "Could not remove %s"
-msgstr "No s'ha pogut moure el fitxer baixat a %s"
+msgstr "No s'ha pogut eliminar %s"
 
 #: src/Preferences.cpp
 #, c-format
@@ -7387,12 +7360,9 @@ msgid "macOS does not let an application stop being the default handler. To stop
 msgstr "El macOS no permet que una aplicació deixi de ser el gestor predeterminat. Perquè l'aMule deixi d'obrir aquests enllaços, feu que una altra aplicació sigui la predeterminada."
 
 #: src/PrefsUnifiedDlg.cpp
-msgid "The web server and aMule API require external connections to be enabled."
+#, fuzzy
+msgid "The aMule API requires external connections to be enabled."
 msgstr "El servidor web i l'API de l'aMule requereixen que les connexions externes estiguin activades."
-
-#: src/PrefsUnifiedDlg.cpp
-msgid "The aMule web server is deprecated. Consider running the aMule API instead."
-msgstr "El servidor web de l'aMule està obsolet. Considereu executar l'API de l'aMule en lloc seu."
 
 #: src/PrefsUnifiedDlg.cpp
 msgid ""
@@ -7671,7 +7641,7 @@ msgstr "Voleu esborrar l'historial de cerques desat? Això no es pot desfer."
 
 #: src/SearchDlg.cpp
 msgid "Load into search form"
-msgstr ""
+msgstr "Carrega al formulari de cerca"
 
 #: src/SearchDlg.cpp
 msgid "Search warning"
@@ -7705,7 +7675,7 @@ msgstr "Cerca en curs"
 
 #: src/SearchDlg.cpp
 msgid "Enter whole, non-negative sizes and availability within the supported range."
-msgstr ""
+msgstr "Introduïu mides i disponibilitats enteres i no negatives dins de l'interval admès."
 
 #: src/SearchDlg.cpp
 msgid "Min size must be smaller than max size. Max size ignored."
@@ -7717,16 +7687,15 @@ msgstr "Principal"
 
 #: src/SearchMetadataPanel.cpp
 msgid "minutes"
-msgstr ""
+msgstr "minuts"
 
 #: src/SearchMetadataPanel.cpp
 msgid "Duration unit"
-msgstr ""
+msgstr "Unitat de durada"
 
 #: src/SearchMetadataPanel.cpp
-#, fuzzy
 msgid "Minimum duration"
-msgstr "Durada mínima (minuts)"
+msgstr "Durada mínima"
 
 #: src/SearchMetadataPanel.cpp
 msgid "Minimum bitrate (kbps)"
@@ -8428,6 +8397,16 @@ msgid "Connected to buddy at %s"
 msgstr "Connectat amb l'amic a %s"
 
 #: src/ServerWnd.cpp
+#, fuzzy
+msgid "Served buddies:"
+msgstr "Llista de servidors"
+
+#: src/ServerWnd.cpp
+#, c-format
+msgid "%u of %u"
+msgstr ""
+
+#: src/ServerWnd.cpp
 msgid "IP address:"
 msgstr "Adreça IP:"
 
@@ -8920,35 +8899,6 @@ msgid "Peak Connections (estimate): %i"
 msgstr "Pic de connexions (aprox.): %i"
 
 #: src/Statistics.cpp
-msgid "NAT Traversal (Session)"
-msgstr "Travessia de NAT (Sessió)"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Server Hole Punches: %s"
-msgstr "Perforacions de NAT amb servidor: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Server Hole Punches: %s"
-msgstr "Perforacions de NAT amb servidor reeixides: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Lugdunum Callbacks: %s"
-msgstr "Retrotrucades de Lugdunum: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Lugdunum Callbacks: %s"
-msgstr "Retrotrucades de Lugdunum reeixides: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "uTP Streams Moved to a New Port: %s"
-msgstr "Fluxos uTP traslladats a un port nou: %s"
-
-#: src/Statistics.cpp
 #, c-format
 msgid "Unknown: %s"
 msgstr "Desconegut: %s"
@@ -9034,6 +8984,11 @@ msgid "Average file size: %s"
 msgstr "Mida mitjana de fitxer: %s"
 
 #: src/Statistics.cpp
+#, fuzzy
+msgid "Diagnostics"
+msgstr "Diagnòstic de cerques"
+
+#: src/Statistics.cpp
 msgid "Operating System"
 msgstr "Sistema operatiu"
 
@@ -9115,6 +9070,11 @@ msgstr ""
 "No s'ha indicat cap paraula clau de cerca.\n"
 "Escriviu «help search» per obtenir més ajuda.\n"
 
+#: src/TextClient.cpp
+#, fuzzy
+msgid "The connected daemon does not support media search filters.\n"
+msgstr "El dimoni connectat no admet la cerca a totes les xarxes.\n"
+
 #. TRANSLATORS:
 #. 'help search' is a command to the program, do not translate it.
 #: src/TextClient.cpp
@@ -9126,11 +9086,20 @@ msgstr ""
 "Escriviu 'help search' per obtenir més ajuda.\n"
 
 #: src/TextClient.cpp
+#, fuzzy
+msgid "The connected daemon does not support search management.\n"
+msgstr "El dimoni connectat no admet la cerca a totes les xarxes.\n"
+
+#: src/TextClient.cpp
+msgid "A search ID from 'search list' is required.\n"
+msgstr ""
+
+#: src/TextClient.cpp
 #, c-format
 msgid "Download File: %lu %s\n"
 msgstr "Baixant el fitxer: %lu %s\r\n"
 
-#: src/TextClient.cpp src/webserver/src/WebServer.cpp
+#: src/TextClient.cpp
 msgid "Request failed with an unknown error."
 msgstr "La petició ha fallat amb un error desconegut."
 
@@ -9237,6 +9206,27 @@ msgstr ""
 #: src/TextClient.cpp
 msgid "[PartFile]"
 msgstr "[Fitxer de parts]"
+
+#: src/TextClient.cpp
+msgid "No retained searches.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; availability is unknown.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; further requests remain possible.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "No further results can be requested for this search.\n"
+msgstr "Retorna els resultats de la cerca anterior.\n"
+
+#: src/TextClient.cpp
+msgid "Search stop request processed; retained results were not removed.\n"
+msgstr ""
 
 #: src/TextClient.cpp
 #, c-format
@@ -9491,6 +9481,7 @@ msgid "Execute a search."
 msgstr "Realitza una cerca."
 
 #: src/TextClient.cpp
+#, fuzzy
 msgid ""
 "A search type has to be specified by giving the type:\n"
 "    GLOBAL\n"
@@ -9506,6 +9497,11 @@ msgid ""
 "    --avail <N>            minimum number of sources\n"
 "    --min-size <N[KMG]>    smallest file size; K=1024, M=K*1024, G=M*1024\n"
 "    --max-size <N[KMG]>    largest file size; same suffixes\n"
+"    --min-bitrate <kbps>   whole number, 0-1000000\n"
+"    --min-duration <sec>   whole number, 0-86400\n"
+"    --codec <text> --title <text> --album <text> --artist <text>\n"
+"Quote media text values containing spaces.\n"
+"Kad applies media filters; eD2k servers may ignore them.\n"
 "Example: 'search global linux iso --type Iso --min-size 100M' returns\n"
 "results for \"linux iso\" of file-type Iso at least 100 MiB.\n"
 msgstr ""
@@ -9541,6 +9537,28 @@ msgstr "Realitza una cerca kad"
 #: src/TextClient.cpp
 msgid "Execute an eD2k and Kad search"
 msgstr "Realitza una cerca a eD2k i Kad"
+
+#: src/TextClient.cpp
+msgid "List retained search IDs and queries."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Stop a search, keeping its results."
+msgstr "Cap cerca oberta no conté aquest resultat."
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Request more Kad search results."
+msgstr "Número de resultats de la cerca: %i\n"
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'. Further results are not guaranteed."
+msgstr ""
 
 #: src/TextClient.cpp
 msgid "Show the results of a search."
@@ -10370,139 +10388,6 @@ msgstr "Directori on està el fitxer de signatura"
 msgid "Folder where generating the statistic image"
 msgstr "Directori on es genera la imatge"
 
-#: src/webserver/src/WebInterface.cpp
-msgid "Loads template <str>"
-msgstr "Carrega la plantilla <str>"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Web server HTTP port"
-msgstr "Port HTTP del servidor web"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use UPnP port forwarding on web server port"
-msgstr "Usa l'encaminament UPnP al port del servidor web"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "UPnP port"
-msgstr "Port UPnP"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use gzip compression"
-msgstr "Usa la compressió gzip"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Full access password for web server"
-msgstr "Contrasenya d'accés total per al servidor web"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Guest password for web server"
-msgstr "Contrasenya de convidat per al servidor web"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Allow guest access"
-msgstr "Permetre l'accés de convidats"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Deny guest access"
-msgstr "Denega l'accés de convidats"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Load/save web server settings from/to remote aMule"
-msgstr "Carrega / desa la configuració del servidor web des de / a l'aMule remot"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule config file path. DO NOT USE DIRECTLY!"
-msgstr "Directori del fitxer de configuració de l'aMule. NO L'USEU DIRECTAMENT!"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Disable PHP interpreter (deprecated)"
-msgstr "Inhabilita l'intèrpret de PHP (obsolet)"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Recompile PHP pages on each request"
-msgstr "Recompila les pàgines PHP a cada petició"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule Web Server"
-msgstr "Servidor web de l'aMule"
-
-#: src/webserver/src/WebServer.cpp
-msgid "web client connection accepted\n"
-msgstr "s'ha acceptat la connexió del client web\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "ERROR: cannot accept web client connection\n"
-msgstr "ERROR: no es pot acceptar connexions de clients web\n"
-
-#: src/webserver/src/WebServer.cpp
-#, c-format
-msgid "Request failed with the following error: %s."
-msgstr "Ha fallat la petició amb el següent error: %s."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Index file not found: "
-msgstr "No s'ha trobat el fitxer d'índex: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session expired - requesting login\n"
-msgstr "La sessió ha caducat - s'està demanant la identificació\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, logged in\n"
-msgstr "Sessió correcta, identificat\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, not logged in\n"
-msgstr "Sessió correcta, sense identificar\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No session opened - will request login\n"
-msgstr "No hi ha cap sessió oberta - es demanarà identificació\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session created - requesting login\n"
-msgstr "Sessió creada - s'està demanant la identificació\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [original]: "
-msgstr "S'està processant la petició [original]: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Refusing to read `pass` from URL query string\n"
-msgstr "Es rebutja llegir «pass» de la cadena de consulta de l'URL\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No password specified, login will not be allowed."
-msgstr "No s'ha especificat cap contrasenya, no es permetrà la identificació."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Checking password\n"
-msgstr "S'està comprovant la contrasenya\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password hash invalid\n"
-msgstr "El resum de la contrasenya és invàlid\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password ok\n"
-msgstr "Contrasenya correcta\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password bad\n"
-msgstr "Contrasenya incorrecta\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "You did not enter any password. Blank password is not allowed.\n"
-msgstr "No heu especificat cap contrasenya. No es permet una contrasenya en blanc.\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Logout requested\n"
-msgstr "Eixida sol·licitada\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [redirected]: "
-msgstr "S'està processant la petició [redirigit]: "
-
 #: packaging/windows/installer_strings.c
 msgid "aMule (required)"
 msgstr "aMule (necessari)"
@@ -10645,6 +10530,236 @@ msgstr "No s'ha pogut comparar l'ECPassword antic amb l'ECPasswordVerifier; es r
 msgid "Migrating a changed legacy ECPassword after downgrade; the previous verifier no longer authenticates this run."
 msgstr "S'està migrant un ECPassword antic modificat després de tornar a una versió anterior; el verificador anterior ja no autentica aquesta execució."
 
+#, c-format
+#~ msgid "Terminating amuleweb instance with pid '%d' ... "
+#~ msgstr "S'està aturant el procés amuleweb amb pid '%d' ... "
+
+#, c-format
+#~ msgid "Killing amuleweb instance with pid '%d' ... "
+#~ msgstr "Aturant el procés amuleweb amb pid '%d' ... "
+
+#~ msgid "An exception occurred while launching amuleweb."
+#~ msgstr "S'ha produït una excepció en executar l'amuleweb."
+
+#, c-format
+#~ msgid "web server running on pid %d"
+#~ msgstr "servidor web executant-se al pid %d"
+
+#~ msgid "Could not prepare the amuleweb authentication token. The web server was not started."
+#~ msgstr "No s'ha pogut preparar el testimoni d'autenticació de l'amuleweb. No s'ha iniciat el servidor web."
+
+#~ msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
+#~ msgstr "Heu demanat que s'executi el servidor web a l'inici, però el fitxer binari de l'amuleweb no es pot executar. Instal·leu el paquet que conté el servidor web de l'aMule, o compileu l'aMule des del codi font amb -DBUILD_WEBSERVER=YES i instal·leu-lo."
+
+#~ msgid "Could not prepare the amuleweb EC token."
+#~ msgstr "No s'ha pogut preparar el testimoni EC de l'amuleweb."
+
+#, c-format
+#~ msgid "Could not remove the amuleweb EC token file: %s"
+#~ msgstr "No s'ha pogut eliminar el fitxer del testimoni EC de l'amuleweb: %s"
+
+#~ msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
+#~ msgstr "S'ha rebutjat una sol·licitud remota per definir la plantilla del servidor web: el valor ha de ser un nom de plantilla simple, no un camí."
+
+#~ msgid "Web server parameters"
+#~ msgstr "Paràmetres del servidor web"
+
+#~ msgid "Run webserver on startup (deprecated)"
+#~ msgstr "Executa el servidor web a l'inici (obsolet)"
+
+#~ msgid "Web template"
+#~ msgstr "Plantilla web"
+
+#~ msgid "Full rights password"
+#~ msgstr "Contrasenya amb drets totals"
+
+#~ msgid "Enable Low rights User"
+#~ msgstr "Habilita l'usuari convidat"
+
+#~ msgid "Low rights password"
+#~ msgstr "Contrasenya amb drets restringits"
+
+#~ msgid "Enable UPnP port forwarding of the web server port"
+#~ msgstr "Activa l'encaminament UPnP del port del servidor web"
+
+#~ msgid "Web server UPnP TCP port (Optional)"
+#~ msgstr "Port TCP UPnP del servidor web (opcional)"
+
+#~ msgid "Page Refresh Time (in secs)"
+#~ msgstr "Temps de refresc de la pàgina (en segons)"
+
+#~ msgid "Enable Gzip compression"
+#~ msgstr "Habilita la compressió Gzip"
+
+#~ msgid "no options available"
+#~ msgstr "No hi ha opcions disponibles"
+
+#~ msgid "The aMule web server is deprecated. Consider running the aMule API instead."
+#~ msgstr "El servidor web de l'aMule està obsolet. Considereu executar l'API de l'aMule en lloc seu."
+
+#~ msgid "Loads template <str>"
+#~ msgstr "Carrega la plantilla <str>"
+
+#~ msgid "Web server HTTP port"
+#~ msgstr "Port HTTP del servidor web"
+
+#~ msgid "Use UPnP port forwarding on web server port"
+#~ msgstr "Usa l'encaminament UPnP al port del servidor web"
+
+#~ msgid "UPnP port"
+#~ msgstr "Port UPnP"
+
+#~ msgid "Use gzip compression"
+#~ msgstr "Usa la compressió gzip"
+
+#~ msgid "Full access password for web server"
+#~ msgstr "Contrasenya d'accés total per al servidor web"
+
+#~ msgid "Guest password for web server"
+#~ msgstr "Contrasenya de convidat per al servidor web"
+
+#~ msgid "Allow guest access"
+#~ msgstr "Permetre l'accés de convidats"
+
+#~ msgid "Deny guest access"
+#~ msgstr "Denega l'accés de convidats"
+
+#~ msgid "Load/save web server settings from/to remote aMule"
+#~ msgstr "Carrega / desa la configuració del servidor web des de / a l'aMule remot"
+
+#~ msgid "aMule config file path. DO NOT USE DIRECTLY!"
+#~ msgstr "Directori del fitxer de configuració de l'aMule. NO L'USEU DIRECTAMENT!"
+
+#~ msgid "Disable PHP interpreter (deprecated)"
+#~ msgstr "Inhabilita l'intèrpret de PHP (obsolet)"
+
+#~ msgid "Recompile PHP pages on each request"
+#~ msgstr "Recompila les pàgines PHP a cada petició"
+
+#~ msgid "aMule Web Server"
+#~ msgstr "Servidor web de l'aMule"
+
+#~ msgid "web client connection accepted\n"
+#~ msgstr "s'ha acceptat la connexió del client web\n"
+
+#~ msgid "ERROR: cannot accept web client connection\n"
+#~ msgstr "ERROR: no es pot acceptar connexions de clients web\n"
+
+#, c-format
+#~ msgid "Request failed with the following error: %s."
+#~ msgstr "Ha fallat la petició amb el següent error: %s."
+
+#~ msgid "Index file not found: "
+#~ msgstr "No s'ha trobat el fitxer d'índex: "
+
+#~ msgid "Session expired - requesting login\n"
+#~ msgstr "La sessió ha caducat - s'està demanant la identificació\n"
+
+#~ msgid "Session ok, logged in\n"
+#~ msgstr "Sessió correcta, identificat\n"
+
+#~ msgid "Session ok, not logged in\n"
+#~ msgstr "Sessió correcta, sense identificar\n"
+
+#~ msgid "No session opened - will request login\n"
+#~ msgstr "No hi ha cap sessió oberta - es demanarà identificació\n"
+
+#~ msgid "Session created - requesting login\n"
+#~ msgstr "Sessió creada - s'està demanant la identificació\n"
+
+#~ msgid "Processing request [original]: "
+#~ msgstr "S'està processant la petició [original]: "
+
+#~ msgid "Refusing to read `pass` from URL query string\n"
+#~ msgstr "Es rebutja llegir «pass» de la cadena de consulta de l'URL\n"
+
+#~ msgid "No password specified, login will not be allowed."
+#~ msgstr "No s'ha especificat cap contrasenya, no es permetrà la identificació."
+
+#~ msgid "Checking password\n"
+#~ msgstr "S'està comprovant la contrasenya\n"
+
+#~ msgid "Password hash invalid\n"
+#~ msgstr "El resum de la contrasenya és invàlid\n"
+
+#~ msgid "Password ok\n"
+#~ msgstr "Contrasenya correcta\n"
+
+#~ msgid "Password bad\n"
+#~ msgstr "Contrasenya incorrecta\n"
+
+#~ msgid "You did not enter any password. Blank password is not allowed.\n"
+#~ msgstr "No heu especificat cap contrasenya. No es permet una contrasenya en blanc.\n"
+
+#~ msgid "Logout requested\n"
+#~ msgstr "Eixida sol·licitada\n"
+
+#~ msgid "Processing request [redirected]: "
+#~ msgstr "S'està processant la petició [redirigit]: "
+
+#~ msgid "(Right click on folder icon for recursive share)"
+#~ msgstr "(Per a compartir recursivament feu clic dret sobre el directori)"
+
+#~ msgid "Currently connected server."
+#~ msgstr "Servidor connectat actualment."
+
+#~ msgid "Up: 0.0 | Down: 0.0"
+#~ msgstr "PU: 0.0 | BA: 0.0"
+
+#~ msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
+#~ msgstr "La mitjana de pujada i baixada actuals. Si està habilitat, el valor entre parèntesis mostra la sobrecàrrega provinent de les comunicacions amb els clients."
+
+#, fuzzy, c-format
+#~ msgid "Buddies Served: %llu"
+#~ msgstr "Fitxers en servidors funcionant: %llu"
+
+#, fuzzy, c-format
+#~ msgid "Time Served: %s"
+#~ msgstr "Servidors filtrats: %s"
+
+#, fuzzy, c-format
+#~ msgid "Buddies Connected: %llu"
+#~ msgstr " està connectat a "
+
+#~ msgid "NAT Traversal (Session)"
+#~ msgstr "Travessia de NAT (Sessió)"
+
+#, c-format
+#~ msgid "Successful Server Hole Punches: %s"
+#~ msgstr "Perforacions de NAT amb servidor reeixides: %s"
+
+#, c-format
+#~ msgid "Successful Lugdunum Callbacks: %s"
+#~ msgstr "Retrotrucades de Lugdunum reeixides: %s"
+
+#, c-format
+#~ msgid "uTP Streams Moved to a New Port: %s"
+#~ msgstr "Fluxos uTP traslladats a un port nou: %s"
+
+#, fuzzy
+#~ msgid "Keyword publish"
+#~ msgstr "Paraula clau: %s"
+
+#, fuzzy
+#~ msgid "Source publish"
+#~ msgstr "Fonts"
+
+#, fuzzy
+#~ msgid "Firewall check"
+#~ msgstr "Comprovació del tallafocs UDP"
+
+#, fuzzy
+#~ msgid "Firewall check 2"
+#~ msgstr "Comprovació del tallafocs UDP"
+
+#, fuzzy, c-format
+#~ msgid "Keys valid: %s"
+#~ msgstr "Paraula clau: %s"
+
+#, fuzzy
+#~ msgid "Kad Buddies"
+#~ msgstr "Usuari de Kad"
+
 #~ msgid "This aMule has no media helper (amule-media-probe)"
 #~ msgstr "Aquest aMule no té el programa auxiliar multimèdia (amule-media-probe)"
 
@@ -10776,9 +10891,6 @@ msgstr "S'està migrant un ECPassword antic modificat després de tornar a una v
 
 #~ msgid "Click on this button to update the servers list from URL ..."
 #~ msgstr "Feu clic en aquest botó per a actualitzar la llista de servidors des d'una URL ..."
-
-#~ msgid "Server list"
-#~ msgstr "Llista de servidors"
 
 #~ msgid "Enter the url to a server.met file here and press the button to the left to update the list of known servers."
 #~ msgstr "Introduïu l'adreça d'un fitxer server.met i premeu el botó de l'esquerra per a actualitzar la llista de servidors coneguts."
@@ -10996,9 +11108,6 @@ msgstr "S'està migrant un ECPassword antic modificat després de tornar a una v
 
 #~ msgid "Rejects packet if the client ip is different from the ip where the packet is received from. Use with caution."
 #~ msgstr "Rebutja el paquet si l'IP del client és diferent de l'IP on es rep el paquet. Useu amb prudència."
-
-#~ msgid "Return the results of the previous search.\n"
-#~ msgstr "Retorna els resultats de la cerca anterior.\n"
 
 #~ msgid "Show the progress of a search.\n"
 #~ msgstr "Mostra el progrés d'una cerca.\n"

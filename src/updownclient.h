@@ -50,6 +50,10 @@
 #include "ClientRef.h"        // Needed for debug defines
 #include "PeerCapabilities.h" // Needed for CPeerCapabilities
 #include "ProtocolPeerIdentity.h"
+#include "DeadSourceKey.h"     // Needed for CDeadSourceKey
+#include "StoredSourceRoute.h" // Needed for SStoredSourceRoute
+#include <optional>
+#include <vector>
 #include "UploadCallbackPolicy.h"
 #include "KadBuddyLiveness.h"
 #ifdef ENABLE_NATT_SERVER_COORDINATION
@@ -73,6 +77,14 @@ class CAICHHash;
 class CServer;
 enum class EContactRoute;
 struct SContactFacts;
+struct SSourceRouteFacts;
+enum class ESourceRoute : std::uint8_t;
+enum class ESourceFallback : std::uint8_t;
+namespace ExtSX
+{
+struct SRecord;
+struct SAddressFilter;
+} // namespace ExtSX
 
 enum EChatCaptchaState
 {
@@ -299,6 +311,8 @@ public:
 	CNetworkAddress GetDialAddress() const;
 	//! Whether the peer has an IPv4 form, from the best address known so far.
 	bool HasPeerIPv4() const;
+	//! Where bans, corruption and AICH votes are charged: see PeerAddressing::ConductAddress().
+	CNetworkAddress GetConductAddress() const;
 	uint32 GetUserIDHybrid() const { return m_nUserIDHybrid; }
 	void SetUserIDHybrid(uint32 val);
 	uint16_t GetUserPort() const { return m_nUserPort; }
@@ -350,6 +364,8 @@ public:
 	/// checks are settings-derived, and every one of those settings can change while a
 	/// connection is open.
 	EContactResult CheckContactPreconditions();
+	//! Whether our obfuscation settings and this client's rule out dialling it.
+	bool CryptSettingsForbidDial() const;
 	//! The address the security checks below are made against.
 	CNetworkAddress ContactAddress() const;
 	//! Whether a socket whose stream died may be dialled again over TCP: every refusal
@@ -363,6 +379,37 @@ private:
 	//! How this client is reached: Refuse exactly where CheckContactPreconditions() declines it.
 	EContactRoute ContactRoute() const;
 	SContactFacts ContactFactsFor(const CNetworkAddress &address) const;
+	//! The facts NextSourceRoute() decides on. @a callbackOnly: a LowID reached only by a callback.
+	SSourceRouteFacts SourceRouteFacts(bool callbackOnly) const;
+	//! Notes the route a contact just went out on. m_sourceRoute ends with the attempt, the
+	//! reported one stays for the source list. @a overIPv6: the dial goes to the peer's IPv6.
+	void StartSourceRoute(ESourceRoute route, bool overIPv6 = false)
+	{
+		m_sourceRoute = route;
+		m_lastContactRoute = ReportedRoute(route);
+		m_lastContactOverIPv6 = overIPv6;
+	}
+	//! Notes a NAT-T step the route chain does not pick: it has no route of its own to fail.
+	void NoteContactStep(EContactRouteReport step)
+	{
+		m_lastContactRoute = step;
+		m_lastContactOverIPv6 = false;
+	}
+	//! The callback through the Kad buddy, or the search for its address. Whether a request went out.
+	bool StartKadBuddyCallback();
+	//! After a contact that never completed the hellos: whether another route is left to try.
+	bool KeepForNextRoute(bool failedAdvertisedIPv6);
+	ESourceRoute NextSourceRouteNow() const;
+	//! Moves to a stored fallback route. Whether it leaves a route to try.
+	bool UseSourceFallback(ESourceFallback fallback, ESourceRoute failedRoute);
+	void ApplyStoredRoute(const SStoredSourceRoute &route);
+	SSourceRoutes CurrentRoutes() const;
+	void ApplyRoutes(const SSourceRoutes &routes);
+	//! Saves the routes a chain starts from, once per chain, before the chain changes them.
+	void SaveChainStart();
+	//! Gives back the saved routes, if the chain saved any.
+	bool RestoreChainStart();
+	SStoredSourceRoute CurrentStoredRoute() const;
 #ifdef ENABLE_NATT_SERVER_COORDINATION
 	//! Sends OP_NAT_CALLBACKREQUEST to this LowID peer when the Lugdunum preconditions hold.
 	//! Returns whether the request went out; a request held for the server's UDP key is not a
@@ -370,11 +417,12 @@ private:
 	//! asked again) and from the upload callback.
 	bool TrySendLugdunumNatCallbackRequest();
 	//! Sends OP_LOWID_HOLEPUNCH_REQUEST (ed2k-server) to this LowID peer when its
-	//! preconditions hold. Mutually exclusive with the Lugdunum callback per server.
+	//! preconditions hold. Tried before the Lugdunum callback on a server that runs both.
 	//! Called from TryToContact's LowID->LowID decline and from the upload callback. Returns
 	//! whether the request went out; a busy server slot is not a send.
 	bool TrySendLowIdHolePunchRequest();
 	bool m_lowIdHolePunchRequested = false;
+	NatServerHolePunch::HolePunchFallback m_holePunchFallback;
 	//! The server of this LowID source when it is not ours and would wake the source for us
 	//! (ed2k-server 0.9.86), else null; always null without uTP, which the dial after the answer
 	//! needs.
@@ -814,19 +862,77 @@ public:
 
 	/* Source comes from? */
 	ESourceFrom GetSourceFrom() const { return m_nSourceFrom; }
-	void SetSourceFrom(ESourceFrom val) { m_nSourceFrom = val; }
+	void SetSourceFrom(ESourceFrom val)
+	{
+		m_nSourceFrom = val;
+		// Every assignment widens the set: this is the one funnel, so no call site has to
+		// remember it, and a channel a copy came from survives that copy.
+		if (val != SF_NONE) {
+			AdoptSourceOrigins(SourceFromBit(val));
+		}
+	}
+	//! Every channel this source has been seen on, SourceFromBit() per ESourceFrom.
+	unsigned GetSourceOriginMask() const { return m_sourceFromMask; }
+	//! Takes a channel this source was seen on: its own, or those of a duplicate copy before
+	//! that copy is deleted. Counts every channel beyond the first.
+	void AdoptSourceOrigins(unsigned mask);
 
 	/* Kad buddy support */
 	// ID
 	const uint8_t *GetBuddyID() const { return m_achBuddyID; }
-	void SetBuddyID(const uint8_t *m_achTempBuddyID);
+	void SetBuddyID(const uint8_t *m_achTempBuddyID, bool fromKad = false);
 	bool HasValidBuddyID() const { return m_bBuddyIDValid; }
+	// From TAG_BUDDYHASH, so known to be the source's ~KadID: only such an ID is passed on.
+	bool IsBuddyIDFromKad() const { return m_bBuddyIDValid && m_bBuddyIDFromKad; }
 	/* IP */
 	void SetBuddyIP(uint32 val) { m_nBuddyIP = val; }
 	uint32 GetBuddyIP() const { return m_nBuddyIP; }
 	/* Port */
 	void SetBuddyPort(uint16 val) { m_nBuddyPort = val; }
 	uint16 GetBuddyPort() const { return m_nBuddyPort; }
+	// Takes the Kad buddy of a duplicate copy of this source before that copy is deleted.
+	void AdoptKadBuddy(const CUpDownClient &duplicate);
+	// Takes every contact route a duplicate copy of this source has and this one lacks.
+	void AdoptContactRoutes(const CUpDownClient &duplicate);
+	// An IPv6 a third party reported for a source without an IPv4 address, dialled once every
+	// other route has failed.
+	void SetLastResortIPv6(const CNetworkAddress &address);
+	// A known client that becomes a download source starts with every route untried.
+	void ResetContactRoutes()
+	{
+		m_failedSourceRoutes = 0;
+		m_refreshedSourceRoutes = 0;
+		m_lastContactRoute = EContactRouteReport::None;
+		m_lastContactOverIPv6 = false;
+	}
+	//! The route of the contact in flight, or the last one tried. EContactRouteReport, as an int
+	//! for CClientRef, which both client classes share.
+	int GetContactRoute() const { return static_cast<int>(m_lastContactRoute); }
+	//! That route is a dial to the peer's IPv6 address.
+	bool IsContactOverIPv6() const { return m_lastContactOverIPv6; }
+	// One key per address this source can be reached on, so a later copy under any of them is
+	// known dead once this one is.
+	std::vector<CDeadSourceKey> DeadSourceKeys() const;
+	//! Where a user hash is tracked: the identity, or the socket while the identity is a fallback
+	//! address no hello came from. An IPv6 hello keeps an IPv4 identity it does not prove.
+	CNetworkAddress GetTrackingAddress() const;
+	bool IsIdentityFromFallback() const { return m_identityFromFallback; }
+	//! The route in use came from a record no hello has proved (SSourceRoutes::routeUnproven).
+	bool IsRouteUnproven() const { return m_routeUnproven; }
+	//! Another host answered the route in use: it is alive, so it is never recorded as dead.
+	void NoteOtherHostOnRoute();
+	//! Whether another host already answered the route in use.
+	bool IsRouteAnsweredByOtherHost() const;
+	// Moves to the fallback buddy address after a callback through the stored one failed.
+	bool SwitchToBuddyCandidate();
+	// This source as an Extended Source Exchange record, sanitized with `filter`.
+	ExtSX::SRecord GetExtendedSourceRecord(const ExtSX::SAddressFilter &filter) const;
+	/* Role: we serve this buddy, or it serves us */
+	void SetServedBuddy(bool served) { m_bServedBuddy = served; }
+	bool IsServedBuddy() const { return m_bServedBuddy; }
+	//! The buddy request set a NAT-T bit in its connect options.
+	void SetServedBuddyNatT(bool natT) { m_bServedBuddyNatT = natT; }
+	bool IsServedBuddyNatT() const { return m_bServedBuddyNatT; }
 
 	// KadIPCheck
 	bool IsBuddyPingDue() const { return m_buddyLiveness.PingDue(::GetTickCount64()); }
@@ -836,6 +942,7 @@ public:
 	void RecordBuddyPongReceived() { m_buddyLiveness.PongReceived(::GetTickCount64()); }
 	void RecordBuddyPacketReceived() { m_buddyLiveness.ReceivedPacket(::GetTickCount64()); }
 	bool HasBuddyTimedOut() const { return m_buddyLiveness.Expired(::GetTickCount64()); }
+	const Kademlia::CBuddyLiveness &GetBuddyLiveness() const { return m_buddyLiveness; }
 	bool HasBuddyRequestExpired() const { return m_buddyLiveness.RequestExpired(::GetTickCount64()); }
 	EKadState GetKadState() const { return m_nKadState; }
 	void SetKadState(EKadState nNewS)
@@ -848,8 +955,7 @@ public:
 	uint8 GetKadVersion() { return m_byKadVersion; }
 	void ProcessFirewallCheckUDPRequest(CMemFile *data);
 
-	//! What the peer claimed in CT_MOD_MISCOPTIONS (eMuleAI vendor capabilities). Recorded
-	//! only: aMule implements none of them and advertises none back. See
+	//! What the peer claimed in CT_MOD_MISCOPTIONS (eMuleAI vendor capabilities). See
 	//! src/PeerCapabilities.h.
 	const CPeerCapabilities &GetModCapabilities() const { return m_modCapabilities; }
 	//! The peer's own IPv6 address from CT_MOD_IP_V6, big-endian, 16 bytes.
@@ -1011,7 +1117,8 @@ private:
 
 	void Init();
 	void SendClassicCallbackRequest();
-	bool ProcessHelloTypePacket(const CMemFile &data);
+	//! `inbound`: an OP_HELLO, which only a peer that dialled us sends.
+	bool ProcessHelloTypePacket(const CMemFile &data, bool inbound);
 	void SendHelloTypePacket(CMemFile *data);
 	void SendFirewallCheckUDPRequest();
 	void ClearHelloProperties(); // eMule 0.42
@@ -1188,16 +1295,50 @@ private:
 	CAICHHash *m_pReqFileAICHHash;
 
 	ESourceFrom m_nSourceFrom;
+	unsigned m_sourceFromMask = 0;
 
 	/* Kad Stuff */
 	uint8_t m_achBuddyID[16];
 	bool m_bBuddyIDValid;
+	bool m_bBuddyIDFromKad = false;
 	// KADEMLIA_CALLBACK_REQ reads the published buddy hash as a pre-fix aMule wrote it (#1835).
 	bool m_bBuddyIdUseAmuleLayout = false;
 	// A KADEMLIA_CALLBACK_REQ was sent and the source has not called back since.
 	bool m_bBuddyCallbackUnanswered = false;
+	bool m_bServedBuddy = false;
+	bool m_bServedBuddyNatT = false;
 	uint32 m_nBuddyIP;
 	uint16 m_nBuddyPort;
+	// A different buddy address from a Kad result, held back while the stored one answers.
+	uint32 m_nBuddyCandidateIP = 0;
+	uint16 m_nBuddyCandidatePort = 0;
+	// The route of the contact in flight, and the routes that failed since the last hello.
+	ESourceRoute m_sourceRoute{};
+	// The same route, kept after the attempt ends so the source list can show it, plus the two
+	// NAT-T steps the chain does not pick.
+	EContactRouteReport m_lastContactRoute{};
+	// The route is a dial to the peer's IPv6 address.
+	bool m_lastContactOverIPv6 = false;
+	unsigned m_failedSourceRoutes = 0;
+	// Routes our server gave new data for during an attempt: that attempt's failure says nothing
+	// about the new data.
+	unsigned m_refreshedSourceRoutes = 0;
+	// Routes kept for when every route this client has failed: a server route from a source we do
+	// not trust to replace ours, and an address it cannot use yet.
+	SStoredSourceRoute m_serverCandidate;
+	SStoredSourceRoute m_lastResortIPv4;
+	SStoredSourceRoute m_lastResortIPv6;
+	// The routes a fallback left behind.
+	std::vector<CDeadSourceKey> m_formerDeadSourceKeys;
+	// Routes where another host answered: alive, and not this source, so never recorded as dead.
+	std::vector<CDeadSourceKey> m_otherHostKeys;
+	// The IPv4 identity came from a fallback and no hello came from it yet.
+	bool m_identityFromFallback = false;
+	// SSourceRoutes::routeUnproven of the route in use.
+	bool m_routeUnproven = false;
+	// The advertised IPv6 came from a source record, not from the peer's own hello.
+	bool m_modIPv6FromRecord = false;
+	CSourceRouteChainStart m_chainStart;
 
 	EKadState m_nKadState;
 
@@ -1255,6 +1396,15 @@ private:
 	wxString connection_reason;
 #endif
 };
+
+//! Thrown by a hello that another host sent on an unproven route: the connection ends, and the
+//! route counts as failed, without the error state that drops the source.
+struct CHelloFromOtherHost
+{
+	wxString reason;
+};
+// Extended Source Exchange address checks: IsGoodIP, the IP filter and the ban list.
+ExtSX::SAddressFilter MakeExtendedSourceAddressFilter();
 
 #define MAKE_CLIENT_VERSION(mjr, min, upd) \
 	((uint32)(mjr) * 100U * 10U * 100U + (uint32)(min) * 100U * 10U + (uint32)(upd) * 100U)

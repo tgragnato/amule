@@ -36,6 +36,7 @@
 #include "CommentDialogLst.h" // Needed for CCommentDialogLst
 #include "DataToText.h"       // Needed for PriorityToStr
 #include "DownloadQueue.h"
+#include "DownloadPercentageDrawing.h"
 #include "FileDetailDialog.h" // Needed for CFileDetailDialog
 #include "FileRenameDialog.h" // Needed for AskNewFileName
 #include "FileLaunch.h"       // Needed for FileLaunch::Open / Reveal
@@ -104,6 +105,7 @@ private:
 		// rather than completed ones.
 		const bool showStrip = !file->IsCompleted() && file->GetStatus() != PS_COMPLETING &&
 				       file->GetHashingProgress() == 0;
+		const int stripHeight = 3;
 		if (showStrip && barRect.GetWidth() > 0) {
 			const int width = static_cast<int>((static_cast<double>(barRect.GetWidth()) /
 								   static_cast<double>(file->GetFileSize())) *
@@ -115,7 +117,7 @@ private:
 				// reproduce the old look.
 				dc->SetPen(*wxTRANSPARENT_PEN);
 				dc->SetBrush(crFlatProgress.GetBrush());
-				dc->DrawRectangle(barRect.x, barRect.y, width, 3);
+				dc->DrawRectangle(barRect.x, barRect.y, width, stripHeight);
 			} else {
 				dc->SetPen(*wxBLACK_PEN);
 				dc->DrawLine(barRect.x, barRect.y + 0, barRect.x + width, barRect.y + 0);
@@ -138,26 +140,13 @@ private:
 			percent = 99.9;
 		}
 		const wxString buffer = CFormat("%.1f%%") % percent;
-		const int middlex = (2 * cell.GetX() + cell.GetWidth()) >> 1;
-		const int middley = (2 * cell.GetY() + cell.GetHeight()) >> 1;
-		wxCoord textwidth;
-		wxCoord textheight;
-		dc->GetTextExtent(buffer, &textwidth, &textheight);
-		const wxColour oldColour = dc->GetTextForeground();
-		const int x = middlex - (textwidth >> 1);
-		const int y = middley - (textheight >> 1);
-		// Outline white text so it stays readable on light fills.
-		if (hashingProgress == 0) {
-			dc->SetTextForeground(*wxBLACK);
-			const int offset = GetView()->FromDIP(1);
-			dc->DrawText(buffer, x - offset, y);
-			dc->DrawText(buffer, x + offset, y);
-			dc->DrawText(buffer, x, y - offset);
-			dc->DrawText(buffer, x, y + offset);
+		// Below the strip, so the text never covers it.
+		wxRect textArea = barRect;
+		if (showStrip) {
+			textArea.y += stripHeight;
+			textArea.height -= stripHeight;
 		}
-		dc->SetTextForeground(hashingProgress == 0 ? *wxWHITE : *wxBLACK);
-		dc->DrawText(buffer, x, y);
-		dc->SetTextForeground(oldColour);
+		DrawDownloadPercentage(*dc, textArea, buffer, *GetView(), hashingProgress != 0);
 	}
 };
 } // namespace
@@ -287,31 +276,6 @@ void CDownloadListCtrl::AddFile(CPartFile *file, bool deferView)
 	}
 }
 
-void CDownloadListCtrl::BeginBatchUpdate()
-{
-	// Coalesce a burst of AddFile()/UpdateItem() calls into a single repaint and suppress the
-	// per-item SortList; EndBatchUpdate() sorts once. Used when reconciling the list against a
-	// fresh snapshot after a reconnect (issue #444).
-	Freeze();
-	// Same reason as CSharedFilesCtrl::BeginBatchUpdate(): rows land unsorted and
-	// EndBatchUpdate() sorts once, while a live sort key makes macOS re-compare the whole list
-	// on every inserted row. See SuspendHeaderSort().
-	SuspendHeaderSort();
-	m_batchUpdate = true;
-}
-
-void CDownloadListCtrl::EndBatchUpdate(bool doSort)
-{
-	m_batchUpdate = false;
-	// A poll that only updated rows in place (no new files) leaves the sort
-	// order untouched, so skip the O(n log n) SortList entirely (issue #615).
-	if (doSort) {
-		SortList();
-	}
-	RestoreHeaderSort();
-	Thaw();
-}
-
 void CDownloadListCtrl::RebuildVisibleList()
 {
 	// Batch counterpart to AddFile()'s per-item path: drop the visible rows and re-append every
@@ -365,30 +329,27 @@ void CDownloadListCtrl::RemoveFile(CPartFile *file)
 	// caller is about to free.
 	ShowFile(file, false);
 	m_files.erase(file);
-	m_pendingUpdates.erase(file);
+	ForgetDeferred(reinterpret_cast<wxUIntPtr>(file));
 }
 
 void CDownloadListCtrl::DeferUpdateItem(const void *item)
 {
 	CPartFile *file = const_cast<CPartFile *>(static_cast<const CPartFile *>(item));
 	if (m_files.find(file) != m_files.end()) {
-		m_pendingUpdates.insert(file);
+		DeferRefresh(reinterpret_cast<wxUIntPtr>(file));
 	}
 }
 
-void CDownloadListCtrl::RefreshLiveItems()
+bool CDownloadListCtrl::RefreshDeferredItem(wxUIntPtr data)
 {
-	for (auto it = m_pendingUpdates.begin(); it != m_pendingUpdates.end();) {
-		CPartFile *file = *it;
-		UpdateItem(file);
-		// Keep active rows on this GUI cadence even if the next core notification
-		// falls just after the timer. Idle rows need no extra periodic repaint.
-		if (file->GetTransferingSrcCount() || file->GetDisplayDownloadRate()) {
-			++it;
-		} else {
-			it = m_pendingUpdates.erase(it);
-		}
+	CPartFile *file = reinterpret_cast<CPartFile *>(data);
+	if (m_files.find(file) == m_files.end()) {
+		return false;
 	}
+	UpdateItem(file);
+	// Keep active rows on this GUI cadence even if the next core notification
+	// falls just after the timer. Idle rows need no extra periodic repaint.
+	return file->GetTransferingSrcCount() || file->GetDisplayDownloadRate();
 }
 
 void CDownloadListCtrl::UpdateItem(const void *toupdate)
@@ -414,6 +375,9 @@ void CDownloadListCtrl::UpdateItem(const void *toupdate)
 		// Was hidden, but its new status means it belongs in the current
 		// category now.
 		ShowFile(file, true);
+		if (!m_batchUpdate) {
+			SortList();
+		}
 	}
 
 	if (file->IsCompleted() && show) {

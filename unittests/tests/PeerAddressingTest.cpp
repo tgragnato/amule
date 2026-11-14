@@ -891,3 +891,149 @@ TEST(PeerAddressing, AnIPv4AndANativeIPv6AreOfOtherFamilies)
 	ASSERT_FALSE(IsOtherFamily(v6, CNetworkAddress::FromString("2a07:9::1")));
 	ASSERT_FALSE(IsOtherFamily(v4, CNetworkAddress::Absent()));
 }
+
+// A peer known by its IPv4 that reconnects from a temporary IPv6 keeps the IPv4 identity: that
+// address is the one that can be dialled again.
+TEST(PeerAddressing, AnIPv6HelloKeepsAKnownIPv4Identity)
+{
+	const CNetworkAddress ipv4 = CNetworkAddress::FromString("203.0.113.7");
+	const CNetworkAddress ipv6 = CNetworkAddress::FromString("2001:4860:4860::8888");
+	const CNetworkAddress mapped = CNetworkAddress::FromString("::ffff:203.0.113.9");
+	ASSERT_TRUE(PeerAddressing::KeepsIPv4IdentityOnIPv6Hello(ipv4, ipv6));
+	// The same family, a mapped IPv4 or a peer we did not know yet: the socket's address is taken.
+	ASSERT_FALSE(PeerAddressing::KeepsIPv4IdentityOnIPv6Hello(ipv4, mapped));
+	ASSERT_FALSE(PeerAddressing::KeepsIPv4IdentityOnIPv6Hello(
+		ipv4, CNetworkAddress::FromString("198.51.100.4")));
+	ASSERT_FALSE(PeerAddressing::KeepsIPv4IdentityOnIPv6Hello(
+		ipv6, CNetworkAddress::FromString("2001:4860:4860::8844")));
+	ASSERT_FALSE(PeerAddressing::KeepsIPv4IdentityOnIPv6Hello(CNetworkAddress::Absent(), ipv6));
+}
+
+// A verdict on a peer's conduct lands on the connection it behaved on, not on an identity it kept
+// without proving it.
+TEST(PeerAddressing, ConductIsChargedToTheLiveConnection)
+{
+	const CNetworkAddress kept = CNetworkAddress::FromString("203.0.113.7");
+	const CNetworkAddress live = CNetworkAddress::FromString("2001:4860:4860::8888");
+	ASSERT_TRUE(PeerAddressing::ConductAddress(live, kept) == live);
+	ASSERT_TRUE(PeerAddressing::ConductAddress(CNetworkAddress::FromString("::ffff:203.0.113.9"), kept) ==
+		    CNetworkAddress::FromString("203.0.113.9"));
+	ASSERT_TRUE(PeerAddressing::ConductAddress(CNetworkAddress::Absent(), kept) == kept);
+}
+
+TEST(PeerAddressing, AnUnprovenIdentityTracksTheHashAtTheSocket)
+{
+	const CNetworkAddress ipv4 = CNetworkAddress::FromIPv4NetworkOrder(0x0D0C0B0Au);
+	const CNetworkAddress ipv6 = CNetworkAddress::FromString("2001:4860:4860::8888");
+	ASSERT_TRUE(PeerAddressing::TrackingAddress(ipv4, ipv6, true) == ipv6);
+	ASSERT_TRUE(PeerAddressing::TrackingAddress(ipv4, ipv6, false) == ipv4);
+	// Without a socket nothing a hello proved is known, so nothing is tracked.
+	ASSERT_TRUE(PeerAddressing::TrackingAddress(ipv4, CNetworkAddress::Absent(), true).IsAbsent());
+	ASSERT_TRUE(PeerAddressing::TrackingAddress(ipv4, CNetworkAddress::Absent(), false) == ipv4);
+}
+
+TEST(PeerAddressing, AnUnprovenIdentityIsNeverCharged)
+{
+	const CNetworkAddress ipv4 = CNetworkAddress::FromIPv4NetworkOrder(0x0D0C0B0Au);
+	const CNetworkAddress ipv6 = CNetworkAddress::FromString("2001:4860:4860::8888");
+	ASSERT_TRUE(PeerAddressing::ConductAddress(ipv6, ipv4, true) == ipv6);
+	ASSERT_TRUE(PeerAddressing::ConductAddress(CNetworkAddress::Absent(), ipv4, true).IsAbsent());
+	ASSERT_TRUE(PeerAddressing::ConductAddress(CNetworkAddress::Absent(), ipv4, false) == ipv4);
+}
+
+TEST(PeerAddressing, AnotherHashOnAnUnprovenRouteIsAnotherHost)
+{
+	ASSERT_TRUE(PeerAddressing::CheckHelloIdentity(true, true, false) ==
+		    PeerAddressing::EHelloIdentity::OtherHost);
+}
+
+TEST(PeerAddressing, TheOwnHashOnAnUnprovenRouteProvesIt)
+{
+	ASSERT_TRUE(PeerAddressing::CheckHelloIdentity(true, true, true) ==
+		    PeerAddressing::EHelloIdentity::Proves);
+}
+
+TEST(PeerAddressing, AnotherHashOnAProvenRouteKeepsTheHashChangeCheck)
+{
+	ASSERT_TRUE(PeerAddressing::CheckHelloIdentity(false, true, false) ==
+		    PeerAddressing::EHelloIdentity::Usual);
+	ASSERT_TRUE(PeerAddressing::CheckHelloIdentity(false, true, true) ==
+		    PeerAddressing::EHelloIdentity::Usual);
+}
+
+TEST(PeerAddressing, NoEarlierHashChangesNothing)
+{
+	ASSERT_TRUE(PeerAddressing::CheckHelloIdentity(true, false, false) ==
+		    PeerAddressing::EHelloIdentity::Usual);
+	ASSERT_TRUE(PeerAddressing::CheckHelloIdentity(false, false, false) ==
+		    PeerAddressing::EHelloIdentity::Usual);
+}
+
+TEST(PeerAddressing, AnotherHashOnAnUnprovenRouteStaysApart)
+{
+	ASSERT_TRUE(PeerAddressing::DecideHelloAttach(true, true, false) ==
+		    PeerAddressing::EHelloAttach::KeepApart);
+}
+
+TEST(PeerAddressing, TheOwnHashOnAnUnprovenRouteAttaches)
+{
+	ASSERT_TRUE(
+		PeerAddressing::DecideHelloAttach(true, true, true) == PeerAddressing::EHelloAttach::Attach);
+}
+
+TEST(PeerAddressing, AnotherHashOnAProvenRouteAttaches)
+{
+	// The hello then goes through the usual hash-change ban.
+	ASSERT_TRUE(PeerAddressing::DecideHelloAttach(false, true, false) ==
+		    PeerAddressing::EHelloAttach::Attach);
+	ASSERT_TRUE(PeerAddressing::DecideHelloAttach(true, false, false) ==
+		    PeerAddressing::EHelloAttach::Attach);
+}
+
+TEST(PeerAddressing, ARecordIPv6CountsOnlyForTheAnswerOnOurDial)
+{
+	ASSERT_TRUE(PeerAddressing::HelloRouteUnproven(false, false, true));
+	ASSERT_FALSE(PeerAddressing::HelloRouteUnproven(false, true, true));
+	ASSERT_TRUE(PeerAddressing::HelloRouteUnproven(true, true, false));
+	ASSERT_FALSE(PeerAddressing::HelloRouteUnproven(false, false, false));
+}
+
+TEST(PeerAddressing, AnotherHashAnsweringOurDialForAHelloHashIsAnotherHost)
+{
+	// A NAT neighbour, or a new owner of a recycled address, answered a client a hello proved.
+	const bool checked = PeerAddressing::ChecksDialAnswer(false, true);
+	ASSERT_TRUE(checked);
+	ASSERT_TRUE(PeerAddressing::CheckHelloIdentity(checked, true, false) ==
+		    PeerAddressing::EHelloIdentity::OtherHost);
+	ASSERT_TRUE(PeerAddressing::CheckHelloIdentity(checked, true, true) ==
+		    PeerAddressing::EHelloIdentity::Proves);
+}
+
+TEST(PeerAddressing, OnlyTheOwnHashOnOurDialClearsTheOtherHostMark)
+{
+	using PeerAddressing::EHelloIdentity;
+	ASSERT_TRUE(PeerAddressing::ClearsOtherHostMark(EHelloIdentity::Proves, false));
+	// From behind the NAT the client can always dial in: that proves nothing about the route.
+	ASSERT_FALSE(PeerAddressing::ClearsOtherHostMark(EHelloIdentity::Proves, true));
+	ASSERT_FALSE(PeerAddressing::ClearsOtherHostMark(EHelloIdentity::OtherHost, false));
+	ASSERT_FALSE(PeerAddressing::ClearsOtherHostMark(EHelloIdentity::Usual, false));
+
+	// Our dial for a client a hello proved: its own hash clears the mark, another hash keeps it.
+	const bool checked = PeerAddressing::ChecksDialAnswer(false, true);
+	ASSERT_TRUE(PeerAddressing::ClearsOtherHostMark(
+		PeerAddressing::CheckHelloIdentity(checked, true, true), false));
+	ASSERT_FALSE(PeerAddressing::ClearsOtherHostMark(
+		PeerAddressing::CheckHelloIdentity(checked, true, false), false));
+}
+
+TEST(PeerAddressing, AListHashOrAnIncomingHelloIsNotCheckedOnOurDial)
+{
+	// A hash from a source list or Kad may be stale: whoever answers is taken, as before.
+	ASSERT_FALSE(PeerAddressing::ChecksDialAnswer(false, false));
+	ASSERT_TRUE(PeerAddressing::CheckHelloIdentity(PeerAddressing::ChecksDialAnswer(false, false),
+			    true,
+			    false) == PeerAddressing::EHelloIdentity::Usual);
+	// An incoming hello keeps the hash-change check.
+	ASSERT_FALSE(PeerAddressing::ChecksDialAnswer(true, true));
+	ASSERT_FALSE(PeerAddressing::ChecksDialAnswer(true, false));
+}

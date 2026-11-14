@@ -66,6 +66,7 @@ there client on the eMule forum..
 #include "../../AdvertisedIPv6.h"
 #endif
 #include "../../SharedFileList.h"
+#include "../../Statistics.h"       // Needed for theStats
 #include "../../KadPublishPolicy.h" // Needed for DecideKadSourcePublish
 #include "../../DownloadQueue.h"
 #include "../../PartFile.h"
@@ -83,6 +84,7 @@ there client on the eMule forum..
 #endif
 #include "../../GuiEvents.h"
 #include "../../KadBuddyIdLayout.h"
+#include "../../KadBuddySearchPolicy.h" // Needed for OwnBuddyID
 
 ////////////////////////////////////////
 using namespace Kademlia;
@@ -212,6 +214,11 @@ CSearch::~CSearch()
 
 void CSearch::Go()
 {
+	if (m_type == STOREFILE && !m_publishMeasured && theLogger.IsEnabled(logKadPublish)) {
+		m_publishMeasured = true;
+		CPublishMetrics::Instance().Start();
+	}
+
 	// Start with a lot of possible contacts, this is a fallback in case search stalls due to dead
 	// contacts
 	if (m_possible.empty()) {
@@ -579,6 +586,26 @@ void CSearch::ProcessResponse(
 	}
 }
 
+void CSearch::RecordStoreAcknowledgements() const
+{
+	if (m_type != STOREFILE) {
+		return;
+	}
+	const uint64_t acknowledged = CPublishMetrics::Acknowledged(m_lookupTrace);
+	theStats::AddPublishEvent(EPublishEvent::KadSourceStoreAcknowledged, acknowledged);
+	if (!acknowledged) {
+		return;
+	}
+	uint8_t fileID[16];
+	m_target.ToByteArray(fileID);
+	if (CKnownFile *file = theApp->sharedfiles->GetFileByID(CMD4Hash(fileID))) {
+		// Nodes keep the entry from when they stored it, so date it from the lookup start.
+		const uint64_t elapsed = (::GetTickCount64() - m_lookupStarted) / 1000;
+		file->SetKadSourceAck(
+			static_cast<uint32_t>(time(nullptr) - elapsed), static_cast<uint32_t>(acknowledged));
+	}
+}
+
 void CSearch::StorePacket()
 {
 	wxASSERT(!m_possible.empty());
@@ -796,8 +823,7 @@ void CSearch::StorePacket()
 				}
 			} else if (publishAs == EKadSourcePublish::Buddy) {
 				// We send the ID to our buddy so they can do a callback.
-				CUInt128 buddyID(true);
-				buddyID ^= CKademlia::GetPrefs()->GetKadID();
+				const CUInt128 buddyID = OwnBuddyID(CKademlia::GetPrefs()->GetKadID());
 				taglist.push_back(new CTagInt8(TAG_SOURCETYPE, file->IsLargeFile() ? 5 : 3));
 				taglist.push_back(new CTagVarInt(
 					TAG_SERVERIP, theApp->clientlist->GetBuddy()->GetIP()));
@@ -860,7 +886,15 @@ void CSearch::StorePacket()
 			}
 #endif
 
-			CKademlia::GetUDPListener()->SendPublishSourcePacket(*from, m_target, id, taglist);
+			if (CKademlia::GetUDPListener()->SendPublishSourcePacket(
+				    *from, m_target, id, taglist)) {
+				m_lookupTrace.ItemRequest({ from->GetIPAddress(), from->GetUDPPort() });
+				theStats::AddPublishEvent(EPublishEvent::KadSourceStoreSent);
+				if (theLogger.IsEnabled(logKadPublish)) {
+					CPublishMetrics::Instance().Queued(
+						from->GetIPAddress(), ::GetTickCount64());
+				}
+			}
 			m_totalRequestAnswers++;
 			deleteTagPtrListEntries(&taglist);
 		} else {
@@ -991,6 +1025,11 @@ void CSearch::StorePacket()
 	case FINDBUDDY: {
 		// Use the same network-order IP as GetConnectIP(), independent of peer ports.
 		if (!theApp->clientlist->CanRequestBuddy(wxUINT32_SWAP_ALWAYS(from->GetIPAddress()))) {
+			++theApp->clientlist->GetBuddyStats().own.requestsSkipped;
+			AddDebugLogLineN(logKadBuddy,
+				"Buddy request to " +
+					KadIPPortToString(from->GetIPAddress(), from->GetUDPPort()) +
+					" skipped: its connection failed within the last hour");
 			break;
 		}
 		AddDebugLogLineN(logKadSearch, "Search request type: FindBuddy");
@@ -1002,9 +1041,8 @@ void CSearch::StorePacket()
 		}
 
 		CMemFile packetdata;
-		// Send the ID we used to find our buddy. Used for checks later and allows users to callback
-		// someone if they change buddies.
-		packetdata.WriteUInt128(m_target);
+		// Our BuddyID, not the lookup target: the offer must echo it, and sources publish it.
+		packetdata.WriteUInt128(OwnBuddyID(CKademlia::GetPrefs()->GetKadID()));
 		packetdata.WriteUInt128(CKademlia::GetPrefs()->GetClientHash());
 		packetdata.WriteUInt16(thePrefs::GetPort());
 
@@ -1027,6 +1065,10 @@ void CSearch::StorePacket()
 			wxASSERT(from->GetUDPKey() == CKadUDPKey(0));
 		}
 		m_answers++;
+		++theApp->clientlist->GetBuddyStats().own.requestsSent;
+		AddDebugLogLineN(logKadBuddy,
+			"Buddy request sent to " +
+				KadIPPortToString(from->GetIPAddress(), from->GetUDPPort()));
 		break;
 	}
 	case FINDSOURCE: {

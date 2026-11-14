@@ -59,6 +59,43 @@ _assert_json_eq '.nodes[0].key' uptime '/stats/tree first node key is "uptime"'
 _assert_json_eq '[.. | objects | select(has("key")) | .key] as $k
 	| (["ul_dl_ratio","download_data","servers_working"] | all(($k | index(.)) != null))' \
 	true '/stats/tree carries the expected stable keys'
+_assert_json_eq '[.nodes[] | select(.key == "kad_buddies" or .key == "kad_receiver_keys" or .key == "nat_traversal")] | length' \
+	0 '/stats/tree keeps the developer counters off the top level'
+_assert_json_eq '[.nodes[] | select(.key == "diagnostics") | .children[].key] | .[0:2] | join(" ")' \
+	'kad_buddies kad_receiver_keys' '/stats/tree puts the developer counters under diagnostics'
+_assert_json_eq '[.nodes[] | select(.key == "diagnostics") | .children[] | select(.key == "kad_buddies") | .children[].key] | join(" ")' \
+	'kad_buddies_serving kad_buddies_own' '/stats/tree groups the Kad buddy rows by role'
+# The IPv6 data rows and the IPv6 diagnostics both exist only in ENABLE_IPV6 builds.
+if [ "$(printf '%s' "$CURL_BODY" | jq '[.. | objects | select(.key? == "upload_ipv6_data")] | length')" != 0 ]; then
+	_assert_json_eq '[.nodes[] | select(.key == "diagnostics") | .children[] | select(.key == "ipv6") | .children[].key] | join(" ")' \
+		'ipv6_dials ipv6_dials_answered ipv6_dials_unanswered ipv6_inbound_hellos ipv6_hellos_with_address ipv6_server_sources_accepted ipv6_server_sources_ignored' \
+		'/stats/tree lists the IPv6 diagnostics in an IPv6 build'
+else
+	_assert_json_eq '[.. | objects | select(.key? == "ipv6")] | length' 0 \
+		'/stats/tree has no IPv6 diagnostics without IPv6'
+fi
+_assert_json_eq '[.nodes[] | select(.key == "diagnostics") | .children[] | select(.key == "source_routes") | .children[].key] | join(" ")' \
+	'source_routes_next_route source_routes_fallback_server_route source_routes_fallback_ipv4 source_routes_fallback_ipv6 source_routes_chain_restored source_routes_reached_after_failure source_routes_merge_took_route source_routes_merge_kept_fallback source_routes_origin_gained source_routes_other_host_refused source_routes_other_host_kept_apart' \
+	'/stats/tree lists the source route diagnostics'
+_assert_json_eq '[.. | objects | select(.key? == "source_routes_next_route") | .values[0].type] | .[0]' \
+	integer '/stats/tree source route counters are integers'
+_assert_json_eq '[.. | objects | select(.key? == "publishing_kad") | .children[].key] | join(" ")' \
+	'publishing_kad_published publishing_kad_published_share publishing_kad_published_5_nodes publishing_kad_lookups publishing_kad_stores_sent publishing_kad_stores_acknowledged' \
+	'/stats/tree lists the Kad publishing diagnostics'
+_assert_json_eq '[.. | objects | select(.key? == "publishing_ed2k") | .children[].key] | join(" ")' \
+	'publishing_ed2k_offered publishing_ed2k_offered_share publishing_ed2k_offer_lists publishing_ed2k_files_offered' \
+	'/stats/tree lists the eD2k publishing diagnostics'
+_assert_json_eq '[.nodes[] | select(.key == "diagnostics") | .children[] | select(.key == "source_exchange") | .children[].key] | join(" ")' \
+	'source_exchange_requests source_exchange_answered source_exchange_too_soon source_exchange_no_sources source_exchange_unknown_file source_exchange_unsupported source_exchange_sources_sent source_exchange_extended_answers source_exchange_extended_sources source_exchange_lowid_routed_sources' \
+	'/stats/tree lists the source exchange diagnostics'
+_assert_json_eq '[.. | objects | select(.key? == "publishing_kad_published") | .values[0].type] | .[0]' \
+	integer '/stats/tree files published on Kad is an integer'
+_assert_json_eq '[.. | objects | select(.key? == "publishing_kad_published_share") | .values[0].type] | .[0]' \
+	double '/stats/tree share of files published on Kad is a double'
+_assert_json_eq '[.. | objects | select(.key? == "kad_buddies_time_served") | .values[0].type] | .[0]' \
+	time '/stats/tree Kad buddy time served is a time value'
+_assert_json_eq '[.. | objects | select(.key? == "kad_buddies_relayed_data") | .values[0].type] | .[0]' \
+	bytes '/stats/tree Kad buddy relayed data is a byte value'
 # Skeleton keys are unique; the dynamic per-client-software rows deliberately
 # share a key by kind, so exclude those. Both the leaves (client_version,
 # client_os) and the containers that group them (client_versions,

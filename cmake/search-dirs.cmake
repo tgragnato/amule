@@ -16,12 +16,6 @@
 # The location, where the flex executable can be found
 #SET (FLEX_EXECUTABLE "${CMAKE_SOURCE_DIR}/../win_flex_bison-latest/win_flex.exe")
 
-# The location, where to find libpng headers.
-#SET (PNG_HEADER_DIR "${CMAKE_SOURCE_DIR}/../lpng1626")
-
-# The location, where to find libpng.
-#SET (PNG_LIB_DIR "${CMAKE_SOURCE_DIR}/../lpng1626/projects/vstudio/Debug")
-
 # The location, where you extracted wx-sources
 #SET (wxWidgets_ROOT_DIR "${CMAKE_SOURCE_DIR}/../wxWidgets")
 
@@ -48,14 +42,6 @@ if (FLEX_EXECUTABLE)
 	set (SEARCH_DIR_FLEX ${FLEX_EXECUTABLE})
 endif()
 
-if (PNG_HEADER_DIR)
-	set (SEARCH_DIR_PNG_HEADER ${PNG_HEADER_DIR})
-endif()
-
-if (PNG_LIB_DIR)
-	set (SEARCH_DIR_PNG_LIB ${PNG_LIB_DIR})
-endif()
-
 if (wxWidgets_ROOT_DIR)
 	set (SEARCH_DIR_wxWidgets ${wxWidgets_ROOT_DIR})
 endif()
@@ -69,8 +55,6 @@ set (SEARCH_DIR_BOOST ${SEARCH_DIR_BOOST} CACHE PATH "Search hint for boost" FOR
 set (SEARCH_DIR_CRYPTOPP_HEADER ${SEARCH_DIR_CRYPTOPP_HEADER} CACHE PATH "Search hint for crypto++ headers" FORCE)
 set (SEARCH_DIR_CRYPTOPP_LIB ${SEARCH_DIR_CRYPTOPP_LIB} CACHE PATH "Search hint for crypto++ library" FORCE)
 set (SEARCH_DIR_FLEX ${SEARCH_DIR_FLEX} CACHE FILEPATH "Location of the flex executable" FORCE)
-set (SEARCH_DIR_PNG_HEADER ${SEARCH_DIR_PNG_HEADER} CACHE PATH "Search hint for libpng headers" FORCE)
-set (SEARCH_DIR_PNG_LIB ${SEARCH_DIR_PNG_LIB} CACHE PATH "Search hint for libpng library" FORCE)
 set (SEARCH_DIR_wxWidgets ${SEARCH_DIR_wxWidgets} CACHE PATH "Search hint for wxconfig executable" FORCE)
 set (SEARCH_DIR_ZLIB ${SEARCH_DIR_ZLIB} CACHE PATH "Search hint for zlib" FORCE)
 mark_as_advanced (FORCE SEARCH_DIR_BISON)
@@ -78,8 +62,6 @@ mark_as_advanced (FORCE SEARCH_DIR_BOOST)
 mark_as_advanced (FORCE SEARCH_DIR_CRYPTOPP_HEADER)
 mark_as_advanced (FORCE SEARCH_DIR_CRYPTOPP_LIB)
 mark_as_advanced (FORCE SEARCH_DIR_FLEX)
-mark_as_advanced (FORCE SEARCH_DIR_PNG_HEADER)
-mark_as_advanced (FORCE SEARCH_DIR_PNG_LIB)
 mark_as_advanced (FORCE SEARCH_DIR_wxWidgets)
 mark_as_advanced (FORCE SEARCH_DIR_ZLIB)
 
@@ -101,14 +83,6 @@ endif()
 
 if (SEARCH_DIR_FLEX AND NOT FLEX_EXECUTABLE)
 	set (FLEX_EXECUTABLE ${SEARCH_DIR_FLEX})
-endif()
-
-if (SEARCH_DIR_PNG_HEADER AND NOT PNG_HEADER_DIR)
-	set (PNG_HEADER_DIR ${SEARCH_DIR_PNG_HEADER})
-endif()
-
-if (SEARCH_DIR_PNG_LIB AND NOT PNG_LIB_DIR)
-	set (PNG_LIB_DIR ${SEARCH_DIR_PNG_LIB})
 endif()
 
 if (SEARCH_DIR_wxWidgets AND NOT wxWidgets_ROOT_DIR)

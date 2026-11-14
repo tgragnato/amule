@@ -15,7 +15,7 @@ msgstr ""
 "Project-Id-Version: aMule\n"
 "Report-Msgid-Bugs-To: https://github.com/amule-org/amule/issues\n"
 "POT-Creation-Date: 2026-10-09 12:39+0000\n"
-"PO-Revision-Date: 2026-11-09 08:48+0000\n"
+"PO-Revision-Date: 2026-11-14 10:37+0000\n"
 "Last-Translator: Andrei Stepanov <adem@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/amule/amule-application/ru/>\n"
 "Language: ru\n"
@@ -23,7 +23,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
-"X-Generator: Weblate 2026.11.2.dev0\n"
+"X-Generator: Weblate 2026.12.dev0\n"
 "X-Poedit-SourceCharset: UTF-8\n"
 
 #: src/AboutDialog.cpp
@@ -361,22 +361,6 @@ msgstr "Остановка вспомогательных приложений�
 
 #: src/amule.cpp
 #, c-format
-msgid "Terminating amuleweb instance with pid '%d' ... "
-msgstr "Завершение экземпляра amuleweb с pid «%d»… "
-
-#: src/amule.cpp
-#, c-format
-msgid "Killing amuleweb instance with pid '%d' ... "
-msgstr "Убивается экземпляр amuleweb с pid «%d»… "
-
-#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
-#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
-#: src/SharedFilesCtrl.cpp
-msgid "Failed"
-msgstr "Сбой"
-
-#: src/amule.cpp
-#, c-format
 msgid "Terminating amuleapi instance with pid '%d' ... "
 msgstr "Завершение экземпляра amuleapi с pid «%d»… "
 
@@ -384,6 +368,12 @@ msgstr "Завершение экземпляра amuleapi с pid «%d»… "
 #, c-format
 msgid "Killing amuleapi instance with pid '%d' ... "
 msgstr "Принудительное завершение экземпляра amuleapi с pid «%d»… "
+
+#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
+#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
+#: src/SharedFilesCtrl.cpp
+msgid "Failed"
+msgstr "Сбой"
 
 #: src/amule.cpp
 msgid "aMule OnExit: Terminating core."
@@ -535,28 +525,6 @@ msgid "Not starting %s: it is neither next to aMule nor on PATH."
 msgstr "Запуск %s не выполняется: его нет ни рядом с aMule, ни в PATH."
 
 #: src/amule.cpp
-msgid "An exception occurred while launching amuleweb."
-msgstr "При запуске amuleweb возникло исключение."
-
-#: src/amule.cpp
-#, c-format
-msgid "web server running on pid %d"
-msgstr "веб-сервер работает с pid %d"
-
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb authentication token. The web server was not started."
-msgstr "Не удалось подготовить токен аутентификации amuleweb. Веб-сервер не был запущен."
-
-#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
-#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
-msgid "ERROR"
-msgstr "ОШИБКА"
-
-#: src/amule.cpp
-msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
-msgstr "Вы запросили запуск веб-сервера при старте, но исполняемый файл amuleweb не может быть запущен. Установите пакет, содержащий веб-сервер aMule, либо соберите aMule из исходного кода с параметром -DBUILD_WEBSERVER=YES и установите его."
-
-#: src/amule.cpp
 #, c-format
 msgid "Could not write the amuleapi EC token to %s; amuleapi will fall back to its configured password."
 msgstr "Не удалось записать токен EC amuleapi в %s; amuleapi переключится на настроенный пароль."
@@ -578,14 +546,10 @@ msgstr "Не удалось запустить amuleapi при автомати�
 msgid "You requested to run amuleapi on startup, but the amuleapi binary cannot be run. Please install the package containing aMule's REST API server, or build aMule from source with -DBUILD_AMULEAPI=YES and install it."
 msgstr "Вы запросили запуск amuleapi при старте, но исполняемый файл amuleapi не может быть запущен. Установите пакет, содержащий REST API-сервер aMule, либо соберите aMule из исходного кода с параметром -DBUILD_AMULEAPI=YES и установите его."
 
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb EC token."
-msgstr "Не удалось подготовить EC-токен amuleweb."
-
-#: src/amule.cpp
-#, c-format
-msgid "Could not remove the amuleweb EC token file: %s"
-msgstr "Не удалось удалить файл EC-токена amuleweb: %s"
+#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
+#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
+msgid "ERROR"
+msgstr "ОШИБКА"
 
 #: src/amule.cpp
 #, c-format
@@ -1073,23 +1037,14 @@ msgstr "Шифрование"
 msgid "aMuleGUI"
 msgstr "aMuleGUI"
 
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
-msgstr "Отд: %.1f%s (%.1f) | Заг: %.1f%s (%.1f)"
-
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
 msgid " MiB/s"
 msgstr " МиБ/с"
 
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/utils/wxCas/src/wxcasframe.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
+#: src/utils/wxCas/src/wxcasframe.cpp
 msgid " KiB/s"
 msgstr " КиБ/с"
-
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s | Down: %.1f%s"
-msgstr "Отд: %.1f%s | Заг: %.1f%s"
 
 #: src/amuleDlg.cpp
 msgid "Transfer speeds are reported by the daemon. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
@@ -1098,6 +1053,16 @@ msgstr "Скорости передачи сообщаются демоном. �
 #: src/amuleDlg.cpp
 msgid "Live speeds are averaged over the last second. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
 msgstr "Текущие скорости усреднены за последнюю секунду. Общая отдача включает служебный трафик; скорость отдачи пирам учитывает только пакеты файлов. Значения в скобках показывают служебный трафик протокола в КиБ/с."
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s | Down: %.1f%s"
+msgstr "Отд: %.1f%s | Заг: %.1f%s"
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
+msgstr "Отд: %.1f%s (%.1f) | Заг: %.1f%s (%.1f)"
 
 #: src/amuleDlg.cpp
 #, c-format
@@ -2133,6 +2098,49 @@ msgstr "Источники сидов"
 msgid "Search Result"
 msgstr "Результаты поиска"
 
+#: src/DataToText.cpp
+msgid "a direct connection"
+msgstr "прямое соединение"
+
+#: src/DataToText.cpp
+msgid "a direct callback"
+msgstr "прямой обратный вызов"
+
+#: src/DataToText.cpp
+msgid "our server"
+msgstr "наш сервер"
+
+#: src/DataToText.cpp
+msgid "the Kad buddy"
+msgstr "партнёр Kad"
+
+#: src/DataToText.cpp
+msgid "the source's own server"
+msgstr "собственный сервер источника"
+
+#: src/DataToText.cpp
+msgid "a server hole punch"
+msgstr "прокол через сервер"
+
+#: src/DataToText.cpp
+msgid "a Lugdunum callback"
+msgstr "обратный вызов Lugdunum"
+
+#: src/DataToText.cpp
+#, c-format
+msgid "Connecting via %s, on a fallback route"
+msgstr "Соединение через %s, по резервному маршруту"
+
+#: src/DataToText.cpp
+#, c-format
+msgid "Connecting via %s, on an unproven route"
+msgstr "Соединение через %s, по непроверенному маршруту"
+
+#: src/DataToText.cpp
+#, c-format
+msgid "Connecting via %s"
+msgstr "Соединение через %s"
+
 #: src/DataToText.cpp src/DownloadListCtrl.cpp src/OtherFunctions.cpp
 #: src/TransferWnd.cpp
 msgid "Completed"
@@ -2445,10 +2453,6 @@ msgstr[2] "Не удалось добавить %u ссылок (подробн�
 #, c-format
 msgid "Invalid eD2k link! ERROR: %s"
 msgstr "Неверная ссылка eD2k! ОШИБКА: %s"
-
-#: src/ECSpecialMuleTags.cpp
-msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
-msgstr "Отклонён удалённый запрос на установку шаблона веб-сервера: значение должно быть простым именем шаблона, а не путём."
 
 #: src/ECSpecialMuleTags.cpp
 msgid "Refused a remote request to change the online-signature folder: it can only be set in the daemon's own configuration."
@@ -4605,14 +4609,12 @@ msgid "Users connected to the current server and an estimate of the total number
 msgstr "Пользователи, подключённые к текущему серверу, и примерное общее число пользователей."
 
 #: src/muuli_wdr.cpp
-msgid "Up: 0.0 | Down: 0.0"
-msgstr "Отд: 0,0 | Заг: 0,0"
+msgid "Up:"
+msgstr "Отдача:"
 
-# Тултип. Лучше оставить как можно более коротким (не все системы автоматом
-# делают их многострочными ;-))
 #: src/muuli_wdr.cpp
-msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
-msgstr "Текущая средняя скорость отдачи и загрузки. Если включено, числа в скобках обозначают служебный трафик обмена данными с клиентами."
+msgid "Down:"
+msgstr "Скачивание:"
 
 # Тултип. Лучше оставить как можно более коротким (не все системы автоматом
 # делают их многострочными ;-))
@@ -4623,10 +4625,6 @@ msgstr "Отображает статус подключения и активн
 #: src/muuli_wdr.cpp
 msgid "Not Connected ..."
 msgstr "Не подключён…"
-
-#: src/muuli_wdr.cpp
-msgid "Currently connected server."
-msgstr "Сейчас подключён к серверу."
 
 #: src/muuli_wdr.cpp
 msgid "Search"
@@ -5636,8 +5634,12 @@ msgid "Remove"
 msgstr "Удалить"
 
 #: src/muuli_wdr.cpp
-msgid "(Right click on folder icon for recursive share)"
-msgstr "(ПКМ по значку каталога для рекурсивной публикации)"
+msgid "Double-click: share or unshare this folder. Right-click: share it with all subfolders, including new ones."
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "Bold: shared. Bold italic: shared with all subfolders. Red folder: contains shared folders."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Share hidden files"
@@ -5798,6 +5800,14 @@ msgstr "Предел числа новых соединений за 5 секу�
 #: src/muuli_wdr.cpp
 msgid "Concurrent Kad source lookups"
 msgstr "Одновременные запросы источников Kad"
+
+#: src/muuli_wdr.cpp
+msgid "Firewalled Kad nodes served as buddy"
+msgstr "Узлы Kad за брандмауэром, обслуживаемые как партнёры"
+
+#: src/muuli_wdr.cpp
+msgid "How many firewalled Kad nodes this node relays callbacks for. Each one holds a connection, so at most a tenth of the connection limit is served."
+msgstr "Сколько узлов Kad за брандмауэром этот узел обслуживает, передавая для них обратные вызовы. Каждый из них занимает соединение, поэтому обслуживается не более десятой части лимита соединений."
 
 #: src/muuli_wdr.cpp
 msgid "Kad source re-search interval (minutes)"
@@ -5999,46 +6009,6 @@ msgid "Guest password"
 msgstr "Гостевой пароль"
 
 #: src/muuli_wdr.cpp
-msgid "Web server parameters"
-msgstr "Параметры веб-сервера"
-
-#: src/muuli_wdr.cpp
-msgid "Run webserver on startup (deprecated)"
-msgstr "Запускать веб-сервер при старте (устарело)"
-
-#: src/muuli_wdr.cpp
-msgid "Web template"
-msgstr "Веб-шаблон"
-
-#: src/muuli_wdr.cpp
-msgid "Full rights password"
-msgstr "Пароль для обычного доступа"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Low rights User"
-msgstr "Разрешить ограниченный доступ"
-
-#: src/muuli_wdr.cpp
-msgid "Low rights password"
-msgstr "Пароль ограниченного доступа"
-
-#: src/muuli_wdr.cpp
-msgid "Enable UPnP port forwarding of the web server port"
-msgstr "Включить проброс порта веб-сервера через UPnP"
-
-#: src/muuli_wdr.cpp
-msgid "Web server UPnP TCP port (Optional)"
-msgstr "Порт UPnP TCP веб-сервера (необязательно)"
-
-#: src/muuli_wdr.cpp
-msgid "Page Refresh Time (in secs)"
-msgstr "Период обновления страницы (в секундах)"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Gzip compression"
-msgstr "Включить сжатие Gzip"
-
-#: src/muuli_wdr.cpp
 msgid "Reset page to defaults"
 msgstr "Сбросить настройки страницы"
 
@@ -6052,7 +6022,7 @@ msgstr "Нажмите здесь, чтобы применить изменен�
 
 #: src/muuli_wdr.cpp
 msgid "Reset any changes made to the preferences."
-msgstr "Сбросить все изменения, внесенные вами."
+msgstr "Сбросить все изменения, сделанные в настройках."
 
 #: src/muuli_wdr.cpp
 msgid "Incoming Dir"
@@ -6530,7 +6500,7 @@ msgstr "Принудительно использовать сжатие ZLIB"
 
 #: src/muuli_wdr.cpp
 msgid "Enable Verbose Debug-Logging."
-msgstr "Записывать в журнал подробные сообщения отладчика."
+msgstr "Записывать в журнал подробные сообщения отладчика"
 
 #: src/muuli_wdr.cpp
 msgid "Only to Logfile"
@@ -7071,9 +7041,9 @@ msgstr "Запрос информации о друге"
 msgid "NAT traversal (QUIC)"
 msgstr "Обход NAT (QUIC)"
 
-#: src/Preferences.cpp
-msgid "no options available"
-msgstr "нет доступных опций"
+#: src/PeerCapabilities.h
+msgid "Skips unknown source exchange tags"
+msgstr "Пропускает неизвестные теги обмена источниками"
 
 #: src/Preferences.cpp
 msgid "Media metadata: FFProbePath is obsolete; aMule now uses its bundled media parser. Removing the old setting."
@@ -7435,12 +7405,9 @@ msgid "macOS does not let an application stop being the default handler. To stop
 msgstr "macOS не позволяет приложению перестать быть обработчиком по умолчанию. Чтобы aMule перестал открывать их, назначьте обработчиком по умолчанию другое приложение."
 
 #: src/PrefsUnifiedDlg.cpp
-msgid "The web server and aMule API require external connections to be enabled."
+#, fuzzy
+msgid "The aMule API requires external connections to be enabled."
 msgstr "Веб-сервер и aMule API требуют включённых внешних подключений."
-
-#: src/PrefsUnifiedDlg.cpp
-msgid "The aMule web server is deprecated. Consider running the aMule API instead."
-msgstr "Веб-сервер aMule устарел. Рассмотрите возможность использования aMule API вместо него."
 
 #: src/PrefsUnifiedDlg.cpp
 msgid ""
@@ -8490,6 +8457,15 @@ msgid "Connected to buddy at %s"
 msgstr "Соединяем с другом на %s"
 
 #: src/ServerWnd.cpp
+msgid "Served buddies:"
+msgstr "Обслужено партнёров:"
+
+#: src/ServerWnd.cpp
+#, c-format
+msgid "%u of %u"
+msgstr "%u из %u"
+
+#: src/ServerWnd.cpp
 msgid "IP address:"
 msgstr "Адрес IP:"
 
@@ -9000,35 +8976,6 @@ msgid "Peak Connections (estimate): %i"
 msgstr "Максимальное число соединений (примерно): %i"
 
 #: src/Statistics.cpp
-msgid "NAT Traversal (Session)"
-msgstr "Обход NAT (за сеанс)"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Server Hole Punches: %s"
-msgstr "Проколы через сервер: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Server Hole Punches: %s"
-msgstr "Успешные проколы через сервер: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Lugdunum Callbacks: %s"
-msgstr "Обратные вызовы Lugdunum: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Lugdunum Callbacks: %s"
-msgstr "Успешные обратные вызовы Lugdunum: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "uTP Streams Moved to a New Port: %s"
-msgstr "Потоки uTP перенесены на новый порт: %s"
-
-#: src/Statistics.cpp
 #, c-format
 msgid "Unknown: %s"
 msgstr "Неизвестны: %s"
@@ -9114,6 +9061,10 @@ msgid "Average file size: %s"
 msgstr "Средний размер файлов: %s"
 
 #: src/Statistics.cpp
+msgid "Diagnostics"
+msgstr "Диагностика"
+
+#: src/Statistics.cpp
 msgid "Operating System"
 msgstr "Операционная система"
 
@@ -9195,6 +9146,10 @@ msgstr ""
 "Не указано ключевое слово поиска.\n"
 "Введите «help search» для получения справки.\n"
 
+#: src/TextClient.cpp
+msgid "The connected daemon does not support media search filters.\n"
+msgstr "Подключённый демон не поддерживает фильтры поиска медиафайлов.\n"
+
 #. TRANSLATORS:
 #. 'help search' is a command to the program, do not translate it.
 #: src/TextClient.cpp
@@ -9206,11 +9161,19 @@ msgstr ""
 "Введите «help search» для получения справки.\n"
 
 #: src/TextClient.cpp
+msgid "The connected daemon does not support search management.\n"
+msgstr "Подключённый демон не поддерживает управление поиском.\n"
+
+#: src/TextClient.cpp
+msgid "A search ID from 'search list' is required.\n"
+msgstr "Требуется идентификатор поиска из «search list».\n"
+
+#: src/TextClient.cpp
 #, c-format
 msgid "Download File: %lu %s\n"
 msgstr "Загрузить файл: %lu %s\n"
 
-#: src/TextClient.cpp src/webserver/src/WebServer.cpp
+#: src/TextClient.cpp
 msgid "Request failed with an unknown error."
 msgstr "Запрос не удался - неизвестная ошибка."
 
@@ -9318,6 +9281,26 @@ msgstr ""
 #: src/TextClient.cpp
 msgid "[PartFile]"
 msgstr "[частично]"
+
+#: src/TextClient.cpp
+msgid "No retained searches.\n"
+msgstr "Сохранённых поисков нет.\n"
+
+#: src/TextClient.cpp
+msgid "More-results request processed; availability is unknown.\n"
+msgstr "Запрос дополнительных результатов обработан; доступность неизвестна.\n"
+
+#: src/TextClient.cpp
+msgid "More-results request processed; further requests remain possible.\n"
+msgstr "Запрос дополнительных результатов обработан; можно запросить ещё.\n"
+
+#: src/TextClient.cpp
+msgid "No further results can be requested for this search.\n"
+msgstr "Для этого поиска больше нельзя запросить результаты.\n"
+
+#: src/TextClient.cpp
+msgid "Search stop request processed; retained results were not removed.\n"
+msgstr "Запрос остановки поиска обработан; сохранённые результаты не удалены.\n"
 
 #: src/TextClient.cpp
 #, c-format
@@ -9587,6 +9570,11 @@ msgid ""
 "    --avail <N>            minimum number of sources\n"
 "    --min-size <N[KMG]>    smallest file size; K=1024, M=K*1024, G=M*1024\n"
 "    --max-size <N[KMG]>    largest file size; same suffixes\n"
+"    --min-bitrate <kbps>   whole number, 0-1000000\n"
+"    --min-duration <sec>   whole number, 0-86400\n"
+"    --codec <text> --title <text> --album <text> --artist <text>\n"
+"Quote media text values containing spaces.\n"
+"Kad applies media filters; eD2k servers may ignore them.\n"
 "Example: 'search global linux iso --type Iso --min-size 100M' returns\n"
 "results for \"linux iso\" of file-type Iso at least 100 MiB.\n"
 msgstr ""
@@ -9604,6 +9592,11 @@ msgstr ""
 "    --avail <N>            минимальное количество источников\n"
 "    --min-size <N[KMG]>    минимальный размер файла; K=1024, M=K*1024, G=M*1024\n"
 "    --max-size <N[KMG]>    максимальный размер файла; те же суффиксы\n"
+"    --min-bitrate <kbps>   целое число, 0–1000000\n"
+"    --min-duration <sec>   целое число, 0–86400\n"
+"    --codec <text> --title <text> --album <text> --artist <text>\n"
+"Значения медиатекста с пробелами заключайте в кавычки.\n"
+"Kad применяет фильтры медиафайлов; серверы eD2k могут их игнорировать.\n"
 "Пример: «search global linux iso --type Iso --min-size 100M» вернёт\n"
 "результаты для «linux iso» типа Iso размером не менее 100 МиБ.\n"
 
@@ -9622,6 +9615,26 @@ msgstr "Выполнить поиск в Kad"
 #: src/TextClient.cpp
 msgid "Execute an eD2k and Kad search"
 msgstr "Выполнить поиск в eD2k и Kad"
+
+#: src/TextClient.cpp
+msgid "List retained search IDs and queries."
+msgstr "Показать сохранённые идентификаторы поисков и запросы."
+
+#: src/TextClient.cpp
+msgid "Stop a search, keeping its results."
+msgstr "Остановить поиск, сохранив его результаты."
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'."
+msgstr "Требуется идентификатор поиска из «search list»."
+
+#: src/TextClient.cpp
+msgid "Request more Kad search results."
+msgstr "Запросить дополнительные результаты поиска Kad."
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'. Further results are not guaranteed."
+msgstr "Требуется идентификатор поиска из «search list». Дополнительные результаты не гарантируются."
 
 #: src/TextClient.cpp
 msgid "Show the results of a search."
@@ -10452,140 +10465,6 @@ msgstr "Каталог, в котором хранится файл-подпис
 msgid "Folder where generating the statistic image"
 msgstr "Каталог, в котором будет сохранятся картинка со статистикой"
 
-#: src/webserver/src/WebInterface.cpp
-msgid "Loads template <str>"
-msgstr "Подгружает шаблон <str>"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Web server HTTP port"
-msgstr "HTTP порт веб-сервера"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use UPnP port forwarding on web server port"
-msgstr "Использовать проброс порта веб-сервера через UPnP"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "UPnP port"
-msgstr "Порт UPnP"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use gzip compression"
-msgstr "Использовать gzip-сжатие"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Full access password for web server"
-msgstr "Пароль веб-сервера для полного доступа"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Guest password for web server"
-msgstr "Пароль веб-сервера для ограниченного доступа"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Allow guest access"
-msgstr "Позволять ограниченный доступ"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Deny guest access"
-msgstr "Запрещать ограниченный доступ"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Load/save web server settings from/to remote aMule"
-msgstr "Подгрузить/сохранить настройки веб-сервера из/в удалённый aMule"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule config file path. DO NOT USE DIRECTLY!"
-msgstr "Путь к файлу конфигурации aMule. НЕ ИСПОЛЬЗУЙТЕ ПРЯМОЙ ПУТЬ!"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Disable PHP interpreter (deprecated)"
-msgstr "Отключить интерпретатор PHP (устарело)"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Recompile PHP pages on each request"
-msgstr "Компилировать PHP-страницы при каждом запросе"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule Web Server"
-msgstr "Веб-сервер aMule"
-
-#: src/webserver/src/WebServer.cpp
-msgid "web client connection accepted\n"
-msgstr "соединение Веб-клиента принято\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "ERROR: cannot accept web client connection\n"
-msgstr "ОШИБКА: невозможно принять соединение web-клиента\n"
-
-#: src/webserver/src/WebServer.cpp
-#, c-format
-msgid "Request failed with the following error: %s."
-msgstr "Запрос не удался из-за следующей ошибки: %s."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Index file not found: "
-msgstr "Индексный файл не найден: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session expired - requesting login\n"
-msgstr "Сеанс просрочен — запрашивается новый вход\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, logged in\n"
-msgstr "Сеанс в порядке, вход выполнен\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, not logged in\n"
-msgstr "Сеанс в порядке, выход не выполнен\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No session opened - will request login\n"
-msgstr "Нет открытых сеансов — будет запрошен вход\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session created - requesting login\n"
-msgstr "Сеанс создан — запрашивается вход\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [original]: "
-msgstr "Обрабатывается запрос [исходный]: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Refusing to read `pass` from URL query string\n"
-msgstr "Отказ от чтения `pass` из строки запроса URL-адреса\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No password specified, login will not be allowed."
-msgstr "Не указан пароль, авторизация запрещена."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Checking password\n"
-msgstr "Проверяю пароль\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password hash invalid\n"
-msgstr "Хеш пароля неверен\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password ok\n"
-msgstr "Пароль верен\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password bad\n"
-msgstr "Неверный пароль\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "You did not enter any password. Blank password is not allowed.\n"
-msgstr "Вы не ввели пароль. Пустой пароль недопустим.\n"
-
-# в eMule - так и пишут: логин/логаут, но мне не нравится
-#: src/webserver/src/WebServer.cpp
-msgid "Logout requested\n"
-msgstr "Запрошено отсоединение\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [redirected]: "
-msgstr "Обрабатывается запрос [перенаправленный]: "
-
 #: packaging/windows/installer_strings.c
 msgid "aMule (required)"
 msgstr "aMule (обязательно)"
@@ -10728,6 +10607,349 @@ msgstr "Не удалось сравнить устаревший ECPassword с 
 msgid "Migrating a changed legacy ECPassword after downgrade; the previous verifier no longer authenticates this run."
 msgstr "Выполняется миграция изменённого устаревшего ECPassword после отката версии; предыдущий верификатор больше не действует в этом запуске."
 
+#, c-format
+#~ msgid "Terminating amuleweb instance with pid '%d' ... "
+#~ msgstr "Завершение экземпляра amuleweb с pid «%d»… "
+
+#, c-format
+#~ msgid "Killing amuleweb instance with pid '%d' ... "
+#~ msgstr "Убивается экземпляр amuleweb с pid «%d»… "
+
+#~ msgid "An exception occurred while launching amuleweb."
+#~ msgstr "При запуске amuleweb возникло исключение."
+
+#, c-format
+#~ msgid "web server running on pid %d"
+#~ msgstr "веб-сервер работает с pid %d"
+
+#~ msgid "Could not prepare the amuleweb authentication token. The web server was not started."
+#~ msgstr "Не удалось подготовить токен аутентификации amuleweb. Веб-сервер не был запущен."
+
+#~ msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
+#~ msgstr "Вы запросили запуск веб-сервера при старте, но исполняемый файл amuleweb не может быть запущен. Установите пакет, содержащий веб-сервер aMule, либо соберите aMule из исходного кода с параметром -DBUILD_WEBSERVER=YES и установите его."
+
+#~ msgid "Could not prepare the amuleweb EC token."
+#~ msgstr "Не удалось подготовить EC-токен amuleweb."
+
+#, c-format
+#~ msgid "Could not remove the amuleweb EC token file: %s"
+#~ msgstr "Не удалось удалить файл EC-токена amuleweb: %s"
+
+#~ msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
+#~ msgstr "Отклонён удалённый запрос на установку шаблона веб-сервера: значение должно быть простым именем шаблона, а не путём."
+
+#~ msgid "Web server parameters"
+#~ msgstr "Параметры веб-сервера"
+
+#~ msgid "Run webserver on startup (deprecated)"
+#~ msgstr "Запускать веб-сервер при старте (устарело)"
+
+#~ msgid "Web template"
+#~ msgstr "Веб-шаблон"
+
+#~ msgid "Full rights password"
+#~ msgstr "Пароль для обычного доступа"
+
+#~ msgid "Enable Low rights User"
+#~ msgstr "Разрешить ограниченный доступ"
+
+#~ msgid "Low rights password"
+#~ msgstr "Пароль ограниченного доступа"
+
+#~ msgid "Enable UPnP port forwarding of the web server port"
+#~ msgstr "Включить проброс порта веб-сервера через UPnP"
+
+#~ msgid "Web server UPnP TCP port (Optional)"
+#~ msgstr "Порт UPnP TCP веб-сервера (необязательно)"
+
+#~ msgid "Page Refresh Time (in secs)"
+#~ msgstr "Период обновления страницы (в секундах)"
+
+#~ msgid "Enable Gzip compression"
+#~ msgstr "Включить сжатие Gzip"
+
+#~ msgid "no options available"
+#~ msgstr "нет доступных опций"
+
+#~ msgid "The aMule web server is deprecated. Consider running the aMule API instead."
+#~ msgstr "Веб-сервер aMule устарел. Рассмотрите возможность использования aMule API вместо него."
+
+#~ msgid "Loads template <str>"
+#~ msgstr "Подгружает шаблон <str>"
+
+#~ msgid "Web server HTTP port"
+#~ msgstr "HTTP порт веб-сервера"
+
+#~ msgid "Use UPnP port forwarding on web server port"
+#~ msgstr "Использовать проброс порта веб-сервера через UPnP"
+
+#~ msgid "UPnP port"
+#~ msgstr "Порт UPnP"
+
+#~ msgid "Use gzip compression"
+#~ msgstr "Использовать gzip-сжатие"
+
+#~ msgid "Full access password for web server"
+#~ msgstr "Пароль веб-сервера для полного доступа"
+
+#~ msgid "Guest password for web server"
+#~ msgstr "Пароль веб-сервера для ограниченного доступа"
+
+#~ msgid "Allow guest access"
+#~ msgstr "Позволять ограниченный доступ"
+
+#~ msgid "Deny guest access"
+#~ msgstr "Запрещать ограниченный доступ"
+
+#~ msgid "Load/save web server settings from/to remote aMule"
+#~ msgstr "Подгрузить/сохранить настройки веб-сервера из/в удалённый aMule"
+
+#~ msgid "aMule config file path. DO NOT USE DIRECTLY!"
+#~ msgstr "Путь к файлу конфигурации aMule. НЕ ИСПОЛЬЗУЙТЕ ПРЯМОЙ ПУТЬ!"
+
+#~ msgid "Disable PHP interpreter (deprecated)"
+#~ msgstr "Отключить интерпретатор PHP (устарело)"
+
+#~ msgid "Recompile PHP pages on each request"
+#~ msgstr "Компилировать PHP-страницы при каждом запросе"
+
+#~ msgid "aMule Web Server"
+#~ msgstr "Веб-сервер aMule"
+
+#~ msgid "web client connection accepted\n"
+#~ msgstr "соединение Веб-клиента принято\n"
+
+#~ msgid "ERROR: cannot accept web client connection\n"
+#~ msgstr "ОШИБКА: невозможно принять соединение web-клиента\n"
+
+#, c-format
+#~ msgid "Request failed with the following error: %s."
+#~ msgstr "Запрос не удался из-за следующей ошибки: %s."
+
+#~ msgid "Index file not found: "
+#~ msgstr "Индексный файл не найден: "
+
+#~ msgid "Session expired - requesting login\n"
+#~ msgstr "Сеанс просрочен — запрашивается новый вход\n"
+
+#~ msgid "Session ok, logged in\n"
+#~ msgstr "Сеанс в порядке, вход выполнен\n"
+
+#~ msgid "Session ok, not logged in\n"
+#~ msgstr "Сеанс в порядке, выход не выполнен\n"
+
+#~ msgid "No session opened - will request login\n"
+#~ msgstr "Нет открытых сеансов — будет запрошен вход\n"
+
+#~ msgid "Session created - requesting login\n"
+#~ msgstr "Сеанс создан — запрашивается вход\n"
+
+#~ msgid "Processing request [original]: "
+#~ msgstr "Обрабатывается запрос [исходный]: "
+
+#~ msgid "Refusing to read `pass` from URL query string\n"
+#~ msgstr "Отказ от чтения `pass` из строки запроса URL-адреса\n"
+
+#~ msgid "No password specified, login will not be allowed."
+#~ msgstr "Не указан пароль, авторизация запрещена."
+
+#~ msgid "Checking password\n"
+#~ msgstr "Проверяю пароль\n"
+
+#~ msgid "Password hash invalid\n"
+#~ msgstr "Хеш пароля неверен\n"
+
+#~ msgid "Password ok\n"
+#~ msgstr "Пароль верен\n"
+
+#~ msgid "Password bad\n"
+#~ msgstr "Неверный пароль\n"
+
+#~ msgid "You did not enter any password. Blank password is not allowed.\n"
+#~ msgstr "Вы не ввели пароль. Пустой пароль недопустим.\n"
+
+# в eMule - так и пишут: логин/логаут, но мне не нравится
+#~ msgid "Logout requested\n"
+#~ msgstr "Запрошено отсоединение\n"
+
+#~ msgid "Processing request [redirected]: "
+#~ msgstr "Обрабатывается запрос [перенаправленный]: "
+
+#~ msgid "(Right click on folder icon for recursive share)"
+#~ msgstr "(ПКМ по значку каталога для рекурсивной публикации)"
+
+#~ msgid "Currently connected server."
+#~ msgstr "Сейчас подключён к серверу."
+
+#~ msgid "Up: 0.0 | Down: 0.0"
+#~ msgstr "Отд: 0,0 | Заг: 0,0"
+
+# Тултип. Лучше оставить как можно более коротким (не все системы автоматом
+# делают их многострочными ;-))
+#~ msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
+#~ msgstr "Текущая средняя скорость отдачи и загрузки. Если включено, числа в скобках обозначают служебный трафик обмена данными с клиентами."
+
+#, c-format
+#~ msgid "Served Now: %llu"
+#~ msgstr "Обслуживается сейчас: %llu"
+
+#, c-format
+#~ msgid "Buddy Requests Received: %llu"
+#~ msgstr "Получено запросов на партнёрство: %llu"
+
+#, c-format
+#~ msgid "Buddy Offers Sent: %llu"
+#~ msgstr "Отправлено предложений партнёрства: %llu"
+
+#, c-format
+#~ msgid "Buddy Requests Refused: %llu"
+#~ msgstr "Отклонено запросов на партнёрство: %llu"
+
+#, c-format
+#~ msgid "Buddy Requests From NAT-T Nodes: %llu"
+#~ msgstr "Запросов на партнёрство от узлов с NAT-T: %llu"
+
+#, c-format
+#~ msgid "Buddy Requests Over the Rate Limit: %llu"
+#~ msgstr "Запросов на партнёрство сверх лимита: %llu"
+
+#, c-format
+#~ msgid "Unused Buddy Offers: %llu"
+#~ msgstr "Неиспользованных предложений партнёрства: %llu"
+
+#, c-format
+#~ msgid "Buddies Served: %llu"
+#~ msgstr "Обслужено партнёров: %llu"
+
+#, c-format
+#~ msgid "Served Buddies Timed Out: %llu"
+#~ msgstr "Обслуженных партнёров с истёкшим временем ожидания: %llu"
+
+#, c-format
+#~ msgid "Time Served: %s"
+#~ msgstr "Время обслуживания: %s"
+
+#, c-format
+#~ msgid "Callbacks Relayed: %llu"
+#~ msgstr "Передано обратных вызовов: %llu"
+
+#, c-format
+#~ msgid "Reasks Relayed: %llu"
+#~ msgstr "Передано повторных запросов: %llu"
+
+#, c-format
+#~ msgid "Data Relayed: %s"
+#~ msgstr "Передано данных: %s"
+
+#, c-format
+#~ msgid "Callbacks Dropped: %llu"
+#~ msgstr "Отброшено обратных вызовов: %llu"
+
+#, c-format
+#~ msgid "Reasks Dropped: %llu"
+#~ msgstr "Отброшено повторных запросов: %llu"
+
+#, c-format
+#~ msgid "Busiest Minute to One Buddy: %s"
+#~ msgstr "Самая загруженная минута для одного партнёра: %s"
+
+#, c-format
+#~ msgid "Buddy Searches: %llu"
+#~ msgstr "Поисков партнёров: %llu"
+
+#, c-format
+#~ msgid "Buddy Searches Held for a Shared File: %llu"
+#~ msgstr "Поисков партнёров, удержанных для публикуемого файла: %llu"
+
+#, c-format
+#~ msgid "Buddy Requests Sent: %llu"
+#~ msgstr "Отправлено запросов на партнёрство: %llu"
+
+#, c-format
+#~ msgid "Buddy Offers Received: %llu"
+#~ msgstr "Получено предложений партнёрства: %llu"
+
+#, c-format
+#~ msgid "Failed Buddy Connections: %llu"
+#~ msgstr "Неудачных подключений к партнёрам: %llu"
+
+#, c-format
+#~ msgid "Buddies Connected: %llu"
+#~ msgstr "Подключено партнёров: %llu"
+
+#, c-format
+#~ msgid "Buddies Timed Out: %llu"
+#~ msgstr "Партнёров с истёкшим временем ожидания: %llu"
+
+#, c-format
+#~ msgid "Time a Buddy Was Needed: %s"
+#~ msgstr "Время, когда требовался партнёр: %s"
+
+#, c-format
+#~ msgid "Time Without a Buddy: %s"
+#~ msgstr "Время без партнёра: %s"
+
+#, c-format
+#~ msgid "Callbacks Received: %llu"
+#~ msgstr "Получено обратных вызовов: %llu"
+
+#, c-format
+#~ msgid "Reasks Received: %llu"
+#~ msgstr "Получено повторных запросов: %llu"
+
+#~ msgid "NAT Traversal (Session)"
+#~ msgstr "Обход NAT (за сеанс)"
+
+#, c-format
+#~ msgid "Successful Server Hole Punches: %s"
+#~ msgstr "Успешные проколы через сервер: %s"
+
+#, c-format
+#~ msgid "Successful Lugdunum Callbacks: %s"
+#~ msgstr "Успешные обратные вызовы Lugdunum: %s"
+
+#, c-format
+#~ msgid "uTP Streams Moved to a New Port: %s"
+#~ msgstr "Потоки uTP перенесены на новый порт: %s"
+
+#~ msgid "Kad receiver keys"
+#~ msgstr "Ключи получателя Kad"
+
+#~ msgid "Keyword publish"
+#~ msgstr "Публикация по ключевому слову"
+
+#~ msgid "Source publish"
+#~ msgstr "Публикация источников"
+
+#~ msgid "Notes publish"
+#~ msgstr "Публикация заметок"
+
+#~ msgid "Firewall check"
+#~ msgstr "Проверка брандмауэра"
+
+#~ msgid "Firewall check 2"
+#~ msgstr "Проверка брандмауэра 2"
+
+#~ msgid "Callback"
+#~ msgstr "Обратный вызов"
+
+#, c-format
+#~ msgid "Keys valid: %s"
+#~ msgstr "Действительных ключей: %s"
+
+#, c-format
+#~ msgid "Keys missing: %s"
+#~ msgstr "Отсутствующих ключей: %s"
+
+#~ msgid "Kad Buddies"
+#~ msgstr "Партнёры Kad"
+
+#~ msgid "Serving Firewalled Nodes"
+#~ msgstr "Обслуживание узлов за брандмауэром"
+
+#~ msgid "Our Own Buddy"
+#~ msgstr "Наш собственный партнёр"
+
 #~ msgid "This aMule has no media helper (amule-media-probe)"
 #~ msgstr "В этом aMule нет помощника для работы с медиа (amule-media-probe)"
 
@@ -10859,9 +11081,6 @@ msgstr "Выполняется миграция изменённого уста�
 
 #~ msgid "Click on this button to update the servers list from URL ..."
 #~ msgstr "Нажмите для обновления списка серверов из URL-адреса…"
-
-#~ msgid "Server list"
-#~ msgstr "Список серверов"
 
 #~ msgid "Enter the url to a server.met file here and press the button to the left to update the list of known servers."
 #~ msgstr "Введите адрес к файлу server.met и нажмите кнопку слева для обновления списка известных серверов."
@@ -11091,9 +11310,6 @@ msgstr "Выполняется миграция изменённого уста�
 
 #~ msgid "Rejects packet if the client ip is different from the ip where the packet is received from. Use with caution."
 #~ msgstr "Отбрасывает пакеты у которых IP клиента отличается от IP с которого пришел пакет. Используйте осторожно."
-
-#~ msgid "Return the results of the previous search.\n"
-#~ msgstr "Вернуть результаты предыдущего поиска.\n"
 
 #~ msgid "Show the progress of a search.\n"
 #~ msgstr "Показать состояние поиска.\n"

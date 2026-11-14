@@ -13,7 +13,7 @@ msgstr ""
 "Project-Id-Version: aMule\n"
 "Report-Msgid-Bugs-To: https://github.com/amule-org/amule/issues\n"
 "POT-Creation-Date: 2026-10-09 12:39+0000\n"
-"PO-Revision-Date: 2026-11-09 08:48+0000\n"
+"PO-Revision-Date: 2026-11-13 15:33+0000\n"
 "Last-Translator: Watchman89 <watchman89@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Dutch <https://hosted.weblate.org/projects/amule/amule-application/nl/>\n"
 "Language: nl\n"
@@ -21,7 +21,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
-"X-Generator: Weblate 2026.11.2.dev0\n"
+"X-Generator: Weblate 2026.12.dev0\n"
 
 #: src/AboutDialog.cpp
 msgid "About aMule"
@@ -356,22 +356,6 @@ msgstr "Helperapplicaties worden gestopt..."
 
 #: src/amule.cpp
 #, c-format
-msgid "Terminating amuleweb instance with pid '%d' ... "
-msgstr "Amuleweb-instantie met pid '%d' wordt afgesloten ... "
-
-#: src/amule.cpp
-#, c-format
-msgid "Killing amuleweb instance with pid '%d' ... "
-msgstr "Amuleweb-instantie met pid '%d' wordt geforceerd beëindigd... "
-
-#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
-#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
-#: src/SharedFilesCtrl.cpp
-msgid "Failed"
-msgstr "Mislukt"
-
-#: src/amule.cpp
-#, c-format
 msgid "Terminating amuleapi instance with pid '%d' ... "
 msgstr "amuleapi-exemplaar met pid '%d' wordt beëindigd... "
 
@@ -379,6 +363,12 @@ msgstr "amuleapi-exemplaar met pid '%d' wordt beëindigd... "
 #, c-format
 msgid "Killing amuleapi instance with pid '%d' ... "
 msgstr "amuleapi-exemplaar met pid '%d' wordt geforceerd beëindigd... "
+
+#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
+#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
+#: src/SharedFilesCtrl.cpp
+msgid "Failed"
+msgstr "Mislukt"
 
 #: src/amule.cpp
 msgid "aMule OnExit: Terminating core."
@@ -530,28 +520,6 @@ msgid "Not starting %s: it is neither next to aMule nor on PATH."
 msgstr "Kan %s niet starten: het staat niet in de map naast aMule en ook niet op PATH."
 
 #: src/amule.cpp
-msgid "An exception occurred while launching amuleweb."
-msgstr "En uitzondering vond plaats tijdens het opstarten van amuleweb."
-
-#: src/amule.cpp
-#, c-format
-msgid "web server running on pid %d"
-msgstr "webserver draait met pid %d"
-
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb authentication token. The web server was not started."
-msgstr "Kon de amuleweb authenticatietoken niet voorbereiden. De webserver is niet opgestart."
-
-#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
-#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
-msgid "ERROR"
-msgstr "FOUT"
-
-#: src/amule.cpp
-msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
-msgstr "U hebt gevraagd om de webserver bij het opstarten uit te voeren, maar het programma amuleweb kan niet worden uitgevoerd. Installeer het pakket met de aMule-webserver, of bouw aMule vanuit de broncode met -DBUILD_WEBSERVER=YES en installeer het."
-
-#: src/amule.cpp
 #, c-format
 msgid "Could not write the amuleapi EC token to %s; amuleapi will fall back to its configured password."
 msgstr "De amuleapi EV-token kon niet naar %s geschreven worden; amuleapi zal terugvallen op het ingestelde wachtwoord."
@@ -573,14 +541,10 @@ msgstr "Kon amuleapi tijdens automatisch herstarten niet opstarten."
 msgid "You requested to run amuleapi on startup, but the amuleapi binary cannot be run. Please install the package containing aMule's REST API server, or build aMule from source with -DBUILD_AMULEAPI=YES and install it."
 msgstr "U hebt gevraagd om amuleapi bij het opstarten uit te voeren, maar het programma amuleapi kan niet worden uitgevoerd. Installeer het pakket met de REST API-server van aMule, of bouw aMule vanuit de broncode met -DBUILD_AMULEAPI=YES en installeer het."
 
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb EC token."
-msgstr "Kon de amuleweb EV-token niet voorbereiden."
-
-#: src/amule.cpp
-#, c-format
-msgid "Could not remove the amuleweb EC token file: %s"
-msgstr "Kon het amuleweb EV-tokenbestand niet verwijderen: %s"
+#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
+#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
+msgid "ERROR"
+msgstr "FOUT"
 
 #: src/amule.cpp
 #, c-format
@@ -1064,23 +1028,14 @@ msgstr "Versleuteling"
 msgid "aMuleGUI"
 msgstr "aMuleGUI"
 
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
-msgstr "Upload: %.1f%s (%.1f) | Download: %.1f%s (%.1f)"
-
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
 msgid " MiB/s"
 msgstr " MiB/s"
 
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/utils/wxCas/src/wxcasframe.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
+#: src/utils/wxCas/src/wxcasframe.cpp
 msgid " KiB/s"
 msgstr " KiB/s"
-
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s | Down: %.1f%s"
-msgstr "Upload: %.1f%s | Download: %.1f%s"
 
 #: src/amuleDlg.cpp
 msgid "Transfer speeds are reported by the daemon. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
@@ -1089,6 +1044,16 @@ msgstr "Overdrachtsnelheid wordt gerapporteerd door de daemon. Totale uploads be
 #: src/amuleDlg.cpp
 msgid "Live speeds are averaged over the last second. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
 msgstr "Live snelheid wordt gemiddeld genomen over de laatste seconde. Totale uploads bevat ook controleverkeer. Peeruploadsnelheid bevat alleen bestandpakketten. Waardes tussen haakjes toten protocol-overhead in KiB/s."
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s | Down: %.1f%s"
+msgstr "Upload: %.1f%s | Download: %.1f%s"
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
+msgstr "Upload: %.1f%s (%.1f) | Download: %.1f%s (%.1f)"
 
 #: src/amuleDlg.cpp
 #, c-format
@@ -2111,6 +2076,55 @@ msgstr "Bron Seeds"
 msgid "Search Result"
 msgstr "Zoekresultaat"
 
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a direct connection"
+msgstr "Actieve verbindingen"
+
+#: src/DataToText.cpp
+msgid "a direct callback"
+msgstr ""
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "our server"
+msgstr "Verwijder server"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the Kad buddy"
+msgstr "Vind buddy"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the source's own server"
+msgstr "eD2k: Huidige server"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a server hole punch"
+msgstr "Serverperforatiepogingen: %s"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a Lugdunum callback"
+msgstr "Lugdunum Terugroepen: %s"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on a fallback route"
+msgstr "Verbinden via server"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on an unproven route"
+msgstr "Verbinden via server"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s"
+msgstr "Verbinding maken via Kad"
+
 #: src/DataToText.cpp src/DownloadListCtrl.cpp src/OtherFunctions.cpp
 #: src/TransferWnd.cpp
 msgid "Completed"
@@ -2421,10 +2435,6 @@ msgstr[1] "Kon %u links niet toevoegen (zie log voor details)."
 #, c-format
 msgid "Invalid eD2k link! ERROR: %s"
 msgstr "Ongeldige eD2k-link! FOUT: %s"
-
-#: src/ECSpecialMuleTags.cpp
-msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
-msgstr "Een extern verzoek om het web-server sjabloon in te stellen is geweigerd. De waarde moet een eenvoudige sjabloonnaam zijn, geen pad."
 
 #: src/ECSpecialMuleTags.cpp
 msgid "Refused a remote request to change the online-signature folder: it can only be set in the daemon's own configuration."
@@ -4571,12 +4581,12 @@ msgid "Users connected to the current server and an estimate of the total number
 msgstr "Gebruikers verbonden met de huidige server en een schatting van het totale aantal gebruikers."
 
 #: src/muuli_wdr.cpp
-msgid "Up: 0.0 | Down: 0.0"
-msgstr "Up: 0.0 | Down: 0.0"
+msgid "Up:"
+msgstr "Up:"
 
 #: src/muuli_wdr.cpp
-msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
-msgstr "Huidige gemiddelde upload- en downloadsnelheden. Indien ingeschakeld geven de getallen tussen haakjes de overhead door client-communicatie aan."
+msgid "Down:"
+msgstr "Down:"
 
 #: src/muuli_wdr.cpp
 msgid "Displays the connected status and active transfers. Red arrows signifies that you are currently not connected, yellow arrows signify that you have low ID (firewalled) and green arrows signify that you have high ID (The optimal connection type)."
@@ -4585,10 +4595,6 @@ msgstr "Toont de verbonden status en actieve overdrachten. Rode pijlen geven aan
 #: src/muuli_wdr.cpp
 msgid "Not Connected ..."
 msgstr "Niet verbonden ..."
-
-#: src/muuli_wdr.cpp
-msgid "Currently connected server."
-msgstr "Server nu mee verbonden."
 
 #: src/muuli_wdr.cpp
 msgid "Search"
@@ -5595,8 +5601,12 @@ msgid "Remove"
 msgstr "Verwijderen"
 
 #: src/muuli_wdr.cpp
-msgid "(Right click on folder icon for recursive share)"
-msgstr "(Rechtermuisklik op mappictogram om recursief te delen)"
+msgid "Double-click: share or unshare this folder. Right-click: share it with all subfolders, including new ones."
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "Bold: shared. Bold italic: shared with all subfolders. Red folder: contains shared folders."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Share hidden files"
@@ -5757,6 +5767,14 @@ msgstr "Max nieuwe verbindingen / 5 seconden"
 #: src/muuli_wdr.cpp
 msgid "Concurrent Kad source lookups"
 msgstr "Gelijktijdige Kad-bronopzoekingen"
+
+#: src/muuli_wdr.cpp
+msgid "Firewalled Kad nodes served as buddy"
+msgstr "Gefirewallde Kad-nodes bediend als buddy"
+
+#: src/muuli_wdr.cpp
+msgid "How many firewalled Kad nodes this node relays callbacks for. Each one holds a connection, so at most a tenth of the connection limit is served."
+msgstr "Voor hoe veel gefirewallde Kad-nodes deze node terugroepen heeft doorgegeven. Elke node bevat een verbinding zodat maximaal een tiende van de verbindingslimiet wordt bediend."
 
 #: src/muuli_wdr.cpp
 msgid "Kad source re-search interval (minutes)"
@@ -5953,46 +5971,6 @@ msgstr "Gastsessies kunnen status en lijsten lezen, maar kunnen niets wijzigen. 
 #: src/muuli_wdr.cpp
 msgid "Guest password"
 msgstr "Gastwachtwoord"
-
-#: src/muuli_wdr.cpp
-msgid "Web server parameters"
-msgstr "Webserver parameters"
-
-#: src/muuli_wdr.cpp
-msgid "Run webserver on startup (deprecated)"
-msgstr "Webserver uitvoeren bij opstarten (verouderd)"
-
-#: src/muuli_wdr.cpp
-msgid "Web template"
-msgstr "Web-template"
-
-#: src/muuli_wdr.cpp
-msgid "Full rights password"
-msgstr "Alle rechten wachtwoord"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Low rights User"
-msgstr "Schakel gebruiker met beperkte rechten in"
-
-#: src/muuli_wdr.cpp
-msgid "Low rights password"
-msgstr "Beperkte rechten wachtwoord"
-
-#: src/muuli_wdr.cpp
-msgid "Enable UPnP port forwarding of the web server port"
-msgstr "Schakel UPnP portforwarding van de webserver-poort in"
-
-#: src/muuli_wdr.cpp
-msgid "Web server UPnP TCP port (Optional)"
-msgstr "Web server UPnP TCP-poort (optioneel)"
-
-#: src/muuli_wdr.cpp
-msgid "Page Refresh Time (in secs)"
-msgstr "Pagina verversingstijd (in seconden)"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Gzip compression"
-msgstr "Schakel Gzip-compressie in"
 
 #: src/muuli_wdr.cpp
 msgid "Reset page to defaults"
@@ -7018,9 +6996,9 @@ msgstr "Buddygegevensopvraag"
 msgid "NAT traversal (QUIC)"
 msgstr "NAT traversal (QUIC)"
 
-#: src/Preferences.cpp
-msgid "no options available"
-msgstr "geen opties beschikbaar"
+#: src/PeerCapabilities.h
+msgid "Skips unknown source exchange tags"
+msgstr "Slaat onbekende bronuitwisselingslabels over"
 
 #: src/Preferences.cpp
 msgid "Media metadata: FFProbePath is obsolete; aMule now uses its bundled media parser. Removing the old setting."
@@ -7381,12 +7359,9 @@ msgid "macOS does not let an application stop being the default handler. To stop
 msgstr "macOS staat niet toe dat een app niet langer de standaard afhandelaar is. Om te voorkomen dat aMule deze opent maakt u een andere app de standaard."
 
 #: src/PrefsUnifiedDlg.cpp
-msgid "The web server and aMule API require external connections to be enabled."
+#, fuzzy
+msgid "The aMule API requires external connections to be enabled."
 msgstr "De webserver en de aMule API vereisen dat externe verbindingen zijn ingeschakeld."
-
-#: src/PrefsUnifiedDlg.cpp
-msgid "The aMule web server is deprecated. Consider running the aMule API instead."
-msgstr "De aMule-webserver is verouderd. Overweeg in plaats daarvan de aMule API uit te voeren."
 
 #: src/PrefsUnifiedDlg.cpp
 msgid ""
@@ -8421,6 +8396,15 @@ msgid "Connected to buddy at %s"
 msgstr "Verbonden met buddy op %s"
 
 #: src/ServerWnd.cpp
+msgid "Served buddies:"
+msgstr "Bediende buddies:"
+
+#: src/ServerWnd.cpp
+#, c-format
+msgid "%u of %u"
+msgstr "%u van de %u"
+
+#: src/ServerWnd.cpp
 msgid "IP address:"
 msgstr "IP-adres:"
 
@@ -8913,35 +8897,6 @@ msgid "Peak Connections (estimate): %i"
 msgstr "Aantal Piekverbindingen (schatting): %i"
 
 #: src/Statistics.cpp
-msgid "NAT Traversal (Session)"
-msgstr "NAT Traversal (Sessie)"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Server Hole Punches: %s"
-msgstr "Serverperforatiepogingen: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Server Hole Punches: %s"
-msgstr "Succesvolle Serverperforatiepogingen: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Lugdunum Callbacks: %s"
-msgstr "Lugdunum Terugroepen: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Lugdunum Callbacks: %s"
-msgstr "Succesvolle Lugdunum Terugroepen: %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "uTP Streams Moved to a New Port: %s"
-msgstr "uTP-Streams Verplaatst naar een Nieuwe Poort: %s"
-
-#: src/Statistics.cpp
 #, c-format
 msgid "Unknown: %s"
 msgstr "Onbekend: %s"
@@ -9027,6 +8982,10 @@ msgid "Average file size: %s"
 msgstr "Gemiddelde bestandsgrootte: %s"
 
 #: src/Statistics.cpp
+msgid "Diagnostics"
+msgstr "Diagnostiek"
+
+#: src/Statistics.cpp
 msgid "Operating System"
 msgstr "Besturingssysteem"
 
@@ -9109,6 +9068,10 @@ msgstr ""
 "Geen zoekwoord opgegeven.\n"
 "Typ 'help search' voor meer hulp.\n"
 
+#: src/TextClient.cpp
+msgid "The connected daemon does not support media search filters.\n"
+msgstr "De verbonden daemon ondersteunt mediazoekfilters niet.\n"
+
 #. TRANSLATORS:
 #. 'help search' is a command to the program, do not translate it.
 #: src/TextClient.cpp
@@ -9120,11 +9083,19 @@ msgstr ""
 "Typ 'help search' om helptekst te lezen.\n"
 
 #: src/TextClient.cpp
+msgid "The connected daemon does not support search management.\n"
+msgstr "De verbonden daemon ondersteunt zoekbeheer niet.\n"
+
+#: src/TextClient.cpp
+msgid "A search ID from 'search list' is required.\n"
+msgstr "Een zoek-ID vanuit de 'zoeklijst' is vereist.\n"
+
+#: src/TextClient.cpp
 #, c-format
 msgid "Download File: %lu %s\n"
 msgstr "Downloadbestand: %lu %s\n"
 
-#: src/TextClient.cpp src/webserver/src/WebServer.cpp
+#: src/TextClient.cpp
 msgid "Request failed with an unknown error."
 msgstr "Aanvraag mislukt met een onbekende fout."
 
@@ -9231,6 +9202,26 @@ msgstr ""
 #: src/TextClient.cpp
 msgid "[PartFile]"
 msgstr "[PartBestand]"
+
+#: src/TextClient.cpp
+msgid "No retained searches.\n"
+msgstr "Geen bewaarde zoekopdrachten.\n"
+
+#: src/TextClient.cpp
+msgid "More-results request processed; availability is unknown.\n"
+msgstr "Meer-resultaten-verzoek verwerkt. Beschikbaarheid is niet bekend.\n"
+
+#: src/TextClient.cpp
+msgid "More-results request processed; further requests remain possible.\n"
+msgstr "Meer-resultaten-verzoek verwerkt. Verdere verzoeken blijven mogelijk.\n"
+
+#: src/TextClient.cpp
+msgid "No further results can be requested for this search.\n"
+msgstr "Geen verdere resultaten kunnen worden aangevraagd voor deze zoekopdracht.\n"
+
+#: src/TextClient.cpp
+msgid "Search stop request processed; retained results were not removed.\n"
+msgstr "Zoekopdracht-stop-verzoek verwerkt. Bewaarde resultaten zijn niet verwijderd.\n"
 
 #: src/TextClient.cpp
 #, c-format
@@ -9500,6 +9491,11 @@ msgid ""
 "    --avail <N>            minimum number of sources\n"
 "    --min-size <N[KMG]>    smallest file size; K=1024, M=K*1024, G=M*1024\n"
 "    --max-size <N[KMG]>    largest file size; same suffixes\n"
+"    --min-bitrate <kbps>   whole number, 0-1000000\n"
+"    --min-duration <sec>   whole number, 0-86400\n"
+"    --codec <text> --title <text> --album <text> --artist <text>\n"
+"Quote media text values containing spaces.\n"
+"Kad applies media filters; eD2k servers may ignore them.\n"
 "Example: 'search global linux iso --type Iso --min-size 100M' returns\n"
 "results for \"linux iso\" of file-type Iso at least 100 MiB.\n"
 msgstr ""
@@ -9517,8 +9513,13 @@ msgstr ""
 "    --avail <N>            minimum aantal bronnen\n"
 "    --min-size <N[KMG]>    kleinste bestandsgrootte; K=1024, M=K*1024, G=M*1024\n"
 "    --max-size <N[KMG]>    grootste bestandsgrootte; zelfde achtervoegsels\n"
-"Voorbeeld: 'search global linux iso --type Iso --min-size 100M' geeft\n"
-"resultaten voor \"linux iso\" van bestandstype Iso van minstens 100 MiB.\n"
+"    --min-bitrate <kbps>   geheel getal, 0-1000000\n"
+"    --min-duration <sec>   geheel getal, 0-86400\n"
+"    --codec <tekst> --title <tekst> --album <tekst> --artist <tekst>\n"
+"Omring media-textwaarden die spaties bevatten met aanhaligstekens.\n"
+"Kad past mediafilters toe.eD2k-servers kunnen ze negeren.\n"
+"Example: 'search global linux iso --type Iso --min-size 100M' returns\n"
+"Voorbeeld: 'search global linux iso --type Iso --min-size 100M' geeft resultaten voor \"linux iso\" van bestandstype Iso van minstens 100 MiB.\n"
 
 #: src/TextClient.cpp
 msgid "Execute a global search."
@@ -9535,6 +9536,26 @@ msgstr "Voer een kad zoekopdracht uit"
 #: src/TextClient.cpp
 msgid "Execute an eD2k and Kad search"
 msgstr "Voer een eD2k- en Kad-zoekopdracht uit"
+
+#: src/TextClient.cpp
+msgid "List retained search IDs and queries."
+msgstr "Benoem bewaarde zoek-IDs en aanvragen."
+
+#: src/TextClient.cpp
+msgid "Stop a search, keeping its results."
+msgstr "Stop een zoekopdracht, bewaar de resultaten."
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'."
+msgstr "Vereist een zoek-ID vanuit de 'zoeklijst'."
+
+#: src/TextClient.cpp
+msgid "Request more Kad search results."
+msgstr "Verzoek meer Kad-zoekresultaten."
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'. Further results are not guaranteed."
+msgstr "Vereist een zoek-ID vanuit de 'zoeklijst'. Verdere resultaten zijn niet gegarandeerd."
 
 #: src/TextClient.cpp
 msgid "Show the results of a search."
@@ -10367,139 +10388,6 @@ msgstr "Map die uw handtekeningbestand bevat"
 msgid "Folder where generating the statistic image"
 msgstr "Map waar de afbeelding van statistieken gegenereerd moet worden"
 
-#: src/webserver/src/WebInterface.cpp
-msgid "Loads template <str>"
-msgstr "Laadt template <str>"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Web server HTTP port"
-msgstr "Webserver HTTP-poort"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use UPnP port forwarding on web server port"
-msgstr "Gebruik UPnP portforwarding voor webserver-poort"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "UPnP port"
-msgstr "UPnP-poort"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use gzip compression"
-msgstr "Gebruik Gzip-compressie"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Full access password for web server"
-msgstr "Wachtwoord voor volledige toegang tot webserver"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Guest password for web server"
-msgstr "Gastwachtwoord voor webserver"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Allow guest access"
-msgstr "Sta gasttoegang toe"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Deny guest access"
-msgstr "Weiger gasttoegang"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Load/save web server settings from/to remote aMule"
-msgstr "Laad/bewaar webserverinstellingen van/naar externe aMule"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule config file path. DO NOT USE DIRECTLY!"
-msgstr "aMule configuratiebestand pad. NIET DIRECT GEBRUIKEN!"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Disable PHP interpreter (deprecated)"
-msgstr "Schakel PHP-interpreter uit (verouderd)"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Recompile PHP pages on each request"
-msgstr "Compileer PHP-pagina's opnieuw bij elke aanvraag"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule Web Server"
-msgstr "aMule webserver"
-
-#: src/webserver/src/WebServer.cpp
-msgid "web client connection accepted\n"
-msgstr "webclient verbinding geaccepteerd\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "ERROR: cannot accept web client connection\n"
-msgstr "FOUT: kan verbinding van webclient niet accepteren\n"
-
-#: src/webserver/src/WebServer.cpp
-#, c-format
-msgid "Request failed with the following error: %s."
-msgstr "Aanvraag mislukt met de volgende fout: %s."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Index file not found: "
-msgstr "Indexbestand niet gevonden: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session expired - requesting login\n"
-msgstr "Sessie verlopen - inloggen wordt aangevraagd\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, logged in\n"
-msgstr "Sessie ok, ingelogd\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, not logged in\n"
-msgstr "Sessie ok, niet ingelogd\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No session opened - will request login\n"
-msgstr "Geen sessie geopend - login wordt aangevraad\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session created - requesting login\n"
-msgstr "Sessie aangemaakt - inloggen wordt aangevraagd\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [original]: "
-msgstr "Aanvraag wordt verwerkt [origineel]: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Refusing to read `pass` from URL query string\n"
-msgstr "Weigert `pass` te lezen uit de URL-queryreeks\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No password specified, login will not be allowed."
-msgstr "Geen wachtwoord opgegeven, login wordt niet toegestaan."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Checking password\n"
-msgstr "Controleren van wachtwoord\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password hash invalid\n"
-msgstr "Wachtwoord-hash ongeldig\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password ok\n"
-msgstr "Wachtwoord is ok\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password bad\n"
-msgstr "Wachtwoord-fout\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "You did not enter any password. Blank password is not allowed.\n"
-msgstr "U heeft geen wachtwoord ingevoerd. Een leeg wachtwoord is niet toegestaan.\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Logout requested\n"
-msgstr "Uitloggen aangevraagd\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [redirected]: "
-msgstr "Aanvraag wordt verwerkt [omgeleid]: "
-
 #: packaging/windows/installer_strings.c
 msgid "aMule (required)"
 msgstr "aMule (vereist)"
@@ -10642,6 +10530,346 @@ msgstr "Kon verouderde ECPassword niet vergelijken met ECPasswordVerifier. Exter
 msgid "Migrating a changed legacy ECPassword after downgrade; the previous verifier no longer authenticates this run."
 msgstr "Migreren van een vernaderde ECPassword na downgrade. De vorige verificatie authenticeert deze uitvoer niet meer."
 
+#, c-format
+#~ msgid "Terminating amuleweb instance with pid '%d' ... "
+#~ msgstr "Amuleweb-instantie met pid '%d' wordt afgesloten ... "
+
+#, c-format
+#~ msgid "Killing amuleweb instance with pid '%d' ... "
+#~ msgstr "Amuleweb-instantie met pid '%d' wordt geforceerd beëindigd... "
+
+#~ msgid "An exception occurred while launching amuleweb."
+#~ msgstr "En uitzondering vond plaats tijdens het opstarten van amuleweb."
+
+#, c-format
+#~ msgid "web server running on pid %d"
+#~ msgstr "webserver draait met pid %d"
+
+#~ msgid "Could not prepare the amuleweb authentication token. The web server was not started."
+#~ msgstr "Kon de amuleweb authenticatietoken niet voorbereiden. De webserver is niet opgestart."
+
+#~ msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
+#~ msgstr "U hebt gevraagd om de webserver bij het opstarten uit te voeren, maar het programma amuleweb kan niet worden uitgevoerd. Installeer het pakket met de aMule-webserver, of bouw aMule vanuit de broncode met -DBUILD_WEBSERVER=YES en installeer het."
+
+#~ msgid "Could not prepare the amuleweb EC token."
+#~ msgstr "Kon de amuleweb EV-token niet voorbereiden."
+
+#, c-format
+#~ msgid "Could not remove the amuleweb EC token file: %s"
+#~ msgstr "Kon het amuleweb EV-tokenbestand niet verwijderen: %s"
+
+#~ msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
+#~ msgstr "Een extern verzoek om het web-server sjabloon in te stellen is geweigerd. De waarde moet een eenvoudige sjabloonnaam zijn, geen pad."
+
+#~ msgid "Web server parameters"
+#~ msgstr "Webserver parameters"
+
+#~ msgid "Run webserver on startup (deprecated)"
+#~ msgstr "Webserver uitvoeren bij opstarten (verouderd)"
+
+#~ msgid "Web template"
+#~ msgstr "Web-template"
+
+#~ msgid "Full rights password"
+#~ msgstr "Alle rechten wachtwoord"
+
+#~ msgid "Enable Low rights User"
+#~ msgstr "Schakel gebruiker met beperkte rechten in"
+
+#~ msgid "Low rights password"
+#~ msgstr "Beperkte rechten wachtwoord"
+
+#~ msgid "Enable UPnP port forwarding of the web server port"
+#~ msgstr "Schakel UPnP portforwarding van de webserver-poort in"
+
+#~ msgid "Web server UPnP TCP port (Optional)"
+#~ msgstr "Web server UPnP TCP-poort (optioneel)"
+
+#~ msgid "Page Refresh Time (in secs)"
+#~ msgstr "Pagina verversingstijd (in seconden)"
+
+#~ msgid "Enable Gzip compression"
+#~ msgstr "Schakel Gzip-compressie in"
+
+#~ msgid "no options available"
+#~ msgstr "geen opties beschikbaar"
+
+#~ msgid "The aMule web server is deprecated. Consider running the aMule API instead."
+#~ msgstr "De aMule-webserver is verouderd. Overweeg in plaats daarvan de aMule API uit te voeren."
+
+#~ msgid "Loads template <str>"
+#~ msgstr "Laadt template <str>"
+
+#~ msgid "Web server HTTP port"
+#~ msgstr "Webserver HTTP-poort"
+
+#~ msgid "Use UPnP port forwarding on web server port"
+#~ msgstr "Gebruik UPnP portforwarding voor webserver-poort"
+
+#~ msgid "UPnP port"
+#~ msgstr "UPnP-poort"
+
+#~ msgid "Use gzip compression"
+#~ msgstr "Gebruik Gzip-compressie"
+
+#~ msgid "Full access password for web server"
+#~ msgstr "Wachtwoord voor volledige toegang tot webserver"
+
+#~ msgid "Guest password for web server"
+#~ msgstr "Gastwachtwoord voor webserver"
+
+#~ msgid "Allow guest access"
+#~ msgstr "Sta gasttoegang toe"
+
+#~ msgid "Deny guest access"
+#~ msgstr "Weiger gasttoegang"
+
+#~ msgid "Load/save web server settings from/to remote aMule"
+#~ msgstr "Laad/bewaar webserverinstellingen van/naar externe aMule"
+
+#~ msgid "aMule config file path. DO NOT USE DIRECTLY!"
+#~ msgstr "aMule configuratiebestand pad. NIET DIRECT GEBRUIKEN!"
+
+#~ msgid "Disable PHP interpreter (deprecated)"
+#~ msgstr "Schakel PHP-interpreter uit (verouderd)"
+
+#~ msgid "Recompile PHP pages on each request"
+#~ msgstr "Compileer PHP-pagina's opnieuw bij elke aanvraag"
+
+#~ msgid "aMule Web Server"
+#~ msgstr "aMule webserver"
+
+#~ msgid "web client connection accepted\n"
+#~ msgstr "webclient verbinding geaccepteerd\n"
+
+#~ msgid "ERROR: cannot accept web client connection\n"
+#~ msgstr "FOUT: kan verbinding van webclient niet accepteren\n"
+
+#, c-format
+#~ msgid "Request failed with the following error: %s."
+#~ msgstr "Aanvraag mislukt met de volgende fout: %s."
+
+#~ msgid "Index file not found: "
+#~ msgstr "Indexbestand niet gevonden: "
+
+#~ msgid "Session expired - requesting login\n"
+#~ msgstr "Sessie verlopen - inloggen wordt aangevraagd\n"
+
+#~ msgid "Session ok, logged in\n"
+#~ msgstr "Sessie ok, ingelogd\n"
+
+#~ msgid "Session ok, not logged in\n"
+#~ msgstr "Sessie ok, niet ingelogd\n"
+
+#~ msgid "No session opened - will request login\n"
+#~ msgstr "Geen sessie geopend - login wordt aangevraad\n"
+
+#~ msgid "Session created - requesting login\n"
+#~ msgstr "Sessie aangemaakt - inloggen wordt aangevraagd\n"
+
+#~ msgid "Processing request [original]: "
+#~ msgstr "Aanvraag wordt verwerkt [origineel]: "
+
+#~ msgid "Refusing to read `pass` from URL query string\n"
+#~ msgstr "Weigert `pass` te lezen uit de URL-queryreeks\n"
+
+#~ msgid "No password specified, login will not be allowed."
+#~ msgstr "Geen wachtwoord opgegeven, login wordt niet toegestaan."
+
+#~ msgid "Checking password\n"
+#~ msgstr "Controleren van wachtwoord\n"
+
+#~ msgid "Password hash invalid\n"
+#~ msgstr "Wachtwoord-hash ongeldig\n"
+
+#~ msgid "Password ok\n"
+#~ msgstr "Wachtwoord is ok\n"
+
+#~ msgid "Password bad\n"
+#~ msgstr "Wachtwoord-fout\n"
+
+#~ msgid "You did not enter any password. Blank password is not allowed.\n"
+#~ msgstr "U heeft geen wachtwoord ingevoerd. Een leeg wachtwoord is niet toegestaan.\n"
+
+#~ msgid "Logout requested\n"
+#~ msgstr "Uitloggen aangevraagd\n"
+
+#~ msgid "Processing request [redirected]: "
+#~ msgstr "Aanvraag wordt verwerkt [omgeleid]: "
+
+#~ msgid "(Right click on folder icon for recursive share)"
+#~ msgstr "(Rechtermuisklik op mappictogram om recursief te delen)"
+
+#~ msgid "Currently connected server."
+#~ msgstr "Server nu mee verbonden."
+
+#~ msgid "Up: 0.0 | Down: 0.0"
+#~ msgstr "Up: 0.0 | Down: 0.0"
+
+#~ msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
+#~ msgstr "Huidige gemiddelde upload- en downloadsnelheden. Indien ingeschakeld geven de getallen tussen haakjes de overhead door client-communicatie aan."
+
+#, c-format
+#~ msgid "Served Now: %llu"
+#~ msgstr "Nu Bediend: %llu"
+
+#, c-format
+#~ msgid "Buddy Requests Received: %llu"
+#~ msgstr "Ontvangen Buddy-Verzoeken: %llu"
+
+#, c-format
+#~ msgid "Buddy Offers Sent: %llu"
+#~ msgstr "Voorstellen voor Buddy Verstuurd: %llu"
+
+#, c-format
+#~ msgid "Buddy Requests Refused: %llu"
+#~ msgstr "Buddy-Verzoeken Geweigerd: %llu"
+
+#, c-format
+#~ msgid "Buddy Requests From NAT-T Nodes: %llu"
+#~ msgstr "Buddy-Verzoeken Van NAT-T-Nodes: %llu"
+
+#, c-format
+#~ msgid "Buddy Requests Over the Rate Limit: %llu"
+#~ msgstr "Verzoeken voor Buddy Boven de Snelheidslimiet: %llu"
+
+#, c-format
+#~ msgid "Unused Buddy Offers: %llu"
+#~ msgstr "Ongebruikte Voorstellen voor Buddy: %llu"
+
+#, c-format
+#~ msgid "Buddies Served: %llu"
+#~ msgstr "Buddies Bediend: %llu"
+
+#, c-format
+#~ msgid "Served Buddies Timed Out: %llu"
+#~ msgstr "Time-Out bij Bediende Buddies: %llu"
+
+#, c-format
+#~ msgid "Time Served: %s"
+#~ msgstr "Tijd Bediend: %s"
+
+#, c-format
+#~ msgid "Callbacks Relayed: %llu"
+#~ msgstr "Terugroepen Doorgegeven: %llu"
+
+#, c-format
+#~ msgid "Reasks Relayed: %llu"
+#~ msgstr "Hervragen Doorgegeven: %llu"
+
+#, c-format
+#~ msgid "Data Relayed: %s"
+#~ msgstr "Gegevens Doorgegeven: %s"
+
+#, c-format
+#~ msgid "Callbacks Dropped: %llu"
+#~ msgstr "Terugroepen Laten vallen: %llu"
+
+#, c-format
+#~ msgid "Reasks Dropped: %llu"
+#~ msgstr "Hervragen Laten vallen: %llu"
+
+#, c-format
+#~ msgid "Busiest Minute to One Buddy: %s"
+#~ msgstr "Drukste Minuut aan Een Buddy: %s"
+
+#, c-format
+#~ msgid "Buddy Searches: %llu"
+#~ msgstr "Buddy Zoekopdrachten: %llu"
+
+#, c-format
+#~ msgid "Buddy Searches Held for a Shared File: %llu"
+#~ msgstr "Buddy Zoekopdrachten Vastgehouden voor een Gedeeld Bestand: %llu"
+
+#, c-format
+#~ msgid "Buddy Requests Sent: %llu"
+#~ msgstr "Buddy-Verzoeken Verstuurd: %llu"
+
+#, c-format
+#~ msgid "Buddy Offers Received: %llu"
+#~ msgstr "Voorstellen voor Buddy Ontvangen: %llu"
+
+#, c-format
+#~ msgid "Failed Buddy Connections: %llu"
+#~ msgstr "Mislukte Buddy-Verbindingen: %llu"
+
+#, c-format
+#~ msgid "Buddies Connected: %llu"
+#~ msgstr "Verbonden Buddies: %llu"
+
+#, c-format
+#~ msgid "Buddies Timed Out: %llu"
+#~ msgstr "Time-Out bij Buddies: %llu"
+
+#, c-format
+#~ msgid "Time a Buddy Was Needed: %s"
+#~ msgstr "Tijd dat een Buddy Nodig Was: %s"
+
+#, c-format
+#~ msgid "Time Without a Buddy: %s"
+#~ msgstr "Tijd Zonder een Buddy: %s"
+
+#, c-format
+#~ msgid "Callbacks Received: %llu"
+#~ msgstr "Terugroepen Ontvangen: %llu"
+
+#, c-format
+#~ msgid "Reasks Received: %llu"
+#~ msgstr "Hervragen Ontvangen: %llu"
+
+#~ msgid "NAT Traversal (Session)"
+#~ msgstr "NAT Traversal (Sessie)"
+
+#, c-format
+#~ msgid "Successful Server Hole Punches: %s"
+#~ msgstr "Succesvolle Serverperforatiepogingen: %s"
+
+#, c-format
+#~ msgid "Successful Lugdunum Callbacks: %s"
+#~ msgstr "Succesvolle Lugdunum Terugroepen: %s"
+
+#, c-format
+#~ msgid "uTP Streams Moved to a New Port: %s"
+#~ msgstr "uTP-Streams Verplaatst naar een Nieuwe Poort: %s"
+
+#~ msgid "Kad receiver keys"
+#~ msgstr "Kad-ontvanger sleutels"
+
+#~ msgid "Keyword publish"
+#~ msgstr "Sleutelwoord publiceren"
+
+#~ msgid "Source publish"
+#~ msgstr "Bron publiceren"
+
+#~ msgid "Notes publish"
+#~ msgstr "Notities publiceren"
+
+#~ msgid "Firewall check"
+#~ msgstr "Firewall controle"
+
+#~ msgid "Firewall check 2"
+#~ msgstr "Firewall controle 2"
+
+#~ msgid "Callback"
+#~ msgstr "Terugroep"
+
+#, c-format
+#~ msgid "Keys valid: %s"
+#~ msgstr "Sleutels geldig: %s"
+
+#, c-format
+#~ msgid "Keys missing: %s"
+#~ msgstr "Ontbrekende sleutels: %s"
+
+#~ msgid "Kad Buddies"
+#~ msgstr "Kad-Buddies"
+
+#~ msgid "Serving Firewalled Nodes"
+#~ msgstr "Bedienen van Gefirewallde Nodes"
+
+#~ msgid "Our Own Buddy"
+#~ msgstr "Onze Eigen Buddy"
+
 #~ msgid "This aMule has no media helper (amule-media-probe)"
 #~ msgstr "Deze aMule heeft geen mediahelper (amule-media-probe)"
 
@@ -10771,9 +10999,6 @@ msgstr "Migreren van een vernaderde ECPassword na downgrade. De vorige verificat
 
 #~ msgid "Click on this button to update the servers list from URL ..."
 #~ msgstr "Klik op deze knop om de lijst van servers te updaten van URL ..."
-
-#~ msgid "Server list"
-#~ msgstr "Server-lijst"
 
 #~ msgid "Enter the url to a server.met file here and press the button to the left to update the list of known servers."
 #~ msgstr "Voer de url naar een server.met bestand hier in en druk op de knop links om de lijst met bekende servers te vernieuwen."
@@ -10991,9 +11216,6 @@ msgstr "Migreren van een vernaderde ECPassword na downgrade. De vorige verificat
 
 #~ msgid "Rejects packet if the client ip is different from the ip where the packet is received from. Use with caution."
 #~ msgstr "Weigert een pakket als het client-IP anders is dan het IP waar het pakket van is ontvangen. Wees voorzichtig hiermee."
-
-#~ msgid "Return the results of the previous search.\n"
-#~ msgstr "Geef de resultaten van de vorige zoekopdracht.\n"
 
 #~ msgid "Show the progress of a search.\n"
 #~ msgstr "Toon de voortgang van een zoekopdracht.\n"

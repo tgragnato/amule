@@ -342,22 +342,6 @@ msgstr "Avslutar programmet."
 
 #: src/amule.cpp
 #, c-format
-msgid "Terminating amuleweb instance with pid '%d' ... "
-msgstr "Avslutar amuleweb-instansen med pid '%d' ... "
-
-#: src/amule.cpp
-#, c-format
-msgid "Killing amuleweb instance with pid '%d' ... "
-msgstr "Dödar amuleweb-instansen med pid '%d' ... "
-
-#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
-#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
-#: src/SharedFilesCtrl.cpp
-msgid "Failed"
-msgstr "Misslyckades"
-
-#: src/amule.cpp
-#, c-format
 msgid "Terminating amuleapi instance with pid '%d' ... "
 msgstr "Avslutar amuleapi-instans med pid '%d' ... "
 
@@ -365,6 +349,12 @@ msgstr "Avslutar amuleapi-instans med pid '%d' ... "
 #, c-format
 msgid "Killing amuleapi instance with pid '%d' ... "
 msgstr "Dödar amuleapi-instans med pid '%d' ... "
+
+#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
+#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
+#: src/SharedFilesCtrl.cpp
+msgid "Failed"
+msgstr "Misslyckades"
 
 #: src/amule.cpp
 msgid "aMule OnExit: Terminating core."
@@ -522,28 +512,6 @@ msgid "Not starting %s: it is neither next to aMule nor on PATH."
 msgstr ""
 
 #: src/amule.cpp
-msgid "An exception occurred while launching amuleweb."
-msgstr ""
-
-#: src/amule.cpp
-#, c-format
-msgid "web server running on pid %d"
-msgstr "webbservern kör på pid %d"
-
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb authentication token. The web server was not started."
-msgstr ""
-
-#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
-#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
-msgid "ERROR"
-msgstr "FEL"
-
-#: src/amule.cpp
-msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
-msgstr "Du har begärt att webbservern ska köras vid start, men binärfilen amuleweb kan inte köras. Installera paketet som innehåller aMules webbserver, eller bygg aMule från källkod med -DBUILD_WEBSERVER=YES och installera det."
-
-#: src/amule.cpp
 #, c-format
 msgid "Could not write the amuleapi EC token to %s; amuleapi will fall back to its configured password."
 msgstr "Kunde inte skriva amuleapis EC-token till %s; amuleapi faller tillbaka till sitt konfigurerade lösenord."
@@ -565,15 +533,10 @@ msgstr ""
 msgid "You requested to run amuleapi on startup, but the amuleapi binary cannot be run. Please install the package containing aMule's REST API server, or build aMule from source with -DBUILD_AMULEAPI=YES and install it."
 msgstr "Du har begärt att amuleapi ska köras vid start, men binärfilen amuleapi kan inte köras. Installera paketet som innehåller aMules REST API-server, eller bygg aMule från källkod med -DBUILD_AMULEAPI=YES och installera den."
 
-#: src/amule.cpp
-#, fuzzy
-msgid "Could not prepare the amuleweb EC token."
-msgstr "Kunde inte spara amuleapi-lösenordet: %s"
-
-#: src/amule.cpp
-#, fuzzy, c-format
-msgid "Could not remove the amuleweb EC token file: %s"
-msgstr "Kunde inte spara amuleapi-lösenordet: %s"
+#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
+#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
+msgid "ERROR"
+msgstr "FEL"
 
 #: src/amule.cpp
 #, fuzzy, c-format
@@ -1059,23 +1022,14 @@ msgstr "Kryptering"
 msgid "aMuleGUI"
 msgstr "aMuleGUI"
 
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
-msgstr "Upp: %.1f%s (%.1f) | Ned: %.1f%s (%.1f)"
-
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
 msgid " MiB/s"
 msgstr " MiB/s"
 
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/utils/wxCas/src/wxcasframe.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
+#: src/utils/wxCas/src/wxcasframe.cpp
 msgid " KiB/s"
 msgstr " KiB/s"
-
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s | Down: %.1f%s"
-msgstr "Upp: %.1f%s | Ned: %.1f%s"
 
 #: src/amuleDlg.cpp
 msgid "Transfer speeds are reported by the daemon. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
@@ -1084,6 +1038,16 @@ msgstr ""
 #: src/amuleDlg.cpp
 msgid "Live speeds are averaged over the last second. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
 msgstr ""
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s | Down: %.1f%s"
+msgstr "Upp: %.1f%s | Ned: %.1f%s"
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
+msgstr "Upp: %.1f%s (%.1f) | Ned: %.1f%s (%.1f)"
 
 #: src/amuleDlg.cpp
 #, c-format
@@ -2109,6 +2073,55 @@ msgstr "Käll-frön"
 msgid "Search Result"
 msgstr "Sökresultat"
 
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a direct connection"
+msgstr "Aktiva anslutningar"
+
+#: src/DataToText.cpp
+msgid "a direct callback"
+msgstr ""
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "our server"
+msgstr "Ta bort server"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the Kad buddy"
+msgstr "Ingen kompis"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the source's own server"
+msgstr "eD2k-serverlista (server.met)"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a server hole punch"
+msgstr "Server Overhead (paket): %s"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a Lugdunum callback"
+msgstr "Lyckad uppdatering av %s"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on a fallback route"
+msgstr "Ansluter via server"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on an unproven route"
+msgstr "Ansluter via server"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s"
+msgstr "Ansluter via Kad"
+
 #: src/DataToText.cpp src/DownloadListCtrl.cpp src/OtherFunctions.cpp
 #: src/TransferWnd.cpp
 msgid "Completed"
@@ -2419,10 +2432,6 @@ msgstr[1] "Kunde inte lägga till %u länkar (se loggen för detaljer)."
 #, c-format
 msgid "Invalid eD2k link! ERROR: %s"
 msgstr "Felaktig eD2k-länk! FEL: %s"
-
-#: src/ECSpecialMuleTags.cpp
-msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
-msgstr ""
 
 #: src/ECSpecialMuleTags.cpp
 msgid "Refused a remote request to change the online-signature folder: it can only be set in the daemon's own configuration."
@@ -4593,12 +4602,13 @@ msgid "Users connected to the current server and an estimate of the total number
 msgstr "Användare som är anslutna till den aktuella servern och en uppskattning av det totala antalet användare."
 
 #: src/muuli_wdr.cpp
-msgid "Up: 0.0 | Down: 0.0"
-msgstr "Upp: 0.0 | Ner: 0.0"
+msgid "Up:"
+msgstr ""
 
 #: src/muuli_wdr.cpp
-msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
-msgstr "Nuvarande genomsnittliga uppladdnings- och nedladdningsnivåer. Om aktiverat visar siffrorna även overhead från klientkommunikationen."
+#, fuzzy
+msgid "Down:"
+msgstr "Hämta: "
 
 #: src/muuli_wdr.cpp
 msgid "Displays the connected status and active transfers. Red arrows signifies that you are currently not connected, yellow arrows signify that you have low ID (firewalled) and green arrows signify that you have high ID (The optimal connection type)."
@@ -4607,10 +4617,6 @@ msgstr "Visar anslutningsstatus och aktiva överföringar. Röda pilar innebär 
 #: src/muuli_wdr.cpp
 msgid "Not Connected ..."
 msgstr "Inte ansluten ..."
-
-#: src/muuli_wdr.cpp
-msgid "Currently connected server."
-msgstr "Just nu ansluten server."
 
 #: src/muuli_wdr.cpp
 msgid "Search"
@@ -5615,8 +5621,12 @@ msgid "Remove"
 msgstr "Ta bort"
 
 #: src/muuli_wdr.cpp
-msgid "(Right click on folder icon for recursive share)"
-msgstr "(Högerklicka på mappikonen för rekursiv delning)"
+msgid "Double-click: share or unshare this folder. Right-click: share it with all subfolders, including new ones."
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "Bold: shared. Bold italic: shared with all subfolders. Red folder: contains shared folders."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Share hidden files"
@@ -5779,6 +5789,14 @@ msgstr "Max nya anslutningar / 5 sek"
 #: src/muuli_wdr.cpp
 msgid "Concurrent Kad source lookups"
 msgstr "Samtidiga uppslag av Kad-källor"
+
+#: src/muuli_wdr.cpp
+msgid "Firewalled Kad nodes served as buddy"
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "How many firewalled Kad nodes this node relays callbacks for. Each one holds a connection, so at most a tenth of the connection limit is served."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Kad source re-search interval (minutes)"
@@ -5975,46 +5993,6 @@ msgstr "Gästsessioner kan läsa status och listor men kan inte ändra något. N
 #: src/muuli_wdr.cpp
 msgid "Guest password"
 msgstr "Gästlösenord"
-
-#: src/muuli_wdr.cpp
-msgid "Web server parameters"
-msgstr "Webbserverparametrar"
-
-#: src/muuli_wdr.cpp
-msgid "Run webserver on startup (deprecated)"
-msgstr "Kör webbserver vid start (föråldrat)"
-
-#: src/muuli_wdr.cpp
-msgid "Web template"
-msgstr "Web mall"
-
-#: src/muuli_wdr.cpp
-msgid "Full rights password"
-msgstr "Fullständiga rättigheterslösenord"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Low rights User"
-msgstr "Aktivera låga användarrättigheter"
-
-#: src/muuli_wdr.cpp
-msgid "Low rights password"
-msgstr "Låga rättigheterslösenord"
-
-#: src/muuli_wdr.cpp
-msgid "Enable UPnP port forwarding of the web server port"
-msgstr "Aktivera UPnP-port-forwarding för webbserverport"
-
-#: src/muuli_wdr.cpp
-msgid "Web server UPnP TCP port (Optional)"
-msgstr "Webbserverns UPnP TCP-port (tillval)"
-
-#: src/muuli_wdr.cpp
-msgid "Page Refresh Time (in secs)"
-msgstr "Siduppdateringstid (i sek)"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Gzip compression"
-msgstr "Aktivera Gzip-komprimering"
 
 #: src/muuli_wdr.cpp
 msgid "Reset page to defaults"
@@ -7039,9 +7017,9 @@ msgstr "Hämtning av väninformation"
 msgid "NAT traversal (QUIC)"
 msgstr "NAT-traversering (QUIC)"
 
-#: src/Preferences.cpp
-msgid "no options available"
-msgstr "Inga alternativ tillgängliga"
+#: src/PeerCapabilities.h
+msgid "Skips unknown source exchange tags"
+msgstr ""
 
 #: src/Preferences.cpp
 msgid "Media metadata: FFProbePath is obsolete; aMule now uses its bundled media parser. Removing the old setting."
@@ -7404,12 +7382,9 @@ msgid "macOS does not let an application stop being the default handler. To stop
 msgstr ""
 
 #: src/PrefsUnifiedDlg.cpp
-msgid "The web server and aMule API require external connections to be enabled."
+#, fuzzy
+msgid "The aMule API requires external connections to be enabled."
 msgstr "Webbservern och aMule API kräver att externa anslutningar är aktiverade."
-
-#: src/PrefsUnifiedDlg.cpp
-msgid "The aMule web server is deprecated. Consider running the aMule API instead."
-msgstr "aMules webbserver är föråldrad. Överväg att köra aMule API i stället."
 
 #: src/PrefsUnifiedDlg.cpp
 #, fuzzy
@@ -8455,6 +8430,16 @@ msgid "Connected to buddy at %s"
 msgstr "Ansluten till vän på %s"
 
 #: src/ServerWnd.cpp
+#, fuzzy
+msgid "Served buddies:"
+msgstr "Serverlista"
+
+#: src/ServerWnd.cpp
+#, c-format
+msgid "%u of %u"
+msgstr ""
+
+#: src/ServerWnd.cpp
 msgid "IP address:"
 msgstr "IP-adress:"
 
@@ -8948,36 +8933,6 @@ msgid "Peak Connections (estimate): %i"
 msgstr "Toppar anslutningar (uppskattning): %i"
 
 #: src/Statistics.cpp
-#, fuzzy
-msgid "NAT Traversal (Session)"
-msgstr "NAT-traversering (uTP)"
-
-#: src/Statistics.cpp
-#, fuzzy, c-format
-msgid "Server Hole Punches: %s"
-msgstr "Server Overhead (paket): %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Server Hole Punches: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Lugdunum Callbacks: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, fuzzy, c-format
-msgid "Successful Lugdunum Callbacks: %s"
-msgstr "Lyckad uppdatering av %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "uTP Streams Moved to a New Port: %s"
-msgstr ""
-
-#: src/Statistics.cpp
 #, c-format
 msgid "Unknown: %s"
 msgstr "Okänd: %s"
@@ -9063,6 +9018,10 @@ msgid "Average file size: %s"
 msgstr "Genomsnittlig filstorlek: %s"
 
 #: src/Statistics.cpp
+msgid "Diagnostics"
+msgstr ""
+
+#: src/Statistics.cpp
 msgid "Operating System"
 msgstr "Operativsystem"
 
@@ -9144,6 +9103,10 @@ msgstr ""
 "Inget sökord angavs.\n"
 "Skriv 'help search' för mer hjälp.\n"
 
+#: src/TextClient.cpp
+msgid "The connected daemon does not support media search filters.\n"
+msgstr ""
+
 #. TRANSLATORS:
 #. 'help search' is a command to the program, do not translate it.
 #: src/TextClient.cpp
@@ -9155,11 +9118,19 @@ msgstr ""
 "Skriv 'help search' för att få mer hjälp.\n"
 
 #: src/TextClient.cpp
+msgid "The connected daemon does not support search management.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "A search ID from 'search list' is required.\n"
+msgstr ""
+
+#: src/TextClient.cpp
 #, c-format
 msgid "Download File: %lu %s\n"
 msgstr "Hämta fil: %lu %s\n"
 
-#: src/TextClient.cpp src/webserver/src/WebServer.cpp
+#: src/TextClient.cpp
 msgid "Request failed with an unknown error."
 msgstr "Begäran misslyckades med ett okänt fel."
 
@@ -9266,6 +9237,27 @@ msgstr ""
 #: src/TextClient.cpp
 msgid "[PartFile]"
 msgstr "[PartFile]"
+
+#: src/TextClient.cpp
+msgid "No retained searches.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; availability is unknown.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; further requests remain possible.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "No further results can be requested for this search.\n"
+msgstr "Returnera resultaten från föregående sökningen.\n"
+
+#: src/TextClient.cpp
+msgid "Search stop request processed; retained results were not removed.\n"
+msgstr ""
 
 #: src/TextClient.cpp
 #, c-format
@@ -9536,6 +9528,11 @@ msgid ""
 "    --avail <N>            minimum number of sources\n"
 "    --min-size <N[KMG]>    smallest file size; K=1024, M=K*1024, G=M*1024\n"
 "    --max-size <N[KMG]>    largest file size; same suffixes\n"
+"    --min-bitrate <kbps>   whole number, 0-1000000\n"
+"    --min-duration <sec>   whole number, 0-86400\n"
+"    --codec <text> --title <text> --album <text> --artist <text>\n"
+"Quote media text values containing spaces.\n"
+"Kad applies media filters; eD2k servers may ignore them.\n"
 "Example: 'search global linux iso --type Iso --min-size 100M' returns\n"
 "results for \"linux iso\" of file-type Iso at least 100 MiB.\n"
 msgstr ""
@@ -9571,6 +9568,28 @@ msgstr "Utför en kadsökning"
 #, fuzzy
 msgid "Execute an eD2k and Kad search"
 msgstr "Utför en kadsökning"
+
+#: src/TextClient.cpp
+msgid "List retained search IDs and queries."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Stop a search, keeping its results."
+msgstr "Ingen annan källa har den här delen"
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Request more Kad search results."
+msgstr "Antal sökresultat: %i\n"
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'. Further results are not guaranteed."
+msgstr ""
 
 #: src/TextClient.cpp
 msgid "Show the results of a search."
@@ -10398,139 +10417,6 @@ msgstr "Mapp som innehåller din signaturfil"
 msgid "Folder where generating the statistic image"
 msgstr "Mapp för skapande av statistikbild"
 
-#: src/webserver/src/WebInterface.cpp
-msgid "Loads template <str>"
-msgstr "Laddar mall <str>"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Web server HTTP port"
-msgstr "Webbserverns HTTP-port"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use UPnP port forwarding on web server port"
-msgstr "Använd UPnP port forwarding på webbserverport"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "UPnP port"
-msgstr "UPnP-port"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use gzip compression"
-msgstr "Använd gzip-komprimering"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Full access password for web server"
-msgstr "Lösenord för full tillgång till webbservern"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Guest password for web server"
-msgstr "Gästlösenord för webbservern"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Allow guest access"
-msgstr "Tillåt gäståtkomst"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Deny guest access"
-msgstr "Neka gäståtkomst"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Load/save web server settings from/to remote aMule"
-msgstr "Ladda/spara webbserverinställningar från / till fjärr-aMule"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule config file path. DO NOT USE DIRECTLY!"
-msgstr "aMule konfigurationsfilssökväg. ANVÄND INTE DIREKT!"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Disable PHP interpreter (deprecated)"
-msgstr "Inaktivera PHP-tolk (föråldrat)"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Recompile PHP pages on each request"
-msgstr "Återkompilera PHP-sidor vid varje begäran"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule Web Server"
-msgstr "aMule webbserver"
-
-#: src/webserver/src/WebServer.cpp
-msgid "web client connection accepted\n"
-msgstr "webbklientanslutning accepterad\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "ERROR: cannot accept web client connection\n"
-msgstr "FEL: kan inte acceptera webbklientanslutning\n"
-
-#: src/webserver/src/WebServer.cpp
-#, c-format
-msgid "Request failed with the following error: %s."
-msgstr "Begäran misslyckades med följande fel: %s ."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Index file not found: "
-msgstr "Indexfil hittades inte: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session expired - requesting login\n"
-msgstr "Session löpt ut - begär inloggning\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, logged in\n"
-msgstr "Session ok, loggade in\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, not logged in\n"
-msgstr "Session ok, inte inloggad\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No session opened - will request login\n"
-msgstr "Ingen session öppnades - kommer att begära inloggning\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session created - requesting login\n"
-msgstr "Session skapad - begär inloggning\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [original]: "
-msgstr "Bearbetar begäran [original]: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Refusing to read `pass` from URL query string\n"
-msgstr "Vägrar läsa `pass` från URL-frågesträngen\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No password specified, login will not be allowed."
-msgstr "Inget lösenord angiven, inloggning kommer inte att tillåtas."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Checking password\n"
-msgstr "Kontrollerar lösenord\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password hash invalid\n"
-msgstr "Lösenords-hash ogiltig\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password ok\n"
-msgstr "Lösenord OK\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password bad\n"
-msgstr "Lösenord dålig\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "You did not enter any password. Blank password is not allowed.\n"
-msgstr "Du har inte anget något lösenord. Tomt lösenord är inte tillåtet.\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Logout requested\n"
-msgstr "Utloggning begärd\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [redirected]: "
-msgstr "Bearbetar begäran [omdirigerad]: "
-
 #: packaging/windows/installer_strings.c
 msgid "aMule (required)"
 msgstr "aMule (krävs)"
@@ -10674,6 +10560,217 @@ msgstr ""
 msgid "Migrating a changed legacy ECPassword after downgrade; the previous verifier no longer authenticates this run."
 msgstr ""
 
+#, c-format
+#~ msgid "Terminating amuleweb instance with pid '%d' ... "
+#~ msgstr "Avslutar amuleweb-instansen med pid '%d' ... "
+
+#, c-format
+#~ msgid "Killing amuleweb instance with pid '%d' ... "
+#~ msgstr "Dödar amuleweb-instansen med pid '%d' ... "
+
+#, c-format
+#~ msgid "web server running on pid %d"
+#~ msgstr "webbservern kör på pid %d"
+
+#~ msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
+#~ msgstr "Du har begärt att webbservern ska köras vid start, men binärfilen amuleweb kan inte köras. Installera paketet som innehåller aMules webbserver, eller bygg aMule från källkod med -DBUILD_WEBSERVER=YES och installera det."
+
+#, fuzzy
+#~ msgid "Could not prepare the amuleweb EC token."
+#~ msgstr "Kunde inte spara amuleapi-lösenordet: %s"
+
+#, fuzzy, c-format
+#~ msgid "Could not remove the amuleweb EC token file: %s"
+#~ msgstr "Kunde inte spara amuleapi-lösenordet: %s"
+
+#~ msgid "Web server parameters"
+#~ msgstr "Webbserverparametrar"
+
+#~ msgid "Run webserver on startup (deprecated)"
+#~ msgstr "Kör webbserver vid start (föråldrat)"
+
+#~ msgid "Web template"
+#~ msgstr "Web mall"
+
+#~ msgid "Full rights password"
+#~ msgstr "Fullständiga rättigheterslösenord"
+
+#~ msgid "Enable Low rights User"
+#~ msgstr "Aktivera låga användarrättigheter"
+
+#~ msgid "Low rights password"
+#~ msgstr "Låga rättigheterslösenord"
+
+#~ msgid "Enable UPnP port forwarding of the web server port"
+#~ msgstr "Aktivera UPnP-port-forwarding för webbserverport"
+
+#~ msgid "Web server UPnP TCP port (Optional)"
+#~ msgstr "Webbserverns UPnP TCP-port (tillval)"
+
+#~ msgid "Page Refresh Time (in secs)"
+#~ msgstr "Siduppdateringstid (i sek)"
+
+#~ msgid "Enable Gzip compression"
+#~ msgstr "Aktivera Gzip-komprimering"
+
+#~ msgid "no options available"
+#~ msgstr "Inga alternativ tillgängliga"
+
+#~ msgid "The aMule web server is deprecated. Consider running the aMule API instead."
+#~ msgstr "aMules webbserver är föråldrad. Överväg att köra aMule API i stället."
+
+#~ msgid "Loads template <str>"
+#~ msgstr "Laddar mall <str>"
+
+#~ msgid "Web server HTTP port"
+#~ msgstr "Webbserverns HTTP-port"
+
+#~ msgid "Use UPnP port forwarding on web server port"
+#~ msgstr "Använd UPnP port forwarding på webbserverport"
+
+#~ msgid "UPnP port"
+#~ msgstr "UPnP-port"
+
+#~ msgid "Use gzip compression"
+#~ msgstr "Använd gzip-komprimering"
+
+#~ msgid "Full access password for web server"
+#~ msgstr "Lösenord för full tillgång till webbservern"
+
+#~ msgid "Guest password for web server"
+#~ msgstr "Gästlösenord för webbservern"
+
+#~ msgid "Allow guest access"
+#~ msgstr "Tillåt gäståtkomst"
+
+#~ msgid "Deny guest access"
+#~ msgstr "Neka gäståtkomst"
+
+#~ msgid "Load/save web server settings from/to remote aMule"
+#~ msgstr "Ladda/spara webbserverinställningar från / till fjärr-aMule"
+
+#~ msgid "aMule config file path. DO NOT USE DIRECTLY!"
+#~ msgstr "aMule konfigurationsfilssökväg. ANVÄND INTE DIREKT!"
+
+#~ msgid "Disable PHP interpreter (deprecated)"
+#~ msgstr "Inaktivera PHP-tolk (föråldrat)"
+
+#~ msgid "Recompile PHP pages on each request"
+#~ msgstr "Återkompilera PHP-sidor vid varje begäran"
+
+#~ msgid "aMule Web Server"
+#~ msgstr "aMule webbserver"
+
+#~ msgid "web client connection accepted\n"
+#~ msgstr "webbklientanslutning accepterad\n"
+
+#~ msgid "ERROR: cannot accept web client connection\n"
+#~ msgstr "FEL: kan inte acceptera webbklientanslutning\n"
+
+#, c-format
+#~ msgid "Request failed with the following error: %s."
+#~ msgstr "Begäran misslyckades med följande fel: %s ."
+
+#~ msgid "Index file not found: "
+#~ msgstr "Indexfil hittades inte: "
+
+#~ msgid "Session expired - requesting login\n"
+#~ msgstr "Session löpt ut - begär inloggning\n"
+
+#~ msgid "Session ok, logged in\n"
+#~ msgstr "Session ok, loggade in\n"
+
+#~ msgid "Session ok, not logged in\n"
+#~ msgstr "Session ok, inte inloggad\n"
+
+#~ msgid "No session opened - will request login\n"
+#~ msgstr "Ingen session öppnades - kommer att begära inloggning\n"
+
+#~ msgid "Session created - requesting login\n"
+#~ msgstr "Session skapad - begär inloggning\n"
+
+#~ msgid "Processing request [original]: "
+#~ msgstr "Bearbetar begäran [original]: "
+
+#~ msgid "Refusing to read `pass` from URL query string\n"
+#~ msgstr "Vägrar läsa `pass` från URL-frågesträngen\n"
+
+#~ msgid "No password specified, login will not be allowed."
+#~ msgstr "Inget lösenord angiven, inloggning kommer inte att tillåtas."
+
+#~ msgid "Checking password\n"
+#~ msgstr "Kontrollerar lösenord\n"
+
+#~ msgid "Password hash invalid\n"
+#~ msgstr "Lösenords-hash ogiltig\n"
+
+#~ msgid "Password ok\n"
+#~ msgstr "Lösenord OK\n"
+
+#~ msgid "Password bad\n"
+#~ msgstr "Lösenord dålig\n"
+
+#~ msgid "You did not enter any password. Blank password is not allowed.\n"
+#~ msgstr "Du har inte anget något lösenord. Tomt lösenord är inte tillåtet.\n"
+
+#~ msgid "Logout requested\n"
+#~ msgstr "Utloggning begärd\n"
+
+#~ msgid "Processing request [redirected]: "
+#~ msgstr "Bearbetar begäran [omdirigerad]: "
+
+#~ msgid "(Right click on folder icon for recursive share)"
+#~ msgstr "(Högerklicka på mappikonen för rekursiv delning)"
+
+#~ msgid "Currently connected server."
+#~ msgstr "Just nu ansluten server."
+
+#~ msgid "Up: 0.0 | Down: 0.0"
+#~ msgstr "Upp: 0.0 | Ner: 0.0"
+
+#~ msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
+#~ msgstr "Nuvarande genomsnittliga uppladdnings- och nedladdningsnivåer. Om aktiverat visar siffrorna även overhead från klientkommunikationen."
+
+#, fuzzy, c-format
+#~ msgid "Buddies Served: %llu"
+#~ msgstr "Filer på fungerande servrar: %llu"
+
+#, fuzzy, c-format
+#~ msgid "Time Served: %s"
+#~ msgstr "Filtrerade servrar: %s"
+
+#, fuzzy, c-format
+#~ msgid "Buddies Connected: %llu"
+#~ msgstr " är ansluten till "
+
+#, fuzzy
+#~ msgid "NAT Traversal (Session)"
+#~ msgstr "NAT-traversering (uTP)"
+
+#, fuzzy
+#~ msgid "Keyword publish"
+#~ msgstr "Filtrerade: %s"
+
+#, fuzzy
+#~ msgid "Source publish"
+#~ msgstr "Källor"
+
+#, fuzzy
+#~ msgid "Firewall check"
+#~ msgstr "via brandvägg"
+
+#, fuzzy
+#~ msgid "Firewall check 2"
+#~ msgstr "via brandvägg"
+
+#, fuzzy, c-format
+#~ msgid "Keys valid: %s"
+#~ msgstr "Filtrerade: %s"
+
+#, fuzzy
+#~ msgid "Kad Buddies"
+#~ msgstr "Kad-användare"
+
 #~ msgid "Disable computer's timed standby mode"
 #~ msgstr "Inaktivera datorns inställda standby-läge"
 
@@ -10787,9 +10884,6 @@ msgstr ""
 
 #~ msgid "Click on this button to update the servers list from URL ..."
 #~ msgstr "Klicka på knappen för att uppdatera servrerlistan från URL ..."
-
-#~ msgid "Server list"
-#~ msgstr "Serverlista"
 
 #~ msgid "Enter the url to a server.met file here and press the button to the left to update the list of known servers."
 #~ msgstr "Ange URL till en server.met-fil här och tryck på knappen till vänster för att uppdatera listan över kända servrar."
@@ -10974,9 +11068,6 @@ msgstr ""
 
 #~ msgid "Rejects packet if the client ip is different from the ip where the packet is received from. Use with caution."
 #~ msgstr "Förkastar paketet om klient-ip skiljer sig från ip där paketet hämtas från. Används med försiktighet."
-
-#~ msgid "Return the results of the previous search.\n"
-#~ msgstr "Returnera resultaten från föregående sökningen.\n"
 
 #~ msgid "Show the progress of a search.\n"
 #~ msgstr "Visa sökförloppet.\n"

@@ -30,6 +30,7 @@
 
 #include <wx/timer.h> // Needed for wxTimer (deferred live re-sort)
 
+#include <set>
 #include <unordered_map>
 #include <vector>
 
@@ -86,6 +87,22 @@ public:
 	//! Repaints just this row, re-sorting only if it moved under the sort.
 	void RefreshItemData(wxUIntPtr data);
 	void ClearItemData();
+	//! Queue a periodic row update for RefreshDeferred(), which the GUI runs once a second.
+	void DeferRefresh(wxUIntPtr data) { m_deferred.insert(data); }
+	//! Drop a queued update; call before the item's data is freed.
+	void ForgetDeferred(wxUIntPtr data) { m_deferred.erase(data); }
+	//! Run the queued updates, keeping the rows RefreshDeferredItem() reports as active.
+	void RefreshDeferred();
+
+	//! Batch insertions into one sort. Routine remote polls pass false to retain
+	//! row invalidations; startup and reconnect snapshots freeze painting.
+	void BeginBatchUpdate(bool freezePainting = true);
+	//! Sort if requested or if rows were appended, then restore the header and painting.
+	void EndBatchUpdate(bool doSort = true);
+	//! End only the paint freeze: startup hashing may keep appending afterwards.
+	void ThawForDisplay();
+	//! Publish and sort pending appended rows; return whether a flush was needed.
+	bool FlushBatchRows();
 	//! Name-compatible with the wxListCtrl API the ported lists were written
 	//! against, so their callers don't have to change.
 	bool DeleteAllItems()
@@ -101,12 +118,12 @@ public:
 	 * lastRow is the last *fully* visible row, so a caller that must not miss a drawn pixel has
 	 * to allow for one more below it.
 	 *
-	 * Returns false when the backend cannot report its viewport -- the wxDataViewCtrl base
-	 * answers GetTopItem()/GetCountPerPage() with "don't know" and only the ports override
-	 * them. The range is then meaningless and the caller has to fall back to whatever is safe
-	 * for it. Which way that falls is not symmetric: treating a visible row as off screen
-	 * leaves a stale cell in front of the user, whereas treating an off-screen row as visible
-	 * only costs the work it saved.
+	 * Returns false when no rows have been published, or the backend cannot report its
+	 * viewport -- the wxDataViewCtrl base answers GetTopItem()/GetCountPerPage() with
+	 * "don't know" and only the ports override them. The range is then meaningless and the
+	 * caller has to fall back to whatever is safe for it. Which way that falls is not
+	 * symmetric: treating a visible row as off screen leaves a stale cell in front of the
+	 * user, whereas treating an off-screen row as visible only costs the work it saved.
 	 */
 	bool GetVisibleRowRange(long &firstRow, long &lastRow) const;
 	/**
@@ -226,6 +243,14 @@ protected:
 
 	//! Associates the internal model; call once the columns are appended.
 	void AssociateVirtualModel();
+	//! Update one queued row; return true to update it again on the next tick.
+	virtual bool RefreshDeferredItem(wxUIntPtr data)
+	{
+		RefreshItemData(data);
+		return false;
+	}
+
+	bool m_batchUpdate = false;
 
 private:
 	class VirtualModel;
@@ -258,6 +283,9 @@ private:
 
 	bool IsInteracting() const;
 
+	//! Rows appended since the last sort/bulk load (also drives startup drain ticks).
+	bool m_batchRowsAppended = false;
+	bool m_batchFrozen = false;
 	VirtualModel *m_virtualModel;
 
 	wxString m_filterText;
@@ -271,6 +299,7 @@ private:
 	//! Top row remembered across a ClearItemData() + refill + FinishBulkLoad()
 	//! rebuild, which is the only sequence where the control cannot be asked.
 	wxUIntPtr m_bulkAnchor = 0;
+	std::set<wxUIntPtr> m_deferred;
 
 	wxDECLARE_EVENT_TABLE();
 };

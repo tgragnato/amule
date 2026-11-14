@@ -39,12 +39,17 @@
 #include "OtherStructs.h"   // Needed for Requested_Block_Struct
 #include "DeadSourceList.h" // Needed for CDeadSourceList
 #include "GapList.h"
+#include <vector>
 
 class CSearchFile;
 class CMemFile;
 class CFileDataIO;
 class CED2KFileLink;
 class CNetworkAddress;
+namespace ExtSX
+{
+struct SRecord;
+}
 struct CPartMetGen;
 
 // #define BUFFER_SIZE_LIMIT	500000 // Max bytes before forcing a flush
@@ -182,14 +187,14 @@ public:
 		uint8 *pdebug_lowiddropped = NULL,
 		bool ed2kID = true,
 		bool keepLowIdSource = false);
-	// loginIPv6: the IPv6 our login advertised, if any; only then may sentinel records appear.
-	// Server UDP answers never carry one: aMule's server UDP is IPv4 only.
+	// ownIPv6: every IPv6 this server session advertised, if any; only then may sentinel records
+	// appear. Server UDP answers never carry one: aMule's server UDP is IPv4 only.
 	void AddSources(CMemFile &sources,
 		uint32 serverip,
 		uint16 serverport,
 		unsigned origin,
 		bool bWithObfuscationAndHash,
-		const CNetworkAddress *loginIPv6 = nullptr);
+		const std::vector<CNetworkAddress> *ownIPv6 = nullptr);
 #ifdef CLIENT_GUI
 	uint8 GetStatus() const { return status; }
 	uint8 GetStatus(bool /*ignorepause = false*/) const { return status; }
@@ -374,6 +379,11 @@ public:
 	void AllocationFinished();
 
 private:
+	void AddExtendedSources(CMemFile &sources, unsigned nSourceFrom);
+	// False once the file has as many sources as it may take.
+	bool AddExtendedSource(const ExtSX::SRecord &record, unsigned nSourceFrom);
+	CUpDownClient *FindSourceByBuddyID(const uint8_t *buddyID) const;
+
 #ifndef CLIENT_GUI
 	// partfile handle (opened on demand)
 	CFileAutoClose m_hpartfile;

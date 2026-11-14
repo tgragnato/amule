@@ -25,16 +25,11 @@ release — it is based on 8.9.0, so every release clears the minimum). The cmak
 check disambiguates the two by `CRYPTOPP_VERSION`, which the fork encodes as a
 calendar version.
 
-For `amuleweb` you'll also need a POSIX-compliant regex library — part of
-the standard C library on most GNU systems.
-
 ### Optional dependencies
 
 | Package                    | Minimum | What it enables                                                          |
 | -------------------------- | ------- | ------------------------------------------------------------------------ |
 | `libgd`                    | 2.0.0   | statistics images in `cas`                                               |
-| `libupnp`                  | 1.6.6   | UPnP port forwarding                                                     |
-| `libmaxminddb`             | 1.0     | country flags + IP→country mapping ([docs/IP2Country.md](IP2Country.md)) |
 | `gettext`                  | 0.11.5  | native-language support (NLS)                                            |
 | `libayatana-appindicator3` | —       | **Linux only.** StatusNotifierItem tray icon                             |
 
@@ -136,14 +131,9 @@ Common `-D` options (`YES` / `NO` unless noted otherwise):
 | `BUILD_REMOTEGUI`        | NO      | `amulegui` — remote control GUI                                          |
 | `BUILD_DAEMON`           | NO      | `amuled` — headless daemon                                               |
 | `BUILD_AMULECMD`         | NO      | `amulecmd` — CLI client for the daemon                                   |
-| `BUILD_WEBSERVER`        | NO      | `amuleweb` — HTTP interface for the daemon                               |
 | `BUILD_AMULEAPI`         | NO      | `amuleapi` — REST API + SSE daemon ([docs/QUICKSTART-AMULEAPI.md](QUICKSTART-AMULEAPI.md)) |
 | `BUILD_ED2K`             | YES     | `ed2k` — queue `ed2k://` and magnet links from the command line          |
-| `BUILD_CAS`              | NO      | `cas` — C statistics tool                                                |
 | `BUILD_WXCAS`            | NO      | `wxCas` — GUI statistics tool                                            |
-| `BUILD_ALC`              | NO      | aMuleLinkCreator GUI                                                     |
-| `BUILD_ALCC`             | NO      | aMuleLinkCreator console                                                 |
-| `BUILD_FILEVIEW`         | NO      | console file viewer (experimental)                                       |
 | `BUILD_EVERYTHING`       | NO      | every program above (`cas` only on Unix)                                 |
 | `BUILD_TESTING`          | NO      | unit tests, run with `ctest` ([unittests/README](../unittests/README))    |
 | `ENABLE_NLS`             | YES     | native-language support (gettext)                                        |

@@ -336,22 +336,6 @@ msgstr "Изход от приложението."
 
 #: src/amule.cpp
 #, c-format
-msgid "Terminating amuleweb instance with pid '%d' ... "
-msgstr "Прекратяване на инстанция на amuleweb с pid „%d“ ... "
-
-#: src/amule.cpp
-#, c-format
-msgid "Killing amuleweb instance with pid '%d' ... "
-msgstr "Принудително спиране на инстанция на amuleweb с pid „%d“ ... "
-
-#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
-#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
-#: src/SharedFilesCtrl.cpp
-msgid "Failed"
-msgstr "Грешка"
-
-#: src/amule.cpp
-#, c-format
 msgid "Terminating amuleapi instance with pid '%d' ... "
 msgstr "Прекратяване на процеса amuleapi с pid „%d“ ... "
 
@@ -359,6 +343,12 @@ msgstr "Прекратяване на процеса amuleapi с pid „%d“ ..
 #, c-format
 msgid "Killing amuleapi instance with pid '%d' ... "
 msgstr "Убиване на процеса amuleapi с pid „%d“ ... "
+
+#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
+#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
+#: src/SharedFilesCtrl.cpp
+msgid "Failed"
+msgstr "Грешка"
 
 #: src/amule.cpp
 msgid "aMule OnExit: Terminating core."
@@ -519,28 +509,6 @@ msgid "Not starting %s: it is neither next to aMule nor on PATH."
 msgstr ""
 
 #: src/amule.cpp
-msgid "An exception occurred while launching amuleweb."
-msgstr ""
-
-#: src/amule.cpp
-#, c-format
-msgid "web server running on pid %d"
-msgstr "уеб сървърът работи с pid %d"
-
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb authentication token. The web server was not started."
-msgstr ""
-
-#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
-#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
-msgid "ERROR"
-msgstr "ГРЕШКА"
-
-#: src/amule.cpp
-msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
-msgstr "Заявихте стартиране на уеб сървъра при старт, но изпълнимият файл amuleweb не може да бъде стартиран. Моля, инсталирайте пакета, съдържащ уеб сървъра на aMule, или компилирайте aMule от изходния код с -DBUILD_WEBSERVER=YES и го инсталирайте."
-
-#: src/amule.cpp
 #, c-format
 msgid "Could not write the amuleapi EC token to %s; amuleapi will fall back to its configured password."
 msgstr ""
@@ -562,15 +530,10 @@ msgstr ""
 msgid "You requested to run amuleapi on startup, but the amuleapi binary cannot be run. Please install the package containing aMule's REST API server, or build aMule from source with -DBUILD_AMULEAPI=YES and install it."
 msgstr "Заявихте amuleapi да се стартира при пускане, но изпълнимият файл на amuleapi не може да бъде стартиран. Моля, инсталирайте пакета, съдържащ REST API сървъра на aMule, или компилирайте aMule от изходния код с -DBUILD_AMULEAPI=YES и го инсталирайте."
 
-#: src/amule.cpp
-#, fuzzy
-msgid "Could not prepare the amuleweb EC token."
-msgstr "Паролата за amuleapi не можа да бъде записана: %s"
-
-#: src/amule.cpp
-#, fuzzy, c-format
-msgid "Could not remove the amuleweb EC token file: %s"
-msgstr "Паролата за amuleapi не можа да бъде записана: %s"
+#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
+#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
+msgid "ERROR"
+msgstr "ГРЕШКА"
 
 #: src/amule.cpp
 #, fuzzy, c-format
@@ -1057,23 +1020,14 @@ msgstr "Описание"
 msgid "aMuleGUI"
 msgstr ""
 
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
-msgstr "Качване: %.1f%s (%.1f) | Изтегляне: %.1f%s (%.1f)"
-
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
 msgid " MiB/s"
 msgstr ""
 
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/utils/wxCas/src/wxcasframe.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
+#: src/utils/wxCas/src/wxcasframe.cpp
 msgid " KiB/s"
 msgstr ""
-
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s | Down: %.1f%s"
-msgstr "Качване: %.1f%s | Изтегляне: %.1f%s"
 
 #: src/amuleDlg.cpp
 msgid "Transfer speeds are reported by the daemon. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
@@ -1082,6 +1036,16 @@ msgstr ""
 #: src/amuleDlg.cpp
 msgid "Live speeds are averaged over the last second. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
 msgstr ""
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s | Down: %.1f%s"
+msgstr "Качване: %.1f%s | Изтегляне: %.1f%s"
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
+msgstr "Качване: %.1f%s (%.1f) | Изтегляне: %.1f%s (%.1f)"
 
 #: src/amuleDlg.cpp
 #, c-format
@@ -2114,6 +2078,55 @@ msgstr ""
 msgid "Search Result"
 msgstr "Резултат от търсене"
 
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a direct connection"
+msgstr "Активни връзки"
+
+#: src/DataToText.cpp
+msgid "a direct callback"
+msgstr ""
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "our server"
+msgstr "Премахване на сървър"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the Kad buddy"
+msgstr "Няма приятел (buddy)"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the source's own server"
+msgstr "Списък със сървъри за eD2k (server.met)"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a server hole punch"
+msgstr "Разходи от сървъра (пакети): %s"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a Lugdunum callback"
+msgstr "%s беше успешно актуализиран"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on a fallback route"
+msgstr "Свързване чрез сървър"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on an unproven route"
+msgstr "Свързване чрез сървър"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s"
+msgstr "Свързване през Kad"
+
 #: src/DataToText.cpp src/DownloadListCtrl.cpp src/OtherFunctions.cpp
 #: src/TransferWnd.cpp
 msgid "Completed"
@@ -2424,10 +2437,6 @@ msgstr[1] "Неуспешно добавяне на %u връзки (вижте 
 #, c-format
 msgid "Invalid eD2k link! ERROR: %s"
 msgstr "Невалидна eD2k връзка! ГРЕШКА: %s"
-
-#: src/ECSpecialMuleTags.cpp
-msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
-msgstr ""
 
 #: src/ECSpecialMuleTags.cpp
 msgid "Refused a remote request to change the online-signature folder: it can only be set in the daemon's own configuration."
@@ -4598,12 +4607,13 @@ msgid "Users connected to the current server and an estimate of the total number
 msgstr "Потребители, свързани с текущия сървър, и приблизителен общ брой потребители."
 
 #: src/muuli_wdr.cpp
-msgid "Up: 0.0 | Down: 0.0"
-msgstr "Качване: 0.0 | Изтегляне: 0.0"
+msgid "Up:"
+msgstr ""
 
 #: src/muuli_wdr.cpp
-msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
-msgstr "Текущи средни стойности за скоростта на качване и изтегляне. Ако е включено, числата в скобите показват допълнителния трафик от комуникацията между клиентите."
+#, fuzzy
+msgid "Down:"
+msgstr "Изтегляне: "
 
 #: src/muuli_wdr.cpp
 msgid "Displays the connected status and active transfers. Red arrows signifies that you are currently not connected, yellow arrows signify that you have low ID (firewalled) and green arrows signify that you have high ID (The optimal connection type)."
@@ -4612,10 +4622,6 @@ msgstr "Показва състоянието на връзката и акти�
 #: src/muuli_wdr.cpp
 msgid "Not Connected ..."
 msgstr "Няма връзка..."
-
-#: src/muuli_wdr.cpp
-msgid "Currently connected server."
-msgstr "Сървър, с който в момента сте свързани."
 
 #: src/muuli_wdr.cpp
 msgid "Search"
@@ -5651,8 +5657,12 @@ msgid "Remove"
 msgstr "Премахване"
 
 #: src/muuli_wdr.cpp
-msgid "(Right click on folder icon for recursive share)"
-msgstr "(Щракнете с десен бутон върху иконата на папката за рекурсивно споделяне)"
+msgid "Double-click: share or unshare this folder. Right-click: share it with all subfolders, including new ones."
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "Bold: shared. Bold italic: shared with all subfolders. Red folder: contains shared folders."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Share hidden files"
@@ -5814,6 +5824,14 @@ msgstr "Максимален брой нови връзки / 5 сек"
 #: src/muuli_wdr.cpp
 msgid "Concurrent Kad source lookups"
 msgstr "Едновременни търсения на източници в Kad"
+
+#: src/muuli_wdr.cpp
+msgid "Firewalled Kad nodes served as buddy"
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "How many firewalled Kad nodes this node relays callbacks for. Each one holds a connection, so at most a tenth of the connection limit is served."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Kad source re-search interval (minutes)"
@@ -6010,46 +6028,6 @@ msgstr "Гостовите сесии могат да четат състоян�
 #: src/muuli_wdr.cpp
 msgid "Guest password"
 msgstr "Гостова парола"
-
-#: src/muuli_wdr.cpp
-msgid "Web server parameters"
-msgstr "Параметри на уеб сървъра"
-
-#: src/muuli_wdr.cpp
-msgid "Run webserver on startup (deprecated)"
-msgstr "Стартиране на уеб сървъра при пускане (остаряло)"
-
-#: src/muuli_wdr.cpp
-msgid "Web template"
-msgstr "Уеб шаблон"
-
-#: src/muuli_wdr.cpp
-msgid "Full rights password"
-msgstr "Парола с пълни права"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Low rights User"
-msgstr "Разрешаване на потребител с ограничени права"
-
-#: src/muuli_wdr.cpp
-msgid "Low rights password"
-msgstr "Парола с ограничени права"
-
-#: src/muuli_wdr.cpp
-msgid "Enable UPnP port forwarding of the web server port"
-msgstr "Разрешаване на UPnP пренасочване на порта на уеб сървъра"
-
-#: src/muuli_wdr.cpp
-msgid "Web server UPnP TCP port (Optional)"
-msgstr "UPnP TCP порт на уеб сървъра (незадължително)"
-
-#: src/muuli_wdr.cpp
-msgid "Page Refresh Time (in secs)"
-msgstr "Време за обновяване на страницата (в секунди)"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Gzip compression"
-msgstr "Разрешаване на Gzip компресия"
 
 #: src/muuli_wdr.cpp
 msgid "Reset page to defaults"
@@ -7074,9 +7052,9 @@ msgstr ""
 msgid "NAT traversal (QUIC)"
 msgstr ""
 
-#: src/Preferences.cpp
-msgid "no options available"
-msgstr "няма налични опции"
+#: src/PeerCapabilities.h
+msgid "Skips unknown source exchange tags"
+msgstr ""
 
 #: src/Preferences.cpp
 msgid "Media metadata: FFProbePath is obsolete; aMule now uses its bundled media parser. Removing the old setting."
@@ -7439,12 +7417,9 @@ msgid "macOS does not let an application stop being the default handler. To stop
 msgstr ""
 
 #: src/PrefsUnifiedDlg.cpp
-msgid "The web server and aMule API require external connections to be enabled."
+#, fuzzy
+msgid "The aMule API requires external connections to be enabled."
 msgstr "Уеб сървърът и API на aMule изискват външните връзки да бъдат разрешени."
-
-#: src/PrefsUnifiedDlg.cpp
-msgid "The aMule web server is deprecated. Consider running the aMule API instead."
-msgstr "Уеб сървърът на aMule е остарял. Обмислете използването на API на aMule вместо него."
 
 #: src/PrefsUnifiedDlg.cpp
 #, fuzzy
@@ -8491,6 +8466,16 @@ msgid "Connected to buddy at %s"
 msgstr "Свързан с приятел (buddy) на адрес %s"
 
 #: src/ServerWnd.cpp
+#, fuzzy
+msgid "Served buddies:"
+msgstr "Списък със сървъри"
+
+#: src/ServerWnd.cpp
+#, c-format
+msgid "%u of %u"
+msgstr ""
+
+#: src/ServerWnd.cpp
 msgid "IP address:"
 msgstr "IP адрес:"
 
@@ -8985,35 +8970,6 @@ msgid "Peak Connections (estimate): %i"
 msgstr "Пикови връзки (приблизително): %i"
 
 #: src/Statistics.cpp
-msgid "NAT Traversal (Session)"
-msgstr ""
-
-#: src/Statistics.cpp
-#, fuzzy, c-format
-msgid "Server Hole Punches: %s"
-msgstr "Разходи от сървъра (пакети): %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Server Hole Punches: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Lugdunum Callbacks: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, fuzzy, c-format
-msgid "Successful Lugdunum Callbacks: %s"
-msgstr "%s беше успешно актуализиран"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "uTP Streams Moved to a New Port: %s"
-msgstr ""
-
-#: src/Statistics.cpp
 #, c-format
 msgid "Unknown: %s"
 msgstr "Неизвестни: %s"
@@ -9099,6 +9055,10 @@ msgid "Average file size: %s"
 msgstr "Среден размер на файл: %s"
 
 #: src/Statistics.cpp
+msgid "Diagnostics"
+msgstr ""
+
+#: src/Statistics.cpp
 msgid "Operating System"
 msgstr "Операционна система"
 
@@ -9180,6 +9140,10 @@ msgstr ""
 "Не е зададена ключова дума за търсене.\n"
 "Въведете „help search“ за повече помощ.\n"
 
+#: src/TextClient.cpp
+msgid "The connected daemon does not support media search filters.\n"
+msgstr ""
+
 #. TRANSLATORS:
 #. 'help search' is a command to the program, do not translate it.
 #: src/TextClient.cpp
@@ -9191,11 +9155,19 @@ msgstr ""
 "Въведете „help search“ за повече помощ.\n"
 
 #: src/TextClient.cpp
+msgid "The connected daemon does not support search management.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "A search ID from 'search list' is required.\n"
+msgstr ""
+
+#: src/TextClient.cpp
 #, c-format
 msgid "Download File: %lu %s\n"
 msgstr "Изтегляне на файл: %lu %s\n"
 
-#: src/TextClient.cpp src/webserver/src/WebServer.cpp
+#: src/TextClient.cpp
 msgid "Request failed with an unknown error."
 msgstr "Заявката бе неуспешна поради неизвестна грешка."
 
@@ -9301,6 +9273,26 @@ msgstr ""
 
 #: src/TextClient.cpp
 msgid "[PartFile]"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "No retained searches.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; availability is unknown.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; further requests remain possible.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "No further results can be requested for this search.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "Search stop request processed; retained results were not removed.\n"
 msgstr ""
 
 #: src/TextClient.cpp
@@ -9572,6 +9564,11 @@ msgid ""
 "    --avail <N>            minimum number of sources\n"
 "    --min-size <N[KMG]>    smallest file size; K=1024, M=K*1024, G=M*1024\n"
 "    --max-size <N[KMG]>    largest file size; same suffixes\n"
+"    --min-bitrate <kbps>   whole number, 0-1000000\n"
+"    --min-duration <sec>   whole number, 0-86400\n"
+"    --codec <text> --title <text> --album <text> --artist <text>\n"
+"Quote media text values containing spaces.\n"
+"Kad applies media filters; eD2k servers may ignore them.\n"
 "Example: 'search global linux iso --type Iso --min-size 100M' returns\n"
 "results for \"linux iso\" of file-type Iso at least 100 MiB.\n"
 msgstr ""
@@ -9607,6 +9604,28 @@ msgstr "Изпълняване на търсене в Kad"
 #, fuzzy
 msgid "Execute an eD2k and Kad search"
 msgstr "Изпълняване на търсене в Kad"
+
+#: src/TextClient.cpp
+msgid "List retained search IDs and queries."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Stop a search, keeping its results."
+msgstr "Резултат от търсене"
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Request more Kad search results."
+msgstr "Брой резултати от търсенето: %i\n"
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'. Further results are not guaranteed."
+msgstr ""
 
 #: src/TextClient.cpp
 msgid "Show the results of a search."
@@ -10434,139 +10453,6 @@ msgstr "Папка, съдържаща вашия файл с подпис"
 msgid "Folder where generating the statistic image"
 msgstr "Папка, в която да се генерира изображението със статистика"
 
-#: src/webserver/src/WebInterface.cpp
-msgid "Loads template <str>"
-msgstr "Зарежда шаблон <str>"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Web server HTTP port"
-msgstr "HTTP порт на уеб сървъра"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use UPnP port forwarding on web server port"
-msgstr "Използване на пренасочване на портове чрез UPnP за порта на уеб сървъра"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "UPnP port"
-msgstr "UPnP порт"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use gzip compression"
-msgstr "Използване на gzip компресия"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Full access password for web server"
-msgstr "Парола за пълен достъп до уеб сървъра"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Guest password for web server"
-msgstr "Гостова парола за уеб сървъра"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Allow guest access"
-msgstr "Разрешаване на гостов достъп"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Deny guest access"
-msgstr "Забраняване на гостов достъп"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Load/save web server settings from/to remote aMule"
-msgstr "Зареждане/запис на настройките на уеб сървъра от/към отдалечен aMule"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule config file path. DO NOT USE DIRECTLY!"
-msgstr "Път до конфигурационния файл на aMule. НЕ ИЗПОЛЗВАЙТЕ ПРЯКО!"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Disable PHP interpreter (deprecated)"
-msgstr "Изключване на PHP интерпретатора (остаряло)"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Recompile PHP pages on each request"
-msgstr "Прекомпилиране на PHP страниците при всяка заявка"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule Web Server"
-msgstr "Уеб сървър на aMule"
-
-#: src/webserver/src/WebServer.cpp
-msgid "web client connection accepted\n"
-msgstr "връзката с уеб клиента е приета\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "ERROR: cannot accept web client connection\n"
-msgstr "ГРЕШКА: не може да се приеме връзка с уеб клиент\n"
-
-#: src/webserver/src/WebServer.cpp
-#, c-format
-msgid "Request failed with the following error: %s."
-msgstr "Заявката е неуспешна със следната грешка: %s."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Index file not found: "
-msgstr "Индексният файл не е намерен: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session expired - requesting login\n"
-msgstr "Сесията е изтекла - изисква се вход\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, logged in\n"
-msgstr "Сесията е валидна, влезли сте\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, not logged in\n"
-msgstr "Сесията е валидна, не сте влезли\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No session opened - will request login\n"
-msgstr "Няма отворена сесия - ще се изисква вход\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session created - requesting login\n"
-msgstr "Сесията е създадена - изисква се вход\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [original]: "
-msgstr "Обработка на заявка [оригинална]: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Refusing to read `pass` from URL query string\n"
-msgstr "Отказ да се чете „pass“ от низа за заявка на URL адреса\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No password specified, login will not be allowed."
-msgstr "Не е зададена парола, входът няма да бъде разрешен."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Checking password\n"
-msgstr "Проверка на паролата\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password hash invalid\n"
-msgstr "Невалиден хеш на паролата\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password ok\n"
-msgstr "Паролата е правилна\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password bad\n"
-msgstr "Паролата е грешна\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "You did not enter any password. Blank password is not allowed.\n"
-msgstr "Не въведохте парола. Празна парола не е разрешена.\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Logout requested\n"
-msgstr "Заявен е изход\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [redirected]: "
-msgstr "Обработка на заявка [пренасочена]: "
-
 #: packaging/windows/installer_strings.c
 msgid "aMule (required)"
 msgstr "aMule (задължително)"
@@ -10704,6 +10590,213 @@ msgstr ""
 msgid "Migrating a changed legacy ECPassword after downgrade; the previous verifier no longer authenticates this run."
 msgstr ""
 
+#, c-format
+#~ msgid "Terminating amuleweb instance with pid '%d' ... "
+#~ msgstr "Прекратяване на инстанция на amuleweb с pid „%d“ ... "
+
+#, c-format
+#~ msgid "Killing amuleweb instance with pid '%d' ... "
+#~ msgstr "Принудително спиране на инстанция на amuleweb с pid „%d“ ... "
+
+#, c-format
+#~ msgid "web server running on pid %d"
+#~ msgstr "уеб сървърът работи с pid %d"
+
+#~ msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
+#~ msgstr "Заявихте стартиране на уеб сървъра при старт, но изпълнимият файл amuleweb не може да бъде стартиран. Моля, инсталирайте пакета, съдържащ уеб сървъра на aMule, или компилирайте aMule от изходния код с -DBUILD_WEBSERVER=YES и го инсталирайте."
+
+#, fuzzy
+#~ msgid "Could not prepare the amuleweb EC token."
+#~ msgstr "Паролата за amuleapi не можа да бъде записана: %s"
+
+#, fuzzy, c-format
+#~ msgid "Could not remove the amuleweb EC token file: %s"
+#~ msgstr "Паролата за amuleapi не можа да бъде записана: %s"
+
+#~ msgid "Web server parameters"
+#~ msgstr "Параметри на уеб сървъра"
+
+#~ msgid "Run webserver on startup (deprecated)"
+#~ msgstr "Стартиране на уеб сървъра при пускане (остаряло)"
+
+#~ msgid "Web template"
+#~ msgstr "Уеб шаблон"
+
+#~ msgid "Full rights password"
+#~ msgstr "Парола с пълни права"
+
+#~ msgid "Enable Low rights User"
+#~ msgstr "Разрешаване на потребител с ограничени права"
+
+#~ msgid "Low rights password"
+#~ msgstr "Парола с ограничени права"
+
+#~ msgid "Enable UPnP port forwarding of the web server port"
+#~ msgstr "Разрешаване на UPnP пренасочване на порта на уеб сървъра"
+
+#~ msgid "Web server UPnP TCP port (Optional)"
+#~ msgstr "UPnP TCP порт на уеб сървъра (незадължително)"
+
+#~ msgid "Page Refresh Time (in secs)"
+#~ msgstr "Време за обновяване на страницата (в секунди)"
+
+#~ msgid "Enable Gzip compression"
+#~ msgstr "Разрешаване на Gzip компресия"
+
+#~ msgid "no options available"
+#~ msgstr "няма налични опции"
+
+#~ msgid "The aMule web server is deprecated. Consider running the aMule API instead."
+#~ msgstr "Уеб сървърът на aMule е остарял. Обмислете използването на API на aMule вместо него."
+
+#~ msgid "Loads template <str>"
+#~ msgstr "Зарежда шаблон <str>"
+
+#~ msgid "Web server HTTP port"
+#~ msgstr "HTTP порт на уеб сървъра"
+
+#~ msgid "Use UPnP port forwarding on web server port"
+#~ msgstr "Използване на пренасочване на портове чрез UPnP за порта на уеб сървъра"
+
+#~ msgid "UPnP port"
+#~ msgstr "UPnP порт"
+
+#~ msgid "Use gzip compression"
+#~ msgstr "Използване на gzip компресия"
+
+#~ msgid "Full access password for web server"
+#~ msgstr "Парола за пълен достъп до уеб сървъра"
+
+#~ msgid "Guest password for web server"
+#~ msgstr "Гостова парола за уеб сървъра"
+
+#~ msgid "Allow guest access"
+#~ msgstr "Разрешаване на гостов достъп"
+
+#~ msgid "Deny guest access"
+#~ msgstr "Забраняване на гостов достъп"
+
+#~ msgid "Load/save web server settings from/to remote aMule"
+#~ msgstr "Зареждане/запис на настройките на уеб сървъра от/към отдалечен aMule"
+
+#~ msgid "aMule config file path. DO NOT USE DIRECTLY!"
+#~ msgstr "Път до конфигурационния файл на aMule. НЕ ИЗПОЛЗВАЙТЕ ПРЯКО!"
+
+#~ msgid "Disable PHP interpreter (deprecated)"
+#~ msgstr "Изключване на PHP интерпретатора (остаряло)"
+
+#~ msgid "Recompile PHP pages on each request"
+#~ msgstr "Прекомпилиране на PHP страниците при всяка заявка"
+
+#~ msgid "aMule Web Server"
+#~ msgstr "Уеб сървър на aMule"
+
+#~ msgid "web client connection accepted\n"
+#~ msgstr "връзката с уеб клиента е приета\n"
+
+#~ msgid "ERROR: cannot accept web client connection\n"
+#~ msgstr "ГРЕШКА: не може да се приеме връзка с уеб клиент\n"
+
+#, c-format
+#~ msgid "Request failed with the following error: %s."
+#~ msgstr "Заявката е неуспешна със следната грешка: %s."
+
+#~ msgid "Index file not found: "
+#~ msgstr "Индексният файл не е намерен: "
+
+#~ msgid "Session expired - requesting login\n"
+#~ msgstr "Сесията е изтекла - изисква се вход\n"
+
+#~ msgid "Session ok, logged in\n"
+#~ msgstr "Сесията е валидна, влезли сте\n"
+
+#~ msgid "Session ok, not logged in\n"
+#~ msgstr "Сесията е валидна, не сте влезли\n"
+
+#~ msgid "No session opened - will request login\n"
+#~ msgstr "Няма отворена сесия - ще се изисква вход\n"
+
+#~ msgid "Session created - requesting login\n"
+#~ msgstr "Сесията е създадена - изисква се вход\n"
+
+#~ msgid "Processing request [original]: "
+#~ msgstr "Обработка на заявка [оригинална]: "
+
+#~ msgid "Refusing to read `pass` from URL query string\n"
+#~ msgstr "Отказ да се чете „pass“ от низа за заявка на URL адреса\n"
+
+#~ msgid "No password specified, login will not be allowed."
+#~ msgstr "Не е зададена парола, входът няма да бъде разрешен."
+
+#~ msgid "Checking password\n"
+#~ msgstr "Проверка на паролата\n"
+
+#~ msgid "Password hash invalid\n"
+#~ msgstr "Невалиден хеш на паролата\n"
+
+#~ msgid "Password ok\n"
+#~ msgstr "Паролата е правилна\n"
+
+#~ msgid "Password bad\n"
+#~ msgstr "Паролата е грешна\n"
+
+#~ msgid "You did not enter any password. Blank password is not allowed.\n"
+#~ msgstr "Не въведохте парола. Празна парола не е разрешена.\n"
+
+#~ msgid "Logout requested\n"
+#~ msgstr "Заявен е изход\n"
+
+#~ msgid "Processing request [redirected]: "
+#~ msgstr "Обработка на заявка [пренасочена]: "
+
+#~ msgid "(Right click on folder icon for recursive share)"
+#~ msgstr "(Щракнете с десен бутон върху иконата на папката за рекурсивно споделяне)"
+
+#~ msgid "Currently connected server."
+#~ msgstr "Сървър, с който в момента сте свързани."
+
+#~ msgid "Up: 0.0 | Down: 0.0"
+#~ msgstr "Качване: 0.0 | Изтегляне: 0.0"
+
+#~ msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
+#~ msgstr "Текущи средни стойности за скоростта на качване и изтегляне. Ако е включено, числата в скобите показват допълнителния трафик от комуникацията между клиентите."
+
+#, fuzzy, c-format
+#~ msgid "Buddies Served: %llu"
+#~ msgstr "Файлове на работещите сървъри: %llu"
+
+#, fuzzy, c-format
+#~ msgid "Time Served: %s"
+#~ msgstr "Филтрирани сървъри: %s"
+
+#, fuzzy, c-format
+#~ msgid "Buddies Connected: %llu"
+#~ msgstr " е свързан с "
+
+#, fuzzy
+#~ msgid "Keyword publish"
+#~ msgstr "Филтрирани: %s"
+
+#, fuzzy
+#~ msgid "Source publish"
+#~ msgstr "Източници"
+
+#, fuzzy
+#~ msgid "Firewall check"
+#~ msgstr "зад защитна стена"
+
+#, fuzzy
+#~ msgid "Firewall check 2"
+#~ msgstr "зад защитна стена"
+
+#, fuzzy, c-format
+#~ msgid "Keys valid: %s"
+#~ msgstr "Филтрирани: %s"
+
+#, fuzzy
+#~ msgid "Kad Buddies"
+#~ msgstr "Потребител на Kad"
+
 #~ msgid "Disable computer's timed standby mode"
 #~ msgstr "Забраняване на автоматичния режим на готовност на компютъра"
 
@@ -10774,9 +10867,6 @@ msgstr ""
 
 #~ msgid "Click on this button to update the servers list from URL ..."
 #~ msgstr "Щракнете върху този бутон, за да обновите списъка със сървъри от URL адрес..."
-
-#~ msgid "Server list"
-#~ msgstr "Списък със сървъри"
 
 #~ msgid "Enter the url to a server.met file here and press the button to the left to update the list of known servers."
 #~ msgstr "Въведете тук URL адрес на файл server.met и натиснете бутона отляво, за да обновите списъка с известните сървъри."

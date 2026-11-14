@@ -394,6 +394,11 @@ struct ClientSnapshot
 	std::string server_name;
 	std::uint16_t kad_port = 0; // 0 => Kad not connected for this peer
 	std::string source_origin;  // "local_server" | "remote_server" | "kad" | "source_exchange" | ...
+	std::uint32_t source_origins_mask = 0; // every channel it was seen on, one bit per ESourceFrom
+	std::string contact_route;   // "dial" | "direct_udp_callback" | "server_callback" | ...; "" => none
+	bool route_unproven = false; // the route comes from a record no hello has proved
+	bool route_from_fallback = false;      // the IPv4 identity came from a fallback route
+	bool route_ipv6 = false;               // the route is a dial to the peer's IPv6 address
 	std::uint32_t parts_offered_count = 0; // count of parts the peer has (EC_TAG_CLIENT_AVAILABLE_PARTS)
 	bool has_parts_offered_count = false;  // false => tag absent, emitted as null
 	std::string client_mod_name;           // EC_TAG_CLIENT_MOD_VERSION
@@ -613,6 +618,84 @@ std::string ChatPeerKeyFromGuiId(std::uint64_t gui_id);
 // /kad endpoint. Single composite snapshot pulled from the STAT_REQ response already
 // fetched for /status -- amuled's EC_OP_STAT_REQ at EC_DETAIL_CMD ships every
 // EC_TAG_STATS_KAD_* wanted here.
+// Buddy counters since the daemon started (EC_TAG_KAD_BUDDY). Members follow the JSON keys
+// under `buddy.serving` and `buddy.own` on GET /kad.
+struct KadBuddyServingSnapshot
+{
+	std::uint64_t pending_count = 0;
+	std::uint64_t served_seconds = 0;
+	struct
+	{
+		std::uint64_t received = 0;
+		std::uint64_t offered = 0;
+		std::uint64_t refused_firewalled = 0;
+		std::uint64_t refused_full = 0;
+		std::uint64_t refused_conflict = 0;
+		std::uint64_t refused_same_ip = 0;
+		std::uint64_t rate_limited = 0;
+		std::uint64_t natt = 0;
+		std::uint64_t expired = 0;
+		std::uint64_t superseded = 0;
+		std::uint64_t duplicate = 0;
+		std::uint64_t evicted = 0;
+	} requests;
+	struct
+	{
+		std::uint64_t started = 0;
+		std::uint64_t released_extra = 0;
+		std::uint64_t ended = 0;
+		std::uint64_t timed_out = 0;
+	} buddies;
+	struct
+	{
+		std::uint64_t relayed = 0;
+		std::uint64_t relayed_bytes = 0;
+		std::uint64_t no_buddy = 0;
+		std::uint64_t mismatched = 0;
+		std::uint64_t rate_limited = 0;
+		std::uint64_t over_budget = 0;
+		std::uint64_t peak_requests_per_minute = 0;
+	} callbacks;
+	struct
+	{
+		std::uint64_t relayed = 0;
+		std::uint64_t relayed_bytes = 0;
+		std::uint64_t no_buddy = 0;
+		std::uint64_t mismatched = 0;
+		std::uint64_t malformed = 0;
+		std::uint64_t over_budget = 0;
+	} reasks;
+	std::uint64_t peak_relayed_bytes_per_minute = 0;
+};
+
+struct KadBuddyOwnSnapshot
+{
+	std::uint64_t search_count = 0;
+	std::uint64_t held_search_count = 0;
+	std::uint64_t needed_seconds = 0;
+	std::uint64_t missing_seconds = 0;
+	std::uint64_t connected_seconds = 0;
+	struct
+	{
+		std::uint64_t sent = 0;
+		std::uint64_t skipped = 0;
+		std::uint64_t offered = 0;
+	} requests;
+	struct
+	{
+		std::uint64_t attempted = 0;
+		std::uint64_t failed = 0;
+	} connections;
+	struct
+	{
+		std::uint64_t started = 0;
+		std::uint64_t ended = 0;
+		std::uint64_t timed_out = 0;
+	} buddies;
+	std::uint64_t received_callback_count = 0;
+	std::uint64_t received_reask_count = 0;
+};
+
 struct KadSnapshot
 {
 	std::string state; // "disabled" | "connecting" | "connected"
@@ -663,6 +746,15 @@ struct KadSnapshot
 	// "not known" split as public_ip above.
 	std::string buddy_ip;
 	std::uint16_t buddy_port = 0;
+	// Shipped with the buddy tags above, so null unless Kad is connected. An older daemon
+	// sends neither.
+	std::uint32_t served_count = 0;
+	std::uint32_t served_limit = 0;
+	bool has_served = false;
+	// Shipped whatever the Kad state, since amuleapi asks for them. An older daemon does not.
+	KadBuddyServingSnapshot buddy_serving;
+	KadBuddyOwnSnapshot buddy_own;
+	bool has_buddy_counters = false;
 };
 
 // One per download category (categories live in amuled's preferences, bundled under
@@ -1009,6 +1101,9 @@ struct PreferencesSnapshot
 	std::uint32_t max_upload_kibibytes_per_second = 0;
 	std::uint32_t max_download_kibibytes_per_second = 0;
 	std::uint32_t upload_slot_min_kibibytes_per_second = 0;
+	// Line capacity: scales the GUI speed graphs and tray presets; not a limit.
+	std::uint32_t download_capacity_kibibytes_per_second = 0;
+	std::uint32_t upload_capacity_kibibytes_per_second = 0;
 	std::uint16_t tcp_port = 0;
 	std::uint16_t udp_port = 0;
 	// Positive sense: true = the extended UDP port (Kad / global search) is on. The EC
@@ -1169,12 +1264,13 @@ struct PreferencesSnapshot
 	// single EC_TAG_PREFS_REMOTECTRL group on the write path.
 	struct RemoteControlsPrefs
 	{
+		// Retired: kept for /api/v1/ only, always these values (the old defaults).
 		struct WebserverPrefs
 		{
 			bool enabled = false;
-			std::uint32_t port = 0;
-			bool gzip_enabled = false;
-			std::uint32_t refresh_seconds = 0;
+			std::uint32_t port = 4711;
+			bool gzip_enabled = true;
+			std::uint32_t refresh_seconds = 120;
 			// `template_name`, not `template`: the JSON key matches the member,
 			// which could never be `template` (C++ keyword).
 			std::string template_name;
@@ -1223,6 +1319,8 @@ struct PreferencesSnapshot
 		std::uint32_t server_keepalive_timeout_minutes = 0;
 		std::uint32_t kad_max_concurrent_source_search_count = 0;
 		std::uint32_t kad_source_reask_minutes = 0;
+		std::uint32_t kad_max_served_buddies = 0;
+		bool kad_max_served_buddies_supported = false;
 		std::uint32_t source_reask_minutes = 0;
 	} advanced;
 

@@ -42,7 +42,7 @@
 
 #include "kademlia/kademlia/Kademlia.h"
 
-// used for webserver, amulecmd
+// used for amulecmd and other EC clients
 CEC_Server_Tag::CEC_Server_Tag(const CServer *server, EC_DETAIL_LEVEL detail_level)
 : CECTag(EC_TAG_SERVER, EC_IPv4_t(server->GetIP(), server->GetPort()))
 {
@@ -410,6 +410,14 @@ CEC_UpDownClient_Tag::CEC_UpDownClient_Tag(
 	AddDiffTag(this, EC_TAG_CLIENT_USER_IP, client->GetIP(), valuemap);
 	AddDiffTag(this, EC_TAG_CLIENT_USER_PORT, client->GetUserPort(), valuemap);
 	AddDiffTag(this, EC_TAG_CLIENT_FROM, (uint64)client->GetSourceFrom(), valuemap);
+	AddDiffTag(this, EC_TAG_CLIENT_FROM_MASK, (uint64)client->GetSourceOriginMask(), valuemap);
+	AddDiffTag(this,
+		EC_TAG_CLIENT_CONTACT_ROUTE,
+		(uint64)PackContactRoute(static_cast<EContactRouteReport>(client->GetContactRoute()),
+			client->IsRouteUnproven(),
+			client->IsIdentityFromFallback(),
+			client->IsContactOverIPv6()),
+		valuemap);
 	AddDiffTag(this, EC_TAG_CLIENT_SERVER_IP, client->GetServerIP(), valuemap);
 	AddDiffTag(this, EC_TAG_CLIENT_SERVER_PORT, client->GetServerPort(), valuemap);
 	AddDiffTag(this, EC_TAG_CLIENT_SERVER_NAME, client->GetServerName(), valuemap);

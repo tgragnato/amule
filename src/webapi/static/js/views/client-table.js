@@ -76,7 +76,10 @@ export const COLS = [
   // How this source was found (server/kad/passive/…), the desktop's Origin column.
   { key: "origin", th: "downloads_peer_col_origin", width: "120px", sortable: true,
     sortVal: (c) => c.source_origin || "",
-    cell: (c) => c.source_origin ? t("downloads_peer_origin_" + c.source_origin) : "—" },
+    // Every channel the source was seen on, not just the one its first copy came from.
+    cell: (c) => (c.source_origins || []).length
+      ? c.source_origins.map((o) => t("downloads_peer_origin_" + o)).join(" + ")
+      : c.source_origin ? t("downloads_peer_origin_" + c.source_origin) : "—" },
   { key: "file", th: "downloads_peer_col_file", cls: "name", sortable: true,
     sortVal: (c) => fileNameOf(c).toLowerCase(),
     // A4AF row: the peer-advertised name belongs to the other file it is parked
@@ -92,7 +95,7 @@ export const COLS = [
       : formatInt(c.parts_offered_count) + (c.partsTotal ? " / " + formatInt(c.partsTotal) : "") },
 
   { key: "dl_state", th: "downloads_peer_col_dl_state", width: "120px", sortable: true,
-    sortVal: (c) => c.download_state || "", cell: (c) => stateBadge(c.download_state) },
+    sortVal: (c) => c.download_state || "", cell: (c) => stateBadge(c.download_state, c) },
   { key: "dl_speed", th: "downloads_peer_col_dl_speed", num: true, width: "100px", sortable: true,
     sortVal: (c) => c.download_speed_bytes_per_second || 0, cell: (c) => formatSpeed(c.download_speed_bytes_per_second) },
   { key: "downloaded", th: "downloads_peer_col_downloaded", num: true, width: "100px", sortable: true,
@@ -269,11 +272,23 @@ export function identBadge(s) {
   return html`<${Badge} kind=${IDENT_KIND[s] || "paused"}>${identLabel(s)}<//>`;
 }
 
-export function stateBadge(s) {
-  if (!s || s === "idle") return html`<${Badge}>${t("downloads_peer_state_" + (s || "idle"))}<//>`;
-  const kind = s === "downloading" || s === "uploading" ? "downloading"
+// While a contact is in flight the route says more than the state does, so the badge carries it
+// as a note, the way the desktop source list words it. `c` is the peer row, when the caller has
+// it; callers without one still get the plain state badge.
+const CONNECTING = ["connecting", "waiting_callback", "waiting_callback_kad", "low_to_low_ip"];
+function routeNote(c) {
+  if (!c || !c.contact_route || !CONNECTING.includes(c.download_state)) return null;
+  const name = t("downloads_peer_route_" + c.contact_route);
+  const key = c.route_from_fallback ? "downloads_peer_route_fallback"
+    : c.route_unproven ? "downloads_peer_route_unproven" : "downloads_peer_route_plain";
+  return html`<span class="route-note">${t(key, { route: name })}</span>`;
+}
+
+export function stateBadge(s, c) {
+  const kind = !s || s === "idle" ? ""
+    : s === "downloading" || s === "uploading" ? "downloading"
     : s === "banned" || s === "error" ? "paused" : "waiting";
-  return html`<${Badge} kind=${kind}>${t("downloads_peer_state_" + s)}<//>`;
+  return html`<${Badge} kind=${kind}>${t("downloads_peer_state_" + (s || "idle"))}<//>${routeNote(c)}`;
 }
 
 // Toolbar + peer table, shared by every consumer. Always offers the full

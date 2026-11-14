@@ -202,9 +202,6 @@
 /* Installed helper, relative to the folder of the core's own executable. */
 #cmakedefine AMULE_MEDIA_PROBE_RELPATH "${AMULE_MEDIA_PROBE_RELPATH}"
 
-/* Define if libpng is present is set. */
-#cmakedefine WITH_LIBPNG
-
 /* Define if libayatana-appindicator3 was found at configure time —
  * enables the StatusNotifierItem backend in MuleTrayIcon. */
 #cmakedefine WITH_LIBAYATANA_APPINDICATOR

@@ -553,23 +553,29 @@ _curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: applica
 _assert_status 200 "PATCH (restore proxy fields) → 200"
 
 # --- Nested remote_controls (#655): round-trip through the sub-objects. ---
-# Both subsystems pack into one EC category, so this also proves the two
-# sub-objects can be sent together without one clobbering the other.
+# The retired webserver sub-object is accepted beside a writable one and
+# ignored, without blocking the writable change.
 _curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/preferences"
-SAVED_WS_PORT=$(printf '%s' "$CURL_BODY" | jq -r '.remote_controls.webserver.port')
-SAVED_WS_REFRESH=$(printf '%s' "$CURL_BODY" | jq -r '.remote_controls.webserver.refresh_seconds')
 SAVED_API_BIND=$(printf '%s' "$CURL_BODY" | jq -r '.remote_controls.amuleapi.bind_address')
 
 _curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
-	-d '{"remote_controls":{"webserver":{"port":4711,"refresh_seconds":123},"amuleapi":{"bind_address":"127.0.0.1"}}}' \
+	-d '{"remote_controls":{"webserver":{"port":4712,"refresh_seconds":123},"amuleapi":{"bind_address":"127.0.0.1"}}}' \
 	"$API/preferences"
 _assert_status 200 "PATCH nested remote_controls (webserver + amuleapi) → 200"
-_assert_json_eq '.remote_controls.webserver.port' 4711 'webserver.port=4711 in response'
-_assert_json_eq '.remote_controls.webserver.refresh_seconds' 123 'webserver.refresh_seconds=123 in response'
+_assert_json_eq '.remote_controls.webserver.port' 4711 'retired webserver.port ignored in response'
+_assert_json_eq '.remote_controls.webserver.refresh_seconds' 120 'retired webserver.refresh_seconds ignored in response'
 _assert_json_eq '.remote_controls.amuleapi.bind_address' 127.0.0.1 'amuleapi.bind_address set in response'
 _curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/preferences"
-_assert_json_eq '.remote_controls.webserver.port' 4711 'webserver.port persisted (no stale GET)'
+_assert_json_eq '.remote_controls.webserver.port' 4711 'retired webserver.port still fixed on GET'
 _assert_json_eq '.remote_controls.amuleapi.bind_address' 127.0.0.1 'amuleapi.bind_address persisted'
+
+# A body naming only retired fields, passwords included, is an accepted no-op.
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+	-d '{"remote_controls":{"webserver":{"enabled":true,"password":"x","guest_password":"y"}}}' \
+	"$API/preferences"
+_assert_status 200 "PATCH only retired remote_controls.webserver fields → 200"
+_assert_json_eq '.remote_controls.webserver.enabled' false 'retired webserver.enabled ignored'
+_assert_json_eq '.remote_controls.webserver.password | type' null 'retired webserver.password not emitted'
 
 # The flat remote_controls keys are not a write path — they are simply
 # unknown fields, so a body carrying only those changes nothing.
@@ -590,7 +596,7 @@ _assert_status 400 "PATCH remote_controls.amuleapi.password → 400 (managed via
 
 # Restore.
 _curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
-	-d "{\"remote_controls\":{\"webserver\":{\"port\":$SAVED_WS_PORT,\"refresh_seconds\":$SAVED_WS_REFRESH},\"amuleapi\":{\"bind_address\":\"$SAVED_API_BIND\"}}}" \
+	-d "{\"remote_controls\":{\"amuleapi\":{\"bind_address\":\"$SAVED_API_BIND\"}}}" \
 	"$API/preferences"
 _assert_status 200 "PATCH (restore remote_controls fields) → 200"
 
@@ -710,6 +716,9 @@ SAVED_FILEBUF=$(printf '%s' "$CURL_BODY" | jq -r '.advanced.file_buffer_bytes')
 SAVED_ULQUEUE=$(printf '%s' "$CURL_BODY" | jq -r '.advanced.max_upload_queue_client_count')
 SAVED_CONN5=$(printf '%s' "$CURL_BODY" | jq -r '.advanced.max_new_connections_per_5_seconds')
 SAVED_KADSEARCH=$(printf '%s' "$CURL_BODY" | jq -r '.advanced.kad_max_concurrent_source_search_count')
+SAVED_SERVEDBUDDIES=$(printf '%s' "$CURL_BODY" | jq -r '.advanced.kad_max_served_buddies')
+_assert_json_eq '.advanced.kad_max_served_buddies_supported' true \
+	'advanced.kad_max_served_buddies_supported is true on a current daemon'
 SAVED_MAXUL=$(printf '%s' "$CURL_BODY" | jq -r '.connection.max_upload_kibibytes_per_second')
 SAVED_MAXDL=$(printf '%s' "$CURL_BODY" | jq -r '.connection.max_download_kibibytes_per_second')
 
@@ -738,6 +747,8 @@ for CASE in \
 	"advanced kad_max_concurrent_source_search_count 100000 34464_uint16_wrap" \
 	"advanced kad_max_concurrent_source_search_count 1 5_clamped_at_next_start" \
 	"advanced source_reask_minutes 7 15_clamped_at_next_start" \
+	"advanced kad_max_served_buddies 3 below_minimum" \
+	"advanced kad_max_served_buddies 17 above_maximum" \
 	; do
 	set -- $CASE
 	_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
@@ -802,6 +813,8 @@ for CASE in \
 	"advanced source_reask_minutes 60" \
 	"advanced kad_source_reask_minutes 30" \
 	"advanced kad_source_reask_minutes 60" \
+	"advanced kad_max_served_buddies 4" \
+	"advanced kad_max_served_buddies 16" \
 	; do
 	set -- $CASE
 	_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
@@ -831,7 +844,7 @@ _assert_json_eq '.connection.max_download_kibibytes_per_second' 9 \
 # This has to stay the last mutation in the file.
 _curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
 	-H "Content-Type: application/json" \
-	-d "{\"advanced\":{\"kad_source_reask_minutes\":$SAVED_KADREASK,\"source_reask_minutes\":$SAVED_SRCREASK,\"write_buffer_limit_mebibytes\":$SAVED_WRITEBUDGET,\"file_buffer_bytes\":$SAVED_FILEBUF,\"max_upload_queue_client_count\":$SAVED_ULQUEUE,\"max_new_connections_per_5_seconds\":$SAVED_CONN5,\"kad_max_concurrent_source_search_count\":$SAVED_KADSEARCH},\"connection\":{\"tcp_port\":$SAVED_TCPPORT,\"max_upload_kibibytes_per_second\":$SAVED_MAXUL,\"max_download_kibibytes_per_second\":$SAVED_MAXDL},\"online_signature\":{\"update_frequency_seconds\":$SAVED_OSFREQ}}" \
+	-d "{\"advanced\":{\"kad_source_reask_minutes\":$SAVED_KADREASK,\"source_reask_minutes\":$SAVED_SRCREASK,\"write_buffer_limit_mebibytes\":$SAVED_WRITEBUDGET,\"file_buffer_bytes\":$SAVED_FILEBUF,\"max_upload_queue_client_count\":$SAVED_ULQUEUE,\"max_new_connections_per_5_seconds\":$SAVED_CONN5,\"kad_max_concurrent_source_search_count\":$SAVED_KADSEARCH,\"kad_max_served_buddies\":$SAVED_SERVEDBUDDIES},\"connection\":{\"tcp_port\":$SAVED_TCPPORT,\"max_upload_kibibytes_per_second\":$SAVED_MAXUL,\"max_download_kibibytes_per_second\":$SAVED_MAXDL},\"online_signature\":{\"update_frequency_seconds\":$SAVED_OSFREQ}}" \
 	"$API/preferences"
 _assert_status 200 "PATCH (restore advanced + connection + onlinesig) -> 200"
 _curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/preferences"
@@ -842,6 +855,8 @@ _assert_json_eq '.advanced.kad_source_reask_minutes' "$SAVED_KADREASK" \
 	'restored advanced.kad_source_reask_minutes to the saved value'
 _assert_json_eq '.advanced.source_reask_minutes' "$SAVED_SRCREASK" \
 	'restored advanced.source_reask_minutes to the saved value'
+_assert_json_eq '.advanced.kad_max_served_buddies' "$SAVED_SERVEDBUDDIES" \
+	'restored advanced.kad_max_served_buddies to the saved value'
 _assert_json_eq '.online_signature.update_frequency_seconds' "$SAVED_OSFREQ" \
 	'restored online_signature.update_frequency_seconds to the saved value'
 
@@ -904,7 +919,7 @@ _assert_json_eq '.connection.upload_slot_min_kibibytes_per_second' 1 \
 # --- remote_controls.external_connections: read-only, never applied. -------
 _curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/preferences"
 EC_BEFORE=$(printf '%s' "$CURL_BODY" | jq -c '.remote_controls.external_connections')
-WS_REFRESH=$(printf '%s' "$CURL_BODY" | jq -r '.remote_controls.webserver.refresh_seconds')
+API_PORT=$(printf '%s' "$CURL_BODY" | jq -r '.remote_controls.amuleapi.port')
 
 _curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
 	-d '{"remote_controls":{"external_connections":{"port":1,"enabled":false}}}' "$API/preferences"
@@ -914,7 +929,7 @@ _assert_json_eq '.error.message | contains("remote_controls.external_connections
 
 # Alongside a writable field, set to its own value, they are ignored rather than rejected.
 _curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
-	-d "{\"remote_controls\":{\"webserver\":{\"refresh_seconds\":$WS_REFRESH},\"external_connections\":{\"port\":1,\"enabled\":false,\"password_set\":false}}}" \
+	-d "{\"remote_controls\":{\"amuleapi\":{\"port\":$API_PORT},\"external_connections\":{\"port\":1,\"enabled\":false,\"password_set\":false}}}" \
 	"$API/preferences"
 _assert_status 200 'PATCH with external_connections beside a writable field -> 200'
 _assert_json_eq '.remote_controls.external_connections | tojson' "$EC_BEFORE" \
@@ -1038,6 +1053,32 @@ if [ "$(printf '%s' "$CURL_BODY" | jq -r '.advanced.debug_categories_supported')
 else
 	_skip 'the daemon does not report debug categories'
 fi
+
+# --- Line capacities round-trip and keep the GUI range. ----------
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/preferences"
+_assert_json_eq '(.connection.download_capacity_kibibytes_per_second|type)' number 'download_capacity_kibibytes_per_second is a number'
+_assert_json_eq '(.connection.upload_capacity_kibibytes_per_second|type)' number 'upload_capacity_kibibytes_per_second is a number'
+SAVED_DLCAP=$(printf '%s' "$CURL_BODY" | jq -r '.connection.download_capacity_kibibytes_per_second')
+SAVED_ULCAP=$(printf '%s' "$CURL_BODY" | jq -r '.connection.upload_capacity_kibibytes_per_second')
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+	-d '{"connection":{"download_capacity_kibibytes_per_second":4321,"upload_capacity_kibibytes_per_second":1234}}' \
+	"$API/preferences"
+_assert_status 200 'PATCH both line capacities -> 200'
+_assert_json_eq '.connection.download_capacity_kibibytes_per_second' 4321 'download capacity echoed in the PATCH reply'
+_assert_json_eq '.connection.upload_capacity_kibibytes_per_second' 1234 'upload capacity echoed in the PATCH reply'
+_curl -H "Authorization: Bearer $ADMIN_TOKEN" "$API/preferences"
+_assert_json_eq '.connection.download_capacity_kibibytes_per_second' 4321 'download capacity persisted (no stale GET)'
+_assert_json_eq '.connection.upload_capacity_kibibytes_per_second' 1234 'upload capacity persisted (no stale GET)'
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+	-d '{"connection":{"upload_capacity_kibibytes_per_second":2}}' "$API/preferences"
+_assert_status 400 'PATCH upload_capacity_kibibytes_per_second=2 -> 400 (below the floor)'
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+	-d '{"connection":{"download_capacity_kibibytes_per_second":1000001}}' "$API/preferences"
+_assert_status 400 'PATCH download_capacity_kibibytes_per_second=1000001 -> 400 (above the ceiling)'
+_curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+	-d "{\"connection\":{\"download_capacity_kibibytes_per_second\":$SAVED_DLCAP,\"upload_capacity_kibibytes_per_second\":$SAVED_ULCAP}}" \
+	"$API/preferences"
+_assert_status 200 'restored the line capacities'
 
 # --- Summary. -----------------------------------------------------
 _summary

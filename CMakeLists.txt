@@ -70,11 +70,11 @@ include (cmake/manpage_install.cmake)
 include (cmake/options.cmake)
 include (cmake/search-dirs.cmake)
 
-if (BUILD_AMULECMD OR BUILD_WEBSERVER)
+if (BUILD_AMULECMD)
 	include (cmake/FindReadline.cmake)
 endif()
 
-if (BUILD_WEBSERVER OR NEED_ZLIB)
+if (NEED_ZLIB)
 	include (cmake/zlib.cmake)
 endif()
 
@@ -382,8 +382,8 @@ endif()
 # glib-2.0 headers — needed for the Wayland wl_app_id / X11 WM_CLASS
 # binding via g_set_prgname() (called from amule.cpp on the monolithic
 # / daemon side, and from amule-remote-gui.cpp on the amulegui side
-# once the remote-GUI fix lands as a separate PR). amulecmd and
-# amuleweb don't need glib. Gated on wxGTK being the wx toolkit AND
+# once the remote-GUI fix lands as a separate PR). amulecmd doesn't
+# need glib. Gated on wxGTK being the wx toolkit AND
 # the host not being macOS — the `#include <glib.h>` / call sit behind
 # `#if defined(__WXGTK__) && !defined(__APPLE__)` in those files;
 # macOS doesn't run Wayland and macOS apps identify via Info.plist, so
@@ -581,9 +581,6 @@ message (STATUS "
 
 	**** aMule TextClient ****
 	Should aMule Command Line Client be built?			${BUILD_AMULECMD}
-
-	**** aMule WebServer ****
-	Should aMule WebServer be built?				${BUILD_WEBSERVER}
 
 	**** aMule REST API ****
 	Should aMule REST API be built?					${BUILD_AMULEAPI}

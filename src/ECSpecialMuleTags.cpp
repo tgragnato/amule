@@ -340,37 +340,14 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(
 
 	if (selection & EC_PREFS_REMOTECONTROLS) {
 		CECEmptyTag rc_prefs(EC_TAG_PREFS_REMOTECTRL);
-		rc_prefs.AddTag(CECTag(EC_TAG_WEBSERVER_PORT, thePrefs::GetWSPort()));
-		if (thePrefs::GetWSIsEnabled()) {
-			rc_prefs.AddTag(CECEmptyTag(EC_TAG_WEBSERVER_AUTORUN));
-		}
-		if (!thePrefs::GetWSPass().IsEmpty()) {
-			CMD4Hash passhash;
-			wxCHECK2(passhash.Decode(thePrefs::GetWSPass()), /* Do nothing. */);
-			rc_prefs.AddTag(CECTag(EC_TAG_PASSWD_HASH, passhash));
-		}
-		if (thePrefs::GetWSIsLowUserEnabled()) {
-			CECEmptyTag lowUser(EC_TAG_WEBSERVER_GUEST);
-			if (!thePrefs::GetWSLowPass().IsEmpty()) {
-				CMD4Hash passhash;
-				wxCHECK2(passhash.Decode(thePrefs::GetWSLowPass()), /* Do nothing. */);
-				lowUser.AddTag(CECTag(EC_TAG_PASSWD_HASH, passhash));
-			}
-			rc_prefs.AddTag(lowUser);
-		}
-		if (thePrefs::GetWebUseGzip()) {
-			rc_prefs.AddTag(CECEmptyTag(EC_TAG_WEBSERVER_USEGZIP));
-		}
-		rc_prefs.AddTag(CECTag(EC_TAG_WEBSERVER_REFRESH, thePrefs::GetWebPageRefresh()));
-		rc_prefs.AddTag(CECTag(EC_TAG_WEBSERVER_TEMPLATE, thePrefs::GetWebTemplate()));
 		rc_prefs.AddTag(CECTag(EC_TAG_AMULEAPI_PORT, thePrefs::GetAmuleApiPort()));
 		if (thePrefs::GetAmuleApiIsEnabled()) {
 			rc_prefs.AddTag(CECEmptyTag(EC_TAG_AMULEAPI_AUTORUN));
 		}
 		rc_prefs.AddTag(CECTag(EC_TAG_AMULEAPI_BIND, thePrefs::GetAmuleApiBindAddress()));
 
-		// amuleapi's credentials are stored salted and stretched in amuleapi-passwords, so unlike
-		// the webserver's there is no digest to put on the wire. Both tags therefore carry a REQUEST
+		// amuleapi's credentials are stored salted and stretched in amuleapi-passwords, so there is
+		// no digest to put on the wire. Both tags therefore carry a REQUEST
 		// from a client and a STATE from the daemon:
 		//
 		//   admin absent          leave the stored password alone
@@ -381,9 +358,9 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(
 		//   guest present, empty  guest access on, password unchanged
 		//   guest present + hash  guest access on with this password
 		//
-		// Guest has the same container-plus-optional-child shape as EC_TAG_WEBSERVER_GUEST, so
-		// absence can mean "off". Admin has no off state on purpose: clearing it from a stray prefs
-		// push would leave a non-loopback deployment with no way back in.
+		// Guest is a container with an optional child, so absence can mean "off". Admin has no off
+		// state on purpose: clearing it from a stray prefs push would leave a non-loopback
+		// deployment with no way back in.
 		if (!thePrefs::GetAmuleApiPass().IsEmpty()) {
 			CECEmptyTag adminTag(EC_TAG_AMULEAPI_PASSWD);
 			CMD4Hash passhash;
@@ -651,6 +628,10 @@ CEC_Prefs_Packet::CEC_Prefs_Packet(
 			CECTag(EC_TAG_CORETW_SRV_KEEPALIVE_TIMEOUT, thePrefs::GetServerKeepAliveTimeout()));
 		cwPrefs.AddTag(CECTag(EC_TAG_CORETW_KAD_MAX_SEARCHES, thePrefs::GetKadMaxSourceSearches()));
 		cwPrefs.AddTag(CECTag(EC_TAG_CORETW_KAD_REASK_MS, thePrefs::GetKadSourceReaskTime()));
+		if (thePrefs::IsKadMaxServedBuddiesSupported()) {
+			cwPrefs.AddTag(CECTag(
+				EC_TAG_CORETW_KAD_MAX_SERVED_BUDDIES, thePrefs::GetKadMaxServedBuddies()));
+		}
 		cwPrefs.AddTag(CECTag(EC_TAG_CORETW_SOURCE_REASK_MS, thePrefs::GetSourceReaskTime()));
 		AddTag(cwPrefs);
 	}
@@ -735,7 +716,7 @@ static void ApplyRemoteDirChange(
 
 /*
  * Sets every preference except the categories, which work as follows: the remote GUI loads them
- * at startup and then changes them on command, and the webserver is not supposed to change them.
+ * at startup and then changes them on command.
  */
 bool CEC_Prefs_Packet::Apply(wxArrayString *refusedDirs) const
 {
@@ -800,7 +781,7 @@ bool CEC_Prefs_Packet::Apply(wxArrayString *refusedDirs) const
 #endif
 	}
 
-	// the webserver does not transmit all boolean values
+	// A partial update (amuleapi's PATCH) does not transmit all boolean values.
 	bool use_tag = (GetDetailLevel() == EC_DETAIL_FULL);
 
 	if ((thisTab = GetTagByName(EC_TAG_PREFS_CONNECTIONS)) != NULL) {
@@ -945,10 +926,6 @@ bool CEC_Prefs_Packet::Apply(wxArrayString *refusedDirs) const
 			thePrefs::LoadECVerifier(oneTag->GetInt() ? "set" : "");
 		}
 #endif
-		ApplyBoolean(use_tag, thisTab, thePrefs::SetWSIsEnabled, EC_TAG_WEBSERVER_AUTORUN);
-		if ((oneTag = thisTab->GetTagByName(EC_TAG_WEBSERVER_PORT)) != NULL) {
-			thePrefs::SetWSPort(oneTag->GetInt());
-		}
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetAmuleApiIsEnabled, EC_TAG_AMULEAPI_AUTORUN);
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_AMULEAPI_PORT)) != nullptr) {
 			thePrefs::SetAmuleApiPort(static_cast<uint16>(oneTag->GetInt()));
@@ -960,11 +937,10 @@ bool CEC_Prefs_Packet::Apply(wxArrayString *refusedDirs) const
 		// are cleared again by AmuleApiCredentials::ApplyPrefs, so "tag present but
 		// carrying no hash" correctly leaves the stored password untouched.
 		//
-		// The guest toggle goes through ApplyBoolean for the same reason
-		// EC_TAG_WEBSERVER_GUEST does: this method serves two callers with opposite
-		// conventions. amulegui sends the whole group at EC_DETAIL_UPDATE, where an absent
-		// tag means "off"; amuleapi's PATCH /preferences sends only the named fields at
-		// EC_DETAIL_FULL, where absent means "leave alone".
+		// The guest toggle goes through ApplyBoolean because this method serves two callers
+		// with opposite conventions. amulegui sends the whole group at EC_DETAIL_UPDATE,
+		// where an absent tag means "off"; amuleapi's PATCH /preferences sends only the named
+		// fields at EC_DETAIL_FULL, where absent means "leave alone".
 		thePrefs::SetAmuleApiPass(wxEmptyString);
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_AMULEAPI_PASSWD)) != nullptr) {
 			thePrefs::SetAmuleApiAdminIsSet(true);
@@ -980,35 +956,6 @@ bool CEC_Prefs_Packet::Apply(wxArrayString *refusedDirs) const
 			const CECTag *const guestHash = oneTag->GetTagByName(EC_TAG_PASSWD_HASH);
 			if (guestHash != nullptr) {
 				thePrefs::SetAmuleApiGuestPass(guestHash->GetMD4Data().Encode());
-			}
-		}
-		if ((oneTag = thisTab->GetTagByName(EC_TAG_PASSWD_HASH)) != NULL) {
-			thePrefs::SetWSPass(oneTag->GetMD4Data().Encode());
-		}
-		ApplyBoolean(use_tag, thisTab, thePrefs::SetWSIsLowUserEnabled, EC_TAG_WEBSERVER_GUEST);
-		if ((oneTag = thisTab->GetTagByName(EC_TAG_WEBSERVER_GUEST)) != NULL) {
-			if ((oneTag->GetTagByName(EC_TAG_PASSWD_HASH)) != NULL) {
-				thePrefs::SetWSLowPass(
-					oneTag->GetTagByName(EC_TAG_PASSWD_HASH)->GetMD4Data().Encode());
-			}
-		}
-		ApplyBoolean(use_tag, thisTab, thePrefs::SetWebUseGzip, EC_TAG_WEBSERVER_USEGZIP);
-		if ((oneTag = thisTab->GetTagByName(EC_TAG_WEBSERVER_REFRESH)) != NULL) {
-			thePrefs::SetWebPageRefresh(oneTag->GetInt());
-		}
-		if ((oneTag = thisTab->GetTagByName(EC_TAG_WEBSERVER_TEMPLATE)) != NULL) {
-			const wxString webTemplate = oneTag->GetStringData();
-			// amuleweb joins this name onto its template search directories without a further
-			// check, so a remote value is confined to a bare file name: a path separator, an
-			// absolute path or a ".."/"." component is refused, which stops it pointing the
-			// webserver at an arbitrary file (CWE-22). An unchanged value always passes; a bad
-			// change is ignored and logged.
-			if (webTemplate == thePrefs::GetWebTemplate() ||
-				CPath(webTemplate).IsBareFileName()) {
-				thePrefs::SetWebTemplate(webTemplate);
-			} else {
-				AddLogLineC(_("Refused a remote request to set the web-server template: the "
-					      "value must be a plain template name, not a path."));
 			}
 		}
 	}
@@ -1291,6 +1238,8 @@ bool CEC_Prefs_Packet::Apply(wxArrayString *refusedDirs) const
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetCoreVerbose, EC_TAG_CORETW_VERBOSE);
 		thePrefs::SetWriteBufferLimitSupported(
 			thisTab->GetTagByName(EC_TAG_CORETW_WRITE_BUFFER_LIMIT_MIB) != nullptr);
+		thePrefs::SetKadMaxServedBuddiesSupported(
+			thisTab->GetTagByName(EC_TAG_CORETW_KAD_MAX_SERVED_BUDDIES) != nullptr);
 #else
 		ApplyBoolean(use_tag, thisTab, thePrefs::SetVerbose, EC_TAG_CORETW_VERBOSE);
 #endif
@@ -1308,6 +1257,9 @@ bool CEC_Prefs_Packet::Apply(wxArrayString *refusedDirs) const
 		}
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_CORETW_KAD_MAX_SEARCHES)) != nullptr) {
 			thePrefs::SetKadMaxSourceSearches(oneTag->GetInt());
+		}
+		if ((oneTag = thisTab->GetTagByName(EC_TAG_CORETW_KAD_MAX_SERVED_BUDDIES)) != nullptr) {
+			thePrefs::SetKadMaxServedBuddies(oneTag->GetInt());
 		}
 		if ((oneTag = thisTab->GetTagByName(EC_TAG_CORETW_KAD_REASK_MS)) != nullptr) {
 			thePrefs::SetKadSourceReaskTime(oneTag->GetInt());

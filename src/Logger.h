@@ -112,6 +112,8 @@ enum DebugType
 	logKadEntryTracking,
 	//! Kad node tracking: identity rotation, problematic nodes and bans.
 	logKadNodeTracking,
+	//! Kad buddies: searches, requests, links and relays, on both sides.
+	logKadBuddy,
 	//! Full log of external connection packets
 	logEC,
 	//! Warnings/Errors related to HTTP traffic
@@ -124,6 +126,10 @@ enum DebugType
 	logVerifyLocalData,
 	//! Main window state, toolbar events and paint activity
 	logGUI,
+	//! Kad source-publication measurements and baseline summaries.
+	logKadPublish,
+	//! Source contact routes: route chain, fallbacks and merges of source copies.
+	logSourceRoutes,
 	logCategoryCount
 	// IMPORTANT NOTE: when you add values to this enum, update the g_debugcats
 	// array in Logger.cpp!

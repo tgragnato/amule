@@ -46,8 +46,9 @@
 
 #include <common/EventIDs.h>
 
-#include "config.h"           // Needed for GITDATE, PACKAGE, VERSION
-#include "amuleDlg.h"         // Interface declarations.
+#include "config.h"   // Needed for GITDATE, PACKAGE, VERSION
+#include "amuleDlg.h" // Interface declarations.
+#include "TransferRateLabel.h"
 #include "AutostartManager.h" // Needed for AutostartManager::RequestFlatpakBackground
 
 #include <common/Format.h>    // Needed for CFormat
@@ -1120,7 +1121,7 @@ void CamuleDlg::AddLogLineToView(const wxString &line, int viewId)
 		wxStaticText *text = CastChild("infoLabel", wxStaticText);
 		text->SetToolTip(bufferline);
 		// Only show the first line if multiple lines
-		UpdateStatusLabel(text, bufferline.BeforeFirst('\n'));
+		UpdateStatusLabel(text, FormatStatusBarLogLine(bufferline.BeforeFirst('\n')));
 	}
 }
 
@@ -1215,7 +1216,8 @@ void CamuleDlg::ShowConnectionState()
 	if (theApp->IsConnectedED2K()) {
 		CServer *server = theApp->serverconnect->GetCurrentServer();
 		if (server) {
-			msgED2K = CFormat(wxT("eD2k: %s")) % server->GetListName();
+			// A literal '&' in a server name must not become a mnemonic.
+			msgED2K = CFormat("eD2k: %s") % wxControl::EscapeMnemonics(server->GetListName());
 		}
 
 		if (theApp->serverconnect->IsLowID()) {
@@ -1435,57 +1437,55 @@ void CamuleDlg::ShowUserCount(const wxString &info)
 
 void CamuleDlg::ShowTransferRate()
 {
-	const double kBpsUp = static_cast<double>(theStats::GetDisplayUploadRate()) / 1024.0;
-	const double kBpsDown = static_cast<double>(theStats::GetDisplayDownloadRate()) / 1024.0;
-	const double MBpsUp = kBpsUp / 1024.0;
-	const double MBpsDown = kBpsDown / 1024.0;
-	bool showMBpsUp = (MBpsUp >= 1);
-	bool showMBpsDown = (MBpsDown >= 1);
-	wxString buffer;
-	if (thePrefs::ShowOverhead()) {
-		buffer = CFormat(_("Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)")) %
-			 (showMBpsUp ? MBpsUp : kBpsUp) %
-			 (showMBpsUp ? _(" MiB/s") : ((kBpsUp > 0) ? _(" KiB/s") : "")) %
-			 (static_cast<double>(theStats::GetDisplayUpOverheadRate()) / 1024.0) %
-			 (showMBpsDown ? MBpsDown : kBpsDown) %
-			 (showMBpsDown ? _(" MiB/s") : ((kBpsDown > 0) ? _(" KiB/s") : "")) %
-			 (static_cast<double>(theStats::GetDisplayDownOverheadRate()) / 1024.0);
-	} else {
-		buffer = CFormat(_("Up: %.1f%s | Down: %.1f%s")) % (showMBpsUp ? MBpsUp : kBpsUp) %
-			 (showMBpsUp ? _(" MiB/s") : ((kBpsUp > 0) ? _(" KiB/s") : "")) %
-			 (showMBpsDown ? MBpsDown : kBpsDown) %
-			 (showMBpsDown ? _(" MiB/s") : ((kBpsDown > 0) ? _(" KiB/s") : ""));
-	}
-	buffer.Truncate(50); // Max size 50
+	const double upBytes = static_cast<double>(theStats::GetDisplayUploadRate());
+	const double downBytes = static_cast<double>(theStats::GetDisplayDownloadRate());
+	const double kBpsUp = upBytes / 1024.0;
+	const double kBpsDown = downBytes / 1024.0;
+	const double upOverhead = static_cast<double>(theStats::GetDisplayUpOverheadRate());
+	const double downOverhead = static_cast<double>(theStats::GetDisplayDownOverheadRate());
+	const bool showMBpsUp = kBpsUp >= 1024.0;
+	const bool showMBpsDown = kBpsDown >= 1024.0;
+	const double up = showMBpsUp ? kBpsUp / 1024.0 : kBpsUp;
+	const double down = showMBpsDown ? kBpsDown / 1024.0 : kBpsDown;
+	const wxString upUnit = showMBpsUp ? _(" MiB/s") : _(" KiB/s");
+	const wxString downUnit = showMBpsDown ? _(" MiB/s") : _(" KiB/s");
+	const bool showOverhead = thePrefs::ShowOverhead();
 
-	// The status labels all share one strip, and updating any of them used to
-	// re-flow the whole content area behind it -- see UpdateStatusLabel().
-	wxStaticText *label = CastChild("speedLabel", wxStaticText);
-	UpdateStatusLabel(label, buffer);
-	if (!label->GetToolTip()) {
+	TransferRateLabel *upload = CastChild("uploadRateLabel", TransferRateLabel);
+	TransferRateLabel *download = CastChild("downloadRateLabel", TransferRateLabel);
+	const bool uploadChanged = upload->UpdateRate(
+		TransferRateLabel::FormatRate(upBytes, upOverhead, showOverhead), showOverhead);
+	const bool downloadChanged = download->UpdateRate(
+		TransferRateLabel::FormatRate(downBytes, downOverhead, showOverhead), showOverhead);
+	if (uploadChanged || downloadChanged) {
+		RelayoutLabelStrip(upload);
+	}
+	if (!upload->GetToolTip()) {
 #ifdef CLIENT_GUI
 		// Older daemons still send longer averages in the same compatible speed fields.
-		label->SetToolTip(_(
+		const wxString tip = _(
 			"Transfer speeds are reported by the daemon. Total upload includes control traffic; "
 			"peer upload speeds include file packets only. Values in parentheses show protocol "
-			"overhead in KiB/s."));
+			"overhead in KiB/s.");
 #else
-		label->SetToolTip(_("Live speeds are averaged over the last second. Total upload includes "
-				    "control traffic; "
-				    "peer upload speeds include file packets only. Values in parentheses "
-				    "show protocol overhead in KiB/s."));
+		const wxString tip = _("Live speeds are averaged over the last second. Total upload includes "
+				       "control traffic; "
+				       "peer upload speeds include file packets only. Values in parentheses "
+				       "show protocol overhead in KiB/s.");
 #endif
+		for (wxWindow *window : { static_cast<wxWindow *>(upload),
+			     static_cast<wxWindow *>(download),
+			     FindWindow("uploadRateCaption"),
+			     FindWindow("downloadRateCaption") }) {
+			window->SetToolTip(tip);
+		}
 	}
 
 	// Show upload/download speed in title
 	if (thePrefs::GetShowRatesOnTitle()) {
-		// Same msgid as the speed label above, so this reuses that translation
-		// rather than asking translators for the string twice.
-		wxString UpDownSpeed = CFormat(_("Up: %.1f%s | Down: %.1f%s")) %
-				       (showMBpsUp ? MBpsUp : kBpsUp) %
-				       (showMBpsUp ? _(" MiB/s") : ((kBpsUp > 0) ? _(" KiB/s") : "")) %
-				       (showMBpsDown ? MBpsDown : kBpsDown) %
-				       (showMBpsDown ? _(" MiB/s") : ((kBpsDown > 0) ? _(" KiB/s") : ""));
+		// The title keeps its compact combined rate display.
+		wxString UpDownSpeed =
+			CFormat(_("Up: %.1f%s | Down: %.1f%s")) % up % upUnit % down % downUnit;
 		if (thePrefs::GetShowRatesOnTitle() == 1) {
 			SetTitle(theApp->m_FrameTitle + wxT(" -- ") + UpDownSpeed);
 		} else {
@@ -1500,11 +1500,20 @@ void CamuleDlg::ShowTransferRate()
 			BandwidthRateConversion::ToPercent(kBpsDown, thePrefs::GetMaxGraphDownloadRate());
 		UpdateTrayIcon(percentDown);
 
+		wxString rates;
+		if (showOverhead) {
+			rates = CFormat(_("Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)")) % up % upUnit %
+				(upOverhead / 1024.0) % down % downUnit % (downOverhead / 1024.0);
+		} else {
+			rates = CFormat(_("Up: %.1f%s | Down: %.1f%s")) % up % upUnit % down % downUnit;
+		}
+		rates.Truncate(50); // Max size 50
+
 		wxString buffer2;
 		if (theApp->IsConnected()) {
-			buffer2 = CFormat(_("aMule (%s | Connected)")) % buffer;
+			buffer2 = CFormat(_("aMule (%s | Connected)")) % rates;
 		} else {
-			buffer2 = CFormat(_("aMule (%s | Disconnected)")) % buffer;
+			buffer2 = CFormat(_("aMule (%s | Disconnected)")) % rates;
 		}
 		m_wndTaskbarNotifier->SetTrayToolTip(buffer2);
 	}
@@ -1852,10 +1861,13 @@ void CamuleDlg::OnGUITimer(wxTimerEvent &WXUNUSED(evt))
 
 	if (msCur - msPrev1 > 1000) { // every second
 		msPrev1 = msCur;
-		// Paint download rows and totals from the same published core snapshots.
+		// Paint live list rows and totals from the same published core snapshots.
 #ifndef CLIENT_GUI
 		if (m_transferwnd && m_transferwnd->downloadlistctrl) {
-			m_transferwnd->downloadlistctrl->RefreshLiveItems();
+			m_transferwnd->downloadlistctrl->RefreshDeferred();
+		}
+		if (m_sharedfileswnd && m_sharedfileswnd->sharedfilesctrl) {
+			m_sharedfileswnd->sharedfilesctrl->RefreshDeferred();
 		}
 #endif
 		ShowTransferRate();

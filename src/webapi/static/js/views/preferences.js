@@ -9,7 +9,7 @@
 // page), and Advanced pulls files.mmap_enabled in next to the core tweaks. So
 // every field's real API category is `f.cat || tab.cat`, and that is what keys
 // the form state and the PATCH body. A category may itself be a dotted path
-// into a nested payload object ("remote_controls.webserver"); the form state
+// into a nested payload object ("remote_controls.amuleapi"); the form state
 // stays flat and only the GET read / PATCH build walk the path. A group's
 // `after` marker appends a panel that is not preferences at all (see
 // AmuleApiCredentials).
@@ -75,6 +75,10 @@ const TABS = [
     ] },
   ] },
   { id: "connection", labelKey: "prefs_connection", cat: "connection", groups: [
+    { legendKey: "prefs_group_capacity", fields: [
+      { key: "download_capacity_kibibytes_per_second", type: "int", min: 3, max: 1000000 },
+      { key: "upload_capacity_kibibytes_per_second", type: "int", min: 3, max: 1000000 },
+    ] },
     { legendKey: "prefs_group_bandwidth", fields: [
       { key: "max_download_kibibytes_per_second", type: "int", min: 0, max: 1000000 },
       { key: "max_upload_kibibytes_per_second", type: "int", min: 0, max: 1000000 },
@@ -274,8 +278,8 @@ const TABS = [
     ] },
   ] },
   // The subsystems are nested categories in the payload
-  // (remote_controls.external_connections / .amuleapi / .webserver), so each
-  // field names its own cat.
+  // (remote_controls.external_connections / .amuleapi), so each field names
+  // its own cat.
   { id: "remote_controls", labelKey: "prefs_remote_controls", cat: "remote_controls", groups: [
     // The EC listener: read-only, applied by the core only on restart. An older
     // daemon reports it all as null, so hide it rather than show it as "off".
@@ -294,16 +298,6 @@ const TABS = [
       { key: "port", type: "int", min: 0, max: 65535, sub: true, cat: "remote_controls.amuleapi", gatedBy: "enabled" },
       { key: "bind_address", type: "text", sub: true, cat: "remote_controls.amuleapi", gatedBy: "enabled" },
     ] },
-    { legendKey: "prefs_group_webserver", fields: [
-      { key: "enabled", type: "bool", cat: "remote_controls.webserver" },
-      { key: "template_name", type: "text", sub: true, cat: "remote_controls.webserver", gatedBy: "enabled" },
-      { key: "password", type: "password", sub: true, cat: "remote_controls.webserver", gatedBy: "enabled" },
-      { key: "guest_enabled", type: "bool", sub: true, cat: "remote_controls.webserver", gatedBy: "enabled" },
-      { key: "guest_password", type: "password", sub: 2, cat: "remote_controls.webserver", gatedBy: ["enabled", "guest_enabled"] },
-      { key: "port", type: "int", min: 0, max: 65535, sub: true, cat: "remote_controls.webserver", gatedBy: "enabled" },
-      { key: "refresh_seconds", type: "int", min: 0, sub: true, cat: "remote_controls.webserver", gatedBy: "enabled" },
-      { key: "gzip_enabled", type: "bool", sub: true, cat: "remote_controls.webserver", gatedBy: "enabled" },
-    ] },
   ] },
   { id: "online_signature", labelKey: "prefs_online_signature", cat: "online_signature", groups: [
     { legendKey: "prefs_group_onlinesig", fields: [
@@ -318,6 +312,8 @@ const TABS = [
       { key: "max_new_connections_per_5_seconds", type: "int", min: 0, max: 65535 },
       { key: "kad_max_concurrent_source_search_count", type: "int", min: 5, max: 50 },
       { key: "kad_source_reask_minutes", type: "int", min: 30, max: 60 },
+      { key: "kad_max_served_buddies_supported", type: "bool", hidden: true },
+      { key: "kad_max_served_buddies", type: "int", min: 4, max: 16, titleKey: "prefs_field_advanced_kad_max_served_buddies_help", gatedBy: "kad_max_served_buddies_supported" },
       { key: "source_reask_minutes", type: "int", min: 15, max: 60 },
       { key: "write_buffer_limit_supported", type: "bool", hidden: true },
       { key: "write_buffer_limit_mebibytes", type: "int", min: 1, max: 1024, titleKey: "prefs_field_advanced_write_buffer_limit_mebibytes_help", gatedBy: "write_buffer_limit_supported" },
@@ -355,14 +351,14 @@ const CHANGED_ONLY = TABS.flatMap((tab) => tab.groups.flatMap((g) =>
 // Scalars compare as one-element lists; list order carries no meaning.
 const sameValue = (a, b) => asArr(a).length === asArr(b).length && asArr(a).every((x) => asArr(b).includes(x));
 // A category may be a dotted path into a nested payload object (e.g.
-// "remote_controls.webserver"); walk/create it on read and write.
+// "remote_controls.amuleapi"); walk/create it on read and write.
 const catGet = (obj, cat) => cat.split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
 const catPut = (obj, cat, key, val) => {
   const o = cat.split(".").reduce((acc, k) => (acc[k] || (acc[k] = {})), obj);
   o[key] = val;
 };
-// i18n keys stay flat: remote_controls.webserver + "port" ->
-// prefs_field_remote_controls_webserver_port.
+// i18n keys stay flat: remote_controls.amuleapi + "port" ->
+// prefs_field_remote_controls_amuleapi_port.
 const labelKeyFor = (cat, key) => "prefs_field_" + cat.replace(/\./g, "_") + "_" + key;
 // Drop objects that ended up with no fields, innermost first, so an untouched
 // nested category never reaches the PATCH body as an empty {}.
@@ -621,7 +617,9 @@ export default function Preferences({ isGuest }) {
     }
     if (f.type === "checklist") {
       const selected = asArr(val);
-      return asArr(values[cat + "." + f.optionsKey]).map((name, i) => {
+      const options = [...asArr(values[cat + "." + f.optionsKey])]
+        .sort((x, y) => x.localeCompare(y, undefined, { sensitivity: "base" }));
+      return options.map((name, i) => {
         const optId = id + "." + i;
         const onChange = (e) => setVal(id, e.target.checked
           ? [...selected, name] : selected.filter((n) => n !== name));

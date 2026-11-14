@@ -23,10 +23,6 @@ if (BUILD_REMOTEGUI)
 	check_manpage ("amulegui")
 endif()
 
-if (BUILD_WEBSERVER)
-	check_manpage ("amuleweb")
-endif()
-
 if (BUILD_AMULEAPI)
 	check_manpage ("amuleapi")
 endif()
@@ -79,12 +75,11 @@ if (TRANSLATED_MANPAGES)
 		# until 3.1; the translator workflow lands amuleapi entries in
 		# po/manpages-*.po, which adds amuleapi to MANPAGE_BINARIES +
 		# MANPAGE_GATE_amuleapi BUILD_AMULEAPI here.
-		set (MANPAGE_BINARIES amule amulecmd amuled amulegui amuleweb ed2k alc alcc cas wxcas)
+		set (MANPAGE_BINARIES amule amulecmd amuled amulegui ed2k alc alcc cas wxcas)
 		set (MANPAGE_BUILD_DIR_amule     "${CMAKE_CURRENT_BINARY_DIR}")
 		set (MANPAGE_BUILD_DIR_amulecmd  "${CMAKE_CURRENT_BINARY_DIR}")
 		set (MANPAGE_BUILD_DIR_amuled    "${CMAKE_CURRENT_BINARY_DIR}")
 		set (MANPAGE_BUILD_DIR_amulegui  "${CMAKE_CURRENT_BINARY_DIR}")
-		set (MANPAGE_BUILD_DIR_amuleweb  "${CMAKE_CURRENT_BINARY_DIR}")
 		set (MANPAGE_BUILD_DIR_ed2k      "${CMAKE_CURRENT_BINARY_DIR}")
 		set (MANPAGE_BUILD_DIR_alc       "${CMAKE_BINARY_DIR}/src/utils/aLinkCreator/docs")
 		set (MANPAGE_BUILD_DIR_alcc      "${CMAKE_BINARY_DIR}/src/utils/aLinkCreator/docs")
@@ -94,11 +89,7 @@ if (TRANSLATED_MANPAGES)
 		set (MANPAGE_GATE_amulecmd  BUILD_AMULECMD)
 		set (MANPAGE_GATE_amuled    BUILD_DAEMON)
 		set (MANPAGE_GATE_amulegui  BUILD_REMOTEGUI)
-		set (MANPAGE_GATE_amuleweb  BUILD_WEBSERVER)
 		set (MANPAGE_GATE_ed2k      BUILD_ED2K)
-		set (MANPAGE_GATE_alc       BUILD_ALC)
-		set (MANPAGE_GATE_alcc      BUILD_ALCC)
-		set (MANPAGE_GATE_cas       BUILD_CAS)
 		set (MANPAGE_GATE_wxcas     BUILD_WXCAS)
 
 		# Every page po4a may render, and the installable page derived from each. The script
@@ -111,7 +102,13 @@ if (TRANSLATED_MANPAGES)
 				list (APPEND PO4A_RAW_OUTPUTS "${_raw}")
 
 				# OPTIONAL: po4a leaves out a page translated below --keep.
-				if (${MANPAGE_GATE_${BIN}} AND TRANSLATION_${LANG})
+				set (_install_translated_manpage TRUE)
+				if (DEFINED MANPAGE_GATE_${BIN})
+					if (NOT ${MANPAGE_GATE_${BIN}})
+						set (_install_translated_manpage FALSE)
+					endif()
+				endif()
+				if (_install_translated_manpage AND TRANSLATION_${LANG})
 					install (FILES "${_final}"
 						DESTINATION "${CMAKE_INSTALL_MANDIR}/${LANG}/man1"
 						RENAME "${BIN}.1"

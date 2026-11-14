@@ -336,22 +336,6 @@ msgstr "Lahkub rakendusest."
 
 #: src/amule.cpp
 #, c-format
-msgid "Terminating amuleweb instance with pid '%d' ... "
-msgstr "Lõpetan amuleweb'i eksemplari, protsessi id '%d' ... "
-
-#: src/amule.cpp
-#, c-format
-msgid "Killing amuleweb instance with pid '%d' ... "
-msgstr "Tapan amuleweb'i eksemplari, protsessi id '%d' ... "
-
-#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
-#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
-#: src/SharedFilesCtrl.cpp
-msgid "Failed"
-msgstr "Nurjunud"
-
-#: src/amule.cpp
-#, c-format
 msgid "Terminating amuleapi instance with pid '%d' ... "
 msgstr "Lõpetatakse amuleapi eksemplar PID-ga '%d' ... "
 
@@ -359,6 +343,12 @@ msgstr "Lõpetatakse amuleapi eksemplar PID-ga '%d' ... "
 #, c-format
 msgid "Killing amuleapi instance with pid '%d' ... "
 msgstr "Tapetakse amuleapi eksemplar PID-ga '%d' ... "
+
+#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
+#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
+#: src/SharedFilesCtrl.cpp
+msgid "Failed"
+msgstr "Nurjunud"
 
 #: src/amule.cpp
 msgid "aMule OnExit: Terminating core."
@@ -519,28 +509,6 @@ msgid "Not starting %s: it is neither next to aMule nor on PATH."
 msgstr ""
 
 #: src/amule.cpp
-msgid "An exception occurred while launching amuleweb."
-msgstr ""
-
-#: src/amule.cpp
-#, c-format
-msgid "web server running on pid %d"
-msgstr "web server töötab protsessi id'ga %d"
-
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb authentication token. The web server was not started."
-msgstr ""
-
-#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
-#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
-msgid "ERROR"
-msgstr "VIGA"
-
-#: src/amule.cpp
-msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
-msgstr "Palusid käivitusel veebiserverit käivitada, kuid amuleweb binaarfaili ei saa käivitada. Palun paigalda aMule veebiserverit sisaldav pakett või ehita aMule lähtekoodist valikuga -DBUILD_WEBSERVER=YES ja paigalda see."
-
-#: src/amule.cpp
 #, c-format
 msgid "Could not write the amuleapi EC token to %s; amuleapi will fall back to its configured password."
 msgstr ""
@@ -562,15 +530,10 @@ msgstr ""
 msgid "You requested to run amuleapi on startup, but the amuleapi binary cannot be run. Please install the package containing aMule's REST API server, or build aMule from source with -DBUILD_AMULEAPI=YES and install it."
 msgstr "Palusid käivitusel amuleapi käivitada, kuid amuleapi binaarfaili ei saa käivitada. Palun paigalda aMule REST API serverit sisaldav pakett või ehita aMule lähtekoodist valikuga -DBUILD_AMULEAPI=YES ja paigalda see."
 
-#: src/amule.cpp
-#, fuzzy
-msgid "Could not prepare the amuleweb EC token."
-msgstr "amuleapi parooli ei õnnestunud salvestada: %s"
-
-#: src/amule.cpp
-#, fuzzy, c-format
-msgid "Could not remove the amuleweb EC token file: %s"
-msgstr "amuleapi parooli ei õnnestunud salvestada: %s"
+#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
+#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
+msgid "ERROR"
+msgstr "VIGA"
 
 #: src/amule.cpp
 #, fuzzy, c-format
@@ -1058,23 +1021,14 @@ msgstr "Kirjeldus"
 msgid "aMuleGUI"
 msgstr "aMule Logi"
 
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
-msgstr "Üles: %.1f%s (%.1f) | Alla: %.1f%s (%.1f)"
-
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
 msgid " MiB/s"
 msgstr ""
 
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/utils/wxCas/src/wxcasframe.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
+#: src/utils/wxCas/src/wxcasframe.cpp
 msgid " KiB/s"
 msgstr ""
-
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s | Down: %.1f%s"
-msgstr "Üles: %.1f%s | Alla: %.1f%s"
 
 #: src/amuleDlg.cpp
 msgid "Transfer speeds are reported by the daemon. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
@@ -1083,6 +1037,16 @@ msgstr ""
 #: src/amuleDlg.cpp
 msgid "Live speeds are averaged over the last second. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
 msgstr ""
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s | Down: %.1f%s"
+msgstr "Üles: %.1f%s | Alla: %.1f%s"
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
+msgstr "Üles: %.1f%s (%.1f) | Alla: %.1f%s (%.1f)"
 
 #: src/amuleDlg.cpp
 #, c-format
@@ -2116,6 +2080,55 @@ msgstr "Allikaid"
 msgid "Search Result"
 msgstr "Otsingu tulemus"
 
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a direct connection"
+msgstr "Aktiivseid ühendusi"
+
+#: src/DataToText.cpp
+msgid "a direct callback"
+msgstr ""
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "our server"
+msgstr "Eemalda server"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the Kad buddy"
+msgstr "Semu puudub"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the source's own server"
+msgstr "eD2k serverite loend (server.met)"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a server hole punch"
+msgstr "Raisatud Servereid (pakette): %s"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a Lugdunum callback"
+msgstr "%s uuendamine õnnestus"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on a fallback route"
+msgstr "Ühendun serveri kaudu"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on an unproven route"
+msgstr "Ühendun serveri kaudu"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s"
+msgstr "Ühendun Kad kaudu"
+
 #: src/DataToText.cpp src/DownloadListCtrl.cpp src/OtherFunctions.cpp
 #: src/TransferWnd.cpp
 msgid "Completed"
@@ -2426,10 +2439,6 @@ msgstr[1] "%u linki jäi lisamata (üksikasjad vt logist)."
 #, c-format
 msgid "Invalid eD2k link! ERROR: %s"
 msgstr "Vigane eD2k link! VIGA: %s"
-
-#: src/ECSpecialMuleTags.cpp
-msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
-msgstr ""
 
 #: src/ECSpecialMuleTags.cpp
 msgid "Refused a remote request to change the online-signature folder: it can only be set in the daemon's own configuration."
@@ -4607,12 +4616,13 @@ msgid "Users connected to the current server and an estimate of the total number
 msgstr "Kasutajaid serveriga ühenduses ja arvatav kasutajate koguarv."
 
 #: src/muuli_wdr.cpp
-msgid "Up: 0.0 | Down: 0.0"
-msgstr "Üles: 0.0 | Alla: 0.0"
+msgid "Up:"
+msgstr ""
 
 #: src/muuli_wdr.cpp
-msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
-msgstr "Hetkel kehtivad keskmised saatmise ja tõmbamise kiirused. Valituna näitavad numbrid sulgudes kliendikommunikatsiooni raisatud pakette."
+#, fuzzy
+msgid "Down:"
+msgstr "Tõmbamine: "
 
 #: src/muuli_wdr.cpp
 msgid "Displays the connected status and active transfers. Red arrows signifies that you are currently not connected, yellow arrows signify that you have low ID (firewalled) and green arrows signify that you have high ID (The optimal connection type)."
@@ -4621,10 +4631,6 @@ msgstr "Näitab ühenduse olekut ja käimasolevaid siirdamisi. Punane nool näit
 #: src/muuli_wdr.cpp
 msgid "Not Connected ..."
 msgstr "Pole ühendust ..."
-
-#: src/muuli_wdr.cpp
-msgid "Currently connected server."
-msgstr "Sa oled serveriga ühenduses."
 
 #: src/muuli_wdr.cpp
 msgid "Search"
@@ -5632,8 +5638,12 @@ msgid "Remove"
 msgstr "Eemalda"
 
 #: src/muuli_wdr.cpp
-msgid "(Right click on folder icon for recursive share)"
-msgstr "(Rekursiivseks jagamiseks tee paremklikk kataloogi ikoonil)"
+msgid "Double-click: share or unshare this folder. Right-click: share it with all subfolders, including new ones."
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "Bold: shared. Bold italic: shared with all subfolders. Red folder: contains shared folders."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Share hidden files"
@@ -5797,6 +5807,14 @@ msgstr "Maksimaalne arv uusi ühendusi / 5 sek."
 #: src/muuli_wdr.cpp
 msgid "Concurrent Kad source lookups"
 msgstr "Samaaegsed Kad allika otsingud"
+
+#: src/muuli_wdr.cpp
+msgid "Firewalled Kad nodes served as buddy"
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "How many firewalled Kad nodes this node relays callbacks for. Each one holds a connection, so at most a tenth of the connection limit is served."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Kad source re-search interval (minutes)"
@@ -5993,46 +6011,6 @@ msgstr "Külalisseansid võivad lugeda olekut ja loendeid, kuid ei saa midagi mu
 #: src/muuli_wdr.cpp
 msgid "Guest password"
 msgstr "Külalisparool"
-
-#: src/muuli_wdr.cpp
-msgid "Web server parameters"
-msgstr "Web serveri seaded"
-
-#: src/muuli_wdr.cpp
-msgid "Run webserver on startup (deprecated)"
-msgstr "Käivita veebiserver käivitumisel (aegunud)"
-
-#: src/muuli_wdr.cpp
-msgid "Web template"
-msgstr "WEB näidis/mall"
-
-#: src/muuli_wdr.cpp
-msgid "Full rights password"
-msgstr "Täisõiguste parool"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Low rights User"
-msgstr "Luba madalate õigustega kasutaja"
-
-#: src/muuli_wdr.cpp
-msgid "Low rights password"
-msgstr "Madalate õiguste parool"
-
-#: src/muuli_wdr.cpp
-msgid "Enable UPnP port forwarding of the web server port"
-msgstr "Luba webservri portide UPnP pordisuunamist"
-
-#: src/muuli_wdr.cpp
-msgid "Web server UPnP TCP port (Optional)"
-msgstr "Webserveri UPnP TCP port (Valikuline)"
-
-#: src/muuli_wdr.cpp
-msgid "Page Refresh Time (in secs)"
-msgstr "Lehekülje värskendusaeg (sekundites)"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Gzip compression"
-msgstr "Luba Gzip pakkimine"
 
 #: src/muuli_wdr.cpp
 msgid "Reset page to defaults"
@@ -7064,9 +7042,9 @@ msgstr ""
 msgid "NAT traversal (QUIC)"
 msgstr ""
 
-#: src/Preferences.cpp
-msgid "no options available"
-msgstr "valikud puuduvad"
+#: src/PeerCapabilities.h
+msgid "Skips unknown source exchange tags"
+msgstr ""
 
 #: src/Preferences.cpp
 msgid "Media metadata: FFProbePath is obsolete; aMule now uses its bundled media parser. Removing the old setting."
@@ -7430,12 +7408,9 @@ msgid "macOS does not let an application stop being the default handler. To stop
 msgstr ""
 
 #: src/PrefsUnifiedDlg.cpp
-msgid "The web server and aMule API require external connections to be enabled."
+#, fuzzy
+msgid "The aMule API requires external connections to be enabled."
 msgstr "Veebiserver ja aMule API nõuavad väliste ühenduste lubamist."
-
-#: src/PrefsUnifiedDlg.cpp
-msgid "The aMule web server is deprecated. Consider running the aMule API instead."
-msgstr "aMule veebiserver on aegunud. Kaalu selle asemel aMule API kasutamist."
 
 #: src/PrefsUnifiedDlg.cpp
 #, fuzzy
@@ -8488,6 +8463,16 @@ msgid "Connected to buddy at %s"
 msgstr "Ühendus semuga %s"
 
 #: src/ServerWnd.cpp
+#, fuzzy
+msgid "Served buddies:"
+msgstr "Serverite nimekiri"
+
+#: src/ServerWnd.cpp
+#, c-format
+msgid "%u of %u"
+msgstr ""
+
+#: src/ServerWnd.cpp
 msgid "IP address:"
 msgstr "IP aadress:"
 
@@ -8984,35 +8969,6 @@ msgid "Peak Connections (estimate): %i"
 msgstr "Suurim ühenduste arv (hinnang): %i"
 
 #: src/Statistics.cpp
-msgid "NAT Traversal (Session)"
-msgstr ""
-
-#: src/Statistics.cpp
-#, fuzzy, c-format
-msgid "Server Hole Punches: %s"
-msgstr "Raisatud Servereid (pakette): %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Server Hole Punches: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Lugdunum Callbacks: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, fuzzy, c-format
-msgid "Successful Lugdunum Callbacks: %s"
-msgstr "%s uuendamine õnnestus"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "uTP Streams Moved to a New Port: %s"
-msgstr ""
-
-#: src/Statistics.cpp
 #, c-format
 msgid "Unknown: %s"
 msgstr "Tundmatu: %s"
@@ -9098,6 +9054,10 @@ msgid "Average file size: %s"
 msgstr "Keskmine faili suurus: %s"
 
 #: src/Statistics.cpp
+msgid "Diagnostics"
+msgstr ""
+
+#: src/Statistics.cpp
 msgid "Operating System"
 msgstr "Operatsioonisüsteem"
 
@@ -9179,6 +9139,10 @@ msgstr ""
 "Otsingu märksõna puudub.\n"
 "Abi saamiseks sisesta 'help search'.\n"
 
+#: src/TextClient.cpp
+msgid "The connected daemon does not support media search filters.\n"
+msgstr ""
+
 #. TRANSLATORS:
 #. 'help search' is a command to the program, do not translate it.
 #: src/TextClient.cpp
@@ -9190,11 +9154,19 @@ msgstr ""
 "Abi saamiseks sisesta 'help search'.\n"
 
 #: src/TextClient.cpp
+msgid "The connected daemon does not support search management.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "A search ID from 'search list' is required.\n"
+msgstr ""
+
+#: src/TextClient.cpp
 #, c-format
 msgid "Download File: %lu %s\n"
 msgstr "Laadi fail alla: %lu %s\n"
 
-#: src/TextClient.cpp src/webserver/src/WebServer.cpp
+#: src/TextClient.cpp
 msgid "Request failed with an unknown error."
 msgstr "Päring ebaõnnestus tundmatu vea tõttu."
 
@@ -9301,6 +9273,27 @@ msgstr ""
 #: src/TextClient.cpp
 msgid "[PartFile]"
 msgstr "[FailiOsa]"
+
+#: src/TextClient.cpp
+msgid "No retained searches.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; availability is unknown.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; further requests remain possible.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "No further results can be requested for this search.\n"
+msgstr "Tagasta eelmise otsingu tulemuse.\n"
+
+#: src/TextClient.cpp
+msgid "Search stop request processed; retained results were not removed.\n"
+msgstr ""
 
 #: src/TextClient.cpp
 #, c-format
@@ -9566,6 +9559,11 @@ msgid ""
 "    --avail <N>            minimum number of sources\n"
 "    --min-size <N[KMG]>    smallest file size; K=1024, M=K*1024, G=M*1024\n"
 "    --max-size <N[KMG]>    largest file size; same suffixes\n"
+"    --min-bitrate <kbps>   whole number, 0-1000000\n"
+"    --min-duration <sec>   whole number, 0-86400\n"
+"    --codec <text> --title <text> --album <text> --artist <text>\n"
+"Quote media text values containing spaces.\n"
+"Kad applies media filters; eD2k servers may ignore them.\n"
 "Example: 'search global linux iso --type Iso --min-size 100M' returns\n"
 "results for \"linux iso\" of file-type Iso at least 100 MiB.\n"
 msgstr ""
@@ -9601,6 +9599,28 @@ msgstr "Käivita otsing kad võrgust."
 #, fuzzy
 msgid "Execute an eD2k and Kad search"
 msgstr "Käivita otsing kad võrgust."
+
+#: src/TextClient.cpp
+msgid "List retained search IDs and queries."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Stop a search, keeping its results."
+msgstr "Sellel käsul ei tohiks olla ühtegi parameetrit."
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Request more Kad search results."
+msgstr "Otsingu tulemusi: %i\n"
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'. Further results are not guaranteed."
+msgstr ""
 
 #: src/TextClient.cpp
 msgid "Show the results of a search."
@@ -10428,139 +10448,6 @@ msgstr "Sinu allkirjafaili asukoha kataloog"
 msgid "Folder where generating the statistic image"
 msgstr "Genereeritud statistiliste piltide kataloog"
 
-#: src/webserver/src/WebInterface.cpp
-msgid "Loads template <str>"
-msgstr "Laeb malli <str>"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Web server HTTP port"
-msgstr "WEB serveri HTTP port"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use UPnP port forwarding on web server port"
-msgstr "Kasuta UPnP pordisuunamist webserveri portide suunamiseks"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "UPnP port"
-msgstr "UPnP port"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use gzip compression"
-msgstr "Kasuta gzip pakkimist"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Full access password for web server"
-msgstr "Webserveri täieliku ligipääsu parool"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Guest password for web server"
-msgstr "Webserveri külalise (guest) parool"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Allow guest access"
-msgstr "Luba külalise (guest) ligipääs"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Deny guest access"
-msgstr "Keela külalise (guest) ligipääs"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Load/save web server settings from/to remote aMule"
-msgstr "Lae/salvesta webserveri parameetrid eemal-asuvast/asuvasse aMule"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule config file path. DO NOT USE DIRECTLY!"
-msgstr "aMule seadetefaili asukoht. ÄRA KASUTA OTSE!!"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Disable PHP interpreter (deprecated)"
-msgstr "Ära kasuta PHP interpretaatorit (aegunud)"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Recompile PHP pages on each request"
-msgstr "Loo PHP lehed iga päringu puhul uuesti"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule Web Server"
-msgstr "aMule WebServer"
-
-#: src/webserver/src/WebServer.cpp
-msgid "web client connection accepted\n"
-msgstr "web kliendi ühenus lubatud\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "ERROR: cannot accept web client connection\n"
-msgstr "VIGA: ei luba web kliendil ühenduda\n"
-
-#: src/webserver/src/WebServer.cpp
-#, c-format
-msgid "Request failed with the following error: %s."
-msgstr "Päring ebaõnnestus, põhjus: %s."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Index file not found: "
-msgstr "Indeksfaili ei leidnud: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session expired - requesting login\n"
-msgstr "Seanss on aegunud - vajalik uuestilogimine\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, logged in\n"
-msgstr "Seanss ok, sisselogitud\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, not logged in\n"
-msgstr "Seanss ok, pole sisselogitud\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No session opened - will request login\n"
-msgstr "Pole avatud seanssi - nõuan logimist\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session created - requesting login\n"
-msgstr "Seanss loodud - nõuan logimist\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [original]: "
-msgstr "Töötlen päringut [algupärane]:"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Refusing to read `pass` from URL query string\n"
-msgstr "Keeldun lugemast `pass` väärtust URL-i päringustringist\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No password specified, login will not be allowed."
-msgstr "Ilma paroolita logimine pole lubatud."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Checking password\n"
-msgstr "Kontrollin parooli\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password hash invalid\n"
-msgstr "Parooli kontrollsumma vigane\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password ok\n"
-msgstr "Parool ok\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password bad\n"
-msgstr "Parool, paha\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "You did not enter any password. Blank password is not allowed.\n"
-msgstr "Sa ei sisestanud parooli. Tühja prooli kasutamine pole lubatud.\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Logout requested\n"
-msgstr "Nõuti väljalogimist\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [redirected]: "
-msgstr "Töötlen päringut [ümbersuunatud]: "
-
 #: packaging/windows/installer_strings.c
 msgid "aMule (required)"
 msgstr "aMule (nõutav)"
@@ -10698,6 +10585,213 @@ msgstr ""
 msgid "Migrating a changed legacy ECPassword after downgrade; the previous verifier no longer authenticates this run."
 msgstr ""
 
+#, c-format
+#~ msgid "Terminating amuleweb instance with pid '%d' ... "
+#~ msgstr "Lõpetan amuleweb'i eksemplari, protsessi id '%d' ... "
+
+#, c-format
+#~ msgid "Killing amuleweb instance with pid '%d' ... "
+#~ msgstr "Tapan amuleweb'i eksemplari, protsessi id '%d' ... "
+
+#, c-format
+#~ msgid "web server running on pid %d"
+#~ msgstr "web server töötab protsessi id'ga %d"
+
+#~ msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
+#~ msgstr "Palusid käivitusel veebiserverit käivitada, kuid amuleweb binaarfaili ei saa käivitada. Palun paigalda aMule veebiserverit sisaldav pakett või ehita aMule lähtekoodist valikuga -DBUILD_WEBSERVER=YES ja paigalda see."
+
+#, fuzzy
+#~ msgid "Could not prepare the amuleweb EC token."
+#~ msgstr "amuleapi parooli ei õnnestunud salvestada: %s"
+
+#, fuzzy, c-format
+#~ msgid "Could not remove the amuleweb EC token file: %s"
+#~ msgstr "amuleapi parooli ei õnnestunud salvestada: %s"
+
+#~ msgid "Web server parameters"
+#~ msgstr "Web serveri seaded"
+
+#~ msgid "Run webserver on startup (deprecated)"
+#~ msgstr "Käivita veebiserver käivitumisel (aegunud)"
+
+#~ msgid "Web template"
+#~ msgstr "WEB näidis/mall"
+
+#~ msgid "Full rights password"
+#~ msgstr "Täisõiguste parool"
+
+#~ msgid "Enable Low rights User"
+#~ msgstr "Luba madalate õigustega kasutaja"
+
+#~ msgid "Low rights password"
+#~ msgstr "Madalate õiguste parool"
+
+#~ msgid "Enable UPnP port forwarding of the web server port"
+#~ msgstr "Luba webservri portide UPnP pordisuunamist"
+
+#~ msgid "Web server UPnP TCP port (Optional)"
+#~ msgstr "Webserveri UPnP TCP port (Valikuline)"
+
+#~ msgid "Page Refresh Time (in secs)"
+#~ msgstr "Lehekülje värskendusaeg (sekundites)"
+
+#~ msgid "Enable Gzip compression"
+#~ msgstr "Luba Gzip pakkimine"
+
+#~ msgid "no options available"
+#~ msgstr "valikud puuduvad"
+
+#~ msgid "The aMule web server is deprecated. Consider running the aMule API instead."
+#~ msgstr "aMule veebiserver on aegunud. Kaalu selle asemel aMule API kasutamist."
+
+#~ msgid "Loads template <str>"
+#~ msgstr "Laeb malli <str>"
+
+#~ msgid "Web server HTTP port"
+#~ msgstr "WEB serveri HTTP port"
+
+#~ msgid "Use UPnP port forwarding on web server port"
+#~ msgstr "Kasuta UPnP pordisuunamist webserveri portide suunamiseks"
+
+#~ msgid "UPnP port"
+#~ msgstr "UPnP port"
+
+#~ msgid "Use gzip compression"
+#~ msgstr "Kasuta gzip pakkimist"
+
+#~ msgid "Full access password for web server"
+#~ msgstr "Webserveri täieliku ligipääsu parool"
+
+#~ msgid "Guest password for web server"
+#~ msgstr "Webserveri külalise (guest) parool"
+
+#~ msgid "Allow guest access"
+#~ msgstr "Luba külalise (guest) ligipääs"
+
+#~ msgid "Deny guest access"
+#~ msgstr "Keela külalise (guest) ligipääs"
+
+#~ msgid "Load/save web server settings from/to remote aMule"
+#~ msgstr "Lae/salvesta webserveri parameetrid eemal-asuvast/asuvasse aMule"
+
+#~ msgid "aMule config file path. DO NOT USE DIRECTLY!"
+#~ msgstr "aMule seadetefaili asukoht. ÄRA KASUTA OTSE!!"
+
+#~ msgid "Disable PHP interpreter (deprecated)"
+#~ msgstr "Ära kasuta PHP interpretaatorit (aegunud)"
+
+#~ msgid "Recompile PHP pages on each request"
+#~ msgstr "Loo PHP lehed iga päringu puhul uuesti"
+
+#~ msgid "aMule Web Server"
+#~ msgstr "aMule WebServer"
+
+#~ msgid "web client connection accepted\n"
+#~ msgstr "web kliendi ühenus lubatud\n"
+
+#~ msgid "ERROR: cannot accept web client connection\n"
+#~ msgstr "VIGA: ei luba web kliendil ühenduda\n"
+
+#, c-format
+#~ msgid "Request failed with the following error: %s."
+#~ msgstr "Päring ebaõnnestus, põhjus: %s."
+
+#~ msgid "Index file not found: "
+#~ msgstr "Indeksfaili ei leidnud: "
+
+#~ msgid "Session expired - requesting login\n"
+#~ msgstr "Seanss on aegunud - vajalik uuestilogimine\n"
+
+#~ msgid "Session ok, logged in\n"
+#~ msgstr "Seanss ok, sisselogitud\n"
+
+#~ msgid "Session ok, not logged in\n"
+#~ msgstr "Seanss ok, pole sisselogitud\n"
+
+#~ msgid "No session opened - will request login\n"
+#~ msgstr "Pole avatud seanssi - nõuan logimist\n"
+
+#~ msgid "Session created - requesting login\n"
+#~ msgstr "Seanss loodud - nõuan logimist\n"
+
+#~ msgid "Processing request [original]: "
+#~ msgstr "Töötlen päringut [algupärane]:"
+
+#~ msgid "Refusing to read `pass` from URL query string\n"
+#~ msgstr "Keeldun lugemast `pass` väärtust URL-i päringustringist\n"
+
+#~ msgid "No password specified, login will not be allowed."
+#~ msgstr "Ilma paroolita logimine pole lubatud."
+
+#~ msgid "Checking password\n"
+#~ msgstr "Kontrollin parooli\n"
+
+#~ msgid "Password hash invalid\n"
+#~ msgstr "Parooli kontrollsumma vigane\n"
+
+#~ msgid "Password ok\n"
+#~ msgstr "Parool ok\n"
+
+#~ msgid "Password bad\n"
+#~ msgstr "Parool, paha\n"
+
+#~ msgid "You did not enter any password. Blank password is not allowed.\n"
+#~ msgstr "Sa ei sisestanud parooli. Tühja prooli kasutamine pole lubatud.\n"
+
+#~ msgid "Logout requested\n"
+#~ msgstr "Nõuti väljalogimist\n"
+
+#~ msgid "Processing request [redirected]: "
+#~ msgstr "Töötlen päringut [ümbersuunatud]: "
+
+#~ msgid "(Right click on folder icon for recursive share)"
+#~ msgstr "(Rekursiivseks jagamiseks tee paremklikk kataloogi ikoonil)"
+
+#~ msgid "Currently connected server."
+#~ msgstr "Sa oled serveriga ühenduses."
+
+#~ msgid "Up: 0.0 | Down: 0.0"
+#~ msgstr "Üles: 0.0 | Alla: 0.0"
+
+#~ msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
+#~ msgstr "Hetkel kehtivad keskmised saatmise ja tõmbamise kiirused. Valituna näitavad numbrid sulgudes kliendikommunikatsiooni raisatud pakette."
+
+#, fuzzy, c-format
+#~ msgid "Buddies Served: %llu"
+#~ msgstr "Faile töötavail servereil: %llu"
+
+#, fuzzy, c-format
+#~ msgid "Time Served: %s"
+#~ msgstr "Filtreeritud serverid: %s"
+
+#, fuzzy, c-format
+#~ msgid "Buddies Connected: %llu"
+#~ msgstr " on ühendatud  "
+
+#, fuzzy
+#~ msgid "Keyword publish"
+#~ msgstr "Filtreeritud: %s"
+
+#, fuzzy
+#~ msgid "Source publish"
+#~ msgstr "Allikaid"
+
+#, fuzzy
+#~ msgid "Firewall check"
+#~ msgstr "tulemüüriga"
+
+#, fuzzy
+#~ msgid "Firewall check 2"
+#~ msgstr "tulemüüriga"
+
+#, fuzzy, c-format
+#~ msgid "Keys valid: %s"
+#~ msgstr "Filtreeritud: %s"
+
+#, fuzzy
+#~ msgid "Kad Buddies"
+#~ msgstr "Kad kasutaja"
+
 #~ msgid "Disable computer's timed standby mode"
 #~ msgstr "Keela arvuti ajastatud uinumine"
 
@@ -10772,9 +10866,6 @@ msgstr ""
 
 #~ msgid "Click on this button to update the servers list from URL ..."
 #~ msgstr "Sellele nupule klikates värskendad serverite loetelu URL ilt ..."
-
-#~ msgid "Server list"
-#~ msgstr "Serverite nimekiri"
 
 #~ msgid "Enter the url to a server.met file here and press the button to the left to update the list of known servers."
 #~ msgstr "Sisesta siia server.met faili asukoha URL ja pressi vasakul olevat nuppu tuntud serverite nimekirja värskendamiseks."
@@ -10954,9 +11045,6 @@ msgstr ""
 
 #~ msgid "Rejects packet if the client ip is different from the ip where the packet is received from. Use with caution."
 #~ msgstr "Viskab paketi minema kui kliendi IP erineb paketi saatja IP aadressist. Kasuta ettevaatlikult."
-
-#~ msgid "Return the results of the previous search.\n"
-#~ msgstr "Tagasta eelmise otsingu tulemuse.\n"
 
 #~ msgid "Show the progress of a search.\n"
 #~ msgstr "Näita otsingu edenemist.\n"

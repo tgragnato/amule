@@ -33,7 +33,7 @@
 #include <common/Constants.h>
 #include <common/Macros.h> // Needed for itemsof()
 
-#include <algorithm> // std::max (page-sidebar column width)
+#include <algorithm> // std::max (page-sidebar column width), std::sort
 
 #include <wx/artprov.h> // wxArtProvider::GetBitmapBundle for the page icons
 #include <wx/bmpbndl.h> // wxBitmapBundle for DPI-aware page icons
@@ -174,7 +174,6 @@ wxBEGIN_EVENT_TABLE(PrefsUnifiedDlg, wxDialog)
 	EVT_CHECKBOX(IDC_NETWORKED2K, PrefsUnifiedDlg::OnCheckBoxChange)
 	EVT_CHECKBOX(IDC_NETWORKKAD, PrefsUnifiedDlg::OnCheckBoxChange)
 	EVT_CHECKBOX(IDC_EXT_CONN_ACCEPT, PrefsUnifiedDlg::OnCheckBoxChange)
-	EVT_CHECKBOX(IDC_ENABLE_WEB, PrefsUnifiedDlg::OnCheckBoxChange)
 	EVT_CHECKBOX(IDC_ENABLE_AMULEAPI, PrefsUnifiedDlg::OnCheckBoxChange)
 	EVT_CHECKBOX(IDC_AMULEAPI_GUEST_ENABLED, PrefsUnifiedDlg::OnCheckBoxChange)
 
@@ -274,6 +273,22 @@ static bool OffersDebugCategory(const CDebugCategory &category)
 	wxUnusedVar(category);
 	return true;
 #endif
+}
+
+// The offered categories by name, the order the list shows them in and is read back in.
+static std::vector<int> OfferedDebugCategories()
+{
+	std::vector<int> offered;
+	for (int i = 0; i < static_cast<int>(theLogger.GetDebugCategoryCount()); ++i) {
+		if (OffersDebugCategory(theLogger.GetDebugCategory(i))) {
+			offered.push_back(i);
+		}
+	}
+	std::sort(offered.begin(), offered.end(), [](int a, int b) {
+		return theLogger.GetDebugCategory(a).GetName().CmpNoCase(
+			       theLogger.GetDebugCategory(b).GetName()) < 0;
+	});
+	return offered;
 }
 
 static void SendCheckBoxEvent(wxWindow *parent, int id)
@@ -540,14 +555,9 @@ PrefsUnifiedDlg::PrefsUnifiedDlg(wxWindow *parent)
 			warning.Replace("\n\n", "\n \n");
 			txt->SetLabel(warning);
 		} else if (pages[i].m_function == PreferencesDebug) {
-			int count = theLogger.GetDebugCategoryCount();
 			wxCheckListBox *list = CastChild(ID_DEBUGCATS, wxCheckListBox);
-
-			for (int j = 0; j < count; j++) {
-				const CDebugCategory &category = theLogger.GetDebugCategory(j);
-				if (OffersDebugCategory(category)) {
-					list->Append(category.GetName());
-				}
+			for (int j : OfferedDebugCategories()) {
+				list->Append(theLogger.GetDebugCategory(j).GetName());
 			}
 		}
 
@@ -883,12 +893,13 @@ bool PrefsUnifiedDlg::TransferToWindow()
 	FindWindow(IDC_STARTNEXTFILE_ALPHA)->Enable(thePrefs::StartNextFile());
 	FindWindow(IDC_AMULEAPI_GUEST_PASSWD)->Enable(thePrefs::GetAmuleApiGuestIsEnabled());
 	FindWindow(IDC_WRITEBUFFERLIMIT)->Enable(thePrefs::IsWriteBufferLimitSupported());
+	FindWindow(IDC_KADMAXSERVEDBUDDIES)->Enable(thePrefs::IsKadMaxServedBuddiesSupported());
 	FindWindow(IDC_KADPROTOCOL10)->Enable(thePrefs::IsKadProtocol10Supported());
 	FindWindow(IDC_KADSTRICTAICHPUBLISHERS)
 		->Enable(thePrefs::IsKadProtocol10Supported() && thePrefs::GetKadProtocol10());
 
-	// amuleapi's stored password is salted and stretched, so unlike the web server's it
-	// cannot be loaded back into the field. The field is a write-only request ("set it to
+	// amuleapi's stored password is salted and stretched, so it cannot be loaded back into
+	// the field. The field is a write-only request ("set it to
 	// this") and empty means "leave it alone", which needs saying somewhere the user looks
 	// -- otherwise an empty box reads as "no password configured".
 	SetCredentialStateLabel(IDC_AMULEAPI_PASSWD_STATE, thePrefs::GetAmuleApiAdminIsSet());
@@ -975,6 +986,28 @@ bool PrefsUnifiedDlg::TransferToWindow()
 	CastChild(IDC_RATESBEFORETITLE, wxRadioButton)->SetValue(thePrefs::GetShowRatesOnTitle() == 2);
 	CastChild(IDC_RATESAFTERTITLE, wxRadioButton)->SetValue(thePrefs::GetShowRatesOnTitle() != 2);
 
+	// UPNP
+#ifdef CLIENT_GUI
+	// Gate the P2P-router UPnP controls on the daemon's advertised capability
+	// (EC_TAG_GENERAL_UPNP_AVAILABLE), not amulegui's own ENABLE_UPNP -- the daemon is what
+	// forwards. Do NOT clobber the pref when unavailable: the value belongs to the daemon.
+	if (thePrefs::GetUPnPAvailable()) {
+		FindWindow(IDC_UPNPTCPPORT)->Enable(thePrefs::GetUPnPEnabled());
+		FindWindow(IDC_UPNPTCPPORTTEXT)->Enable(thePrefs::GetUPnPEnabled());
+	} else {
+		FindWindow(IDC_UPNP_ENABLED)->Enable(false);
+		FindWindow(IDC_UPNPTCPPORT)->Enable(false);
+		FindWindow(IDC_UPNPTCPPORTTEXT)->Enable(false);
+	}
+#else
+	FindWindow(IDC_UPNP_ENABLED)->Enable(false);
+	FindWindow(IDC_UPNPTCPPORT)->Enable(false);
+	FindWindow(IDC_UPNPTCPPORTTEXT)->Enable(false);
+	thePrefs::SetUPnPEnabled(false);
+	FindWindow(IDC_UPNP_EC_ENABLED)->Enable(false);
+	thePrefs::SetUPnPECEnabled(false);
+#endif
+
 #ifdef ENABLE_IPV6
 #ifdef CLIENT_GUI
 	// A daemon that sent no address-families tag is old or lacks ENABLE_IPV6: nothing to edit.
@@ -991,21 +1024,20 @@ bool PrefsUnifiedDlg::TransferToWindow()
 #endif
 
 	// Set debugging toggles
-	int count = theLogger.GetDebugCategoryCount();
 	wxCheckListBox *list = CastChild(ID_DEBUGCATS, wxCheckListBox);
-
 	unsigned int row = 0;
-	for (int i = 0; i < count; i++) {
-		const CDebugCategory &category = theLogger.GetDebugCategory(i);
-		if (OffersDebugCategory(category)) {
-			list->Check(row++, category.IsEnabled());
-		}
+	for (int i : OfferedDebugCategories()) {
+		list->Check(row++, theLogger.GetDebugCategory(i).IsEnabled());
 	}
 #ifdef CLIENT_GUI
 	// Rebuilt on each open: the list belongs to the connected core.
 	wxCheckListBox *coreList = CastChild(ID_DEBUGCATS_CORE, wxCheckListBox);
 	coreList->Clear();
-	for (const auto &category : thePrefs::GetCoreDebugCategories()) {
+	std::vector<CPreferences::CoreDebugCategory> coreCategories = thePrefs::GetCoreDebugCategories();
+	std::sort(coreCategories.begin(), coreCategories.end(), [](const auto &a, const auto &b) {
+		return a.name.CmpNoCase(b.name) < 0;
+	});
+	for (const auto &category : coreCategories) {
 		coreList->Check(coreList->Append(category.name), category.enabled);
 	}
 	coreList->Enable(!coreList->IsEmpty());
@@ -1077,15 +1109,10 @@ bool PrefsUnifiedDlg::TransferFromWindow()
 	thePrefs::SetVerboseLogfile(thePrefs::GetVerboseLogfile());
 
 	// Get debugging toggles
-	int count = theLogger.GetDebugCategoryCount();
 	wxCheckListBox *list = CastChild(ID_DEBUGCATS, wxCheckListBox);
-
 	unsigned int row = 0;
-	for (int i = 0; i < count; i++) {
-		const CDebugCategory &category = theLogger.GetDebugCategory(i);
-		if (OffersDebugCategory(category)) {
-			theLogger.SetEnabled(category.GetType(), list->IsChecked(row++));
-		}
+	for (int i : OfferedDebugCategories()) {
+		theLogger.SetEnabled(theLogger.GetDebugCategory(i).GetType(), list->IsChecked(row++));
 	}
 #ifdef CLIENT_GUI
 	// SendChangesToRemote serialises from here.
@@ -1385,17 +1412,15 @@ void PrefsUnifiedDlg::OnOk(wxCommandEvent &WXUNUSED(event))
 	}
 
 #ifndef CLIENT_GUI
-	// The web server and amuleapi are EC clients of the core; without external connections
-	// they can never connect. OnCheckBoxChange already warns live and reverts the toggles,
-	// so this is a silent backstop that keeps the saved prefs consistent for a config
+	// amuleapi is an EC client of the core; without external connections it can never
+	// connect. OnCheckBoxChange already warns live and reverts the toggle, so this is a
+	// silent backstop that keeps the saved prefs consistent for a config
 	// loaded in a mismatched state.
 	//
 	// amulegui is itself a connected EC client, so external connections are necessarily
 	// enabled on the daemon; its local AcceptExternalConnections pref only mirrors
 	// remote.conf, so this backstop must not run there.
-	if ((thePrefs::GetWSIsEnabled() || thePrefs::GetAmuleApiIsEnabled()) &&
-		!thePrefs::AcceptExternalConnections()) {
-		thePrefs::SetWSIsEnabled(false);
+	if (thePrefs::GetAmuleApiIsEnabled() && !thePrefs::AcceptExternalConnections()) {
 		thePrefs::SetAmuleApiIsEnabled(false);
 	}
 #endif
@@ -1822,45 +1847,37 @@ void PrefsUnifiedDlg::OnCheckBoxChange(wxCommandEvent &event)
 		FindWindow(IDC_KADSTRICTAICHPUBLISHERS)->Enable(value);
 		break;
 
-	// The web server and amuleapi are EC clients of the core: they can only run when
-	// external connections are enabled. Warn live and refuse the invalid combination
+	case IDC_UPNP_ENABLED:
+		FindWindow(IDC_UPNPTCPPORT)->Enable(value);
+		FindWindow(IDC_UPNPTCPPORTTEXT)->Enable(value);
+		break;
+
+	// amuleapi is an EC client of the core: it can only run when external connections are
+	// enabled. Warn live and refuse the invalid combination
 	// instead of waiting for OK.
 	//
 	// amulegui is itself a connected EC client, so the precondition is always met. The
 	// IDC_EXT_CONN_ACCEPT checkbox is hidden there and only mirrors remote.conf, so reading
 	// it would wrongly block the toggle.
-	case IDC_ENABLE_WEB:
 	case IDC_ENABLE_AMULEAPI:
 #ifndef CLIENT_GUI
 		if (value && !CastChild(IDC_EXT_CONN_ACCEPT, wxCheckBox)->IsChecked()) {
-			wxMessageBox(_("The web server and aMule API require external connections "
-				       "to be enabled."),
+			wxMessageBox(_("The aMule API requires external connections to be enabled."),
 				_("Message"),
 				wxOK | wxICON_INFORMATION);
 			CastChild(id, wxCheckBox)->SetValue(false);
-			break;
 		}
 #endif
-		if (value && id == IDC_ENABLE_WEB) {
-			// Enabled and allowed: nudge toward the actively-developed API.
-			wxMessageBox(_("The aMule web server is deprecated. Consider running the aMule "
-				       "API instead."),
-				_("Message"),
-				wxOK | wxICON_INFORMATION);
-		}
 		break;
 
 #ifndef CLIENT_GUI
 	case IDC_EXT_CONN_ACCEPT: {
-		// Turning external connections off strands both EC-client services. (amulegui hides
-		// this checkbox and always runs over EC, so the case is core-only.)
-		wxCheckBox *web = CastChild(IDC_ENABLE_WEB, wxCheckBox);
+		// Turning external connections off strands amuleapi. (amulegui hides this checkbox
+		// and always runs over EC, so the case is core-only.)
 		wxCheckBox *api = CastChild(IDC_ENABLE_AMULEAPI, wxCheckBox);
-		if (!value && (web->IsChecked() || api->IsChecked())) {
-			web->SetValue(false);
+		if (!value && api->IsChecked()) {
 			api->SetValue(false);
-			wxMessageBox(_("The web server and aMule API require external connections "
-				       "to be enabled."),
+			wxMessageBox(_("The aMule API requires external connections to be enabled."),
 				_("Message"),
 				wxOK | wxICON_INFORMATION);
 		}

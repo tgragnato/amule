@@ -25,6 +25,7 @@
 #include "PrefsSchema.h"
 
 #include "SourceSearchLimits.h"
+#include "KadServedBuddyPolicy.h" // Needed for KAD_SERVED_BUDDIES
 #include "WriteBufferLimits.h"
 
 #include <cstring>
@@ -129,6 +130,13 @@ const char *const kIp2CountrySources[] = { "dbip", "maxmind", "custom", nullptr 
 #define PREF_REJECT(cat, key) \
 	{cat, key, 0, PrefType::String, PrefEnc::Value, false, PrefAccess::Rejected, 0u, nullptr, nullptr, nullptr, 0}
 
+// Retired rows carry no tag either: they read as the snapshot default and PATCH ignores them.
+#define PREF_RETIRED(cat, key, type, cpp_type, memb) \
+	{cat, key, 0, type, PrefEnc::Value, false, PrefAccess::Retired, 0u, nullptr, nullptr, PREF_MEMBER(memb, cpp_type), 0}
+
+#define PREF_RETIRED_WRITEONLY(cat, key) \
+	{cat, key, 0, PrefType::String, PrefEnc::Value, false, PrefAccess::Retired, 0u, nullptr, nullptr, nullptr, 0}
+
 const PrefField kSchema[] = {
 	// [general]
 	// Value, not Presence: the core emits EC_TAG_GENERAL_CHECK_NEW_VERSION unconditionally as a
@@ -143,6 +151,8 @@ const PrefField kSchema[] = {
 	PREF_BOOL("connection", "autoconnect", EC_TAG_CONN_AUTOCONNECT, PrefEnc::Presence, false, PrefAccess::ReadWrite, autoconnect),
 	PREF_STR("connection", "bind_address", EC_TAG_CONN_BIND_ADDRESS, PrefAccess::ReadWrite, bind_address),
 	PREF_STR("connection", "bind_interface", EC_TAG_CONN_BIND_INTERFACE, PrefAccess::ReadWrite, bind_interface),
+	// The GUI spin control floor; the setter stores any value as is.
+	PREF_U32_DOMAIN("connection", "download_capacity_kibibytes_per_second", EC_TAG_CONN_DL_CAP, 3u, 1000000u, 0u, PrefAccess::ReadWrite, download_capacity_kibibytes_per_second),
 	PREF_BOOL("connection", "extended_udp_port_enabled", EC_TAG_CONN_UDP_DISABLE, PrefEnc::Presence, true, PrefAccess::ReadWrite, extended_udp_port_enabled),
 	PREF_U32("connection", "max_connection_count", EC_TAG_CONN_MAX_CONN, 65535u, PrefAccess::ReadWrite, max_connection_count),
 	PREF_U32("connection", "max_download_kibibytes_per_second", EC_TAG_CONN_MAX_DL, 1000000000u, PrefAccess::ReadWrite, max_download_kibibytes_per_second),
@@ -161,6 +171,7 @@ const PrefField kSchema[] = {
 	// server UDP socket being TCP+3. A 65534 here was a 200 that left the daemon on 4662.
 	PREF_U16_DOMAIN("connection", "tcp_port", EC_TAG_CONN_TCP_PORT, 1u, 65532u, PrefAccess::ReadWrite, tcp_port),
 	PREF_U16("connection", "udp_port", EC_TAG_CONN_UDP_PORT, 65535u, PrefAccess::ReadWrite, udp_port),
+	PREF_U32_DOMAIN("connection", "upload_capacity_kibibytes_per_second", EC_TAG_CONN_UL_CAP, 3u, 1000000u, 0u, PrefAccess::ReadWrite, upload_capacity_kibibytes_per_second),
 	// Floor of 1: SetSlotAllocation clamps anything lower up to 1, so
 	// without the bound a 0 answered 200 and read back as 1.
 	PREF_U32_DOMAIN("connection", "upload_slot_min_kibibytes_per_second", EC_TAG_CONN_SLOT_ALLOCATION, 1u, 65535u, 0u, PrefAccess::ReadWrite, upload_slot_min_kibibytes_per_second),
@@ -250,19 +261,16 @@ const PrefField kSchema[] = {
 	PREF_BOOL("message_filter", "log_filtered_messages", EC_TAG_MSGFILTER_SHOW_IN_LOG, PrefEnc::Presence, false, PrefAccess::ReadWrite, message_filter.log_filtered_messages),
 
 	// [remote_controls.webserver]
-	PREF_BOOL("remote_controls.webserver", "enabled", EC_TAG_WEBSERVER_AUTORUN, PrefEnc::Presence, false, PrefAccess::ReadWrite, remote_controls.webserver.enabled),
-	// Its partner `remote_controls.webserver.guest_password` deliberately has NO row here, and
-	// that is not an oversight -- neither access level fits. The two share one EC tag
-	// (EC_TAG_WEBSERVER_GUEST carries the enable bool with the password hash as a child), so a
-	// WriteOnly row would send the generic loop at the tag a second time behind the bespoke
-	// packing; and Bespoke rows are emitted on GET, which a password must never be. It is applied
-	// only by the hand-written branch in Api.cpp and documented in REFERENCE.md.
-	PREF_BOOL("remote_controls.webserver", "guest_enabled", EC_TAG_WEBSERVER_GUEST, PrefEnc::Presence, false, PrefAccess::Bespoke, remote_controls.webserver.guest_enabled),
-	PREF_U32("remote_controls.webserver", "port", EC_TAG_WEBSERVER_PORT, 65535u, PrefAccess::ReadWrite, remote_controls.webserver.port),
-	PREF_U32("remote_controls.webserver", "refresh_seconds", EC_TAG_WEBSERVER_REFRESH, 0xFFFFFFFFu, PrefAccess::ReadWrite, remote_controls.webserver.refresh_seconds),
-	PREF_STR("remote_controls.webserver", "template_name", EC_TAG_WEBSERVER_TEMPLATE, PrefAccess::ReadWrite, remote_controls.webserver.template_name),
-	PREF_BOOL("remote_controls.webserver", "gzip_enabled", EC_TAG_WEBSERVER_USEGZIP, PrefEnc::Presence, false, PrefAccess::ReadWrite, remote_controls.webserver.gzip_enabled),
-	PREF_PASSWD_HASHED("remote_controls.webserver", "password", EC_TAG_PASSWD_HASH),
+	// The core no longer has a web server. The rows stay because /api/v1/ is frozen; remove them
+	// in /api/v2/.
+	PREF_RETIRED("remote_controls.webserver", "enabled", PrefType::Bool, bool, remote_controls.webserver.enabled),
+	PREF_RETIRED("remote_controls.webserver", "guest_enabled", PrefType::Bool, bool, remote_controls.webserver.guest_enabled),
+	PREF_RETIRED("remote_controls.webserver", "port", PrefType::Uint32, std::uint32_t, remote_controls.webserver.port),
+	PREF_RETIRED("remote_controls.webserver", "refresh_seconds", PrefType::Uint32, std::uint32_t, remote_controls.webserver.refresh_seconds),
+	PREF_RETIRED("remote_controls.webserver", "template_name", PrefType::String, std::string, remote_controls.webserver.template_name),
+	PREF_RETIRED("remote_controls.webserver", "gzip_enabled", PrefType::Bool, bool, remote_controls.webserver.gzip_enabled),
+	PREF_RETIRED_WRITEONLY("remote_controls.webserver", "password"),
+	PREF_RETIRED_WRITEONLY("remote_controls.webserver", "guest_password"),
 
 	// [remote_controls.amuleapi]
 	PREF_STR("remote_controls.amuleapi", "bind_address", EC_TAG_AMULEAPI_BIND, PrefAccess::ReadWrite, remote_controls.amuleapi.bind_address),
@@ -294,8 +302,10 @@ const PrefField kSchema[] = {
 	PREF_U32_DOMAIN("advanced", "file_buffer_bytes", EC_TAG_CORETW_FILEBUFFER, 0u, 3825000u, 15000u, PrefAccess::ReadWrite, advanced.file_buffer_bytes),
 	PREF_BOOL("advanced", "write_buffer_limit_supported", EC_TAG_CORETW_WRITE_BUFFER_LIMIT_MIB, PrefEnc::Presence, false, PrefAccess::ReadOnly, advanced.write_buffer_limit_supported),
 	PREF_U32_DOMAIN_GATED("advanced", "write_buffer_limit_mebibytes", EC_TAG_CORETW_WRITE_BUFFER_LIMIT_MIB, WriteBufferLimits::minMiB, WriteBufferLimits::maxMiB, PrefAccess::ReadWrite, advanced.write_buffer_limit_mebibytes, "write_buffer_limit_supported"),
-	// The core clamps these three, so a value outside the range would be changed, not stored.
+	// The core clamps these, so a value outside the range would be changed, not stored.
 	PREF_U32_DOMAIN("advanced", "kad_max_concurrent_source_search_count", EC_TAG_CORETW_KAD_MAX_SEARCHES, KAD_MAX_SOURCE_SEARCHES.min, KAD_MAX_SOURCE_SEARCHES.max, 0u, PrefAccess::ReadWrite, advanced.kad_max_concurrent_source_search_count),
+	PREF_BOOL("advanced", "kad_max_served_buddies_supported", EC_TAG_CORETW_KAD_MAX_SERVED_BUDDIES, PrefEnc::Presence, false, PrefAccess::ReadOnly, advanced.kad_max_served_buddies_supported),
+	PREF_U32_DOMAIN_GATED("advanced", "kad_max_served_buddies", EC_TAG_CORETW_KAD_MAX_SERVED_BUDDIES, Kademlia::KAD_SERVED_BUDDIES.min, Kademlia::KAD_SERVED_BUDDIES.max, PrefAccess::ReadWrite, advanced.kad_max_served_buddies, "kad_max_served_buddies_supported"),
 	PREF_U32_SCALED_DOMAIN("advanced", "kad_source_reask_minutes", EC_TAG_CORETW_KAD_REASK_MS, KAD_SOURCE_REASK_MINUTES.min, KAD_SOURCE_REASK_MINUTES.max, PrefAccess::ReadWrite, advanced.kad_source_reask_minutes, 60000u),
 	// s_MaxConperFive is a uint16; 70000 wrapped to 4464.
 	PREF_U32_DOMAIN("advanced", "max_new_connections_per_5_seconds", EC_TAG_CORETW_MAX_CONN_PER_FIVE, 0u, 65535u, 0u, PrefAccess::ReadWrite, advanced.max_new_connections_per_5_seconds),

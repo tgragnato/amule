@@ -333,22 +333,6 @@ msgstr "Iziet no programmas."
 
 #: src/amule.cpp
 #, c-format
-msgid "Terminating amuleweb instance with pid '%d' ... "
-msgstr "Pārtrauc amuleweb procesu ar pid '%d' … "
-
-#: src/amule.cpp
-#, c-format
-msgid "Killing amuleweb instance with pid '%d' ... "
-msgstr "Iznīcina amuleweb procesu ar pid '%d' … "
-
-#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
-#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
-#: src/SharedFilesCtrl.cpp
-msgid "Failed"
-msgstr "Neizdevās"
-
-#: src/amule.cpp
-#, c-format
 msgid "Terminating amuleapi instance with pid '%d' ... "
 msgstr "Pārtrauc amuleapi procesu ar pid '%d' … "
 
@@ -356,6 +340,12 @@ msgstr "Pārtrauc amuleapi procesu ar pid '%d' … "
 #, c-format
 msgid "Killing amuleapi instance with pid '%d' ... "
 msgstr "Iznīcina amuleapi procesu ar pid '%d' … "
+
+#: src/amule.cpp src/ClientNameCellDrawing.cpp src/ClientRef.cpp
+#: src/FileDetailDialog.cpp src/SearchDlg.cpp src/ServerListCtrl.cpp
+#: src/SharedFilesCtrl.cpp
+msgid "Failed"
+msgstr "Neizdevās"
 
 #: src/amule.cpp
 msgid "aMule OnExit: Terminating core."
@@ -513,28 +503,6 @@ msgid "Not starting %s: it is neither next to aMule nor on PATH."
 msgstr ""
 
 #: src/amule.cpp
-msgid "An exception occurred while launching amuleweb."
-msgstr ""
-
-#: src/amule.cpp
-#, c-format
-msgid "web server running on pid %d"
-msgstr "tīmekļa serveris darbojas ar pid %d"
-
-#: src/amule.cpp
-msgid "Could not prepare the amuleweb authentication token. The web server was not started."
-msgstr ""
-
-#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
-#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
-msgid "ERROR"
-msgstr "KĻŪDA"
-
-#: src/amule.cpp
-msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
-msgstr "Jūs esiet iespējojuši 'Kad palaiž, palaist arī tīmekļa serveri' iestatījumu, taču amuleweb izpilddatni nevar palaist. Lūdzu, uzstādiet pakotni, kas satur aMule tīmekļa serveri (amuleweb), vai pārkompilējiet aMule no pirmkoda ar -DBUILD_WEBSERVER=YES parametru un uzstādiet to."
-
-#: src/amule.cpp
 #, c-format
 msgid "Could not write the amuleapi EC token to %s; amuleapi will fall back to its configured password."
 msgstr ""
@@ -556,15 +524,10 @@ msgstr ""
 msgid "You requested to run amuleapi on startup, but the amuleapi binary cannot be run. Please install the package containing aMule's REST API server, or build aMule from source with -DBUILD_AMULEAPI=YES and install it."
 msgstr "Jūs pieprasījāt palaist amuleapi startēšanas laikā, taču amuleapi bināro datni nevar palaist. Lūdzu, uzstādiet pakotni, kas satur aMule REST API serveri, vai kompilējiet aMule no pirmkoda ar -DBUILD_AMULEAPI=YES un uzstādiet to."
 
-#: src/amule.cpp
-#, fuzzy
-msgid "Could not prepare the amuleweb EC token."
-msgstr "Neizdevās saglabāt amuleapi paroli: %s"
-
-#: src/amule.cpp
-#, fuzzy, c-format
-msgid "Could not remove the amuleweb EC token file: %s"
-msgstr "Neizdevās saglabāt amuleapi paroli: %s"
+#: src/amule.cpp src/amule-remote-gui.cpp src/DownloadQueue.cpp
+#: src/EditServerListDlg.cpp src/PrefsUnifiedDlg.cpp src/SearchDlg.cpp
+msgid "ERROR"
+msgstr "KĻŪDA"
 
 #: src/amule.cpp
 #, fuzzy, c-format
@@ -1050,23 +1013,14 @@ msgstr "Šifrēšana"
 msgid "aMuleGUI"
 msgstr "aMule grafiskā lietotāja saskarne"
 
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
-msgstr "↑ Augšup.: %.1f%s (%.1f) | ↓ Lejup.: %.1f%s (%.1f)"
-
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
 msgid " MiB/s"
 msgstr " MiB/s"
 
-#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/utils/wxCas/src/wxcasframe.cpp
+#: src/amuleDlg.cpp src/MuleTrayIcon.cpp src/TransferRateLabel.h
+#: src/utils/wxCas/src/wxcasframe.cpp
 msgid " KiB/s"
 msgstr " KiB/s"
-
-#: src/amuleDlg.cpp
-#, c-format
-msgid "Up: %.1f%s | Down: %.1f%s"
-msgstr "↑ Augšup.: %.1f%s | ↓ Lejup.: %.1f%s"
 
 #: src/amuleDlg.cpp
 msgid "Transfer speeds are reported by the daemon. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
@@ -1075,6 +1029,16 @@ msgstr ""
 #: src/amuleDlg.cpp
 msgid "Live speeds are averaged over the last second. Total upload includes control traffic; peer upload speeds include file packets only. Values in parentheses show protocol overhead in KiB/s."
 msgstr ""
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s | Down: %.1f%s"
+msgstr "↑ Augšup.: %.1f%s | ↓ Lejup.: %.1f%s"
+
+#: src/amuleDlg.cpp
+#, c-format
+msgid "Up: %.1f%s (%.1f) | Down: %.1f%s (%.1f)"
+msgstr "↑ Augšup.: %.1f%s (%.1f) | ↓ Lejup.: %.1f%s (%.1f)"
 
 #: src/amuleDlg.cpp
 #, c-format
@@ -2114,6 +2078,55 @@ msgstr "Avotu sēklas"
 msgid "Search Result"
 msgstr "Meklēšanas rezultāts"
 
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a direct connection"
+msgstr "Aktīvi savienojumi"
+
+#: src/DataToText.cpp
+msgid "a direct callback"
+msgstr ""
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "our server"
+msgstr "Noņemt atlasīto serveri"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the Kad buddy"
+msgstr "Nav neviena drauga"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "the source's own server"
+msgstr "eD2k serveru saraksts (server.met)"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a server hole punch"
+msgstr "Serveru trafiks (Paketes): %s"
+
+#: src/DataToText.cpp
+#, fuzzy
+msgid "a Lugdunum callback"
+msgstr "%s veiksmīgi atjaunināts"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on a fallback route"
+msgstr "Pieslēdzas caur serveri"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s, on an unproven route"
+msgstr "Pieslēdzas caur serveri"
+
+#: src/DataToText.cpp
+#, fuzzy, c-format
+msgid "Connecting via %s"
+msgstr "Pieslēdzas caur Kad"
+
 #: src/DataToText.cpp src/DownloadListCtrl.cpp src/OtherFunctions.cpp
 #: src/TransferWnd.cpp
 msgid "Completed"
@@ -2426,10 +2439,6 @@ msgstr[2] "Neizdevās pievienot %u saites (skatiet žurnālu, lai uzzinātu vair
 #, c-format
 msgid "Invalid eD2k link! ERROR: %s"
 msgstr "Nederīga eD2k saite! KĻŪDA: %s"
-
-#: src/ECSpecialMuleTags.cpp
-msgid "Refused a remote request to set the web-server template: the value must be a plain template name, not a path."
-msgstr ""
 
 #: src/ECSpecialMuleTags.cpp
 msgid "Refused a remote request to change the online-signature folder: it can only be set in the daemon's own configuration."
@@ -4603,12 +4612,13 @@ msgid "Users connected to the current server and an estimate of the total number
 msgstr "Pašreizējam serverim pieslēgto dalībnieku skaits un aptuvenais kopējais dalībnieku skaits."
 
 #: src/muuli_wdr.cpp
-msgid "Up: 0.0 | Down: 0.0"
-msgstr "↑ Augšup.: 0.0 | ↓ Lejup.: 0.0"
+msgid "Up:"
+msgstr ""
 
 #: src/muuli_wdr.cpp
-msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
-msgstr "Pašreizējais vidējais augšupielādes un lejupielādes ātrums. Ja iespējots, skaitļi iekavās norāda klientu komunikācijas papildslodzi."
+#, fuzzy
+msgid "Down:"
+msgstr "Lejupielāde: "
 
 #: src/muuli_wdr.cpp
 msgid "Displays the connected status and active transfers. Red arrows signifies that you are currently not connected, yellow arrows signify that you have low ID (firewalled) and green arrows signify that you have high ID (The optimal connection type)."
@@ -4617,10 +4627,6 @@ msgstr "Attēlo savienojuma statusu un aktīvos pārsūtījumus. Sarkanas bultas
 #: src/muuli_wdr.cpp
 msgid "Not Connected ..."
 msgstr "Nav pieslēgts ..."
-
-#: src/muuli_wdr.cpp
-msgid "Currently connected server."
-msgstr "Serveris, kuram šobrīd esiet pieslēdzies."
 
 #: src/muuli_wdr.cpp
 msgid "Search"
@@ -5639,8 +5645,12 @@ msgid "Remove"
 msgstr "Noņemt"
 
 #: src/muuli_wdr.cpp
-msgid "(Right click on folder icon for recursive share)"
-msgstr "(Lai kopīgotu mapi un visas tās apakšmapes, noklikšķiniet uz mapes ikonas ar peles labo pogu)"
+msgid "Double-click: share or unshare this folder. Right-click: share it with all subfolders, including new ones."
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "Bold: shared. Bold italic: shared with all subfolders. Red folder: contains shared folders."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Share hidden files"
@@ -5802,6 +5812,14 @@ msgstr "Maks. jauno savienojumu skaits / 5 sek."
 #: src/muuli_wdr.cpp
 msgid "Concurrent Kad source lookups"
 msgstr "Vienlaicīgi Kad avotu meklējumi"
+
+#: src/muuli_wdr.cpp
+msgid "Firewalled Kad nodes served as buddy"
+msgstr ""
+
+#: src/muuli_wdr.cpp
+msgid "How many firewalled Kad nodes this node relays callbacks for. Each one holds a connection, so at most a tenth of the connection limit is served."
+msgstr ""
 
 #: src/muuli_wdr.cpp
 msgid "Kad source re-search interval (minutes)"
@@ -5998,46 +6016,6 @@ msgstr "Viesu sesijas var lasīt statusu un sarakstus, bet nevar neko mainīt. I
 #: src/muuli_wdr.cpp
 msgid "Guest password"
 msgstr "Viesa parole"
-
-#: src/muuli_wdr.cpp
-msgid "Web server parameters"
-msgstr "Tīmekļa servera parametri"
-
-#: src/muuli_wdr.cpp
-msgid "Run webserver on startup (deprecated)"
-msgstr "Palaist tīmekļa serveri startēšanas laikā (novecojis)"
-
-#: src/muuli_wdr.cpp
-msgid "Web template"
-msgstr "Tīmekļa veidne"
-
-#: src/muuli_wdr.cpp
-msgid "Full rights password"
-msgstr "Pilnu tiesību parole"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Low rights User"
-msgstr "Iespējot ierobežotu tiesību lietotāju"
-
-#: src/muuli_wdr.cpp
-msgid "Low rights password"
-msgstr "Ierobežotu tiesību parole"
-
-#: src/muuli_wdr.cpp
-msgid "Enable UPnP port forwarding of the web server port"
-msgstr "Iespējot UPnP porta pāradresāciju tīmekļa servera portam"
-
-#: src/muuli_wdr.cpp
-msgid "Web server UPnP TCP port (Optional)"
-msgstr "Tīmekļa servera UPnP TCP ports (nav obligāts)"
-
-#: src/muuli_wdr.cpp
-msgid "Page Refresh Time (in secs)"
-msgstr "Lapas atsvaidzināšanas laiks (sekundēs)"
-
-#: src/muuli_wdr.cpp
-msgid "Enable Gzip compression"
-msgstr "Iespējot Gzip saspiešanu"
 
 #: src/muuli_wdr.cpp
 msgid "Reset page to defaults"
@@ -7067,9 +7045,9 @@ msgstr ""
 msgid "NAT traversal (QUIC)"
 msgstr ""
 
-#: src/Preferences.cpp
-msgid "no options available"
-msgstr "nav pieejamu opciju"
+#: src/PeerCapabilities.h
+msgid "Skips unknown source exchange tags"
+msgstr ""
 
 #: src/Preferences.cpp
 msgid "Media metadata: FFProbePath is obsolete; aMule now uses its bundled media parser. Removing the old setting."
@@ -7433,12 +7411,9 @@ msgid "macOS does not let an application stop being the default handler. To stop
 msgstr ""
 
 #: src/PrefsUnifiedDlg.cpp
-msgid "The web server and aMule API require external connections to be enabled."
+#, fuzzy
+msgid "The aMule API requires external connections to be enabled."
 msgstr "Tīmekļa serverim un aMule API ir nepieciešams, lai būtu iespējoti ārējie savienojumi."
-
-#: src/PrefsUnifiedDlg.cpp
-msgid "The aMule web server is deprecated. Consider running the aMule API instead."
-msgstr "aMule tīmekļa serveris ir novecojis. Apsveriet iespēju tā vietā izmantot aMule API."
 
 #: src/PrefsUnifiedDlg.cpp
 #, fuzzy
@@ -8487,6 +8462,16 @@ msgid "Connected to buddy at %s"
 msgstr "Savienots ar draugu %s"
 
 #: src/ServerWnd.cpp
+#, fuzzy
+msgid "Served buddies:"
+msgstr "Serveru saraksts"
+
+#: src/ServerWnd.cpp
+#, c-format
+msgid "%u of %u"
+msgstr ""
+
+#: src/ServerWnd.cpp
 msgid "IP address:"
 msgstr "IP adrese:"
 
@@ -8996,35 +8981,6 @@ msgid "Peak Connections (estimate): %i"
 msgstr "Maksimālie savienojumi (aptuveni): %i"
 
 #: src/Statistics.cpp
-msgid "NAT Traversal (Session)"
-msgstr ""
-
-#: src/Statistics.cpp
-#, fuzzy, c-format
-msgid "Server Hole Punches: %s"
-msgstr "Serveru trafiks (Paketes): %s"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Successful Server Hole Punches: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, c-format
-msgid "Lugdunum Callbacks: %s"
-msgstr ""
-
-#: src/Statistics.cpp
-#, fuzzy, c-format
-msgid "Successful Lugdunum Callbacks: %s"
-msgstr "%s veiksmīgi atjaunināts"
-
-#: src/Statistics.cpp
-#, c-format
-msgid "uTP Streams Moved to a New Port: %s"
-msgstr ""
-
-#: src/Statistics.cpp
 #, c-format
 msgid "Unknown: %s"
 msgstr "Nezināms: %s"
@@ -9110,6 +9066,10 @@ msgid "Average file size: %s"
 msgstr "Vidējais datnes izmērs: %s"
 
 #: src/Statistics.cpp
+msgid "Diagnostics"
+msgstr ""
+
+#: src/Statistics.cpp
 msgid "Operating System"
 msgstr "Operētājsistēma"
 
@@ -9191,6 +9151,10 @@ msgstr ""
 "Nav norādīts meklēšanas atslēgvārds.\n"
 "Ierakstiet 'help search', lai iegūtu vairāk palīdzības.\n"
 
+#: src/TextClient.cpp
+msgid "The connected daemon does not support media search filters.\n"
+msgstr ""
+
 #. TRANSLATORS:
 #. 'help search' is a command to the program, do not translate it.
 #: src/TextClient.cpp
@@ -9202,11 +9166,19 @@ msgstr ""
 "Ierakstiet 'help search', lai iegūtu vairāk palīdzības.\n"
 
 #: src/TextClient.cpp
+msgid "The connected daemon does not support search management.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "A search ID from 'search list' is required.\n"
+msgstr ""
+
+#: src/TextClient.cpp
 #, c-format
 msgid "Download File: %lu %s\n"
 msgstr "Lejupielādēt datni: %lu %s\n"
 
-#: src/TextClient.cpp src/webserver/src/WebServer.cpp
+#: src/TextClient.cpp
 msgid "Request failed with an unknown error."
 msgstr "Pieprasījums neizdevās nezināmas kļūdas dēļ."
 
@@ -9313,6 +9285,26 @@ msgstr ""
 #: src/TextClient.cpp
 msgid "[PartFile]"
 msgstr "[Daļējā datne]"
+
+#: src/TextClient.cpp
+msgid "No retained searches.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; availability is unknown.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "More-results request processed; further requests remain possible.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "No further results can be requested for this search.\n"
+msgstr ""
+
+#: src/TextClient.cpp
+msgid "Search stop request processed; retained results were not removed.\n"
+msgstr ""
 
 #: src/TextClient.cpp
 #, c-format
@@ -9583,6 +9575,11 @@ msgid ""
 "    --avail <N>            minimum number of sources\n"
 "    --min-size <N[KMG]>    smallest file size; K=1024, M=K*1024, G=M*1024\n"
 "    --max-size <N[KMG]>    largest file size; same suffixes\n"
+"    --min-bitrate <kbps>   whole number, 0-1000000\n"
+"    --min-duration <sec>   whole number, 0-86400\n"
+"    --codec <text> --title <text> --album <text> --artist <text>\n"
+"Quote media text values containing spaces.\n"
+"Kad applies media filters; eD2k servers may ignore them.\n"
 "Example: 'search global linux iso --type Iso --min-size 100M' returns\n"
 "results for \"linux iso\" of file-type Iso at least 100 MiB.\n"
 msgstr ""
@@ -9618,6 +9615,28 @@ msgstr "Izpildīt Kad meklēšanu"
 #, fuzzy
 msgid "Execute an eD2k and Kad search"
 msgstr "Izpildīt Kad meklēšanu"
+
+#: src/TextClient.cpp
+msgid "List retained search IDs and queries."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Stop a search, keeping its results."
+msgstr "Meklēšanas rezultāts"
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'."
+msgstr ""
+
+#: src/TextClient.cpp
+#, fuzzy
+msgid "Request more Kad search results."
+msgstr "Meklēšanas rezultātu skaits: %i\n"
+
+#: src/TextClient.cpp
+msgid "Requires a search ID from 'search list'. Further results are not guaranteed."
+msgstr ""
 
 #: src/TextClient.cpp
 msgid "Show the results of a search."
@@ -10445,139 +10464,6 @@ msgstr "Mape, kurā atrodas jūsu paraksta datne"
 msgid "Folder where generating the statistic image"
 msgstr "Mape, kurā ģenerēt statistikas attēlu"
 
-#: src/webserver/src/WebInterface.cpp
-msgid "Loads template <str>"
-msgstr "Ielādē veidni <str>"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Web server HTTP port"
-msgstr "Tīmekļa servera HTTP ports"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use UPnP port forwarding on web server port"
-msgstr "Izmantot UPnP porta pārsūtīšanu tīmekļa servera portam"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "UPnP port"
-msgstr "UPnP ports"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Use gzip compression"
-msgstr "Izmantot gzip saspiešanu"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Full access password for web server"
-msgstr "Pilnas piekļuves parole tīmekļa serverim"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Guest password for web server"
-msgstr "Viesa parole tīmekļa serverim"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Allow guest access"
-msgstr "Atļaut viesa piekļuvi"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Deny guest access"
-msgstr "Liegt viesa piekļuvi"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Load/save web server settings from/to remote aMule"
-msgstr "Ielādēt/saglabāt tīmekļa servera iestatījumus no/uz attālināto aMule"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule config file path. DO NOT USE DIRECTLY!"
-msgstr "aMule konfigurācijas datnes ceļš. NEIZMANTOT TIEŠI!"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Disable PHP interpreter (deprecated)"
-msgstr "Atspējot PHP interpretatoru (novecojis)"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "Recompile PHP pages on each request"
-msgstr "Pārkompilēt PHP lapas ar katru pieprasījumu"
-
-#: src/webserver/src/WebInterface.cpp
-msgid "aMule Web Server"
-msgstr "aMule tīmekļa serveris"
-
-#: src/webserver/src/WebServer.cpp
-msgid "web client connection accepted\n"
-msgstr "tīmekļa klienta savienojums pieņemts\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "ERROR: cannot accept web client connection\n"
-msgstr "KĻŪDA: nevar pieņemt tīmekļa klienta savienojumu\n"
-
-#: src/webserver/src/WebServer.cpp
-#, c-format
-msgid "Request failed with the following error: %s."
-msgstr "Pieprasījums neizdevās ar šādu kļūdu: %s."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Index file not found: "
-msgstr "Indeksa datne nav atrasta: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session expired - requesting login\n"
-msgstr "Sesija beigusies - pieprasa pieteikšanos\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, logged in\n"
-msgstr "Sesija labā stāvoklī, pieteicies\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session ok, not logged in\n"
-msgstr "Sesija labā stāvoklī, nav pieteicies\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No session opened - will request login\n"
-msgstr "Nav atvērtas sesijas - tiks pieprasīta pieteikšanās\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Session created - requesting login\n"
-msgstr "Sesija izveidota - pieprasa pieteikšanos\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [original]: "
-msgstr "Apstrādā pieprasījumu [oriģināls]: "
-
-#: src/webserver/src/WebServer.cpp
-msgid "Refusing to read `pass` from URL query string\n"
-msgstr "Atsakās nolasīt `pass` no URL vaicājuma virknes\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "No password specified, login will not be allowed."
-msgstr "Parole nav norādīta, pieteikšanās netiks atļauta."
-
-#: src/webserver/src/WebServer.cpp
-msgid "Checking password\n"
-msgstr "Pārbauda paroli\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password hash invalid\n"
-msgstr "Paroles jaucējvērtība nav derīga\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password ok\n"
-msgstr "Parole pareiza\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Password bad\n"
-msgstr "Parole nepareiza\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "You did not enter any password. Blank password is not allowed.\n"
-msgstr "Jūs neievadījāt paroli. Tukša parole nav atļauta.\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Logout requested\n"
-msgstr "Pieprasīta atteikšanās\n"
-
-#: src/webserver/src/WebServer.cpp
-msgid "Processing request [redirected]: "
-msgstr "Apstrādā pieprasījumu [novirzīts]: "
-
 #: packaging/windows/installer_strings.c
 msgid "aMule (required)"
 msgstr "aMule (nepieciešams)"
@@ -10721,6 +10607,213 @@ msgstr ""
 msgid "Migrating a changed legacy ECPassword after downgrade; the previous verifier no longer authenticates this run."
 msgstr ""
 
+#, c-format
+#~ msgid "Terminating amuleweb instance with pid '%d' ... "
+#~ msgstr "Pārtrauc amuleweb procesu ar pid '%d' … "
+
+#, c-format
+#~ msgid "Killing amuleweb instance with pid '%d' ... "
+#~ msgstr "Iznīcina amuleweb procesu ar pid '%d' … "
+
+#, c-format
+#~ msgid "web server running on pid %d"
+#~ msgstr "tīmekļa serveris darbojas ar pid %d"
+
+#~ msgid "You requested to run web server on startup, but the amuleweb binary cannot be run. Please install the package containing aMule web server, or build aMule from source with -DBUILD_WEBSERVER=YES and install it."
+#~ msgstr "Jūs esiet iespējojuši 'Kad palaiž, palaist arī tīmekļa serveri' iestatījumu, taču amuleweb izpilddatni nevar palaist. Lūdzu, uzstādiet pakotni, kas satur aMule tīmekļa serveri (amuleweb), vai pārkompilējiet aMule no pirmkoda ar -DBUILD_WEBSERVER=YES parametru un uzstādiet to."
+
+#, fuzzy
+#~ msgid "Could not prepare the amuleweb EC token."
+#~ msgstr "Neizdevās saglabāt amuleapi paroli: %s"
+
+#, fuzzy, c-format
+#~ msgid "Could not remove the amuleweb EC token file: %s"
+#~ msgstr "Neizdevās saglabāt amuleapi paroli: %s"
+
+#~ msgid "Web server parameters"
+#~ msgstr "Tīmekļa servera parametri"
+
+#~ msgid "Run webserver on startup (deprecated)"
+#~ msgstr "Palaist tīmekļa serveri startēšanas laikā (novecojis)"
+
+#~ msgid "Web template"
+#~ msgstr "Tīmekļa veidne"
+
+#~ msgid "Full rights password"
+#~ msgstr "Pilnu tiesību parole"
+
+#~ msgid "Enable Low rights User"
+#~ msgstr "Iespējot ierobežotu tiesību lietotāju"
+
+#~ msgid "Low rights password"
+#~ msgstr "Ierobežotu tiesību parole"
+
+#~ msgid "Enable UPnP port forwarding of the web server port"
+#~ msgstr "Iespējot UPnP porta pāradresāciju tīmekļa servera portam"
+
+#~ msgid "Web server UPnP TCP port (Optional)"
+#~ msgstr "Tīmekļa servera UPnP TCP ports (nav obligāts)"
+
+#~ msgid "Page Refresh Time (in secs)"
+#~ msgstr "Lapas atsvaidzināšanas laiks (sekundēs)"
+
+#~ msgid "Enable Gzip compression"
+#~ msgstr "Iespējot Gzip saspiešanu"
+
+#~ msgid "no options available"
+#~ msgstr "nav pieejamu opciju"
+
+#~ msgid "The aMule web server is deprecated. Consider running the aMule API instead."
+#~ msgstr "aMule tīmekļa serveris ir novecojis. Apsveriet iespēju tā vietā izmantot aMule API."
+
+#~ msgid "Loads template <str>"
+#~ msgstr "Ielādē veidni <str>"
+
+#~ msgid "Web server HTTP port"
+#~ msgstr "Tīmekļa servera HTTP ports"
+
+#~ msgid "Use UPnP port forwarding on web server port"
+#~ msgstr "Izmantot UPnP porta pārsūtīšanu tīmekļa servera portam"
+
+#~ msgid "UPnP port"
+#~ msgstr "UPnP ports"
+
+#~ msgid "Use gzip compression"
+#~ msgstr "Izmantot gzip saspiešanu"
+
+#~ msgid "Full access password for web server"
+#~ msgstr "Pilnas piekļuves parole tīmekļa serverim"
+
+#~ msgid "Guest password for web server"
+#~ msgstr "Viesa parole tīmekļa serverim"
+
+#~ msgid "Allow guest access"
+#~ msgstr "Atļaut viesa piekļuvi"
+
+#~ msgid "Deny guest access"
+#~ msgstr "Liegt viesa piekļuvi"
+
+#~ msgid "Load/save web server settings from/to remote aMule"
+#~ msgstr "Ielādēt/saglabāt tīmekļa servera iestatījumus no/uz attālināto aMule"
+
+#~ msgid "aMule config file path. DO NOT USE DIRECTLY!"
+#~ msgstr "aMule konfigurācijas datnes ceļš. NEIZMANTOT TIEŠI!"
+
+#~ msgid "Disable PHP interpreter (deprecated)"
+#~ msgstr "Atspējot PHP interpretatoru (novecojis)"
+
+#~ msgid "Recompile PHP pages on each request"
+#~ msgstr "Pārkompilēt PHP lapas ar katru pieprasījumu"
+
+#~ msgid "aMule Web Server"
+#~ msgstr "aMule tīmekļa serveris"
+
+#~ msgid "web client connection accepted\n"
+#~ msgstr "tīmekļa klienta savienojums pieņemts\n"
+
+#~ msgid "ERROR: cannot accept web client connection\n"
+#~ msgstr "KĻŪDA: nevar pieņemt tīmekļa klienta savienojumu\n"
+
+#, c-format
+#~ msgid "Request failed with the following error: %s."
+#~ msgstr "Pieprasījums neizdevās ar šādu kļūdu: %s."
+
+#~ msgid "Index file not found: "
+#~ msgstr "Indeksa datne nav atrasta: "
+
+#~ msgid "Session expired - requesting login\n"
+#~ msgstr "Sesija beigusies - pieprasa pieteikšanos\n"
+
+#~ msgid "Session ok, logged in\n"
+#~ msgstr "Sesija labā stāvoklī, pieteicies\n"
+
+#~ msgid "Session ok, not logged in\n"
+#~ msgstr "Sesija labā stāvoklī, nav pieteicies\n"
+
+#~ msgid "No session opened - will request login\n"
+#~ msgstr "Nav atvērtas sesijas - tiks pieprasīta pieteikšanās\n"
+
+#~ msgid "Session created - requesting login\n"
+#~ msgstr "Sesija izveidota - pieprasa pieteikšanos\n"
+
+#~ msgid "Processing request [original]: "
+#~ msgstr "Apstrādā pieprasījumu [oriģināls]: "
+
+#~ msgid "Refusing to read `pass` from URL query string\n"
+#~ msgstr "Atsakās nolasīt `pass` no URL vaicājuma virknes\n"
+
+#~ msgid "No password specified, login will not be allowed."
+#~ msgstr "Parole nav norādīta, pieteikšanās netiks atļauta."
+
+#~ msgid "Checking password\n"
+#~ msgstr "Pārbauda paroli\n"
+
+#~ msgid "Password hash invalid\n"
+#~ msgstr "Paroles jaucējvērtība nav derīga\n"
+
+#~ msgid "Password ok\n"
+#~ msgstr "Parole pareiza\n"
+
+#~ msgid "Password bad\n"
+#~ msgstr "Parole nepareiza\n"
+
+#~ msgid "You did not enter any password. Blank password is not allowed.\n"
+#~ msgstr "Jūs neievadījāt paroli. Tukša parole nav atļauta.\n"
+
+#~ msgid "Logout requested\n"
+#~ msgstr "Pieprasīta atteikšanās\n"
+
+#~ msgid "Processing request [redirected]: "
+#~ msgstr "Apstrādā pieprasījumu [novirzīts]: "
+
+#~ msgid "(Right click on folder icon for recursive share)"
+#~ msgstr "(Lai kopīgotu mapi un visas tās apakšmapes, noklikšķiniet uz mapes ikonas ar peles labo pogu)"
+
+#~ msgid "Currently connected server."
+#~ msgstr "Serveris, kuram šobrīd esiet pieslēdzies."
+
+#~ msgid "Up: 0.0 | Down: 0.0"
+#~ msgstr "↑ Augšup.: 0.0 | ↓ Lejup.: 0.0"
+
+#~ msgid "Current average upload and download rates. If enabled the numbers in the braces signify the overhead from client communication."
+#~ msgstr "Pašreizējais vidējais augšupielādes un lejupielādes ātrums. Ja iespējots, skaitļi iekavās norāda klientu komunikācijas papildslodzi."
+
+#, fuzzy, c-format
+#~ msgid "Buddies Served: %llu"
+#~ msgstr "Datnes strādājošajos serveros: %llu"
+
+#, fuzzy, c-format
+#~ msgid "Time Served: %s"
+#~ msgstr "Filtrētie serveri: %s"
+
+#, fuzzy, c-format
+#~ msgid "Buddies Connected: %llu"
+#~ msgstr " ir pieslēgts "
+
+#, fuzzy
+#~ msgid "Keyword publish"
+#~ msgstr "Filtrēti: %s"
+
+#, fuzzy
+#~ msgid "Source publish"
+#~ msgstr "Avoti"
+
+#, fuzzy
+#~ msgid "Firewall check"
+#~ msgstr "aiz ugunsmūra"
+
+#, fuzzy
+#~ msgid "Firewall check 2"
+#~ msgstr "aiz ugunsmūra"
+
+#, fuzzy, c-format
+#~ msgid "Keys valid: %s"
+#~ msgstr "Filtrēti: %s"
+
+#, fuzzy
+#~ msgid "Kad Buddies"
+#~ msgstr "Kad dalībnieks"
+
 #~ msgid "Disable computer's timed standby mode"
 #~ msgstr "Atspējot datora ieplānoto gaidstāves režīmu"
 
@@ -10794,9 +10887,6 @@ msgstr ""
 
 #~ msgid "Click on this button to update the servers list from URL ..."
 #~ msgstr "Noklikšķiniet uz šīs pogas, lai atjauninātu serveru sarakstu no URL ..."
-
-#~ msgid "Server list"
-#~ msgstr "Serveru saraksts"
 
 #~ msgid "Enter the url to a server.met file here and press the button to the left to update the list of known servers."
 #~ msgstr "Šeit ievadiet server.met datnes URL un nospiediet kreisajā pusē esošo pogu, lai atjauninātu zināmo serveru sarakstu."

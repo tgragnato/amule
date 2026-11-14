@@ -31,9 +31,7 @@ option (BUILD_ED2K "compile aMule ed2k links handler" ON)
 option (BUILD_EVERYTHING "compile all parts of aMule")
 option (BUILD_MONOLITHIC "enable building of the monolithic aMule app" ON)
 option (BUILD_MACOS_BUNDLE "build macOS application bundles" OFF)
-
 option (BUILD_REMOTEGUI "compile aMule remote GUI")
-option (BUILD_WEBSERVER "compile aMule WebServer")
 option (BUILD_AMULEAPI "compile aMule REST API daemon")
 option (BUILD_WXCAS "compile aMule GUI Statistics")
 option (BUILD_TESTING "Build unit tests" OFF)
@@ -45,7 +43,6 @@ if (PREFIX)
 endif()
 
 include (GNUInstallDirs)
-
 if (APPLE AND NOT BUILD_MACOS_BUNDLE)
 	set (AMULE_MACOS_LOCALEDIR "${CMAKE_INSTALL_FULL_LOCALEDIR}")
 endif()
@@ -56,7 +53,6 @@ if (BUILD_EVERYTHING)
 	set (BUILD_AMULECMD ON CACHE BOOL "compile aMule command line client" FORCE)
 	set (BUILD_DAEMON ON CACHE BOOL "compile aMule daemon version" FORCE)
 	set (BUILD_REMOTEGUI ON CACHE BOOL "compile aMule remote GUI" FORCE)
-	set (BUILD_WEBSERVER ON CACHE BOOL "compile aMule WebServer" FORCE)
 	set (BUILD_AMULEAPI ON CACHE BOOL "compile aMule REST API daemon" FORCE)
 	set (BUILD_WXCAS ON CACHE BOOL "compile aMule GUI Statistics" FORCE)
 endif()
@@ -81,8 +77,8 @@ if (BUILD_AMULEAPI)
 	#   * cryptopp — `NEED_LIB_EC` (set below) implies `NEED_LIB_CRYPTO`,
 	#     which includes cmake/cryptopp.cmake; that file FATAL_ERRORs
 	#     on a missing `cryptlib.h`.
-	#   * Boost   — `cmake/boost.cmake` runs when the socket library is
-	#     needed and uses `find_package(Boost CONFIG REQUIRED)`,
+	#   * Boost   — `cmake/boost.cmake` runs unconditionally at the
+	#     project root and uses `find_package(Boost CONFIG REQUIRED)`,
 	#     which FATAL_ERRORs on miss.
 	# If a future refactor breaks either chain (e.g. moves Boost
 	# behind a conditional `if`), add an explicit `find_package(Boost
@@ -93,27 +89,12 @@ if (BUILD_AMULEAPI)
 	set (wx_NEED_NET TRUE)
 	set (NEED_ZLIB TRUE)
 	# Compile-time install path the daemon falls back to when
-	# [Server]/StaticRoot is empty in the conf. Mirrors WEBSERVERDIR but
-	# uses the ABSOLUTE form so a binary running from /usr/local/bin
-	# (or wherever the operator put it) resolves to the matching
-	# /usr/local/share/amule/amuleapi-static without needing to be
-	# cwd'd at the install prefix.
+	# [Server]/StaticRoot is empty in the conf. Absolute, so a binary
+	# running from /usr/local/bin (or wherever the operator put it)
+	# resolves to the matching /usr/local/share/amule/amuleapi-static
+	# without needing to be cwd'd at the install prefix.
 	set (AMULEAPI_STATIC_DIR
 		"${CMAKE_INSTALL_FULL_DATADIR}/${PACKAGE}/amuleapi-static/")
-endif()
-
-if (BUILD_CAS)
-	set (BUILD_UTIL TRUE)
-endif()
-
-if (BUILD_ALCC)
-	set (BUILD_UTIL TRUE)
-	set (wx_NEED_BASE TRUE)
-endif()
-
-if (BUILD_ALC)
-	set (BUILD_UTIL TRUE)
-	set (wx_NEED_GUI TRUE)
 endif()
 
 if (BUILD_DAEMON)
@@ -136,6 +117,7 @@ if (BUILD_MONOLITHIC)
 	set (NEED_LIB_MULECOMMON TRUE)
 	set (NEED_LIB_MULESOCKET TRUE)
 	set (NEED_ZLIB TRUE)
+	set (wx_NEED_ADV TRUE)
 	set (wx_NEED_NET TRUE)
 endif()
 
@@ -151,15 +133,12 @@ if (BUILD_REMOTEGUI)
 	set (NEED_LIB_MULECOMMON TRUE)
 	set (NEED_LIB_MULESOCKET TRUE)
 	set (NEED_ZLIB TRUE)
+	set (wx_NEED_ADV TRUE)
 	set (wx_NEED_NET TRUE)
 endif()
 
-if (BUILD_WEBSERVER)
-	set (NEED_LIB_EC TRUE)
-	set (NEED_LIB_MULECOMMON TRUE)
-	set (NEED_LIB_MULESOCKET TRUE)
-	set (NEED_ZLIB TRUE)
-	set (WEBSERVERDIR "${PKGDATADIR}/webserver/")
+if (BUILD_WXCAS)
+	set (wx_NEED_GUI TRUE)
 	set (wx_NEED_NET TRUE)
 endif()
 
@@ -220,15 +199,13 @@ if (NEED_LIB_MULESOCKET)
 endif()
 
 # boost::asio is mandatory; the remaining wxWidgets-sockets consumers are
-# the daemon/GUI EC paths, the wxcas helper, and amuleweb (which links
-# wxWidgets::NET directly in src/webserver/src/CMakeLists.txt for its
-# socket code). Keep wx_NEED_NET on only when those are actually being
-# built.
-if (NOT (BUILD_DAEMON OR BUILD_MONOLITHIC OR BUILD_REMOTEGUI OR BUILD_WEBSERVER OR BUILD_WXCAS OR BUILD_AMULECMD OR BUILD_AMULEAPI))
+# the daemon/GUI EC paths and the wxcas helper. Keep wx_NEED_NET on only
+# when those are actually being built.
+if (NOT (BUILD_DAEMON OR BUILD_MONOLITHIC OR BUILD_REMOTEGUI OR BUILD_WXCAS OR BUILD_AMULECMD OR BUILD_AMULEAPI))
 	set (wx_NEED_NET FALSE)
 endif()
 
-if (wx_NEED_BASE OR wx_NEED_GUI OR wx_NEED_NET)
+if (wx_NEED_ADV OR wx_NEED_BASE OR wx_NEED_GUI OR wx_NEED_NET)
 	set (wx_NEEDED TRUE)
 endif()
 
