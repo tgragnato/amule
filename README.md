@@ -1,6 +1,8 @@
 aMule
 =====
 
+[![C/C++ CI and CodeQL](https://github.com/tgragnato/amule/actions/workflows/ccpp.yml/badge.svg)](https://github.com/tgragnato/amule/actions/workflows/ccpp.yml)
+
 ![aMule](org.amule.aMule.png)
 
 aMule is an eMule-like client for the eDonkey and Kademlia networks.
